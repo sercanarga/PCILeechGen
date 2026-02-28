@@ -47,9 +47,18 @@ func (p *SVPatcher) PatchAll() error {
 
 // svRegexPatch defines a single regex-based patch operation.
 type svRegexPatch struct {
-	pattern     string // regex pattern with capture groups
-	replacement string // replacement string using $1, $2 etc.
-	label       string // human-readable description
+	pattern     string         // regex pattern with capture groups
+	replacement string         // replacement string using $1, $2 etc.
+	label       string         // human-readable description
+	re          *regexp.Regexp // compiled pattern (lazy)
+}
+
+// compile returns the compiled regex, compiling on first use.
+func (p *svRegexPatch) compile() *regexp.Regexp {
+	if p.re == nil {
+		p.re = regexp.MustCompile(p.pattern)
+	}
+	return p.re
 }
 
 // applyRegexPatches applies a list of regex patches to content, returning modified content and patch labels.
@@ -57,11 +66,11 @@ func applyRegexPatches(content string, patches []svRegexPatch) (string, []string
 	modified := content
 	var applied []string
 
-	for _, patch := range patches {
-		re := regexp.MustCompile(patch.pattern)
+	for i := range patches {
+		re := patches[i].compile()
 		if re.MatchString(modified) {
-			modified = re.ReplaceAllString(modified, patch.replacement)
-			applied = append(applied, patch.label)
+			modified = re.ReplaceAllString(modified, patches[i].replacement)
+			applied = append(applied, patches[i].label)
 		}
 	}
 

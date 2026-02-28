@@ -82,7 +82,12 @@ Example:
 		fmt.Printf("[pcileechgen] Config space: %d bytes\n", ctx.ConfigSpace.Size)
 		fmt.Printf("[pcileechgen] Capabilities: %d standard, %d extended\n",
 			len(ctx.Capabilities), len(ctx.ExtCapabilities))
-		fmt.Printf("[pcileechgen] BARs: %d\n\n", len(ctx.BARs))
+		barContentCount := len(ctx.BARContents)
+		if barContentCount > 0 {
+			fmt.Printf("[pcileechgen] BARs: %d (%d with content)\n\n", len(ctx.BARs), barContentCount)
+		} else {
+			fmt.Printf("[pcileechgen] BARs: %d\n\n", len(ctx.BARs))
+		}
 
 		// Stage 2 & 3: Build
 		builder := vivado.NewBuilder(b, vivado.BuildOptions{
