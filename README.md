@@ -15,17 +15,15 @@ Firmware generator for PCILeech-compatible FPGA boards. Reads a real PCI/PCIe de
 
 ## Features
 
-| Donor Property | Emulated |
-|---|---:|
-| Vendor / Device / Revision ID | ✅ |
-| Subsystem Vendor / Device ID | ✅ |
-| Class Code (base, sub-class, interface) | ✅ |
-| Device Serial Number (64-bit DSN) | ✅ |
-| BAR0 Layout (type, size, 32/64-bit) | ✅ |
-| Link Speed / Width (clamped to board) | ✅ |
-| Config Space (full 4KB shadow + scrubbing) | ✅ |
-| Write Mask (per-register) | ✅ |
-| Power Management (D-state) | ✅ |
+- [x] Vendor / Device / Revision ID
+- [x] Subsystem Vendor / Device ID
+- [x] Class Code (base, sub-class, interface)
+- [x] Device Serial Number (64-bit DSN)
+- [x] BAR0 Layout (type, size, 32/64-bit)
+- [x] Link Speed / Width (clamped to board)
+- [x] Config Space (full 4KB shadow + scrubbing)
+- [x] Write Mask (per-register)
+- [x] Power Management (D-state)
 
 ## Supported Boards
 
