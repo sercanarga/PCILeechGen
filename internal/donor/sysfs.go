@@ -37,11 +37,16 @@ func (sr *SysfsReader) ScanDevices() ([]pci.PCIDevice, error) {
 
 	var devices []pci.PCIDevice
 	for _, entry := range entries {
-		if !entry.IsDir() {
+		// sysfs entries are symlinks, not plain directories
+		name := entry.Name()
+		fullPath := filepath.Join(sr.basePath, name)
+
+		fi, err := os.Stat(fullPath) // follows symlinks
+		if err != nil || !fi.IsDir() {
 			continue
 		}
 
-		bdf, err := pci.ParseBDF(entry.Name())
+		bdf, err := pci.ParseBDF(name)
 		if err != nil {
 			continue
 		}
