@@ -3,6 +3,7 @@ package firmware
 import (
 	"bytes"
 	"fmt"
+	"path/filepath"
 	"text/template"
 
 	"github.com/sercanarga/pcileechgen/internal/board"
@@ -182,7 +183,10 @@ if {[string equal [get_filesets -quiet sim_1] ""]} {
 set_property -name "top" -value "{{.TopModule}}" -objects [get_filesets sim_1]
 
 # Upgrade IPs to current Vivado version
-upgrade_ip [get_ips *]
+set all_ips [get_ips -quiet *]
+if {[llength $all_ips] > 0} {
+  upgrade_ip $all_ips
+}
 
 # Synthesis run
 if {[string equal [get_runs -quiet synth_1] ""]} {
@@ -327,11 +331,15 @@ func GenerateProjectTCL(ctx *donor.DeviceContext, b *board.Board, libDir string)
 		}
 	}
 
+	// Resolve to absolute paths so TCL works from any working directory
+	srcAbs, _ := filepath.Abs(b.SrcPath(libDir))
+	ipAbs, _ := filepath.Abs(b.IPPath(libDir))
+
 	data := projectTCLData{
 		BoardName:      b.Name,
 		FPGAPart:       b.FPGAPart,
-		SrcPath:        b.SrcPath(libDir),
-		IPPath:         b.IPPath(libDir),
+		SrcPath:        srcAbs,
+		IPPath:         ipAbs,
 		TopModule:      b.TopModule,
 		DeviceID:       fmt.Sprintf("%04X", ctx.Device.DeviceID),
 		VendorID:       fmt.Sprintf("%04X", ctx.Device.VendorID),
