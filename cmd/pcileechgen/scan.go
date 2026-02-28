@@ -8,6 +8,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/sercanarga/pcileechgen/internal/donor"
+	"github.com/sercanarga/pcileechgen/internal/pci"
 	"github.com/spf13/cobra"
 )
 
@@ -27,9 +28,9 @@ var scanCmd = &cobra.Command{
 			return nil
 		}
 
+		db := pci.LoadPCIDB()
+
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "BDF\tCLASS\tVENDOR:DEVICE\tDRIVER\tIOMMU\tVFIO")
-		fmt.Fprintln(w, "---\t-----\t-------------\t------\t-----\t----")
 
 		for _, dev := range devices {
 			driver := dev.Driver
@@ -47,13 +48,25 @@ var scanCmd = &cobra.Command{
 			// VFIO status
 			vfioStatus := vfioCheck(dev.Driver, iommuStr, dev.BDF.String())
 
-			fmt.Fprintf(w, "%s\t%s [%04x]\t[%04x:%04x]\t%s\t%s\t%s\n",
+			// Device description from pci.ids
+			devName := db.DeviceName(dev.VendorID, dev.DeviceID)
+			vendorName := db.VendorName(dev.VendorID)
+			description := dev.ClassDescription()
+			if vendorName != "" && devName != "" {
+				description = fmt.Sprintf("%s %s", vendorName, devName)
+			} else if vendorName != "" {
+				description = fmt.Sprintf("%s [%04x:%04x]", vendorName, dev.VendorID, dev.DeviceID)
+			}
+
+			fmt.Fprintf(w, "%s %s [%04x]: %s [%04x:%04x] (%s)\t%s\tiommu=%s\tvfio=%s\n",
 				dev.BDF.String(),
 				dev.ClassDescription(),
 				dev.ClassCode>>8,
+				description,
 				dev.VendorID,
 				dev.DeviceID,
 				driver,
+				"",
 				iommuStr,
 				vfioStatus,
 			)
