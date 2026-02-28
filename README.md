@@ -18,6 +18,7 @@ Firmware generator for PCILeech-compatible FPGA boards. Reads a real PCI/PCIe de
 - [x] Config Space (full 4KB shadow + scrubbing)
 - [x] Write Mask (per-register)
 - [x] Power Management (D-state + NoSoftReset)
+- [x] Capability Filtering (SR-IOV, Resizable BAR, ATS, L1PM, etc.)
 
 ## Supported Boards
 
