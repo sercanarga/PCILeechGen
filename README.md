@@ -50,9 +50,18 @@ sudo ./bin/pcileechgen check --bdf 0000:03:00.0
 
 ### `build` — generate firmware
 
+Full build (collect + generate + synthesize):
 ```bash
 sudo ./bin/pcileechgen build --bdf 0000:03:00.0 --board CaptainDMA_100T
+```
+
+Generate artifacts only (no Vivado):
+```bash
 sudo ./bin/pcileechgen build --bdf 0000:03:00.0 --board CaptainDMA_100T --skip-vivado
+```
+
+Offline build from saved JSON:
+```bash
 sudo ./bin/pcileechgen build --from-json device_context.json --board CaptainDMA_100T --skip-vivado
 ```
 

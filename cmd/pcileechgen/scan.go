@@ -5,8 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"text/tabwriter"
 
+	"github.com/sercanarga/pcileechgen/internal/color"
 	"github.com/sercanarga/pcileechgen/internal/donor"
 	"github.com/sercanarga/pcileechgen/internal/pci"
 	"github.com/spf13/cobra"
@@ -30,24 +30,7 @@ var scanCmd = &cobra.Command{
 
 		db := pci.LoadPCIDB()
 
-		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-
 		for _, dev := range devices {
-			driver := dev.Driver
-			if driver == "" {
-				driver = "-"
-			}
-
-			// IOMMU group
-			iommuStr := "-"
-			iommuLink, err := os.Readlink(filepath.Join("/sys/bus/pci/devices", dev.BDF.String(), "iommu_group"))
-			if err == nil {
-				iommuStr = filepath.Base(iommuLink)
-			}
-
-			// VFIO status
-			vfioStatus := vfioCheck(dev.Driver, iommuStr, dev.BDF.String())
-
 			// Device description from pci.ids
 			devName := db.DeviceName(dev.VendorID, dev.DeviceID)
 			vendorName := db.VendorName(dev.VendorID)
@@ -55,23 +38,40 @@ var scanCmd = &cobra.Command{
 			if vendorName != "" && devName != "" {
 				description = fmt.Sprintf("%s %s", vendorName, devName)
 			} else if vendorName != "" {
-				description = fmt.Sprintf("%s [%04x:%04x]", vendorName, dev.VendorID, dev.DeviceID)
+				description = vendorName
 			}
 
-			fmt.Fprintf(w, "%s %s [%04x]: %s [%04x:%04x] (%s)\t%s\tiommu=%s\tvfio=%s\n",
+			// IOMMU group
+			iommuStr := ""
+			iommuLink, err := os.Readlink(filepath.Join("/sys/bus/pci/devices", dev.BDF.String(), "iommu_group"))
+			if err == nil {
+				iommuStr = filepath.Base(iommuLink)
+			}
+
+			// VFIO tag
+			vfio := vfioCheck(dev.Driver, iommuStr, dev.BDF.String())
+			vfioTag := ""
+			switch vfio {
+			case "ready":
+				vfioTag = " " + color.OK("vfio")
+			case "ok":
+				vfioTag = ""
+			case "no-iommu":
+				vfioTag = " " + color.Warn("no-iommu")
+			default:
+				vfioTag = " " + color.Warn(vfio)
+			}
+
+			fmt.Printf("%s %s [%04x]: %s [%04x:%04x]%s\n",
 				dev.BDF.String(),
 				dev.ClassDescription(),
 				dev.ClassCode>>8,
 				description,
 				dev.VendorID,
 				dev.DeviceID,
-				driver,
-				"",
-				iommuStr,
-				vfioStatus,
+				vfioTag,
 			)
 		}
-		w.Flush()
 
 		fmt.Printf("\nTotal: %d devices\n", len(devices))
 		return nil
@@ -84,11 +84,10 @@ func vfioCheck(driver, iommuGroup, bdf string) string {
 		return "ready"
 	}
 
-	if iommuGroup == "-" {
+	if iommuGroup == "" {
 		return "no-iommu"
 	}
 
-	// Check if there are other devices in the same IOMMU group
 	groupPath := filepath.Join("/sys/kernel/iommu_groups", iommuGroup, "devices")
 	entries, err := os.ReadDir(groupPath)
 	if err != nil {
