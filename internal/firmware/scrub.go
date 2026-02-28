@@ -48,10 +48,11 @@ func ScrubConfigSpace(cs *pci.ConfigSpace) *pci.ConfigSpace {
 		}
 
 		if cap.ID == pci.CapIDPowerManagement && cap.Offset+4 < pci.ConfigSpaceLegacySize {
-			// PM Control/Status: set to D0 state (powered on)
+			// PM Control/Status: set to D0 state (powered on), preserve NoSoftReset
 			pmcsr := scrubbed.ReadU16(cap.Offset + 4)
 			pmcsr &= 0xFFFC // Clear PowerState bits (set to D0)
 			pmcsr &= 0x7FFF // Clear PME_Status
+			pmcsr |= 0x0008 // Set NoSoftReset bit — FPGA preserves state across D3hot→D0
 			scrubbed.WriteU16(cap.Offset+4, pmcsr)
 		}
 	}

@@ -167,12 +167,47 @@ func applyExtCapabilityWritemasks(cs *pci.ConfigSpace, masks []uint32) {
 	}
 }
 
-// GenerateBarZeroCOE generates the pcileech_bar_zero4k.coe file.
-// This is a 4KB zero-filled COE file used for BAR response data.
-func GenerateBarZeroCOE() string {
+// GenerateBarContentCOE generates the pcileech_bar_zero4k.coe file.
+// If BAR memory contents are available from the donor device, they are used to
+// populate the BRAM. Otherwise, the file is zero-filled as a safe fallback.
+// The first active memory BAR's content is used (pcileech-fpga has a single 4KB BRAM).
+func GenerateBarContentCOE(barContents map[int][]byte) string {
 	words := make([]uint32, shadowCfgSpaceWords)
-	return formatCOE(
-		"; PCILeechGen - BAR Zero 4KB\n",
-		words,
-	)
+
+	// Find the first BAR with content and populate the BRAM
+	if len(barContents) > 0 {
+		// Use lowest-indexed BAR content available
+		bestIdx := -1
+		for idx := range barContents {
+			if bestIdx == -1 || idx < bestIdx {
+				bestIdx = idx
+			}
+		}
+		if bestIdx >= 0 {
+			data := barContents[bestIdx]
+			// Convert bytes to uint32 words (little-endian)
+			for i := 0; i+3 < len(data) && i/4 < len(words); i += 4 {
+				words[i/4] = uint32(data[i]) |
+					uint32(data[i+1])<<8 |
+					uint32(data[i+2])<<16 |
+					uint32(data[i+3])<<24
+			}
+		}
+	}
+
+	header := "; PCILeechGen - BAR Content (4KB shadow)\n"
+	if len(barContents) > 0 {
+		header += "; Populated from donor device BAR memory\n"
+	} else {
+		header += "; Zero-filled (no donor BAR data available)\n"
+	}
+	header += ";\n"
+
+	return formatCOE(header, words)
+}
+
+// GenerateBarZeroCOE generates a zero-filled pcileech_bar_zero4k.coe file.
+// Deprecated: Use GenerateBarContentCOE instead.
+func GenerateBarZeroCOE() string {
+	return GenerateBarContentCOE(nil)
 }

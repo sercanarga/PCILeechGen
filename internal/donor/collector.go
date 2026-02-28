@@ -63,6 +63,23 @@ func (c *Collector) Collect(bdf pci.BDF) (*DeviceContext, error) {
 	}
 	ctx.BARs = bars
 
+	// Read BAR memory contents for active memory BARs
+	// Capped at 4KB to match pcileech-fpga's bram_bar_zero4k BRAM size
+	const maxBARReadSize = 4096
+	ctx.BARContents = make(map[int][]byte)
+	for _, bar := range bars {
+		if bar.IsDisabled() || bar.IsIO() || bar.Size == 0 {
+			continue
+		}
+		data, err := c.sysfs.ReadBARContent(bdf, bar.Index, maxBARReadSize)
+		if err != nil {
+			fmt.Printf("[collect] Warning: could not read BAR%d content: %v\n", bar.Index, err)
+			continue
+		}
+		ctx.BARContents[bar.Index] = data
+		fmt.Printf("[collect] Read %d bytes from BAR%d\n", len(data), bar.Index)
+	}
+
 	// Parse capabilities
 	ctx.Capabilities = pci.ParseCapabilities(cs)
 	ctx.ExtCapabilities = pci.ParseExtCapabilities(cs)
