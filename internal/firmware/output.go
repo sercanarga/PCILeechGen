@@ -118,5 +118,6 @@ func ListOutputFiles() []string {
 		"pcileech_bar_zero4k.coe",
 		"vivado_generate_project.tcl",
 		"vivado_build.tcl",
+		"src/",
 	}
 }

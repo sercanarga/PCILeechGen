@@ -73,11 +73,11 @@ func (c *Collector) Collect(bdf pci.BDF) (*DeviceContext, error) {
 		}
 		data, err := c.sysfs.ReadBARContent(bdf, bar.Index, maxBARReadSize)
 		if err != nil {
-			fmt.Printf("[collect] Warning: could not read BAR%d content: %v\n", bar.Index, err)
+			fmt.Printf("[donor] Warning: could not read BAR%d content: %v\n", bar.Index, err)
 			continue
 		}
 		ctx.BARContents[bar.Index] = data
-		fmt.Printf("[collect] Read %d bytes from BAR%d\n", len(data), bar.Index)
+		fmt.Printf("[donor] Read %d bytes from BAR%d\n", len(data), bar.Index)
 	}
 
 	// Parse capabilities

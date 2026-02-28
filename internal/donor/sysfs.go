@@ -89,6 +89,13 @@ func (sr *SysfsReader) ReadDeviceInfo(bdf pci.BDF) (*pci.PCIDevice, error) {
 	rev, _ := sr.readHex8(devPath, "revision")
 	dev.RevisionID = rev
 
+	// Read header type from config space
+	configPath := filepath.Join(devPath, "config")
+	configData, err := os.ReadFile(configPath)
+	if err == nil && len(configData) > 0x0E {
+		dev.HeaderType = configData[0x0E] & 0x7F // mask multi-function bit
+	}
+
 	// Read driver symlink
 	driverLink, err := os.Readlink(filepath.Join(devPath, "driver"))
 	if err == nil {
