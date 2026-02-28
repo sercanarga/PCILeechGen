@@ -1,0 +1,39 @@
+# Binary
+/pcileechgen
+/bin/
+/dist/
+
+# Build output
+pcileech_datastore/
+output/
+*.bin
+*.bit
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.out
+coverage.html
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Vivado
+*.jou
+*.log
+*.str
+*.xpr
+.Xil/
