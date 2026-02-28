@@ -84,12 +84,14 @@ func TestPCIDeviceClassDescription(t *testing.T) {
 		classCode uint32
 		want      string
 	}{
-		{0x020000, "Network Controller"},
-		{0x010000, "Mass Storage Controller"},
-		{0x030000, "Display Controller"},
-		{0x040000, "Multimedia Controller"},
-		{0x060000, "Bridge"},
-		{0xFF0000, "Unassigned Class"},
+		{0x020000, "Ethernet controller"},
+		{0x010600, "SATA controller"},
+		{0x030000, "VGA compatible controller"},
+		{0x040300, "Audio device"},
+		{0x060000, "Host bridge"},
+		{0x060400, "PCI bridge"},
+		{0x0C0300, "USB controller"},
+		{0xFF0000, "Unassigned class"},
 	}
 
 	for _, tt := range tests {

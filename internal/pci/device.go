@@ -79,51 +79,130 @@ func (d *PCIDevice) ProgIF() uint8 {
 	return uint8(d.ClassCode & 0xFF)
 }
 
-// ClassDescription returns a human-readable description of the device class.
+// ClassDescription returns a human-readable description matching lspci style.
 func (d *PCIDevice) ClassDescription() string {
-	switch d.BaseClass() {
+	base := d.BaseClass()
+	sub := d.SubClass()
+	key := uint16(base)<<8 | uint16(sub)
+
+	// Sub-class specific descriptions (matches lspci)
+	switch key {
+	// 0x01 Mass Storage
+	case 0x0101:
+		return "IDE interface"
+	case 0x0104:
+		return "RAID bus controller"
+	case 0x0106:
+		return "SATA controller"
+	case 0x0107:
+		return "Serial Attached SCSI controller"
+	case 0x0108:
+		return "Non-Volatile memory controller"
+	// 0x02 Network
+	case 0x0200:
+		return "Ethernet controller"
+	case 0x0280:
+		return "Network controller"
+	// 0x03 Display
+	case 0x0300:
+		return "VGA compatible controller"
+	case 0x0302:
+		return "3D controller"
+	// 0x04 Multimedia
+	case 0x0400:
+		return "Multimedia video controller"
+	case 0x0401:
+		return "Multimedia audio controller"
+	case 0x0403:
+		return "Audio device"
+	// 0x05 Memory
+	case 0x0500:
+		return "RAM memory"
+	case 0x0580:
+		return "Memory controller"
+	// 0x06 Bridge
+	case 0x0600:
+		return "Host bridge"
+	case 0x0601:
+		return "ISA bridge"
+	case 0x0604:
+		return "PCI bridge"
+	case 0x0680:
+		return "Bridge"
+	// 0x07 Communication
+	case 0x0700:
+		return "Serial controller"
+	case 0x0780:
+		return "Communication controller"
+	// 0x08 System Peripheral
+	case 0x0800:
+		return "PIC"
+	case 0x0880:
+		return "System peripheral"
+	// 0x0C Serial Bus
+	case 0x0C03:
+		return "USB controller"
+	case 0x0C05:
+		return "SMBus"
+	// 0x0D Wireless
+	case 0x0D00:
+		return "IRDA controller"
+	case 0x0D11:
+		return "Bluetooth"
+	case 0x0D80:
+		return "Wireless controller"
+	// 0x11 Signal Processing
+	case 0x1180:
+		return "Signal processing controller"
+	// 0x12 Processing Accelerator
+	case 0x1200:
+		return "Processing accelerator"
+	}
+
+	// Fall back to base class
+	switch base {
 	case 0x00:
-		return "Unclassified"
+		return "Unclassified device"
 	case 0x01:
-		return "Mass Storage Controller"
+		return "Mass storage controller"
 	case 0x02:
-		return "Network Controller"
+		return "Network controller"
 	case 0x03:
-		return "Display Controller"
+		return "Display controller"
 	case 0x04:
-		return "Multimedia Controller"
+		return "Multimedia controller"
 	case 0x05:
-		return "Memory Controller"
+		return "Memory controller"
 	case 0x06:
 		return "Bridge"
 	case 0x07:
-		return "Communication Controller"
+		return "Communication controller"
 	case 0x08:
-		return "System Peripheral"
+		return "System peripheral"
 	case 0x09:
-		return "Input Device Controller"
+		return "Input device controller"
 	case 0x0A:
-		return "Docking Station"
+		return "Docking station"
 	case 0x0B:
 		return "Processor"
 	case 0x0C:
-		return "Serial Bus Controller"
+		return "Serial bus controller"
 	case 0x0D:
-		return "Wireless Controller"
+		return "Wireless controller"
 	case 0x0E:
-		return "Intelligent Controller"
+		return "Intelligent controller"
 	case 0x0F:
-		return "Satellite Communication Controller"
+		return "Satellite communication controller"
 	case 0x10:
-		return "Encryption Controller"
+		return "Encryption controller"
 	case 0x11:
-		return "Signal Processing Controller"
+		return "Signal processing controller"
 	case 0x12:
-		return "Processing Accelerator"
+		return "Processing accelerator"
 	case 0xFF:
-		return "Unassigned Class"
+		return "Unassigned class"
 	default:
-		return "Unknown"
+		return fmt.Sprintf("Class [%02x%02x]", base, sub)
 	}
 }
 
