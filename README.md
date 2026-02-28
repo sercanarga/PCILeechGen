@@ -13,7 +13,19 @@ Firmware generator for PCILeech-compatible FPGA boards. Reads a real PCI/PCIe de
 3. **Generate** Xilinx COE files, patched SystemVerilog sources, and Vivado TCL scripts
 4. **Build** a bitstream (requires Vivado)
 
-The generated firmware configures the FPGA's PCIe IP core and shadow config space to match the donor, including device/vendor IDs, subsystem IDs, class code, link parameters, DSN, and BAR layout.
+## Features
+
+| Donor Property |  | Emulated |
+|---|---|---:|
+| Vendor / Device / Revision ID | PCIe IP core + config shadow | ✅ |
+| Subsystem Vendor / Device ID | PCIe IP core + config shadow | ✅ |
+| Class Code | Base, sub-class, interface | ✅ |
+| Device Serial Number (DSN) | 64-bit DSN injected into SV sources | ✅ |
+| BAR0 Layout | Type, size, 32/64-bit | ✅ |
+| Link Speed / Width | Clamped to board's physical lanes | ✅ |
+| Config Space (4KB) | Full shadow via COE with scrubbing | ✅ |
+| Write Mask | Per-register mask generation | ✅ |
+| Power Management | D-state emulation | ✅ |
 
 ## Requirements
 
