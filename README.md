@@ -157,7 +157,7 @@ NAME              FPGA PART          PCIe  TOP MODULE
 ----              ---------          ----  ----------
 PCIeSquirrel      xc7a35tfgg484-2    x1    pcileech_squirrel_top
 ScreamerM2        xc7a35tcsg325-2    x1    pcileech_screamer_m2_top
-CaptainDMA_100T   xc7a100tfgg484-2   x1    pcileech_captaindma_100t_top
+CaptainDMA_100T   xc7a100tfgg484-2   x1    pcileech_100t484_x1_top
 ZDMA              xc7a100tfgg484-2   x4    pcileech_tbx4_100t_top
 ...
 
