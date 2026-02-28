@@ -1,0 +1,3 @@
+[submodule "lib/pcileech-fpga"]
+	path = lib/pcileech-fpga
+	url = https://github.com/ufrisk/pcileech-fpga.git

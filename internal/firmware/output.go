@@ -81,9 +81,9 @@ func (ow *OutputWriter) patchSVSources(ctx *donor.DeviceContext, b *board.Board)
 	dstDir := filepath.Join(ow.OutputDir, "src")
 
 	if _, err := os.Stat(srcDir); os.IsNotExist(err) {
-		// Source directory doesn't exist (e.g. testing without submodule) — skip
-		fmt.Printf("[firmware] Warning: board source dir not found: %s (skipping SV patch)\n", srcDir)
-		return nil
+		fmt.Printf("[firmware] Warning: board source dir not found: %s\n", srcDir)
+		fmt.Println("[firmware] Run: git submodule update --init --recursive")
+		return fmt.Errorf("board sources not found at %s (is the pcileech-fpga submodule initialized?)", srcDir)
 	}
 
 	if err := util.CopyDir(srcDir, dstDir); err != nil {

@@ -12,10 +12,27 @@ import (
 
 func TestOutputWriterWriteAll(t *testing.T) {
 	outputDir := t.TempDir()
-	libDir := "/fake/lib/pcileech-fpga"
+	libDir := t.TempDir()
+
+	// Create fake board source directory with expected SV files
+	b, _ := board.Find("PCIeSquirrel")
+	fakeSrcDir := filepath.Join(libDir, b.ProjectDir, "src")
+	if err := os.MkdirAll(fakeSrcDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Minimal SV files the patcher expects
+	os.WriteFile(filepath.Join(fakeSrcDir, "pcileech_pcie_cfg_a7.sv"), []byte(`
+		rw[20:16] <= 5'b00001; // DEVICE_ID
+		rw[04:00] <= 5'b00001; // VENDOR_ID
+		rw[36:32] <= 5'b00001; // SUBSYSTEM_ID
+		rw[52:48] <= 5'b00001; // SUBSYSTEM_VENDOR_ID
+		rw[68:64] <= 5'b00001; // REVISION_ID
+		rw[23:16] <= 8'b00000001; // CLASS_CODE
+		cfg_dsn
+	`), 0644)
+	os.WriteFile(filepath.Join(fakeSrcDir, "pcileech_fifo.sv"), []byte("// fifo stub"), 0644)
 
 	ctx := makeTestContext()
-	b, _ := board.Find("PCIeSquirrel")
 
 	ow := NewOutputWriter(outputDir, libDir)
 	if err := ow.WriteAll(ctx, b); err != nil {
