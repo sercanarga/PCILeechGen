@@ -13,21 +13,10 @@ Firmware generator for PCILeech-compatible FPGA boards. Reads a real PCI/PCIe de
 3. **Generate** Xilinx COE files, patched SystemVerilog sources, and Vivado TCL scripts
 4. **Build** a bitstream (requires Vivado)
 
-## Features
+## Features & Supported Boards
 
-| Donor Property | Emulated |
-|---|---:|
-| Vendor / Device / Revision ID | ✅ |
-| Subsystem Vendor / Device ID | ✅ |
-| Class Code (base, sub-class, interface) | ✅ |
-| Device Serial Number (64-bit DSN) | ✅ |
-| BAR0 Layout (type, size, 32/64-bit) | ✅ |
-| Link Speed / Width (clamped to board) | ✅ |
-| Config Space (full 4KB shadow + scrubbing) | ✅ |
-| Write Mask (per-register) | ✅ |
-| Power Management (D-state) | ✅ |
-
-## Supported Boards
+<table>
+<tr><td valign="top">
 
 | Board | FPGA | Lanes |
 |---|---|---|
@@ -48,6 +37,23 @@ Firmware generator for PCILeech-compatible FPGA boards. Reads a real PCI/PCIe de
 | [acorn](https://github.com/ufrisk/pcileech-fpga/tree/master/acorn_ft2232h) | XC7A200T-484 | x4 |
 | [litefury](https://github.com/ufrisk/pcileech-fpga/tree/master/ZDMA) | XC7A100T-484 | x4 |
 | [sp605_ft601](https://github.com/ufrisk/pcileech-fpga/tree/master/sp605_ft601) | XC6SLX45T-484 | x1 |
+
+</td><td valign="top">
+
+| Donor Property | Emulated |
+|---|---:|
+| Vendor / Device / Revision ID | ✅ |
+| Subsystem Vendor / Device ID | ✅ |
+| Class Code (base, sub-class, interface) | ✅ |
+| Device Serial Number (64-bit DSN) | ✅ |
+| BAR0 Layout (type, size, 32/64-bit) | ✅ |
+| Link Speed / Width (clamped to board) | ✅ |
+| Config Space (full 4KB shadow + scrubbing) | ✅ |
+| Write Mask (per-register) | ✅ |
+| Power Management (D-state) | ✅ |
+
+</td></tr>
+</table>
 
 ## Requirements
 
