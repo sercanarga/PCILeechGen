@@ -35,13 +35,13 @@ make build
 ### `scan` — list PCI devices
 
 ```bash
-sudo pcileechgen scan
+sudo ./bin/pcileechgen scan
 ```
 
 ### `check` — verify donor compatibility
 
 ```bash
-sudo pcileechgen check --bdf 0000:03:00.0
+sudo ./bin/pcileechgen check --bdf 0000:03:00.0
 ```
 
 | Flag | Description |
@@ -51,9 +51,9 @@ sudo pcileechgen check --bdf 0000:03:00.0
 ### `build` — generate firmware
 
 ```bash
-sudo pcileechgen build --bdf 0000:03:00.0 --board CaptainDMA_100T
-sudo pcileechgen build --bdf 0000:03:00.0 --board CaptainDMA_100T --skip-vivado
-sudo pcileechgen build --from-json device_context.json --board CaptainDMA_100T --skip-vivado
+sudo ./bin/pcileechgen build --bdf 0000:03:00.0 --board CaptainDMA_100T
+sudo ./bin/pcileechgen build --bdf 0000:03:00.0 --board CaptainDMA_100T --skip-vivado
+sudo ./bin/pcileechgen build --from-json device_context.json --board CaptainDMA_100T --skip-vivado
 ```
 
 | Flag | Default | Description |
@@ -71,7 +71,7 @@ sudo pcileechgen build --from-json device_context.json --board CaptainDMA_100T -
 ### `validate` — verify generated artifacts
 
 ```bash
-pcileechgen validate --json device_context.json --output-dir pcileech_datastore/
+./bin/pcileechgen validate --json device_context.json --output-dir pcileech_datastore/
 ```
 
 | Flag | Default | Description |
@@ -82,7 +82,7 @@ pcileechgen validate --json device_context.json --output-dir pcileech_datastore/
 ### `boards` — list supported boards
 
 ```bash
-pcileechgen boards
+./bin/pcileechgen boards
 ```
 
 ## Supported boards
