@@ -6,12 +6,7 @@
 
 Firmware generator for PCILeech-compatible FPGA boards. Reads a real PCI/PCIe device over VFIO and produces ready-to-build Vivado projects that replicate the donor device's identity on an FPGA DMA card.
 
-## What it does
-
-1. **Scan** the host for PCI devices
-2. **Read** a donor device's full config space, BARs, capabilities, and serial number
-3. **Generate** Xilinx COE files, patched SystemVerilog sources, and Vivado TCL scripts
-4. **Build** a bitstream (requires Vivado)
+## Features
 
 - [x] Vendor / Device / Revision ID
 - [x] Subsystem Vendor / Device ID
@@ -45,53 +40,47 @@ Firmware generator for PCILeech-compatible FPGA boards. Reads a real PCI/PCIe de
 | [litefury](https://github.com/ufrisk/pcileech-fpga/tree/master/ZDMA) | XC7A100T-484 | x4 | M.2 |
 | [sp605_ft601](https://github.com/ufrisk/pcileech-fpga/tree/master/sp605_ft601) | XC6SLX45T-484 | x1 | Dev Board |
 
-## Requirements
-
-- Go 1.25+
-- Linux with IOMMU enabled and VFIO support
-- A donor PCIe device
-- Xilinx Vivado 2023.2+ (optional, for synthesis)
-
-## Install
+## Quick Start
 
 ```bash
+# install
 git clone --recurse-submodules https://github.com/sercanarga/PCILeechGen.git
-cd PCILeechGen
-make build
+cd PCILeechGen && make build
+
+# scan devices
+sudo ./bin/pcileechgen scan
+
+# build firmware
+sudo ./bin/pcileechgen build --bdf 0000:03:00.0 --board CaptainDMA_100T
 ```
 
-## Usage
+**Requirements:** Go 1.25+, Linux with IOMMU/VFIO, Vivado 2023.2+ (for synthesis)
 
-### `scan` — list PCI devices
+## Commands
 
+### `scan`
+List PCI devices with VFIO compatibility status.
 ```bash
 sudo ./bin/pcileechgen scan
 ```
 
-### `check` — verify donor compatibility
-
+### `check`
+Verify a device is suitable as a donor.
 ```bash
 sudo ./bin/pcileechgen check --bdf 0000:03:00.0
 ```
 
-| Flag | Description |
-|---|---|
-| `--bdf` | Device BDF address (required) |
+### `build`
+Generate firmware and optionally run Vivado synthesis.
 
-### `build` — generate firmware
-
-Full build (collect + generate + synthesize):
 ```bash
+# full build
 sudo ./bin/pcileechgen build --bdf 0000:03:00.0 --board CaptainDMA_100T
-```
 
-Generate artifacts only (no Vivado):
-```bash
+# artifacts only (no Vivado)
 sudo ./bin/pcileechgen build --bdf 0000:03:00.0 --board CaptainDMA_100T --skip-vivado
-```
 
-Offline build from saved JSON:
-```bash
+# offline build from saved JSON
 sudo ./bin/pcileechgen build --from-json device_context.json --board CaptainDMA_100T --skip-vivado
 ```
 
@@ -107,23 +96,17 @@ sudo ./bin/pcileechgen build --from-json device_context.json --board CaptainDMA_
 | `--jobs` | `4` | Parallel Vivado jobs |
 | `--timeout` | `3600` | Vivado timeout (seconds) |
 
-### `validate` — verify generated artifacts
-
+### `validate`
+Verify generated artifacts match the donor device context.
 ```bash
 ./bin/pcileechgen validate --json device_context.json --output-dir pcileech_datastore/
 ```
 
-| Flag | Default | Description |
-|---|---|---|
-| `--json` | | Path to device_context.json (required) |
-| `--output-dir` | `.` | Path to firmware output directory |
-
-### `boards` — list supported boards
-
+### `boards`
+List all supported FPGA boards.
 ```bash
 ./bin/pcileechgen boards
 ```
-
 
 ## Output
 
