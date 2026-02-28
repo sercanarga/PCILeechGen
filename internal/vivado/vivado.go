@@ -88,7 +88,7 @@ func (v *Vivado) BinaryPath() string {
 
 // RunTCL executes a TCL script in Vivado batch mode.
 func (v *Vivado) RunTCL(tclScript string, workDir string) error {
-	cmd := exec.Command(v.BinaryPath(), "-mode", "batch", "-source", tclScript)
+	cmd := exec.Command(v.BinaryPath(), "-mode", "batch", "-notrace", "-source", tclScript)
 	cmd.Dir = workDir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
