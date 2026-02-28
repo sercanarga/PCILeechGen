@@ -63,11 +63,56 @@ List PCI devices with VFIO compatibility status.
 ```bash
 sudo ./bin/pcileechgen scan
 ```
+```
+0000:00:00.0 Host bridge [0600]: Intel Corporation Xeon E3-1200 v6/7th Gen Core Processor Host Bridge [8086:591f]
+0000:00:17.0 SATA controller [0106]: Intel Corporation 200 Series PCH SATA controller [8086:a282]
+0000:01:00.0 VGA compatible controller [0300]: NVIDIA Corporation GP106 [GeForce GTX 1060 3GB] [10de:1c02] [WARN] group(3)
+0000:02:00.0 Audio device [0403]: Creative Labs CA0132 Sound Core3D [1102:0012] [OK] vfio
+
+Total: 16 devices
+```
 
 ### `check`
 Verify a device is suitable as a donor.
 ```bash
-sudo ./bin/pcileechgen check --bdf 0000:03:00.0
+sudo ./bin/pcileechgen check --bdf 0000:02:00.0
+```
+```
+Checking device 0000:02:00.0...
+
+[OK] Device found: 1102:0012 Audio device
+[OK] Config space readable: 4096 bytes
+[OK] IOMMU is enabled
+[OK] VFIO modules loaded
+[OK] IOMMU group: 9
+[OK] Already bound to vfio-pci
+
+Capabilities (3):
+  [01] Power Management at offset 0x50
+  [05] MSI at offset 0x60
+  [10] PCI Express at offset 0x70
+
+Extended Capabilities (4):
+  [0001] Advanced Error Reporting at offset 0x100
+  [0003] Device Serial Number at offset 0x150
+  [0010] Single Root I/O Virtualization at offset 0x180
+  [0002] VC at offset 0x260
+
+BARs:
+  BAR0: Memory32 at 0xfe800000, size 16 KiB
+
+--- Board Compatibility ---
+Donor Link: 2.5 GT/s x1
+Donor DSN:  0x0123456789abcdef
+
+Compatible boards:
+  PCIeSquirrel           xc7a35tfgg484-2 x1 (exact match)
+  CaptainDMA_100T        xc7a100tfgg484-2 x1 (exact match)
+  ...
+
+Total: 17 boards
+
+--- Check complete ---
 ```
 
 ### `build`
@@ -106,6 +151,17 @@ Verify generated artifacts match the donor device context.
 List all supported FPGA boards.
 ```bash
 ./bin/pcileechgen boards
+```
+```
+NAME              FPGA PART          PCIe  TOP MODULE
+----              ---------          ----  ----------
+PCIeSquirrel      xc7a35tfgg484-2    x1    pcileech_squirrel_top
+ScreamerM2        xc7a35tcsg325-2    x1    pcileech_screamer_m2_top
+CaptainDMA_100T   xc7a100tfgg484-2   x1    pcileech_captaindma_100t_top
+ZDMA              xc7a100tfgg484-2   x4    pcileech_tbx4_100t_top
+...
+
+Total: 17 boards
 ```
 
 ## Output
