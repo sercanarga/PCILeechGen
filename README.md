@@ -25,14 +25,8 @@ The generated firmware configures the FPGA's PCIe IP core and shadow config spac
 ## Install
 
 ```bash
-go install github.com/sercanarga/pcileechgen/cmd/pcileechgen@latest
-```
-
-Or from source:
-
-```bash
-git clone --recurse-submodules https://github.com/sercanarga/pcileechgen.git
-cd pcileechgen
+git clone --recurse-submodules https://github.com/sercanarga/PCILeechGen.git
+cd PCILeechGen
 make build
 ```
 
