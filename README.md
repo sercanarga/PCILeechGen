@@ -13,10 +13,11 @@ Firmware generator for PCILeech-compatible FPGA boards. Reads a real PCI/PCIe de
 - [x] Class Code (base, sub-class, interface)
 - [x] Device Serial Number (64-bit DSN)
 - [x] BAR0 Layout (type, size, 32/64-bit)
+- [x] BAR Content Emulation (donor memory snapshot)
 - [x] Link Speed / Width (clamped to board)
 - [x] Config Space (full 4KB shadow + scrubbing)
 - [x] Write Mask (per-register)
-- [x] Power Management (D-state)
+- [x] Power Management (D-state + NoSoftReset)
 
 ## Supported Boards
 
