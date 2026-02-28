@@ -139,6 +139,41 @@ func (sr *SysfsReader) ReadResourceFile(bdf pci.BDF) ([]pci.BAR, error) {
 	return pci.ParseBARsFromSysfsResource(lines), nil
 }
 
+// ReadBARContent reads the memory contents of a BAR from sysfs resource file.
+// The resource{N} files in sysfs provide direct access to the BAR's memory region.
+// maxSize limits the read to prevent exceeding FPGA BRAM capacity.
+func (sr *SysfsReader) ReadBARContent(bdf pci.BDF, barIndex int, maxSize int) ([]byte, error) {
+	resourcePath := filepath.Join(sr.basePath, bdf.String(), fmt.Sprintf("resource%d", barIndex))
+
+	f, err := os.Open(resourcePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open BAR%d resource file: %w", barIndex, err)
+	}
+	defer f.Close()
+
+	// Check file size
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("failed to stat BAR%d resource file: %w", barIndex, err)
+	}
+
+	readSize := int(fi.Size())
+	if readSize == 0 {
+		return nil, fmt.Errorf("BAR%d resource file is empty", barIndex)
+	}
+	if readSize > maxSize {
+		readSize = maxSize
+	}
+
+	data := make([]byte, readSize)
+	n, err := f.Read(data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read BAR%d content: %w", barIndex, err)
+	}
+
+	return data[:n], nil
+}
+
 // readHex16 reads a hex value from a sysfs file and returns it as uint16.
 func (sr *SysfsReader) readHex16(devPath, name string) (uint16, error) {
 	data, err := os.ReadFile(filepath.Join(devPath, name))

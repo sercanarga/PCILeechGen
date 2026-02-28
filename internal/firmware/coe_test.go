@@ -90,6 +90,7 @@ func TestGenerateWritemaskCOE(t *testing.T) {
 }
 
 func TestGenerateBarZeroCOE(t *testing.T) {
+	// Deprecated wrapper should still produce valid zero-filled COE
 	coe := GenerateBarZeroCOE()
 
 	if !strings.Contains(coe, "memory_initialization_radix=16;") {
@@ -100,6 +101,127 @@ func TestGenerateBarZeroCOE(t *testing.T) {
 	count := strings.Count(coe, "00000000")
 	if count != 1024 {
 		t.Errorf("Expected 1024 zero words, got %d", count)
+	}
+}
+
+func TestGenerateBarContentCOE_WithData(t *testing.T) {
+	// Simulate donor BAR data: first 8 bytes are non-zero (like HDA GCAP + VMIN/VMAJ)
+	barData := make([]byte, 256)
+	barData[0] = 0x59 // GCAP low byte
+	barData[1] = 0x00 // GCAP high byte
+	barData[2] = 0x01 // VMIN
+	barData[3] = 0x01 // VMAJ
+	barData[4] = 0x00 // OUTPAY low
+	barData[5] = 0x3C // OUTPAY high
+	barData[6] = 0x00 // INPAY low
+	barData[7] = 0x1C // INPAY high
+
+	contents := map[int][]byte{0: barData}
+	coe := GenerateBarContentCOE(contents)
+
+	// Should contain donor data header
+	if !strings.Contains(coe, "donor device BAR memory") {
+		t.Error("COE should mention donor BAR data in header")
+	}
+
+	// First word should be 0x01010059 (GCAP + VMIN/VMAJ in little-endian)
+	if !strings.Contains(coe, "01010059") {
+		t.Error("First BAR word should contain GCAP data (01010059)")
+	}
+
+	// Second word should be 0x1C003C00 (OUTPAY + INPAY)
+	if !strings.Contains(coe, "1c003c00") {
+		t.Error("Second BAR word should contain payload data (1c003c00)")
+	}
+
+	// Should still have 1024 total words
+	lines := strings.Split(strings.TrimSpace(coe), "\n")
+	dataLines := 0
+	for _, line := range lines {
+		if strings.Contains(line, ",") || strings.HasSuffix(line, ";") {
+			if !strings.HasPrefix(line, ";") && !strings.Contains(line, "memory_") {
+				dataLines++
+			}
+		}
+	}
+	if dataLines != 1024 {
+		t.Errorf("Expected 1024 data words, got %d", dataLines)
+	}
+}
+
+func TestGenerateBarContentCOE_Empty(t *testing.T) {
+	// No BAR contents — should produce zero-filled with appropriate header
+	coe := GenerateBarContentCOE(nil)
+
+	if !strings.Contains(coe, "Zero-filled") {
+		t.Error("Empty BAR COE should note zero-filled in header")
+	}
+
+	count := strings.Count(coe, "00000000")
+	if count != 1024 {
+		t.Errorf("Expected 1024 zero words, got %d", count)
+	}
+}
+
+func TestGenerateBarContentCOE_MultipleBAR(t *testing.T) {
+	// Multiple BARs — should use lowest index
+	bar0 := make([]byte, 8)
+	bar0[0] = 0xAA
+	bar2 := make([]byte, 8)
+	bar2[0] = 0xBB
+
+	contents := map[int][]byte{0: bar0, 2: bar2}
+	coe := GenerateBarContentCOE(contents)
+
+	// Should use BAR0 (lowest index) — first word should contain 0xAA
+	if !strings.Contains(coe, "000000aa") {
+		t.Error("Should use lowest BAR index (BAR0 with 0xAA)")
+	}
+}
+
+func TestPMWritemask(t *testing.T) {
+	cs := makeTestConfigSpace()
+	coe := GenerateWritemaskCOE(cs)
+
+	// PM cap is at 0x40, PMCSR at 0x44 (word index 0x44/4 = 0x11 = 17)
+	// Expected writemask: 0x00008103
+	lines := strings.Split(strings.TrimSpace(coe), "\n")
+	dataIdx := 0
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, ";") ||
+			strings.Contains(line, "memory_") {
+			continue
+		}
+		if dataIdx == 0x44/4 {
+			cleaned := strings.TrimSuffix(strings.TrimSuffix(line, ","), ";")
+			if cleaned != "00008103" {
+				t.Errorf("PM writemask at word %d = %s, want 00008103", dataIdx, cleaned)
+			}
+			return
+		}
+		dataIdx++
+	}
+	t.Error("Could not find PM writemask word")
+}
+
+func TestScrubPMNoSoftReset(t *testing.T) {
+	cs := makeTestConfigSpace()
+	// Set some PM state (D3hot, PME_Status)
+	cs.WriteU16(0x44, 0x8003) // D3hot + PME_Status set
+
+	scrubbed := ScrubConfigSpace(cs)
+	pmcsr := scrubbed.ReadU16(0x44)
+
+	// Should be D0 (bits 1:0 = 00), NoSoftReset set (bit 3), PME_Status cleared (bit 15)
+	if pmcsr&0x0003 != 0 {
+		t.Errorf("PowerState should be D0 (0), got %d", pmcsr&0x0003)
+	}
+	if pmcsr&0x0008 == 0 {
+		t.Error("NoSoftReset bit should be set")
+	}
+	if pmcsr&0x8000 != 0 {
+		t.Error("PME_Status should be cleared")
 	}
 }
 

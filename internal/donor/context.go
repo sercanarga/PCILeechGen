@@ -3,8 +3,10 @@
 package donor
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/sercanarga/pcileechgen/internal/pci"
@@ -19,6 +21,7 @@ type DeviceContext struct {
 	Device          pci.PCIDevice       `json:"device"`
 	ConfigSpace     *pci.ConfigSpace    `json:"config_space"`
 	BARs            []pci.BAR           `json:"bars"`
+	BARContents     map[int][]byte      `json:"-"` // BAR memory contents, keyed by BAR index
 	Capabilities    []pci.Capability    `json:"capabilities"`
 	ExtCapabilities []pci.ExtCapability `json:"ext_capabilities,omitempty"`
 }
@@ -32,6 +35,7 @@ type deviceContextJSON struct {
 	ConfigSpaceHex  []string            `json:"config_space_hex"`
 	ConfigSpaceSize int                 `json:"config_space_size"`
 	BARs            []pci.BAR           `json:"bars"`
+	BARContents     map[string]string   `json:"bar_contents,omitempty"` // key: BAR index, value: base64
 	Capabilities    []pci.Capability    `json:"capabilities"`
 	ExtCapabilities []pci.ExtCapability `json:"ext_capabilities,omitempty"`
 }
@@ -53,6 +57,13 @@ func (dc *DeviceContext) MarshalJSON() ([]byte, error) {
 		for i := 0; i < dc.ConfigSpace.Size; i += 4 {
 			word := dc.ConfigSpace.ReadU32(i)
 			j.ConfigSpaceHex = append(j.ConfigSpaceHex, fmt.Sprintf("%08x", word))
+		}
+	}
+
+	if len(dc.BARContents) > 0 {
+		j.BARContents = make(map[string]string)
+		for idx, data := range dc.BARContents {
+			j.BARContents[strconv.Itoa(idx)] = base64.StdEncoding.EncodeToString(data)
 		}
 	}
 
@@ -89,6 +100,22 @@ func FromJSON(data []byte) (*DeviceContext, error) {
 			var word uint32
 			fmt.Sscanf(hexWord, "%x", &word)
 			dc.ConfigSpace.WriteU32(i*4, word)
+		}
+	}
+
+	// Reconstruct BAR contents from base64
+	if len(j.BARContents) > 0 {
+		dc.BARContents = make(map[int][]byte)
+		for idxStr, b64 := range j.BARContents {
+			idx, err := strconv.Atoi(idxStr)
+			if err != nil {
+				continue
+			}
+			data, err := base64.StdEncoding.DecodeString(b64)
+			if err != nil {
+				continue
+			}
+			dc.BARContents[idx] = data
 		}
 	}
 

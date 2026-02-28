@@ -52,7 +52,7 @@ func (ow *OutputWriter) WriteAll(ctx *donor.DeviceContext, b *board.Board) error
 		return fmt.Errorf("failed to write writemask COE: %w", err)
 	}
 	if err := ow.writeFile("pcileech_bar_zero4k.coe",
-		GenerateBarZeroCOE()); err != nil {
+		GenerateBarContentCOE(ctx.BARContents)); err != nil {
 		return fmt.Errorf("failed to write bar zero COE: %w", err)
 	}
 
