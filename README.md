@@ -27,6 +27,28 @@ Firmware generator for PCILeech-compatible FPGA boards. Reads a real PCI/PCIe de
 | Write Mask (per-register) | ✅ |
 | Power Management (D-state) | ✅ |
 
+## Supported Boards
+
+| Board | FPGA | Lanes |
+|---|---|---|
+| [CaptainDMA_M2_x1](https://github.com/ufrisk/pcileech-fpga/tree/master/CaptainDMA) | XC7A35T-325 | x1 |
+| [CaptainDMA_M2_x4](https://github.com/ufrisk/pcileech-fpga/tree/master/CaptainDMA) | XC7A35T-325 | x4 |
+| [CaptainDMA_35T](https://github.com/ufrisk/pcileech-fpga/tree/master/CaptainDMA) | XC7A35T-484 | x1 |
+| [CaptainDMA_75T](https://github.com/ufrisk/pcileech-fpga/tree/master/CaptainDMA) | XC7A75T-484 | x1 |
+| [CaptainDMA_100T](https://github.com/ufrisk/pcileech-fpga/tree/master/CaptainDMA) | XC7A100T-484 | x1 |
+| [ScreamerM2](https://github.com/ufrisk/pcileech-fpga/tree/master/ScreamerM2) | XC7A35T-325 | x1 |
+| [pciescreamer](https://github.com/ufrisk/pcileech-fpga/tree/master/pciescreamer) | XC7A35T-484 | x1 |
+| [NeTV2_35T](https://github.com/ufrisk/pcileech-fpga/tree/master/NeTV2) | XC7A35T-484 | x1 |
+| [NeTV2_100T](https://github.com/ufrisk/pcileech-fpga/tree/master/NeTV2) | XC7A100T-484 | x1 |
+| [PCIeSquirrel](https://github.com/ufrisk/pcileech-fpga/tree/master/PCIeSquirrel) | XC7A35T-484 | x1 |
+| [EnigmaX1](https://github.com/ufrisk/pcileech-fpga/tree/master/EnigmaX1) | XC7A75T-484 | x1 |
+| [ZDMA](https://github.com/ufrisk/pcileech-fpga/tree/master/ZDMA) | XC7A100T-484 | x4 |
+| [GBOX](https://github.com/ufrisk/pcileech-fpga/tree/master/GBOX) | XC7A35T-484 | x1 |
+| [ac701_ft601](https://github.com/ufrisk/pcileech-fpga/tree/master/ac701_ft601) | XC7A200T-676 | x4 |
+| [acorn](https://github.com/ufrisk/pcileech-fpga/tree/master/acorn_ft2232h) | XC7A200T-484 | x4 |
+| [litefury](https://github.com/ufrisk/pcileech-fpga/tree/master/ZDMA) | XC7A100T-484 | x4 |
+| [sp605_ft601](https://github.com/ufrisk/pcileech-fpga/tree/master/sp605_ft601) | XC6SLX45T-484 | x1 |
+
 ## Requirements
 
 - Go 1.25+
@@ -106,29 +128,6 @@ sudo ./bin/pcileechgen build --from-json device_context.json --board CaptainDMA_
 ./bin/pcileechgen boards
 ```
 
-## Supported boards
-
-- **CaptainDMA**
-  - `CaptainDMA_M2_x1` — XC7A35T-325, x1
-  - `CaptainDMA_M2_x4` — XC7A35T-325, x4
-  - `CaptainDMA_35T` — XC7A35T-484, x1
-  - `CaptainDMA_75T` — XC7A75T-484, x1
-  - `CaptainDMA_100T` — XC7A100T-484, x1
-- **Screamer**
-  - `ScreamerM2` — XC7A35T-325, x1
-  - `pciescreamer` — XC7A35T-484, x1
-- **NeTV2**
-  - `NeTV2_35T` — XC7A35T-484, x1
-  - `NeTV2_100T` — XC7A100T-484, x1
-- **Other**
-  - `PCIeSquirrel` — XC7A35T-484, x1
-  - `EnigmaX1` — XC7A75T-484, x1
-  - `ZDMA` — XC7A100T-484, x4
-  - `GBOX` — XC7A35T-484, x1
-  - `ac701_ft601` — XC7A200T-676, x4
-  - `acorn` — XC7A200T-484, x4
-  - `litefury` — XC7A100T-484, x4
-  - `sp605_ft601` — XC6SLX45T-484, x1
 
 ## Output
 
