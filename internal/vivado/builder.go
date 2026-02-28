@@ -72,13 +72,13 @@ func (b *Builder) Build(ctx *donor.DeviceContext) error {
 	fmt.Printf("[build] Using Vivado %s at %s\n", vivado.Version, vivado.Path)
 
 	// Run project creation
-	projectTCL := filepath.Join(b.opts.OutputDir, "vivado_generate_project.tcl")
+	projectTCL := "vivado_generate_project.tcl"
 	if err := vivado.RunTCL(projectTCL, b.opts.OutputDir); err != nil {
 		return fmt.Errorf("project creation failed: %w", err)
 	}
 
 	// Run synthesis and implementation
-	buildTCL := filepath.Join(b.opts.OutputDir, "vivado_build.tcl")
+	buildTCL := "vivado_build.tcl"
 	if err := vivado.RunTCL(buildTCL, b.opts.OutputDir); err != nil {
 		return fmt.Errorf("build failed: %w", err)
 	}
