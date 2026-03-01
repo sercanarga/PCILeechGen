@@ -326,7 +326,12 @@ func GenerateProjectTCL(ctx *donor.DeviceContext, b *board.Board, libDir string)
 		bar0 := ctx.BARs[0]
 		if bar0.Size > 0 {
 			bar0Enabled = true
-			bar0Scale, bar0Size = barSizeToTCL(bar0.Size)
+			// clamp to FPGA BRAM (4 KB)
+			bar0SizeClamped := bar0.Size
+			if bar0SizeClamped > fpgaBRAMSize {
+				bar0SizeClamped = fpgaBRAMSize
+			}
+			bar0Scale, bar0Size = barSizeToTCL(bar0SizeClamped)
 			bar064bit = bar0.Type == pci.BARTypeMem64
 		}
 	}

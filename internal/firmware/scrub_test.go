@@ -285,6 +285,171 @@ func TestScrubConfigSpace_FiltersExtCaps(t *testing.T) {
 	}
 }
 
+func TestFilterExtCaps_RemoveFirst(t *testing.T) {
+	// Chain: SR-IOV(0x100) -> AER(0x150) -> DSN(0x200) -> end
+	// SR-IOV should be removed, AER relocated to 0x100.
+	// Chain should become AER(0x100) -> DSN(0x200) -> end
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+
+	cs.WriteU32(0x100, makeExtCapHeader(pci.ExtCapIDSRIOV, 1, 0x150))
+	cs.WriteU32(0x104, 0xAAAAAAAA) // SR-IOV data
+	cs.WriteU32(0x108, 0xBBBBBBBB) // SR-IOV data
+
+	cs.WriteU32(0x150, makeExtCapHeader(pci.ExtCapIDAER, 2, 0x200))
+	cs.WriteU32(0x154, 0xDEADBEEF) // AER uncorrectable error status
+	cs.WriteU32(0x158, 0x11111111) // AER uncorrectable error mask
+	cs.WriteU32(0x15C, 0x22222222) // AER data
+
+	cs.WriteU32(0x200, makeExtCapHeader(pci.ExtCapIDDeviceSerialNumber, 1, 0))
+	cs.WriteU32(0x204, 0x12345678) // DSN low
+	cs.WriteU32(0x208, 0x9ABCDEF0) // DSN high
+
+	removed := FilterExtCapabilities(cs)
+
+	// Should have removed SR-IOV
+	if len(removed) != 1 {
+		t.Fatalf("Expected 1 removed cap, got %d: %v", len(removed), removed)
+	}
+
+	// 0x100 should now contain AER (cap ID 0x0001)
+	hdr := cs.ReadU32(0x100)
+	capID := uint16(hdr & 0xFFFF)
+	if capID != pci.ExtCapIDAER {
+		t.Errorf("0x100 should contain AER (0x0001), got 0x%04x", capID)
+	}
+
+	// AER version should be preserved
+	version := uint8((hdr >> 16) & 0xF)
+	if version != 2 {
+		t.Errorf("AER version should be 2, got %d", version)
+	}
+
+	// AER data should be relocated to 0x100
+	if cs.ReadU32(0x104) != 0xDEADBEEF {
+		t.Errorf("AER data at 0x104 should be 0xDEADBEEF, got 0x%08x", cs.ReadU32(0x104))
+	}
+	if cs.ReadU32(0x108) != 0x11111111 {
+		t.Errorf("AER data at 0x108 should be 0x11111111, got 0x%08x", cs.ReadU32(0x108))
+	}
+
+	// 0x100 next-pointer should point to DSN at 0x200
+	nextOff := int((hdr >> 20) & 0xFFC)
+	if nextOff != 0x200 {
+		t.Errorf("AER at 0x100 should point to 0x200, got 0x%03x", nextOff)
+	}
+
+	// Original AER location (0x150) should be zeroed
+	if cs.ReadU32(0x150) != 0 {
+		t.Errorf("Original AER location (0x150) should be zeroed, got 0x%08x", cs.ReadU32(0x150))
+	}
+
+	// DSN data should be preserved
+	if cs.ReadU32(0x204) != 0x12345678 {
+		t.Errorf("DSN data corrupted: 0x%08x", cs.ReadU32(0x204))
+	}
+
+	// Verify chain walks correctly: AER(0x100) -> DSN(0x200) -> end
+	caps := pci.ParseExtCapabilities(cs)
+	if len(caps) != 2 {
+		t.Fatalf("Expected 2 remaining caps, got %d", len(caps))
+	}
+	if caps[0].ID != pci.ExtCapIDAER || caps[0].Offset != 0x100 {
+		t.Errorf("First cap should be AER at 0x100, got 0x%04x at 0x%03x", caps[0].ID, caps[0].Offset)
+	}
+	if caps[1].ID != pci.ExtCapIDDeviceSerialNumber || caps[1].Offset != 0x200 {
+		t.Errorf("Second cap should be DSN at 0x200, got 0x%04x at 0x%03x", caps[1].ID, caps[1].Offset)
+	}
+}
+
+func TestFilterExtCaps_RemoveFirstAndMiddle(t *testing.T) {
+	// Chain: L1PM(0x100) -> AER(0x140) -> SecPCIe(0x180) -> DSN(0x200) -> end
+	// L1PM and SecPCIe should be removed.
+	// Chain should become AER(0x100) -> DSN(0x200) -> end
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+
+	cs.WriteU32(0x100, makeExtCapHeader(pci.ExtCapIDL1PMSubstates, 1, 0x140))
+	cs.WriteU32(0x104, 0xAAAAAAAA)
+
+	cs.WriteU32(0x140, makeExtCapHeader(pci.ExtCapIDAER, 1, 0x180))
+	cs.WriteU32(0x144, 0xDEADBEEF) // AER data
+
+	cs.WriteU32(0x180, makeExtCapHeader(pci.ExtCapIDSecondaryPCIe, 1, 0x200))
+	cs.WriteU32(0x184, 0xCCCCCCCC)
+
+	cs.WriteU32(0x200, makeExtCapHeader(pci.ExtCapIDDeviceSerialNumber, 1, 0))
+	cs.WriteU32(0x204, 0x12345678)
+
+	removed := FilterExtCapabilities(cs)
+
+	if len(removed) != 2 {
+		t.Fatalf("Expected 2 removed caps, got %d: %v", len(removed), removed)
+	}
+
+	// 0x100 should now contain AER
+	hdr := cs.ReadU32(0x100)
+	capID := uint16(hdr & 0xFFFF)
+	if capID != pci.ExtCapIDAER {
+		t.Errorf("0x100 should contain AER, got 0x%04x", capID)
+	}
+
+	// AER data should be relocated
+	if cs.ReadU32(0x104) != 0xDEADBEEF {
+		t.Errorf("AER data should be relocated to 0x104, got 0x%08x", cs.ReadU32(0x104))
+	}
+
+	// Chain: AER(0x100) -> DSN(0x200) -> end
+	caps := pci.ParseExtCapabilities(cs)
+	if len(caps) != 2 {
+		t.Fatalf("Expected 2 remaining caps, got %d", len(caps))
+	}
+	if caps[0].ID != pci.ExtCapIDAER {
+		t.Errorf("First cap should be AER, got 0x%04x", caps[0].ID)
+	}
+	if caps[1].ID != pci.ExtCapIDDeviceSerialNumber {
+		t.Errorf("Second cap should be DSN, got 0x%04x", caps[1].ID)
+	}
+}
+
+func TestScrubConfigSpace_ClampBAR0(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+
+	cs.WriteU16(0x00, 0x144D) // Samsung Vendor ID
+	cs.WriteU16(0x02, 0xA80A) // Device ID
+	cs.WriteU16(0x06, 0x0010) // Status: caps
+
+	// BAR0: 64-bit memory, 16 KB size (mask = 0xFFFFC000)
+	cs.WriteU32(0x10, 0xFFFFC004) // mem64, 16 KB
+	cs.WriteU32(0x14, 0xFFFFFFFF) // upper 32 bits
+
+	// BAR2: 32-bit memory, 64 KB size
+	cs.WriteU32(0x18, 0xFFFF0000) // mem32, 64 KB
+
+	scrubbed := ScrubConfigSpace(cs)
+
+	// BAR0 should be clamped to 4 KB (mask = 0xFFFFF000, type bits preserved)
+	bar0 := scrubbed.BAR(0)
+	expectedBar0 := uint32(0xFFFFF004) // 4 KB mask | mem64 type bits
+	if bar0 != expectedBar0 {
+		t.Errorf("BAR0 should be clamped to 4 KB: got 0x%08x, want 0x%08x", bar0, expectedBar0)
+	}
+
+	// BAR1 (upper half of 64-bit BAR0) should be zeroed
+	bar1 := scrubbed.BAR(1)
+	if bar1 != 0 {
+		t.Errorf("BAR1 (upper 64-bit) should be zero: got 0x%08x", bar1)
+	}
+
+	// BAR2 should also be clamped to 4 KB
+	bar2 := scrubbed.BAR(2)
+	expectedBar2 := uint32(0xFFFFF000) // 4 KB mask | mem32 type bits
+	if bar2 != expectedBar2 {
+		t.Errorf("BAR2 should be clamped to 4 KB: got 0x%08x, want 0x%08x", bar2, expectedBar2)
+	}
+}
+
 func TestIsUnsafeExtCap(t *testing.T) {
 	// Safe caps
 	if IsUnsafeExtCap(pci.ExtCapIDAER) {
