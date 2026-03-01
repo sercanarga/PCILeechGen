@@ -45,7 +45,7 @@ Example:
 				return fmt.Errorf("failed to read COE file: %w", err)
 			}
 
-			scrubbedCS := firmware.ScrubConfigSpace(ctx.ConfigSpace)
+			scrubbedCS := firmware.ScrubConfigSpace(ctx.ConfigSpace, nil)
 			expectedCOE := firmware.GenerateConfigSpaceCOE(scrubbedCS)
 
 			if string(coeData) == expectedCOE {
@@ -69,7 +69,7 @@ Example:
 				return fmt.Errorf("failed to read writemask COE: %w", err)
 			}
 
-			scrubbedCS := firmware.ScrubConfigSpace(ctx.ConfigSpace)
+			scrubbedCS := firmware.ScrubConfigSpace(ctx.ConfigSpace, nil)
 			expectedWM := firmware.GenerateWritemaskCOE(scrubbedCS)
 
 			if string(wmData) == expectedWM {
@@ -93,7 +93,7 @@ Example:
 				coeStr := string(coeData)
 
 				// Extract first word (VendorID:DeviceID)
-				scrubbedCS := firmware.ScrubConfigSpace(ctx.ConfigSpace)
+				scrubbedCS := firmware.ScrubConfigSpace(ctx.ConfigSpace, nil)
 				expectedWord0 := fmt.Sprintf("%08x", scrubbedCS.ReadU32(0))
 				if strings.Contains(coeStr, expectedWord0) {
 					fmt.Println(color.Okf("VendorID:DeviceID = %04X:%04X present in COE",

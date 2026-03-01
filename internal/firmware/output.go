@@ -40,7 +40,7 @@ func (ow *OutputWriter) WriteAll(ctx *donor.DeviceContext, b *board.Board) error
 	}
 
 	// Scrub config space before COE generation (clean dangerous/error registers)
-	scrubbedCS := ScrubConfigSpace(ctx.ConfigSpace)
+	scrubbedCS := ScrubConfigSpace(ctx.ConfigSpace, b)
 
 	// COE files (using scrubbed config space for shadow BRAM)
 	if err := ow.writeFile("pcileech_cfgspace.coe",

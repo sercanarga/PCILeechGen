@@ -3,6 +3,7 @@ package firmware
 import (
 	"testing"
 
+	"github.com/sercanarga/pcileechgen/internal/board"
 	"github.com/sercanarga/pcileechgen/internal/pci"
 )
 
@@ -21,7 +22,7 @@ func TestScrubConfigSpace(t *testing.T) {
 	cs.WriteU8(0x0F, 0xC0)    // BIST: running
 	cs.WriteU8(0x3C, 0x0B)    // Interrupt Line: IRQ 11
 
-	scrubbed := ScrubConfigSpace(cs)
+	scrubbed := ScrubConfigSpace(cs, nil)
 
 	// Vendor/Device should be preserved
 	if scrubbed.VendorID() != 0x8086 {
@@ -90,7 +91,7 @@ func TestScrubConfigSpaceWithPCIeCap(t *testing.T) {
 	cs.WriteU16(0x52, 0x0003) // PM Caps
 	cs.WriteU16(0x54, 0x8003) // PMCSR: D3 + PME_Status
 
-	scrubbed := ScrubConfigSpace(cs)
+	scrubbed := ScrubConfigSpace(cs, nil)
 
 	// Device Status errors should be cleared
 	devStatus := scrubbed.ReadU16(0x4A)
@@ -277,7 +278,7 @@ func TestScrubConfigSpace_FiltersExtCaps(t *testing.T) {
 	cs.WriteU32(0x100, makeExtCapHeader(pci.ExtCapIDSRIOV, 1, 0))
 	cs.WriteU32(0x104, 0xFFFFFFFF)
 
-	scrubbed := ScrubConfigSpace(cs)
+	scrubbed := ScrubConfigSpace(cs, nil)
 
 	// SR-IOV should be removed
 	if scrubbed.ReadU32(0x100) != 0 {
@@ -427,7 +428,7 @@ func TestScrubConfigSpace_ClampBAR0(t *testing.T) {
 	// BAR2: 32-bit memory, 64 KB size
 	cs.WriteU32(0x18, 0xFFFF0000) // mem32, 64 KB
 
-	scrubbed := ScrubConfigSpace(cs)
+	scrubbed := ScrubConfigSpace(cs, nil)
 
 	// BAR0 should be clamped to 4 KB (mask = 0xFFFFF000, type bits preserved)
 	bar0 := scrubbed.BAR(0)
@@ -474,6 +475,108 @@ func TestIsUnsafeExtCap(t *testing.T) {
 	}
 	if !IsUnsafeExtCap(pci.ExtCapIDPTM) {
 		t.Error("PTM should be unsafe")
+	}
+}
+
+func TestScrubConfigSpace_ClampLinkCapability(t *testing.T) {
+	// Simulate Gen4 x4 donor with CaptainDMA_75T (x1) board
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+
+	cs.WriteU16(0x00, 0x144D) // Samsung
+	cs.WriteU16(0x06, 0x0010) // Status: caps
+	cs.WriteU8(0x34, 0x70)    // Cap pointer
+
+	// PCIe capability at 0x70
+	cs.WriteU8(0x70, pci.CapIDPCIExpress)
+	cs.WriteU8(0x71, 0x00) // end of cap list
+
+	// Link Capabilities Register (cap+0x0C = 0x7C): Gen4 x4
+	// bits [3:0] = 4 (Gen4), bits [9:4] = 4 (x4)
+	linkCap := uint32(4) | (uint32(4) << 4) // speed=4, width=4
+	cs.WriteU32(0x7C, linkCap)
+
+	// Link Status Register (cap+0x12 = 0x82): Gen4 x4 current
+	linkStatus := uint16(4) | (uint16(4) << 4) // speed=4, width=4
+	cs.WriteU16(0x82, linkStatus)
+
+	// Link Control 2 Register (cap+0x30 = 0xA0): Target=Gen4
+	cs.WriteU16(0xA0, 4) // target speed = Gen4
+
+	// Link Capabilities 2 Register (cap+0x2C = 0x9C): Gen1-4 supported
+	// bits [7:1] = speed vector: bit1=Gen1, bit2=Gen2, bit3=Gen3, bit4=Gen4
+	cs.WriteU32(0x9C, (0x1E)<<1) // 0x1E = 11110b (Gen1-4)
+
+	b := &board.Board{PCIeLanes: 1} // x1 board
+	scrubbed := ScrubConfigSpace(cs, b)
+
+	// Link Capabilities: should be Gen2 x1
+	scrubbedLinkCap := scrubbed.ReadU32(0x7C)
+	speed := uint8(scrubbedLinkCap & 0x0F)
+	width := uint8((scrubbedLinkCap >> 4) & 0x3F)
+	if speed != LinkSpeedGen2 {
+		t.Errorf("Link Cap Max Speed: got %d, want %d (Gen2)", speed, LinkSpeedGen2)
+	}
+	if width != 1 {
+		t.Errorf("Link Cap Max Width: got %d, want 1", width)
+	}
+
+	// Link Status: should be Gen2 x1
+	scrubbedLinkStatus := scrubbed.ReadU16(0x82)
+	curSpeed := uint8(scrubbedLinkStatus & 0x0F)
+	curWidth := uint8((scrubbedLinkStatus >> 4) & 0x3F)
+	if curSpeed != LinkSpeedGen2 {
+		t.Errorf("Link Status Current Speed: got %d, want %d (Gen2)", curSpeed, LinkSpeedGen2)
+	}
+	if curWidth != 1 {
+		t.Errorf("Link Status Negotiated Width: got %d, want 1", curWidth)
+	}
+
+	// Link Control 2: Target Link Speed should be Gen2
+	targetSpeed := uint8(scrubbed.ReadU16(0xA0) & 0x0F)
+	if targetSpeed != LinkSpeedGen2 {
+		t.Errorf("Link Control 2 Target Speed: got %d, want %d (Gen2)", targetSpeed, LinkSpeedGen2)
+	}
+
+	// Link Capabilities 2: Supported speeds should be Gen1+Gen2 only
+	linkCap2 := scrubbed.ReadU32(0x9C)
+	speedVector := (linkCap2 >> 1) & 0x7F
+	// Gen1=bit0, Gen2=bit1 → 0x03
+	expectedVector := uint32(0x03) // Gen1 + Gen2
+	if speedVector != expectedVector {
+		t.Errorf("Link Cap 2 speed vector: got 0x%02x, want 0x%02x", speedVector, expectedVector)
+	}
+}
+
+func TestScrubConfigSpace_ClampLinkCapability_NilBoard(t *testing.T) {
+	// Without board info, only speed should be clamped (not width)
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+
+	cs.WriteU16(0x00, 0x144D)
+	cs.WriteU16(0x06, 0x0010)
+	cs.WriteU8(0x34, 0x70)
+
+	cs.WriteU8(0x70, pci.CapIDPCIExpress)
+	cs.WriteU8(0x71, 0x00)
+
+	// Gen4 x4
+	linkCap := uint32(4) | (uint32(4) << 4)
+	cs.WriteU32(0x7C, linkCap)
+
+	scrubbed := ScrubConfigSpace(cs, nil) // nil board
+
+	scrubbedLinkCap := scrubbed.ReadU32(0x7C)
+	speed := uint8(scrubbedLinkCap & 0x0F)
+	width := uint8((scrubbedLinkCap >> 4) & 0x3F)
+
+	// Speed should be clamped to Gen2
+	if speed != LinkSpeedGen2 {
+		t.Errorf("Speed should be clamped to Gen2: got %d", speed)
+	}
+	// Width should remain unchanged (no board info)
+	if width != 4 {
+		t.Errorf("Width should remain x4 without board info: got %d", width)
 	}
 }
 

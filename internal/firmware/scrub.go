@@ -3,6 +3,7 @@ package firmware
 import (
 	"fmt"
 
+	"github.com/sercanarga/pcileechgen/internal/board"
 	"github.com/sercanarga/pcileechgen/internal/pci"
 )
 
@@ -38,10 +39,10 @@ func UnsafeExtCapName(id uint16) string {
 	return ""
 }
 
-// ScrubConfigSpace cleans potentially dangerous or detection-revealing registers
-// from the config space before writing to COE. This prevents leaking donor-specific
-// debug/diagnostic data that the DMA card cannot actually implement.
-func ScrubConfigSpace(cs *pci.ConfigSpace) *pci.ConfigSpace {
+// ScrubConfigSpace cleans config space for COE generation.
+// Clears error/debug registers, filters unsafe ext caps, clamps BARs to
+// FPGA BRAM size, and (if board is given) clamps link speed/width.
+func ScrubConfigSpace(cs *pci.ConfigSpace, b *board.Board) *pci.ConfigSpace {
 	scrubbed := cs.Clone()
 
 	// Clear BIST register (offset 0x0F) — DMA card cannot run self-test
@@ -113,14 +114,15 @@ func ScrubConfigSpace(cs *pci.ConfigSpace) *pci.ConfigSpace {
 		FilterExtCapabilities(scrubbed)
 	}
 
-	// Clamp BAR sizes to FPGA BRAM limit (4 KB)
 	clampBARsToFPGA(scrubbed)
+	clampLinkCapability(scrubbed, b)
 
 	return scrubbed
 }
 
-const fpgaBRAMSize = 4096           // pcileech-fpga shadow BAR BRAM size
-const fpgaBAR0SizeMask = 0xFFFFF000 // 4 KB aligned BAR mask
+const fpgaBRAMSize = 4096
+const fpgaBAR0SizeMask = 0xFFFFF000    // 4 KB aligned
+const fpgaMaxLinkSpeed = LinkSpeedGen2 // 7-series max
 
 // clampBARsToFPGA rewrites memory BAR registers to advertise 4 KB max size,
 // matching the actual FPGA BRAM capacity.
@@ -146,6 +148,79 @@ func clampBARsToFPGA(cs *pci.ConfigSpace) {
 			cs.WriteU32(barOffset+4, 0x00000000) // clear upper 32 bits
 			i++                                  // skip upper half
 		}
+	}
+}
+
+// clampLinkCapability rewrites PCIe link registers so the advertised
+// speed/width matches what the FPGA + board can actually negotiate.
+func clampLinkCapability(cs *pci.ConfigSpace, b *board.Board) {
+	caps := pci.ParseCapabilities(cs)
+	for _, cap := range caps {
+		if cap.ID != pci.CapIDPCIExpress {
+			continue
+		}
+
+		maxSpeed := uint8(fpgaMaxLinkSpeed)
+
+		maxWidth := uint8(0)
+		if b != nil && b.PCIeLanes > 0 {
+			maxWidth = uint8(b.PCIeLanes)
+		}
+
+		// Link Capabilities (cap+0x0C)
+		if cap.Offset+0x0C+4 <= pci.ConfigSpaceLegacySize {
+			linkCap := cs.ReadU32(cap.Offset + 0x0C)
+
+			if speed := uint8(linkCap & 0x0F); speed > maxSpeed {
+				linkCap = (linkCap & 0xFFFFFFF0) | uint32(maxSpeed)
+			}
+			if maxWidth > 0 {
+				if width := uint8((linkCap >> 4) & 0x3F); width > maxWidth {
+					linkCap = (linkCap & 0xFFFFFC0F) | (uint32(maxWidth) << 4)
+				}
+			}
+
+			cs.WriteU32(cap.Offset+0x0C, linkCap)
+		}
+
+		// Link Status (cap+0x12)
+		if cap.Offset+0x12+2 <= pci.ConfigSpaceLegacySize {
+			ls := cs.ReadU16(cap.Offset + 0x12)
+
+			if speed := uint8(ls & 0x0F); speed > maxSpeed {
+				ls = (ls & 0xFFF0) | uint16(maxSpeed)
+			}
+			if maxWidth > 0 {
+				if width := uint8((ls >> 4) & 0x3F); width > maxWidth {
+					ls = (ls & 0xFC0F) | (uint16(maxWidth) << 4)
+				}
+			}
+
+			cs.WriteU16(cap.Offset+0x12, ls)
+		}
+
+		// Link Control 2 (cap+0x30): target link speed
+		if cap.Offset+0x30+2 <= pci.ConfigSpaceLegacySize {
+			lc2 := cs.ReadU16(cap.Offset + 0x30)
+			if speed := uint8(lc2 & 0x0F); speed > maxSpeed {
+				lc2 = (lc2 & 0xFFF0) | uint16(maxSpeed)
+			}
+			cs.WriteU16(cap.Offset+0x30, lc2)
+		}
+
+		// Link Capabilities 2 (cap+0x2C): supported speeds vector
+		if cap.Offset+0x2C+4 <= pci.ConfigSpaceLegacySize {
+			lc2 := cs.ReadU32(cap.Offset + 0x2C)
+			if lc2 != 0 {
+				var vec uint32
+				for s := uint8(1); s <= maxSpeed; s++ {
+					vec |= 1 << s
+				}
+				cs.WriteU32(cap.Offset+0x2C, (lc2&0xFFFFFF01)|vec)
+			}
+		}
+
+		break
 	}
 }
 
