@@ -182,3 +182,68 @@ func TestDeviceContextJSONRoundtrip(t *testing.T) {
 		t.Errorf("roundtrip ConfigSpace.VendorID = 0x%04x, want 0x8086", loaded.ConfigSpace.VendorID())
 	}
 }
+
+func TestReadBARContent(t *testing.T) {
+	base := createMockSysfs(t)
+
+	// Write mock BAR0 resource file with known content
+	devDir := filepath.Join(base, "0000:03:00.0")
+	barData := make([]byte, 4096)
+	barData[0] = 0xDE
+	barData[1] = 0xAD
+	barData[2] = 0xBE
+	barData[3] = 0xEF
+	barData[4095] = 0xFF
+	if err := os.WriteFile(filepath.Join(devDir, "resource0"), barData, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	sr := NewSysfsReaderWithPath(base)
+	bdf := pci.BDF{Domain: 0, Bus: 3, Device: 0, Function: 0}
+
+	t.Run("read full BAR", func(t *testing.T) {
+		data, err := sr.ReadBARContent(bdf, 0, 4096)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(data) != 4096 {
+			t.Fatalf("ReadBARContent returned %d bytes, want 4096", len(data))
+		}
+		if data[0] != 0xDE || data[1] != 0xAD || data[2] != 0xBE || data[3] != 0xEF {
+			t.Errorf("BAR header = %x %x %x %x, want DE AD BE EF", data[0], data[1], data[2], data[3])
+		}
+		if data[4095] != 0xFF {
+			t.Errorf("BAR last byte = 0x%02x, want 0xFF", data[4095])
+		}
+	})
+
+	t.Run("read capped to maxSize", func(t *testing.T) {
+		data, err := sr.ReadBARContent(bdf, 0, 256)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(data) != 256 {
+			t.Fatalf("ReadBARContent returned %d bytes, want 256", len(data))
+		}
+		if data[0] != 0xDE {
+			t.Errorf("BAR[0] = 0x%02x, want 0xDE", data[0])
+		}
+	})
+
+	t.Run("missing resource file", func(t *testing.T) {
+		_, err := sr.ReadBARContent(bdf, 5, 4096)
+		if err == nil {
+			t.Fatal("expected error for missing resource file, got nil")
+		}
+	})
+
+	t.Run("empty resource file", func(t *testing.T) {
+		if err := os.WriteFile(filepath.Join(devDir, "resource3"), []byte{}, 0644); err != nil {
+			t.Fatal(err)
+		}
+		_, err := sr.ReadBARContent(bdf, 3, 4096)
+		if err == nil {
+			t.Fatal("expected error for empty resource file, got nil")
+		}
+	})
+}

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/sercanarga/pcileechgen/internal/pci"
 )
@@ -149,6 +150,10 @@ func (sr *SysfsReader) ReadResourceFile(bdf pci.BDF) ([]pci.BAR, error) {
 // ReadBARContent reads the memory contents of a BAR from sysfs resource file.
 // The resource{N} files in sysfs provide direct access to the BAR's memory region.
 // maxSize limits the read to prevent exceeding FPGA BRAM capacity.
+//
+// When a device is bound to vfio-pci, direct read() on resource files fails with
+// "input/output error". In this case, mmap() is used instead, which works because
+// the kernel exposes BAR memory via mmap even under vfio-pci.
 func (sr *SysfsReader) ReadBARContent(bdf pci.BDF, barIndex int, maxSize int) ([]byte, error) {
 	resourcePath := filepath.Join(sr.basePath, bdf.String(), fmt.Sprintf("resource%d", barIndex))
 
@@ -164,20 +169,49 @@ func (sr *SysfsReader) ReadBARContent(bdf pci.BDF, barIndex int, maxSize int) ([
 		return nil, fmt.Errorf("failed to stat BAR%d resource file: %w", barIndex, err)
 	}
 
-	readSize := int(fi.Size())
-	if readSize == 0 {
+	fileSize := int(fi.Size())
+	if fileSize == 0 {
 		return nil, fmt.Errorf("BAR%d resource file is empty", barIndex)
 	}
+
+	readSize := fileSize
 	if readSize > maxSize {
 		readSize = maxSize
 	}
 
-	data := make([]byte, readSize)
+	// Try mmap first — works with vfio-pci bound devices
+	data, err := sr.readBARViaMmap(f, readSize)
+	if err == nil {
+		return data, nil
+	}
+
+	// Fallback to read() — works for regular files (e.g. in tests)
+	return sr.readBARViaRead(f, barIndex, readSize)
+}
+
+// readBARViaMmap maps the BAR resource file into memory, copies the contents,
+// and unmaps it. This is the preferred method for vfio-pci bound devices.
+func (sr *SysfsReader) readBARViaMmap(f *os.File, size int) ([]byte, error) {
+	mapped, err := syscall.Mmap(int(f.Fd()), 0, size, syscall.PROT_READ, syscall.MAP_SHARED)
+	if err != nil {
+		return nil, fmt.Errorf("mmap failed: %w", err)
+	}
+
+	// Copy data out before unmapping
+	data := make([]byte, size)
+	copy(data, mapped)
+
+	syscall.Munmap(mapped)
+	return data, nil
+}
+
+// readBARViaRead reads the BAR resource file using standard read() syscall.
+func (sr *SysfsReader) readBARViaRead(f *os.File, barIndex int, size int) ([]byte, error) {
+	data := make([]byte, size)
 	n, err := f.Read(data)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read BAR%d content: %w", barIndex, err)
 	}
-
 	return data[:n], nil
 }
 
