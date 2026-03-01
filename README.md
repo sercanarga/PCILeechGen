@@ -3,6 +3,7 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/sercanarga/pcileechgen)](https://goreportcard.com/report/github.com/sercanarga/pcileechgen)
 [![License: CC0-1.0](https://img.shields.io/badge/License-CC0_1.0-lightgrey.svg)](https://github.com/sercanarga/PCILeechGen/blob/main/LICENSE)
 [![Go](https://img.shields.io/github/go-mod/go-version/sercanarga/PCILeechGen)](https://go.dev/)
+[![Discord](https://img.shields.io/discord/1477751220037877881?logo=discord&logoColor=white&label=Discord&color=5865F2)](https://discord.gg/kcWVCAhNSg)
 
 Generates custom firmware for [PCILeech FPGA](https://github.com/ufrisk/pcileech-fpga) boards. Reads a real PCI/PCIe donor device via VFIO, clones its identity (IDs, config space, BARs, capabilities), and builds a ready-to-flash `.bin` firmware through Vivado.
 
