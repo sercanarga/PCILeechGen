@@ -118,6 +118,12 @@ if {[llength $ip_coe_files] > 0} {
   import_files -fileset sources_1 $ip_coe_files
 }
 
+# Upgrade IPs to current Vivado version (must happen before configuring properties)
+set all_ips [get_ips -quiet *]
+if {[llength $all_ips] > 0} {
+  upgrade_ip $all_ips
+}
+
 # Patch PCIe IP core with donor identity
 set pcie_ip [get_ips -quiet pcie_7x_0]
 if { $pcie_ip != "" } {
@@ -181,12 +187,6 @@ if {[string equal [get_filesets -quiet sim_1] ""]} {
   create_fileset -simset sim_1
 }
 set_property -name "top" -value "{{.TopModule}}" -objects [get_filesets sim_1]
-
-# Upgrade IPs to current Vivado version
-set all_ips [get_ips -quiet *]
-if {[llength $all_ips] > 0} {
-  upgrade_ip $all_ips
-}
 
 # Synthesis run
 if {[string equal [get_runs -quiet synth_1] ""]} {
