@@ -113,31 +113,57 @@ func ScrubConfigSpace(cs *pci.ConfigSpace) *pci.ConfigSpace {
 		FilterExtCapabilities(scrubbed)
 	}
 
+	// Clamp BAR sizes to FPGA BRAM limit (4 KB)
+	clampBARsToFPGA(scrubbed)
+
 	return scrubbed
 }
 
-// FilterExtCapabilities removes extended capabilities that an FPGA DMA card
-// cannot emulate from the config space. Returns list of removed capability names.
-//
-// Extended capability chain format (each entry starts with a 32-bit header):
-//
-//	Bits [15:0]  = Capability ID
-//	Bits [19:16] = Version
-//	Bits [31:20] = Next capability offset (0 = end of list)
-//
-// To remove a capability: zero its data region and patch the previous
-// entry's next-pointer to skip over it.
+const fpgaBRAMSize = 4096           // pcileech-fpga shadow BAR BRAM size
+const fpgaBAR0SizeMask = 0xFFFFF000 // 4 KB aligned BAR mask
+
+// clampBARsToFPGA rewrites memory BAR registers to advertise 4 KB max size,
+// matching the actual FPGA BRAM capacity.
+func clampBARsToFPGA(cs *pci.ConfigSpace) {
+	for i := 0; i < 6; i++ {
+		barOffset := 0x10 + (i * 4)
+		barVal := cs.BAR(i)
+		if barVal == 0 {
+			continue
+		}
+
+		isIO := barVal&0x01 != 0
+		if isIO {
+			continue // skip IO BARs
+		}
+
+		is64bit := (barVal & 0x06) == 0x04
+		// preserve type bits [3:0], apply 4 KB mask
+		newBar := fpgaBAR0SizeMask | (barVal & 0x0F)
+		cs.WriteU32(barOffset, newBar)
+
+		if is64bit && i < 5 {
+			cs.WriteU32(barOffset+4, 0x00000000) // clear upper 32 bits
+			i++                                  // skip upper half
+		}
+	}
+}
+
+// FilterExtCapabilities strips extended capabilities the FPGA can't emulate.
+// Zeroes removed regions, relinks the chain, and relocates to 0x100 if needed
+// (PCIe spec requires ext caps to start there).
 func FilterExtCapabilities(cs *pci.ConfigSpace) []string {
 	var removed []string
 
 	type capEntry struct {
 		offset     int
 		id         uint16
+		version    uint8
 		nextOffset int
 		size       int
 	}
 
-	// First pass: build ordered list of all extended capabilities
+	// walk the chain and collect all entries
 	var entries []capEntry
 	visited := make(map[int]bool)
 	offset := 0x100
@@ -151,6 +177,7 @@ func FilterExtCapabilities(cs *pci.ConfigSpace) []string {
 		}
 
 		capID := uint16(header & 0xFFFF)
+		capVer := uint8((header >> 16) & 0xF)
 		nextOff := int((header >> 20) & 0xFFC)
 
 		size := 4
@@ -163,6 +190,7 @@ func FilterExtCapabilities(cs *pci.ConfigSpace) []string {
 		entries = append(entries, capEntry{
 			offset:     offset,
 			id:         capID,
+			version:    capVer,
 			nextOffset: nextOff,
 			size:       size,
 		})
@@ -177,7 +205,7 @@ func FilterExtCapabilities(cs *pci.ConfigSpace) []string {
 		return nil
 	}
 
-	// Second pass: identify which entries to remove
+	// mark unsafe entries for removal
 	removeSet := make(map[int]bool)
 	for i, e := range entries {
 		if IsUnsafeExtCap(e.id) {
@@ -191,82 +219,87 @@ func FilterExtCapabilities(cs *pci.ConfigSpace) []string {
 		return nil
 	}
 
-	// Third pass: relink chain and zero removed regions (process backwards)
-	for i := len(entries) - 1; i >= 0; i-- {
+	// find first survivor (-1 if all removed)
+	firstSurvivor := -1
+	for i := range entries {
+		if !removeSet[i] {
+			firstSurvivor = i
+			break
+		}
+	}
+
+	// if 0x100 is being removed, we need to relocate a survivor there
+	needsRelocate := removeSet[0] && firstSurvivor > 0
+
+	// zero out removed cap regions
+	for i := range entries {
 		if !removeSet[i] {
 			continue
 		}
-
 		e := entries[i]
+		for b := 0; b < e.size && e.offset+b < pci.ConfigSpaceSize; b++ {
+			cs.WriteU8(e.offset+b, 0x00)
+		}
+	}
 
-		// Find the next surviving entry's offset for relinking
+	if firstSurvivor < 0 {
+		// all caps gone
+		cs.WriteU32(0x100, 0x00000000)
+		return removed
+	}
+
+	if needsRelocate {
+		// move first survivor to 0x100
+		surv := entries[firstSurvivor]
+
+		// copy data
+		for b := 0; b < surv.size && b < surv.offset && surv.offset+b < pci.ConfigSpaceSize; b++ {
+			cs.WriteU8(0x100+b, cs.ReadU8(surv.offset+b))
+		}
+
+		// clear original location
+		for b := 0; b < surv.size && surv.offset+b < pci.ConfigSpaceSize; b++ {
+			cs.WriteU8(surv.offset+b, 0x00)
+		}
+
+		// find next survivor for chain
 		newNext := 0
-		for j := i + 1; j < len(entries); j++ {
+		for j := firstSurvivor + 1; j < len(entries); j++ {
 			if !removeSet[j] {
 				newNext = entries[j].offset
 				break
 			}
 		}
 
-		// Zero out the removed capability's data region
-		for b := 0; b < e.size && e.offset+b < pci.ConfigSpaceSize; b++ {
-			cs.WriteU8(e.offset+b, 0x00)
+		// fix next-pointer at 0x100
+		hdr := cs.ReadU32(0x100)
+		hdr = (hdr & 0x000FFFFF) | (uint32(newNext) << 20)
+		cs.WriteU32(0x100, hdr)
+
+		// update offset so relinking below uses the new location
+		entries[firstSurvivor].offset = 0x100
+	}
+
+	// relink surviving chain
+	var survivors []int
+	for i := range entries {
+		if !removeSet[i] {
+			survivors = append(survivors, i)
+		}
+	}
+
+	for si := 0; si < len(survivors); si++ {
+		idx := survivors[si]
+		e := entries[idx]
+
+		newNext := 0
+		if si+1 < len(survivors) {
+			newNext = entries[survivors[si+1]].offset
 		}
 
-		// Patch the previous surviving entry's next-pointer
-		if i == 0 {
-			// Removing the first ext cap at 0x100
-			if newNext > 0 {
-				// There are surviving caps after this — zero 0x100 as empty passthrough
-				// The surviving caps still have valid headers at their offsets
-				// We need to make 0x100 point to the first survivor
-				// Read survivor's header to get its cap ID and version
-				nextHeader := cs.ReadU32(newNext)
-				nextID := uint16(nextHeader & 0xFFFF)
-				nextVer := uint8((nextHeader >> 16) & 0xF)
-				// Find what the survivor points to next
-				nextNext := int((nextHeader >> 20) & 0xFFC)
-
-				// Move survivor's header to 0x100 as a redirect
-				// Copy the survivor's full data to 0x100
-				survSize := entries[0].size // use original first cap's size
-				for si := i + 1; si < len(entries); si++ {
-					if !removeSet[si] {
-						survSize = entries[si].size
-						break
-					}
-				}
-
-				// Simpler approach: just create a minimal "bridge" header at 0x100
-				// pointing to the first surviving cap
-				// But PCIe spec says extended caps must start at 0x100
-				// So we write a "Vendor Specific" placeholder that chains to survivor
-				_ = nextID
-				_ = nextVer
-				_ = nextNext
-				_ = survSize
-
-				// Safest: write the survivor's full header at 0x100 with its chain
-				// This means 0x100 becomes a duplicate pointer, but that's fine since
-				// the original location is zeroed. However, the survivor still has its data
-				// at the original offset. Best approach: just write an empty end-of-list.
-				cs.WriteU32(0x100, 0x00000000)
-			} else {
-				// All extended caps removed
-				cs.WriteU32(0x100, 0x00000000)
-			}
-		} else {
-			// Find the closest previous surviving entry and patch its next-pointer
-			for j := i - 1; j >= 0; j-- {
-				if !removeSet[j] {
-					prevHeader := cs.ReadU32(entries[j].offset)
-					// Clear old next-pointer [31:20], set new one
-					prevHeader = (prevHeader & 0x000FFFFF) | (uint32(newNext) << 20)
-					cs.WriteU32(entries[j].offset, prevHeader)
-					break
-				}
-			}
-		}
+		hdr := cs.ReadU32(e.offset)
+		hdr = (hdr & 0x000FFFFF) | (uint32(newNext) << 20)
+		cs.WriteU32(e.offset, hdr)
 	}
 
 	return removed
