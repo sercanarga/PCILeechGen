@@ -12,6 +12,8 @@ const (
 	LinkSpeedGen1 uint8 = 1 // 2.5 GT/s
 	LinkSpeedGen2 uint8 = 2 // 5.0 GT/s
 	LinkSpeedGen3 uint8 = 3 // 8.0 GT/s
+	LinkSpeedGen4 uint8 = 4 // 16.0 GT/s
+	LinkSpeedGen5 uint8 = 5 // 32.0 GT/s
 )
 
 // DeviceIDs holds all device identification values needed for SV patching.
@@ -82,6 +84,10 @@ func LinkSpeedName(speed uint8) string {
 		return "Gen2 (5.0 GT/s)"
 	case LinkSpeedGen3:
 		return "Gen3 (8.0 GT/s)"
+	case LinkSpeedGen4:
+		return "Gen4 (16.0 GT/s)"
+	case LinkSpeedGen5:
+		return "Gen5 (32.0 GT/s)"
 	default:
 		return fmt.Sprintf("Unknown (%d)", speed)
 	}

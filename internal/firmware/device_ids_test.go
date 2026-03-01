@@ -95,6 +95,8 @@ func TestLinkSpeedName(t *testing.T) {
 		{LinkSpeedGen1, "Gen1 (2.5 GT/s)"},
 		{LinkSpeedGen2, "Gen2 (5.0 GT/s)"},
 		{LinkSpeedGen3, "Gen3 (8.0 GT/s)"},
+		{LinkSpeedGen4, "Gen4 (16.0 GT/s)"},
+		{LinkSpeedGen5, "Gen5 (32.0 GT/s)"},
 		{0, "Unknown (0)"},
 	}
 	for _, tt := range tests {

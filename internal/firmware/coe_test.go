@@ -210,7 +210,7 @@ func TestScrubPMNoSoftReset(t *testing.T) {
 	// Set some PM state (D3hot, PME_Status)
 	cs.WriteU16(0x44, 0x8003) // D3hot + PME_Status set
 
-	scrubbed := ScrubConfigSpace(cs)
+	scrubbed := ScrubConfigSpace(cs, nil)
 	pmcsr := scrubbed.ReadU16(0x44)
 
 	// Should be D0 (bits 1:0 = 00), NoSoftReset set (bit 3), PME_Status cleared (bit 15)
