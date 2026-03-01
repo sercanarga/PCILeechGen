@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/logo.png" alt="PCILeechGen" width="200">
+  <img src="https://raw.githubusercontent.com/sercanarga/PCILeechGen/main/docs/logo.png" alt="PCILeechGen" width="200">
 </p>
 
 # PCILeechGen
