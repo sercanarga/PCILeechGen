@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/logo.png" alt="PCILeechGen" width="200">
+</p>
+
 # PCILeechGen
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/sercanarga/pcileechgen)](https://goreportcard.com/report/github.com/sercanarga/pcileechgen)
