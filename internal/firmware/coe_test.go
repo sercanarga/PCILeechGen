@@ -268,3 +268,223 @@ func TestCOEFormatValidity(t *testing.T) {
 		t.Error("No data words found")
 	}
 }
+
+func TestScrubBarContent_NVMe(t *testing.T) {
+	// NVMe class code 01:08:02
+	classCode := uint32(0x010802)
+
+	// Create a BAR0 with NVMe registers
+	bar0 := make([]byte, 4096)
+	// CC at offset 0x14: EN=0 (disabled)
+	bar0[0x14] = 0x00
+	// CSTS at offset 0x1C: RDY=0 (not ready), CFS=1 (fatal), SHST=10 (shutdown)
+	bar0[0x1C] = 0x0A // CFS=1, SHST=10 → binary 00001010
+
+	contents := map[int][]byte{0: bar0}
+	ScrubBarContent(contents, classCode)
+
+	// CSTS.RDY should now be 1
+	csts := uint32(bar0[0x1C]) | uint32(bar0[0x1D])<<8 |
+		uint32(bar0[0x1E])<<16 | uint32(bar0[0x1F])<<24
+	if csts&0x01 != 1 {
+		t.Errorf("NVMe CSTS.RDY should be 1, got %d", csts&0x01)
+	}
+	// CSTS.CFS should be cleared
+	if csts&0x02 != 0 {
+		t.Errorf("NVMe CSTS.CFS should be 0, got %d", (csts>>1)&0x01)
+	}
+	// CSTS.SHST should be 00
+	if csts&0x0C != 0 {
+		t.Errorf("NVMe CSTS.SHST should be 00, got %d", (csts>>2)&0x03)
+	}
+
+	// CC.EN should be 1 (coherent with CSTS.RDY=1)
+	cc := uint32(bar0[0x14]) | uint32(bar0[0x15])<<8 |
+		uint32(bar0[0x16])<<16 | uint32(bar0[0x17])<<24
+	if cc&0x01 != 1 {
+		t.Errorf("NVMe CC.EN should be 1, got %d", cc&0x01)
+	}
+}
+
+func TestScrubBarContent_NonNVMe(t *testing.T) {
+	// Sound card class code (04:03:00 = Audio Device)
+	classCode := uint32(0x040300)
+
+	bar0 := make([]byte, 256)
+	bar0[0x1C] = 0x00 // some register
+	bar0[0x14] = 0x42 // some register
+
+	original1C := bar0[0x1C]
+	original14 := bar0[0x14]
+
+	contents := map[int][]byte{0: bar0}
+	ScrubBarContent(contents, classCode)
+
+	// Nothing should change for non-NVMe devices
+	if bar0[0x1C] != original1C {
+		t.Errorf("Non-NVMe BAR0[0x1C] should not change: got 0x%02x, want 0x%02x", bar0[0x1C], original1C)
+	}
+	if bar0[0x14] != original14 {
+		t.Errorf("Non-NVMe BAR0[0x14] should not change: got 0x%02x, want 0x%02x", bar0[0x14], original14)
+	}
+}
+
+func TestScrubBarContent_Empty(t *testing.T) {
+	// Empty contents — should not panic
+	ScrubBarContent(nil, 0x010802)
+	ScrubBarContent(map[int][]byte{}, 0x010802)
+}
+
+func TestScrubBarContent_SmallBAR(t *testing.T) {
+	// BAR smaller than NVMe register area — should not panic
+	classCode := uint32(0x010802)
+	bar0 := make([]byte, 16) // too small for CSTS at 0x1C
+	contents := map[int][]byte{0: bar0}
+	ScrubBarContent(contents, classCode)
+	// Should return without modifying anything (no panic)
+}
+
+func TestScrubBarContent_NVMe_HigherBARIndex(t *testing.T) {
+	// BAR content at index 2 instead of 0
+	classCode := uint32(0x010802)
+	bar2 := make([]byte, 4096)
+	bar2[0x1C] = 0x00 // CSTS.RDY=0
+	bar2[0x14] = 0x00 // CC.EN=0
+
+	contents := map[int][]byte{2: bar2}
+	ScrubBarContent(contents, classCode)
+
+	if bar2[0x1C]&0x01 != 1 {
+		t.Error("CSTS.RDY should be set even when BAR is at index 2")
+	}
+	if bar2[0x14]&0x01 != 1 {
+		t.Error("CC.EN should be set even when BAR is at index 2")
+	}
+}
+
+func TestExtCapWritemask_AER(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+
+	cs.WriteU16(0x06, 0x0010)
+
+	// AER at 0x100
+	cs.WriteU32(0x100, makeExtCapHeader(pci.ExtCapIDAER, 1, 0))
+
+	masks := make([]uint32, 1024)
+	applyExtCapabilityWritemasks(cs, masks)
+
+	// AER uncorrectable error status (cap+4 = word 0x104/4 = 65)
+	if masks[0x104/4] != 0xFFFFFFFF {
+		t.Errorf("AER uncorrectable error status writemask: got 0x%08x, want 0xFFFFFFFF", masks[0x104/4])
+	}
+	// AER uncorrectable error mask (cap+8 = word 66)
+	if masks[0x108/4] != 0xFFFFFFFF {
+		t.Errorf("AER uncorrectable error mask writemask: got 0x%08x, want 0xFFFFFFFF", masks[0x108/4])
+	}
+	// AER uncorrectable error severity (cap+12 = word 67)
+	if masks[0x10C/4] != 0xFFFFFFFF {
+		t.Errorf("AER uncorrectable error severity writemask: got 0x%08x, want 0xFFFFFFFF", masks[0x10C/4])
+	}
+	// AER correctable error status (cap+16 = word 68)
+	if masks[0x110/4] != 0xFFFFFFFF {
+		t.Errorf("AER correctable error status writemask: got 0x%08x, want 0xFFFFFFFF", masks[0x110/4])
+	}
+	// AER correctable error mask (cap+20 = word 69)
+	if masks[0x114/4] != 0xFFFFFFFF {
+		t.Errorf("AER correctable error mask writemask: got 0x%08x, want 0xFFFFFFFF", masks[0x114/4])
+	}
+}
+
+func TestExtCapWritemask_LTR(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+
+	cs.WriteU16(0x06, 0x0010)
+
+	// LTR at 0x100
+	cs.WriteU32(0x100, makeExtCapHeader(pci.ExtCapIDLTR, 1, 0))
+
+	masks := make([]uint32, 1024)
+	applyExtCapabilityWritemasks(cs, masks)
+
+	if masks[0x104/4] != 0xFFFFFFFF {
+		t.Errorf("LTR writemask at cap+4: got 0x%08x, want 0xFFFFFFFF", masks[0x104/4])
+	}
+}
+
+func TestExtCapWritemask_NoExtCaps(t *testing.T) {
+	// Small config space (256 bytes) — no ext caps
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceLegacySize
+
+	masks := make([]uint32, 1024)
+	applyExtCapabilityWritemasks(cs, masks)
+
+	// All masks beyond legacy should be 0
+	for i := 64; i < 1024; i++ {
+		if masks[i] != 0 {
+			t.Errorf("mask[%d] should be 0 for legacy config space, got 0x%08x", i, masks[i])
+		}
+	}
+}
+
+func TestLinkSpeedToTCL_AllCases(t *testing.T) {
+	tests := []struct {
+		speed uint8
+		want  string
+	}{
+		{LinkSpeedGen1, "2.5_GT/s"},
+		{LinkSpeedGen2, "5.0_GT/s"},
+		{LinkSpeedGen3, "8.0_GT/s"},
+		{4, "5.0_GT/s"},  // Gen4 falls to default
+		{0, "5.0_GT/s"},  // unknown
+		{99, "5.0_GT/s"}, // garbage
+	}
+	for _, tt := range tests {
+		got := linkSpeedToTCL(tt.speed)
+		if got != tt.want {
+			t.Errorf("linkSpeedToTCL(%d) = %q, want %q", tt.speed, got, tt.want)
+		}
+	}
+}
+
+func TestLinkSpeedToTrgt_AllCases(t *testing.T) {
+	tests := []struct {
+		speed uint8
+		want  string
+	}{
+		{LinkSpeedGen1, "4'h1"},
+		{LinkSpeedGen2, "4'h2"},
+		{LinkSpeedGen3, "4'h3"},
+		{4, "4'h2"}, // default
+		{0, "4'h2"}, // default
+	}
+	for _, tt := range tests {
+		got := linkSpeedToTrgt(tt.speed)
+		if got != tt.want {
+			t.Errorf("linkSpeedToTrgt(%d) = %q, want %q", tt.speed, got, tt.want)
+		}
+	}
+}
+
+func TestLinkWidthToTCL_AllCases(t *testing.T) {
+	tests := []struct {
+		width uint8
+		want  string
+	}{
+		{1, "X1"},
+		{2, "X2"},
+		{4, "X4"},
+		{8, "X8"},
+		{0, "X1"},  // default
+		{3, "X1"},  // odd value
+		{16, "X1"}, // unsupported
+	}
+	for _, tt := range tests {
+		got := linkWidthToTCL(tt.width)
+		if got != tt.want {
+			t.Errorf("linkWidthToTCL(%d) = %q, want %q", tt.width, got, tt.want)
+		}
+	}
+}

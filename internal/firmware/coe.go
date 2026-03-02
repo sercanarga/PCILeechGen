@@ -206,6 +206,64 @@ func GenerateBarContentCOE(barContents map[int][]byte) string {
 	return formatCOE(header, words)
 }
 
+// ScrubBarContent patches BAR data for device-class-specific quirks.
+// Call before GenerateBarContentCOE.
+func ScrubBarContent(barContents map[int][]byte, classCode uint32) {
+	if len(barContents) == 0 {
+		return
+	}
+	if classCode == 0x010802 { // NVMe
+		scrubNVMeBar0(barContents)
+	}
+}
+
+// scrubNVMeBar0 sets CSTS.RDY=1 and CC.EN=1 in the BAR0 snapshot.
+//
+// Without this, Windows stornvme.sys writes CC.EN=1 and polls CSTS.RDY
+// forever — the static BRAM never flips RDY on its own, so the driver
+// times out with "device cannot start".
+//
+// NVMe register offsets (per NVMe 1.0–1.4):
+//
+//	0x14 CC   (Controller Configuration)
+//	0x1C CSTS (Controller Status)
+func scrubNVMeBar0(barContents map[int][]byte) {
+	bestIdx := -1
+	for idx := range barContents {
+		if bestIdx == -1 || idx < bestIdx {
+			bestIdx = idx
+		}
+	}
+	if bestIdx < 0 {
+		return
+	}
+
+	data := barContents[bestIdx]
+	if len(data) < 0x20 {
+		return
+	}
+
+	// CSTS @ 0x1C: set RDY, clear CFS and SHST
+	csts := uint32(data[0x1C]) | uint32(data[0x1D])<<8 |
+		uint32(data[0x1E])<<16 | uint32(data[0x1F])<<24
+	csts |= 0x01
+	csts &= ^uint32(0x02)
+	csts &= ^uint32(0x0C)
+	data[0x1C] = byte(csts)
+	data[0x1D] = byte(csts >> 8)
+	data[0x1E] = byte(csts >> 16)
+	data[0x1F] = byte(csts >> 24)
+
+	// CC @ 0x14: EN=1 so it's coherent with RDY=1
+	cc := uint32(data[0x14]) | uint32(data[0x15])<<8 |
+		uint32(data[0x16])<<16 | uint32(data[0x17])<<24
+	cc |= 0x01
+	data[0x14] = byte(cc)
+	data[0x15] = byte(cc >> 8)
+	data[0x16] = byte(cc >> 16)
+	data[0x17] = byte(cc >> 24)
+}
+
 // GenerateBarZeroCOE generates a zero-filled pcileech_bar_zero4k.coe file.
 // Deprecated: Use GenerateBarContentCOE instead.
 func GenerateBarZeroCOE() string {

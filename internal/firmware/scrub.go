@@ -116,6 +116,7 @@ func ScrubConfigSpace(cs *pci.ConfigSpace, b *board.Board) *pci.ConfigSpace {
 
 	clampBARsToFPGA(scrubbed)
 	clampLinkCapability(scrubbed, b)
+	clampDeviceCapability(scrubbed)
 
 	return scrubbed
 }
@@ -124,8 +125,8 @@ const fpgaBRAMSize = 4096
 const fpgaBAR0SizeMask = 0xFFFFF000    // 4 KB aligned
 const fpgaMaxLinkSpeed = LinkSpeedGen2 // 7-series max
 
-// clampBARsToFPGA rewrites memory BAR registers to advertise 4 KB max size,
-// matching the actual FPGA BRAM capacity.
+// clampBARsToFPGA forces all memory BARs to 4 KB.
+// pcileech-fpga only has one 4 KB BRAM block for BAR emulation.
 func clampBARsToFPGA(cs *pci.ConfigSpace) {
 	for i := 0; i < 6; i++ {
 		barOffset := 0x10 + (i * 4)
@@ -136,23 +137,23 @@ func clampBARsToFPGA(cs *pci.ConfigSpace) {
 
 		isIO := barVal&0x01 != 0
 		if isIO {
-			continue // skip IO BARs
+			continue
 		}
 
 		is64bit := (barVal & 0x06) == 0x04
-		// preserve type bits [3:0], apply 4 KB mask
+		// keep type bits [3:0], slam the size mask to 4 KB
 		newBar := fpgaBAR0SizeMask | (barVal & 0x0F)
 		cs.WriteU32(barOffset, newBar)
 
 		if is64bit && i < 5 {
-			cs.WriteU32(barOffset+4, 0x00000000) // clear upper 32 bits
-			i++                                  // skip upper half
+			cs.WriteU32(barOffset+4, 0x00000000)
+			i++ // skip upper half
 		}
 	}
 }
 
-// clampLinkCapability rewrites PCIe link registers so the advertised
-// speed/width matches what the FPGA + board can actually negotiate.
+// clampLinkCapability downgrades link speed/width in config space
+// to what the 7-series FPGA and the physical board can handle.
 func clampLinkCapability(cs *pci.ConfigSpace, b *board.Board) {
 	caps := pci.ParseCapabilities(cs)
 	for _, cap := range caps {
@@ -218,6 +219,49 @@ func clampLinkCapability(cs *pci.ConfigSpace, b *board.Board) {
 				}
 				cs.WriteU32(cap.Offset+0x2C, (lc2&0xFFFFFF01)|vec)
 			}
+		}
+
+		break
+	}
+}
+
+// clampDeviceCapability limits device capability fields to what
+// the FPGA can actually do — 128B MPS, no extended tags, no phantoms.
+func clampDeviceCapability(cs *pci.ConfigSpace) {
+	caps := pci.ParseCapabilities(cs)
+	for _, cap := range caps {
+		if cap.ID != pci.CapIDPCIExpress {
+			continue
+		}
+
+		// DevCap (cap+0x04): MPS=128B, no phantoms, no ext tag
+		if cap.Offset+0x04+4 <= pci.ConfigSpaceLegacySize {
+			devCap := cs.ReadU32(cap.Offset + 0x04)
+			devCap &= ^uint32(0x07) // MPS Supported → 0 (128B)
+			devCap &= ^uint32(0x18) // Phantom Functions → 0
+			devCap &= ^uint32(0x20) // Extended Tag → 0
+			cs.WriteU32(cap.Offset+0x04, devCap)
+		}
+
+		// DevCtl (cap+0x08): match the caps we just clamped
+		if cap.Offset+0x08+2 <= pci.ConfigSpaceLegacySize {
+			devCtl := cs.ReadU16(cap.Offset + 0x08)
+			devCtl &= ^uint16(0x00E0) // MPS → 128B
+			devCtl &= ^uint16(0x0100) // Extended Tag Enable → 0
+			devCtl &= ^uint16(0x0200) // Phantom Enable → 0
+			// cap MRRS to 512B — FPGA TLP buffers can't handle more
+			if mrrs := (devCtl >> 12) & 0x07; mrrs > 2 {
+				devCtl = (devCtl & 0x8FFF) | (2 << 12)
+			}
+			cs.WriteU16(cap.Offset+0x08, devCtl)
+		}
+
+		// DevCap2 (cap+0x24): no 10-bit tags
+		if cap.Offset+0x24+4 <= pci.ConfigSpaceLegacySize {
+			devCap2 := cs.ReadU32(cap.Offset + 0x24)
+			devCap2 &= ^uint32(1 << 16) // 10-bit Tag Completer
+			devCap2 &= ^uint32(1 << 17) // 10-bit Tag Requester
+			cs.WriteU32(cap.Offset+0x24, devCap2)
 		}
 
 		break

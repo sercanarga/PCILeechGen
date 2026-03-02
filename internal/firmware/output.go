@@ -51,6 +51,10 @@ func (ow *OutputWriter) WriteAll(ctx *donor.DeviceContext, b *board.Board) error
 		GenerateWritemaskCOE(scrubbedCS)); err != nil {
 		return fmt.Errorf("failed to write writemask COE: %w", err)
 	}
+
+	// fix device-class quirks in BAR content (e.g. NVMe CSTS.RDY)
+	ScrubBarContent(ctx.BARContents, ctx.Device.ClassCode)
+
 	if err := ow.writeFile("pcileech_bar_zero4k.coe",
 		GenerateBarContentCOE(ctx.BARContents)); err != nil {
 		return fmt.Errorf("failed to write bar zero COE: %w", err)

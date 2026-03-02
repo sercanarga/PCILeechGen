@@ -592,3 +592,109 @@ func containsHelper(s, substr string) bool {
 	}
 	return false
 }
+
+func TestScrubConfigSpace_ClampDeviceCapability(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+
+	cs.WriteU16(0x00, 0x144D)
+	cs.WriteU16(0x06, 0x0010) // Status: caps
+	cs.WriteU8(0x34, 0x70)    // Cap pointer
+
+	// PCIe capability at 0x70
+	cs.WriteU8(0x70, pci.CapIDPCIExpress)
+	cs.WriteU8(0x71, 0x00) // end of cap list
+
+	// Device Capabilities (cap+0x04 = 0x74):
+	// bits [2:0] = 2 (MPS 512B), bit 5 = 1 (ExtTag), bits [4:3] = 1 (Phantom)
+	devCap := uint32(2) | (1 << 3) | (1 << 5) | (0x07 << 6) // MPS=512B, Phantom=1, ExtTag=1, L0s latency
+	cs.WriteU32(0x74, devCap)
+
+	// Device Control (cap+0x08 = 0x78):
+	// bits [7:5] = 2 (MPS 512B), bit 8 = 1 (ExtTag), bit 9 = 1 (Phantom), bits [14:12] = 5 (MRRS 4KB)
+	devCtl := uint16(2<<5) | (1 << 8) | (1 << 9) | (5 << 12)
+	cs.WriteU16(0x78, devCtl)
+
+	// Device Capabilities 2 (cap+0x24 = 0x94):
+	// bit 16 = 1 (10-bit Tag Completer), bit 17 = 1 (10-bit Tag Requester)
+	devCap2 := uint32(1<<16) | (1 << 17) | (0x0F) // some other bits
+	cs.WriteU32(0x94, devCap2)
+
+	scrubbed := ScrubConfigSpace(cs, nil)
+
+	// Device Capabilities: MPS should be 0 (128B), ExtTag=0, Phantom=0
+	scrubbedDevCap := scrubbed.ReadU32(0x74)
+	mps := scrubbedDevCap & 0x07
+	if mps != 0 {
+		t.Errorf("Device Cap MPS Supported should be 0 (128B), got %d", mps)
+	}
+	phantom := (scrubbedDevCap >> 3) & 0x03
+	if phantom != 0 {
+		t.Errorf("Device Cap Phantom Functions should be 0, got %d", phantom)
+	}
+	extTag := (scrubbedDevCap >> 5) & 0x01
+	if extTag != 0 {
+		t.Errorf("Device Cap Extended Tag should be 0, got %d", extTag)
+	}
+	// L0s latency (bits [8:6]) should be preserved
+	l0sLat := (scrubbedDevCap >> 6) & 0x07
+	if l0sLat != 0x07 {
+		t.Errorf("Device Cap L0s Latency should be preserved (7), got %d", l0sLat)
+	}
+
+	// Device Control: MPS=0, ExtTag=0, Phantom=0, MRRS clamped to 2 (512B)
+	scrubbedDevCtl := scrubbed.ReadU16(0x78)
+	ctlMPS := (scrubbedDevCtl >> 5) & 0x07
+	if ctlMPS != 0 {
+		t.Errorf("Device Control MPS should be 0 (128B), got %d", ctlMPS)
+	}
+	ctlExtTag := (scrubbedDevCtl >> 8) & 0x01
+	if ctlExtTag != 0 {
+		t.Errorf("Device Control Extended Tag Enable should be 0, got %d", ctlExtTag)
+	}
+	ctlPhantom := (scrubbedDevCtl >> 9) & 0x01
+	if ctlPhantom != 0 {
+		t.Errorf("Device Control Phantom Enable should be 0, got %d", ctlPhantom)
+	}
+	ctlMRRS := (scrubbedDevCtl >> 12) & 0x07
+	if ctlMRRS != 2 {
+		t.Errorf("Device Control MRRS should be clamped to 2 (512B), got %d", ctlMRRS)
+	}
+
+	// Device Capabilities 2: 10-bit tag fields should be 0
+	scrubbedDevCap2 := scrubbed.ReadU32(0x94)
+	if scrubbedDevCap2&(1<<16) != 0 {
+		t.Error("Device Cap 2: 10-bit Tag Completer should be 0")
+	}
+	if scrubbedDevCap2&(1<<17) != 0 {
+		t.Error("Device Cap 2: 10-bit Tag Requester should be 0")
+	}
+	// Other bits should be preserved
+	if scrubbedDevCap2&0x0F != 0x0F {
+		t.Errorf("Device Cap 2: other bits should be preserved, got 0x%08x", scrubbedDevCap2)
+	}
+}
+
+func TestScrubConfigSpace_ClampDeviceControl_SmallMRRS(t *testing.T) {
+	// If MRRS is already <= 512B, it should not be changed
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+
+	cs.WriteU16(0x06, 0x0010)
+	cs.WriteU8(0x34, 0x70)
+
+	cs.WriteU8(0x70, pci.CapIDPCIExpress)
+	cs.WriteU8(0x71, 0x00)
+
+	// Device Control: MRRS = 1 (256B) — should stay
+	devCtl := uint16(1 << 12)
+	cs.WriteU16(0x78, devCtl)
+
+	scrubbed := ScrubConfigSpace(cs, nil)
+
+	scrubbedDevCtl := scrubbed.ReadU16(0x78)
+	ctlMRRS := (scrubbedDevCtl >> 12) & 0x07
+	if ctlMRRS != 1 {
+		t.Errorf("Device Control MRRS should remain 1 (256B), got %d", ctlMRRS)
+	}
+}
