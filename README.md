@@ -6,7 +6,7 @@
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/sercanarga/pcileechgen)](https://goreportcard.com/report/github.com/sercanarga/pcileechgen)
 [![CodeQL](https://github.com/sercanarga/PCILeechGen/actions/workflows/codeql.yml/badge.svg)](https://github.com/sercanarga/PCILeechGen/actions/workflows/codeql.yml)
-[![Coverage](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/sercanarga/b85bf5ab915f0f64fc15df8d52b8924c/raw/coverage.json)](https://github.com/sercanarga/PCILeechGen/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/sercanarga/b85bf5ab915f0f64fc15df8d52b8924c/raw)](https://github.com/sercanarga/PCILeechGen/actions/workflows/ci.yml)
 [![License: CC0-1.0](https://img.shields.io/badge/License-CC0_1.0-lightgrey.svg)](https://github.com/sercanarga/PCILeechGen/blob/main/LICENSE)
 [![Go](https://img.shields.io/github/go-mod/go-version/sercanarga/PCILeechGen)](https://go.dev/)
 [![Discord](https://img.shields.io/discord/1477751220037877881?logo=discord&logoColor=white&label=Discord&color=5865F2)](https://discord.gg/kcWVCAhNSg)
