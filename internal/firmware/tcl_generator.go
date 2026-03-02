@@ -313,8 +313,8 @@ func GenerateProjectTCL(ctx *donor.DeviceContext, b *board.Board, libDir string)
 	// Clamp link width to board physical lanes
 	linkWidth := clampLinkWidth(ids.LinkWidth, b.PCIeLanes)
 	linkSpeed := ids.LinkSpeed
-	if linkSpeed == 0 {
-		linkSpeed = LinkSpeedGen2 // safe default
+	if linkSpeed == 0 || linkSpeed > fpgaMaxLinkSpeed {
+		linkSpeed = fpgaMaxLinkSpeed // Xilinx 7-series max: Gen2
 	}
 
 	// BAR0 configuration
