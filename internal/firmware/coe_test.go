@@ -89,15 +89,13 @@ func TestGenerateWritemaskCOE(t *testing.T) {
 	}
 }
 
-func TestGenerateBarZeroCOE(t *testing.T) {
-	// Deprecated wrapper should still produce valid zero-filled COE
-	coe := GenerateBarZeroCOE()
+func TestGenerateBarContentCOE_ZeroFilled(t *testing.T) {
+	coe := GenerateBarContentCOE(nil)
 
 	if !strings.Contains(coe, "memory_initialization_radix=16;") {
 		t.Error("BAR zero COE missing radix")
 	}
 
-	// Count data words (should be 1024 for 4KB)
 	count := strings.Count(coe, "00000000")
 	if count != 1024 {
 		t.Errorf("Expected 1024 zero words, got %d", count)
@@ -556,5 +554,269 @@ func TestScrubBarContent_XHCI_ZeroCAPLEN(t *testing.T) {
 	usbsts := uint32(bar0[0x24])
 	if usbsts&0x01 != 0 {
 		t.Errorf("xHCI USBSTS.HCHalted should be cleared with default CAPLENGTH, got 0x%02x", usbsts)
+	}
+}
+
+func TestScrubBarContent_XHCI_ClampDBOFF(t *testing.T) {
+	classCode := uint32(0x0C0330)
+	bar0 := make([]byte, 4096)
+
+	bar0[0x00] = 0x20 // CAPLENGTH
+	// HCSPARAMS1: MaxSlots=32, MaxIntrs=1, MaxPorts=2
+	writeLE32(bar0, 0x04, 32|(1<<8)|(2<<24))
+	writeLE32(bar0, 0x14, 0x2000) // DBOFF outside BRAM
+
+	contents := map[int][]byte{0: bar0}
+	ScrubBarContent(contents, classCode)
+
+	dboff := readLE32(bar0, 0x14)
+	maxSlots := int(readLE32(bar0, 0x04) & 0xFF)
+	doorbellSize := (maxSlots + 1) * 4
+	if int(dboff)+doorbellSize > bramSize {
+		t.Errorf("DBOFF (0x%04x) + doorbell array (%d) exceeds BRAM", dboff, doorbellSize)
+	}
+	if dboff&0x1F != 0 {
+		t.Errorf("DBOFF (0x%04x) is not 32-byte aligned", dboff)
+	}
+}
+
+func TestScrubBarContent_XHCI_ClampRTSOFF(t *testing.T) {
+	classCode := uint32(0x0C0330)
+	bar0 := make([]byte, 4096)
+
+	bar0[0x00] = 0x20
+	writeLE32(bar0, 0x04, 4|(1<<8)|(2<<24))
+	writeLE32(bar0, 0x18, 0x3000) // RTSOFF outside BRAM
+
+	contents := map[int][]byte{0: bar0}
+	ScrubBarContent(contents, classCode)
+
+	rtsoff := readLE32(bar0, 0x18)
+	if int(rtsoff)+0x40 > bramSize {
+		t.Errorf("RTSOFF (0x%04x) + runtime regs exceeds BRAM", rtsoff)
+	}
+	if rtsoff&0x1F != 0 {
+		t.Errorf("RTSOFF (0x%04x) is not 32-byte aligned", rtsoff)
+	}
+}
+
+func TestScrubBarContent_XHCI_AlreadyInBRAM(t *testing.T) {
+	classCode := uint32(0x0C0330)
+	bar0 := make([]byte, 4096)
+
+	bar0[0x00] = 0x20
+	writeLE32(bar0, 0x04, 4|(1<<8)|(2<<24)) // MaxSlots=4, MaxIntrs=1, MaxPorts=2
+	writeLE32(bar0, 0x14, 0x0800)           // DBOFF inside BRAM
+	writeLE32(bar0, 0x18, 0x0400)           // RTSOFF inside BRAM
+
+	contents := map[int][]byte{0: bar0}
+	ScrubBarContent(contents, classCode)
+
+	if readLE32(bar0, 0x14) != 0x0800 {
+		t.Errorf("DBOFF should remain 0x0800, got 0x%04x", readLE32(bar0, 0x14))
+	}
+	if readLE32(bar0, 0x18) != 0x0400 {
+		t.Errorf("RTSOFF should remain 0x0400, got 0x%04x", readLE32(bar0, 0x18))
+	}
+}
+
+func TestScrubBarContent_XHCI_PageSize(t *testing.T) {
+	classCode := uint32(0x0C0330)
+	bar0 := make([]byte, 4096)
+
+	bar0[0x00] = 0x20
+	writeLE32(bar0, 0x04, 4|(1<<8)|(2<<24))
+	writeLE32(bar0, 0x28, 0xFF) // PAGESIZE at capLen+0x08
+
+	contents := map[int][]byte{0: bar0}
+	ScrubBarContent(contents, classCode)
+
+	if readLE32(bar0, 0x28) != 0x01 {
+		t.Errorf("PAGESIZE should be 0x01 (4KB), got 0x%08x", readLE32(bar0, 0x28))
+	}
+}
+
+func TestScrubBarContent_XHCI_BothOffsetsOutside(t *testing.T) {
+	classCode := uint32(0x0C0330)
+	bar0 := make([]byte, 4096)
+
+	bar0[0x00] = 0x20
+	writeLE32(bar0, 0x04, 16|(1<<8)|(2<<24))
+	writeLE32(bar0, 0x14, 0x4000)
+	writeLE32(bar0, 0x18, 0x8000)
+
+	contents := map[int][]byte{0: bar0}
+	ScrubBarContent(contents, classCode)
+
+	dboff := readLE32(bar0, 0x14)
+	rtsoff := readLE32(bar0, 0x18)
+	maxSlots := int(readLE32(bar0, 0x04) & 0xFF)
+
+	if int(dboff)+(maxSlots+1)*4 > bramSize {
+		t.Errorf("DBOFF (0x%04x) + doorbell array exceeds BRAM", dboff)
+	}
+	if int(rtsoff)+0x40 > bramSize {
+		t.Errorf("RTSOFF (0x%04x) + runtime regs exceeds BRAM", rtsoff)
+	}
+	if dboff&0x1F != 0 {
+		t.Errorf("DBOFF (0x%04x) not 32-byte aligned", dboff)
+	}
+	if rtsoff&0x1F != 0 {
+		t.Errorf("RTSOFF (0x%04x) not 32-byte aligned", rtsoff)
+	}
+}
+
+func TestScrubBarContent_XHCI_ScratchpadZeroed(t *testing.T) {
+	classCode := uint32(0x0C0330)
+	bar0 := make([]byte, 4096)
+
+	bar0[0x00] = 0x20
+	writeLE32(bar0, 0x04, 4|(1<<8)|(2<<24))
+	// HCSPARAMS2: Scratchpad Hi=3, SPR=1, Lo=5, plus some low bits
+	writeLE32(bar0, 0x08, (3<<27)|(1<<26)|(5<<21)|0x000F)
+
+	contents := map[int][]byte{0: bar0}
+	ScrubBarContent(contents, classCode)
+
+	hcsparams2 := readLE32(bar0, 0x08)
+	scratchHi := (hcsparams2 >> 27) & 0x1F
+	scratchLo := (hcsparams2 >> 21) & 0x1F
+	spr := (hcsparams2 >> 26) & 0x01
+	if scratchHi != 0 || scratchLo != 0 || spr != 0 {
+		t.Errorf("Scratchpad should be zeroed: Hi=%d Lo=%d SPR=%d", scratchHi, scratchLo, spr)
+	}
+	if hcsparams2&0x0F != 0x0F {
+		t.Errorf("HCSPARAMS2 lower bits should be preserved: 0x%08x", hcsparams2)
+	}
+}
+
+func TestScrubBarContent_XHCI_XECPClamp(t *testing.T) {
+	classCode := uint32(0x0C0330)
+	bar0 := make([]byte, 4096)
+
+	bar0[0x00] = 0x20
+	writeLE32(bar0, 0x04, 4|(1<<8)|(2<<24))
+	// xECP=0x500 DWORDs → byte offset 0x1400, outside BRAM
+	writeLE32(bar0, 0x10, (0x500<<16)|0x05)
+
+	contents := map[int][]byte{0: bar0}
+	ScrubBarContent(contents, classCode)
+
+	hccparams1 := readLE32(bar0, 0x10)
+	xecp := (hccparams1 >> 16) & 0xFFFF
+	if xecp != 0 {
+		t.Errorf("xECP should be zeroed when outside BRAM, got 0x%04x", xecp)
+	}
+	if hccparams1&0xFFFF != 0x05 {
+		t.Errorf("HCCPARAMS1 lower bits should be preserved: 0x%08x", hccparams1)
+	}
+}
+
+func TestScrubBarContent_XHCI_XECPInsideBRAM(t *testing.T) {
+	classCode := uint32(0x0C0330)
+	bar0 := make([]byte, 4096)
+
+	bar0[0x00] = 0x20
+	writeLE32(bar0, 0x04, 4|(1<<8)|(2<<24))
+	// xECP=0x100 DWORDs → byte offset 0x400, inside BRAM
+	writeLE32(bar0, 0x10, (0x100<<16)|0x05)
+
+	contents := map[int][]byte{0: bar0}
+	ScrubBarContent(contents, classCode)
+
+	xecp := (readLE32(bar0, 0x10) >> 16) & 0xFFFF
+	if xecp != 0x100 {
+		t.Errorf("xECP should remain 0x100 when inside BRAM, got 0x%04x", xecp)
+	}
+}
+
+func TestScrubBarContent_XHCI_ClampMaxIntrs(t *testing.T) {
+	classCode := uint32(0x0C0330)
+	bar0 := make([]byte, 4096)
+
+	bar0[0x00] = 0x20
+	// MaxSlots=4, MaxIntrs=256, MaxPorts=2
+	writeLE32(bar0, 0x04, 4|(256<<8)|(2<<24))
+	writeLE32(bar0, 0x18, 0x200) // RTSOFF
+
+	contents := map[int][]byte{0: bar0}
+	ScrubBarContent(contents, classCode)
+
+	hcsparams1 := readLE32(bar0, 0x04)
+	maxIntrs := int((hcsparams1 >> 8) & 0x7FF)
+	rtsoff := int(readLE32(bar0, 0x18))
+
+	if rtsoff+0x20+maxIntrs*0x20 > bramSize {
+		t.Errorf("MaxIntrs (%d) interrupter sets overflow BRAM from RTSOFF=0x%x", maxIntrs, rtsoff)
+	}
+	if maxIntrs < 1 {
+		t.Error("MaxIntrs should be at least 1")
+	}
+}
+
+func TestScrubBarContent_XHCI_ClampMaxPorts(t *testing.T) {
+	classCode := uint32(0x0C0330)
+	bar0 := make([]byte, 4096)
+
+	bar0[0x00] = 0x20
+	// MaxSlots=4, MaxIntrs=1, MaxPorts=255
+	writeLE32(bar0, 0x04, 4|(1<<8)|(255<<24))
+
+	contents := map[int][]byte{0: bar0}
+	ScrubBarContent(contents, classCode)
+
+	maxPorts := int((readLE32(bar0, 0x04) >> 24) & 0xFF)
+	portBase := 0x20 + 0x400
+	if portBase+maxPorts*0x10 > bramSize {
+		t.Errorf("MaxPorts (%d) port regs overflow BRAM", maxPorts)
+	}
+	if maxPorts < 1 {
+		t.Error("MaxPorts should be at least 1")
+	}
+}
+
+func TestScrubBarContent_XHCI_ConfigMaxSlotsEn(t *testing.T) {
+	classCode := uint32(0x0C0330)
+	bar0 := make([]byte, 4096)
+
+	bar0[0x00] = 0x20
+	writeLE32(bar0, 0x04, 8|(1<<8)|(2<<24)) // MaxSlots=8
+	writeLE32(bar0, 0x58, 0xFF00FF00)       // CONFIG at capLen+0x38=0x58
+
+	contents := map[int][]byte{0: bar0}
+	ScrubBarContent(contents, classCode)
+
+	config := readLE32(bar0, 0x58)
+	maxSlotsEn := config & 0xFF
+	maxSlots := readLE32(bar0, 0x04) & 0xFF
+	if maxSlotsEn != maxSlots {
+		t.Errorf("CONFIG MaxSlotsEn (%d) != MaxSlots (%d)", maxSlotsEn, maxSlots)
+	}
+	if config&0xFFFFFF00 != 0xFF00FF00 {
+		t.Errorf("CONFIG upper bits should be preserved: 0x%08x", config)
+	}
+}
+
+func TestScrubBarContent_XHCI_ClearDNCTRL_CRCR(t *testing.T) {
+	classCode := uint32(0x0C0330)
+	bar0 := make([]byte, 4096)
+
+	bar0[0x00] = 0x20
+	writeLE32(bar0, 0x04, 4|(1<<8)|(2<<24))
+	writeLE32(bar0, 0x34, 0xFFFF)     // DNCTRL at capLen+0x14
+	writeLE32(bar0, 0x38, 0xDEADBEEF) // CRCR lo at capLen+0x18
+	writeLE32(bar0, 0x3C, 0xCAFEBABE) // CRCR hi at capLen+0x1C
+
+	contents := map[int][]byte{0: bar0}
+	ScrubBarContent(contents, classCode)
+
+	if readLE32(bar0, 0x34) != 0 {
+		t.Errorf("DNCTRL should be cleared, got 0x%08x", readLE32(bar0, 0x34))
+	}
+	if readLE32(bar0, 0x38) != 0 {
+		t.Errorf("CRCR lo should be cleared, got 0x%08x", readLE32(bar0, 0x38))
+	}
+	if readLE32(bar0, 0x3C) != 0 {
+		t.Errorf("CRCR hi should be cleared, got 0x%08x", readLE32(bar0, 0x3C))
 	}
 }

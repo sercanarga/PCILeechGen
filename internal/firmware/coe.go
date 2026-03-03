@@ -269,40 +269,142 @@ func scrubNVMeBar0(data []byte) {
 	writeLE32(data, 0x14, cc)
 }
 
-// scrubXHCIBar0 fakes a running xHCI controller in the BAR0 snapshot.
-// usbxhci.sys writes USBCMD.Run and polls USBSTS.HCHalted; static BRAM
-// can't flip the bit, so the driver gives up. We set R/S=1, HCH=0.
-//
-// Operational regs live at BAR0 + CAPLENGTH (byte 0x00).
+const bramSize = 0x1000 // 4KB BAR BRAM
+
+// scrubXHCIBar0 patches xHCI BAR0 registers to fit within the 4KB BRAM
+// and fakes a running controller state (R/S=1, HCH=0).
 func scrubXHCIBar0(data []byte) {
 	if len(data) < 0x20 {
 		return
 	}
 
-	// CAPLENGTH tells us where operational regs start
-	capLen := int(data[0x00])
+	capLen := int(data[0x00]) // operational regs base
 	if capLen == 0 || capLen > 0x40 {
-		capLen = 0x20 // sane default
+		capLen = 0x20
 	}
 
-	if capLen+8 > len(data) {
+	if capLen+0x40 > len(data) {
 		return
 	}
 
-	// USBCMD: R/S=1 (running), HCRST=0
+	// HCSPARAMS1 (0x04)
+	hcsparams1 := readLE32(data, 0x04)
+	maxSlots := int(hcsparams1 & 0xFF)
+	if maxSlots == 0 {
+		maxSlots = 32
+	}
+	maxIntrs := int((hcsparams1 >> 8) & 0x7FF)
+	maxPorts := int((hcsparams1 >> 24) & 0xFF)
+
+	// HCSPARAMS2 (0x08): nuke scratchpad counts, BRAM can't handle them
+	hcsparams2 := readLE32(data, 0x08)
+	hcsparams2 &= ^uint32(0xFFE00000)
+	writeLE32(data, 0x08, hcsparams2)
+
+	// HCCPARAMS1 (0x10): kill xECP if it points outside BRAM
+	hccparams1 := readLE32(data, 0x10)
+	xecp := int((hccparams1 >> 16) & 0xFFFF)
+	if xecp*4 >= bramSize {
+		hccparams1 &= 0x0000FFFF
+		writeLE32(data, 0x10, hccparams1)
+	}
+
+	// DBOFF (0x14): doorbell array, (MaxSlots+1)*4 bytes
+	dboff := readLE32(data, 0x14) & ^uint32(0x03)
+	doorbellSize := (maxSlots + 1) * 4
+
+	if int(dboff)+doorbellSize > bramSize {
+		newDBOFF := bramSize - doorbellSize
+		newDBOFF = newDBOFF & ^0x1F // align down 32B
+		if newDBOFF < capLen+0x20 {
+			// not enough room, shrink MaxSlots
+			available := bramSize - (capLen + 0x20)
+			maxSlots = available/4 - 1
+			if maxSlots < 1 {
+				maxSlots = 1
+			}
+			doorbellSize = (maxSlots + 1) * 4
+			newDBOFF = bramSize - doorbellSize
+			newDBOFF = newDBOFF & ^0x1F
+		}
+		writeLE32(data, 0x14, uint32(newDBOFF))
+	}
+
+	// RTSOFF (0x18): runtime regs, each interrupter takes 0x20 bytes
+	rtsoff := int(readLE32(data, 0x18) & ^uint32(0x1F))
+
+	// clamp MaxIntrs to fit
+	if rtsoff > 0 && maxIntrs > 0 {
+		maxFit := (bramSize - rtsoff - 0x20) / 0x20
+		if maxFit < 1 {
+			maxFit = 1
+		}
+		if maxIntrs > maxFit {
+			maxIntrs = maxFit
+		}
+	}
+	if maxIntrs < 1 {
+		maxIntrs = 1
+	}
+
+	runtimeSize := 0x20 + maxIntrs*0x20
+	if rtsoff+runtimeSize > bramSize {
+		newRTSOFF := capLen + 0x20
+		newRTSOFF = (newRTSOFF + 0x1F) & ^0x1F // align up 32B
+		if newRTSOFF+runtimeSize > bramSize {
+			newRTSOFF = bramSize - runtimeSize
+			newRTSOFF = newRTSOFF & ^0x1F
+		}
+		rtsoff = newRTSOFF
+		writeLE32(data, 0x18, uint32(rtsoff))
+
+		// re-check after moving
+		maxFit := (bramSize - rtsoff - 0x20) / 0x20
+		if maxFit < 1 {
+			maxFit = 1
+		}
+		if maxIntrs > maxFit {
+			maxIntrs = maxFit
+		}
+	}
+
+	// MaxPorts: port regs start at capLen+0x400, 0x10 each
+	portBase := capLen + 0x400
+	if portBase < bramSize {
+		maxPortsFit := (bramSize - portBase) / 0x10
+		if maxPorts > maxPortsFit {
+			maxPorts = maxPortsFit
+		}
+	}
+	if maxPorts < 1 {
+		maxPorts = 1
+	}
+
+	// write back clamped HCSPARAMS1
+	hcsparams1 = uint32(maxSlots) | (uint32(maxIntrs) << 8) | (uint32(maxPorts) << 24)
+	writeLE32(data, 0x04, hcsparams1)
+
+	// PAGESIZE: 4KB
+	writeLE32(data, capLen+0x08, 0x01)
+
+	// DNCTRL + CRCR: clear, irrelevant for static BRAM
+	writeLE32(data, capLen+0x14, 0x00)
+	writeLE32(data, capLen+0x18, 0x00)
+	writeLE32(data, capLen+0x1C, 0x00)
+
+	// CONFIG: MaxSlotsEn = clamped MaxSlots
+	config := readLE32(data, capLen+0x38)
+	config = (config & 0xFFFFFF00) | uint32(maxSlots)
+	writeLE32(data, capLen+0x38, config)
+
+	// USBCMD: R/S=1, HCRST=0
 	usbcmd := readLE32(data, capLen)
 	usbcmd |= 0x01
 	usbcmd &= ^uint32(0x02)
 	writeLE32(data, capLen, usbcmd)
 
-	// USBSTS: HCH=0 (not halted), HSE=0
+	// USBSTS: HCH=0, HSE=0
 	usbsts := readLE32(data, capLen+4)
 	usbsts &= ^uint32(0x01 | 0x04)
 	writeLE32(data, capLen+4, usbsts)
-}
-
-// GenerateBarZeroCOE generates a zero-filled pcileech_bar_zero4k.coe file.
-// Deprecated: Use GenerateBarContentCOE instead.
-func GenerateBarZeroCOE() string {
-	return GenerateBarContentCOE(nil)
 }
