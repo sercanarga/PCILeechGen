@@ -698,3 +698,92 @@ func TestScrubConfigSpace_ClampDeviceControl_SmallMRRS(t *testing.T) {
 		t.Errorf("Device Control MRRS should remain 1 (256B), got %d", ctlMRRS)
 	}
 }
+
+func TestDisableMSIXIfOutOfBRAM_TableOutside(t *testing.T) {
+	// MSI-X table at BAR0+0x1000 (>= 4KB BRAM) should be disabled
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+
+	cs.WriteU16(0x06, 0x0010) // Status: caps
+	cs.WriteU8(0x34, 0x90)    // Cap pointer
+
+	// MSI-X cap at 0x90
+	cs.WriteU8(0x90, pci.CapIDMSIX)
+	cs.WriteU8(0x91, 0x00)    // end of cap list
+	cs.WriteU16(0x92, 0x8007) // Message Control: Enable=1, table_size=8
+
+	// Table: BIR=0, offset=0x1000 (outside 4KB BRAM)
+	cs.WriteU32(0x94, 0x00001000)
+	// PBA: BIR=0, offset=0x1080
+	cs.WriteU32(0x98, 0x00001080)
+
+	// BAR0: mem64
+	cs.WriteU32(0x10, 0xFFFFF004)
+
+	scrubbed := ScrubConfigSpace(cs, nil)
+
+	// MSI-X Enable (bit 15) should be cleared
+	msgCtl := scrubbed.ReadU16(0x92)
+	if msgCtl&0x8000 != 0 {
+		t.Errorf("MSI-X should be disabled when table is outside BRAM, got msgCtl=0x%04x", msgCtl)
+	}
+	// Function Mask (bit 14) should also be cleared
+	if msgCtl&0x4000 != 0 {
+		t.Errorf("MSI-X Function Mask should be cleared, got msgCtl=0x%04x", msgCtl)
+	}
+	// Table size bits should be preserved
+	if msgCtl&0x07FF != 0x0007 {
+		t.Errorf("MSI-X table size should be preserved, got 0x%04x", msgCtl&0x07FF)
+	}
+}
+
+func TestDisableMSIXIfOutOfBRAM_TableInside(t *testing.T) {
+	// MSI-X table at BAR0+0x0000 (inside 4KB BRAM) should NOT be disabled
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+
+	cs.WriteU16(0x06, 0x0010)
+	cs.WriteU8(0x34, 0x90)
+
+	cs.WriteU8(0x90, pci.CapIDMSIX)
+	cs.WriteU8(0x91, 0x00)
+	cs.WriteU16(0x92, 0x8003) // Enable=1, table_size=4
+
+	// Table: BIR=0, offset=0x0000 (inside BRAM)
+	cs.WriteU32(0x94, 0x00000000)
+	// PBA: BIR=0, offset=0x0100
+	cs.WriteU32(0x98, 0x00000100)
+
+	scrubbed := ScrubConfigSpace(cs, nil)
+
+	// MSI-X Enable should remain set
+	msgCtl := scrubbed.ReadU16(0x92)
+	if msgCtl&0x8000 == 0 {
+		t.Errorf("MSI-X should remain enabled when table is inside BRAM, got msgCtl=0x%04x", msgCtl)
+	}
+}
+
+func TestDisableMSIXIfOutOfBRAM_PBAOutside(t *testing.T) {
+	// Table inside but PBA outside — should still disable
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+
+	cs.WriteU16(0x06, 0x0010)
+	cs.WriteU8(0x34, 0x90)
+
+	cs.WriteU8(0x90, pci.CapIDMSIX)
+	cs.WriteU8(0x91, 0x00)
+	cs.WriteU16(0x92, 0x8003) // Enable=1
+
+	// Table inside BRAM
+	cs.WriteU32(0x94, 0x00000800)
+	// PBA at offset 0x2000 (outside BRAM)
+	cs.WriteU32(0x98, 0x00002000)
+
+	scrubbed := ScrubConfigSpace(cs, nil)
+
+	msgCtl := scrubbed.ReadU16(0x92)
+	if msgCtl&0x8000 != 0 {
+		t.Errorf("MSI-X should be disabled when PBA is outside BRAM, got msgCtl=0x%04x", msgCtl)
+	}
+}
