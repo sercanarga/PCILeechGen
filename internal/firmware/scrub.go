@@ -115,6 +115,7 @@ func ScrubConfigSpace(cs *pci.ConfigSpace, b *board.Board) *pci.ConfigSpace {
 	}
 
 	clampBARsToFPGA(scrubbed)
+	disableMSIXIfOutOfBRAM(scrubbed)
 	clampLinkCapability(scrubbed, b)
 	clampDeviceCapability(scrubbed)
 
@@ -149,6 +150,38 @@ func clampBARsToFPGA(cs *pci.ConfigSpace) {
 			cs.WriteU32(barOffset+4, 0x00000000)
 			i++ // skip upper half
 		}
+	}
+}
+
+// disableMSIXIfOutOfBRAM clears the MSI-X enable bit when the table or PBA
+// sits beyond the 4 KB BRAM. Keeps the cap struct intact so drivers fall
+// back to MSI / INTx instead of crashing.
+func disableMSIXIfOutOfBRAM(cs *pci.ConfigSpace) {
+	caps := pci.ParseCapabilities(cs)
+	for _, cap := range caps {
+		if cap.ID != pci.CapIDMSIX {
+			continue
+		}
+
+		// table offset/BIR at cap+4, PBA at cap+8
+		if cap.Offset+8 > pci.ConfigSpaceLegacySize {
+			continue
+		}
+
+		tableReg := cs.ReadU32(cap.Offset + 4)
+		pbaReg := cs.ReadU32(cap.Offset + 8)
+
+		tableOffset := int(tableReg &^ 0x07) // offset bits [31:3]
+		pbaOffset := int(pbaReg &^ 0x07)
+
+		if tableOffset >= fpgaBRAMSize || pbaOffset >= fpgaBRAMSize {
+			// clear Enable + Function Mask (bits 15:14)
+			msgCtl := cs.ReadU16(cap.Offset + 2)
+			msgCtl &= 0x3FFF
+			cs.WriteU16(cap.Offset+2, msgCtl)
+		}
+
+		break
 	}
 }
 

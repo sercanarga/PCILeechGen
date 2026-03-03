@@ -488,3 +488,73 @@ func TestLinkWidthToTCL_AllCases(t *testing.T) {
 		}
 	}
 }
+
+func TestScrubBarContent_XHCI(t *testing.T) {
+	// xHCI class code 0C:03:30
+	classCode := uint32(0x0C0330)
+
+	// Create a BAR0 with xHCI registers
+	bar0 := make([]byte, 4096)
+	// CAPLENGTH at 0x00: operational regs start at offset 0x20
+	bar0[0x00] = 0x20
+	// HCIVERSION at 0x02-0x03
+	bar0[0x02] = 0x00
+	bar0[0x03] = 0x01 // version 1.0
+
+	// USBCMD at CAPLENGTH+0x00 = 0x20: HCRST=1, Run/Stop=0
+	bar0[0x20] = 0x02 // HCRST=1
+
+	// USBSTS at CAPLENGTH+0x04 = 0x24: HCHalted=1, HSE=1
+	bar0[0x24] = 0x05 // HCHalted=1, HSE=1
+
+	contents := map[int][]byte{0: bar0}
+	ScrubBarContent(contents, classCode)
+
+	// USBCMD: Run/Stop (bit 0) should be 1, HCRST (bit 1) should be cleared
+	usbcmd := uint32(bar0[0x20]) | uint32(bar0[0x21])<<8 |
+		uint32(bar0[0x22])<<16 | uint32(bar0[0x23])<<24
+	if usbcmd&0x01 != 1 {
+		t.Errorf("xHCI USBCMD.Run/Stop should be 1, got 0x%08x", usbcmd)
+	}
+	if usbcmd&0x02 != 0 {
+		t.Errorf("xHCI USBCMD.HCRST should be 0, got 0x%08x", usbcmd)
+	}
+
+	// USBSTS: HCHalted (bit 0) should be 0, HSE (bit 2) should be 0
+	usbsts := uint32(bar0[0x24]) | uint32(bar0[0x25])<<8 |
+		uint32(bar0[0x26])<<16 | uint32(bar0[0x27])<<24
+	if usbsts&0x01 != 0 {
+		t.Errorf("xHCI USBSTS.HCHalted should be 0, got 0x%08x", usbsts)
+	}
+	if usbsts&0x04 != 0 {
+		t.Errorf("xHCI USBSTS.HSE should be 0, got 0x%08x", usbsts)
+	}
+}
+
+func TestScrubBarContent_XHCI_SmallBAR(t *testing.T) {
+	// BAR smaller than register area — should not panic
+	classCode := uint32(0x0C0330)
+	bar0 := make([]byte, 16) // too small
+	contents := map[int][]byte{0: bar0}
+	ScrubBarContent(contents, classCode)
+	// Should return without panic
+}
+
+func TestScrubBarContent_XHCI_ZeroCAPLEN(t *testing.T) {
+	// CAPLENGTH=0 — should use safe default (0x20)
+	classCode := uint32(0x0C0330)
+	bar0 := make([]byte, 4096)
+	bar0[0x00] = 0x00 // CAPLENGTH=0 (invalid)
+
+	// USBSTS at default CAPLENGTH (0x20) + 4 = 0x24: HCHalted=1
+	bar0[0x24] = 0x01
+
+	contents := map[int][]byte{0: bar0}
+	ScrubBarContent(contents, classCode)
+
+	// Should use default CAPLENGTH=0x20
+	usbsts := uint32(bar0[0x24])
+	if usbsts&0x01 != 0 {
+		t.Errorf("xHCI USBSTS.HCHalted should be cleared with default CAPLENGTH, got 0x%02x", usbsts)
+	}
+}
