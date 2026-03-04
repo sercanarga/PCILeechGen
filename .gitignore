@@ -8,6 +8,7 @@ pcileech_datastore/
 output/
 *.bin
 *.bit
+*.json
 
 # Go
 *.exe

@@ -278,9 +278,18 @@ func scrubXHCIBar0(data []byte) {
 		return
 	}
 
-	capLen := int(data[0x00]) // operational regs base
+	capLen := int(data[0x00])
 	if capLen == 0 || capLen > 0x40 {
 		capLen = 0x20
+	}
+	// always write CAPLENGTH so driver finds operational regs
+	data[0x00] = byte(capLen)
+
+	// HCIVERSION (0x02): must be >= 0x0100 for xHCI 1.0
+	hciVer := uint16(data[0x02]) | uint16(data[0x03])<<8
+	if hciVer < 0x0100 {
+		data[0x02] = 0x00
+		data[0x03] = 0x01 // 0x0100 = xHCI 1.0
 	}
 
 	if capLen+0x40 > len(data) {
