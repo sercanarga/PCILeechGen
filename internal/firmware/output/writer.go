@@ -171,9 +171,11 @@ func ListOutputFiles() []string {
 		"src/",
 		"pcileech_bar_impl_device.sv",
 		"pcileech_tlps128_bar_controller.sv",
+		"pcileech_msix_table.sv",
 		"tlp_latency_emulator.sv",
 		"device_config.sv",
 		"config_space_init.hex",
+		"msix_table_init.hex",
 	}
 }
 
@@ -205,6 +207,18 @@ func (ow *OutputWriter) writeSVModules(ctx *donor.DeviceContext, scrubbedCS *pci
 		PRNGSeeds:     seeds,
 		IsNVMe:        isNVMe,
 		IsXHCI:        isXHCI,
+	}
+
+	if ctx.MSIXData != nil && ctx.MSIXData.TableSize > 0 {
+		tableSize := ctx.MSIXData.TableSize * 16
+		pbaOffset := uint32(0x1000) + uint32(tableSize)
+		pbaOffset = (pbaOffset + 7) &^ 7
+		cfg.MSIXConfig = &svgen.MSIXConfig{
+			NumVectors:  ctx.MSIXData.TableSize,
+			TableOffset: 0x1000,
+			PBAOffset:   pbaOffset,
+		}
+		cfg.HasMSIX = true
 	}
 
 	// pcileech_bar_impl_device.sv
@@ -249,12 +263,38 @@ func (ow *OutputWriter) writeSVModules(ctx *donor.DeviceContext, scrubbedCS *pci
 		return err
 	}
 
+	// pcileech_msix_table.sv + msix_table_init.hex
+	if cfg.MSIXConfig != nil {
+		msixSV, err := svgen.GenerateMSIXTableSV(cfg)
+		if err != nil {
+			return fmt.Errorf("generating pcileech_msix_table.sv: %w", err)
+		}
+		if err := ow.writeFile("pcileech_msix_table.sv", msixSV); err != nil {
+			return err
+		}
+
+		entries := ctx.MSIXData.Entries
+		if entries == nil {
+			entries = make([]pci.MSIXEntry, cfg.MSIXConfig.NumVectors)
+			for i := range entries {
+				entries[i].Control = 0x01 // masked
+			}
+		}
+		msixHex := codegen.GenerateMSIXTableHex(entries)
+		if err := ow.writeFile("msix_table_init.hex", msixHex); err != nil {
+			return err
+		}
+	}
+
 	features := []string{}
 	if isNVMe {
 		features = append(features, "NVMe FSM")
 	}
 	if isXHCI {
 		features = append(features, "xHCI FSM")
+	}
+	if cfg.MSIXConfig != nil {
+		features = append(features, fmt.Sprintf("MSI-X %d vectors", cfg.MSIXConfig.NumVectors))
 	}
 	if bm != nil {
 		features = append(features, fmt.Sprintf("%d registers", len(bm.Registers)))

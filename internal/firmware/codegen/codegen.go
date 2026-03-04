@@ -203,3 +203,20 @@ func GenerateConfigSpaceHex(cs *pci.ConfigSpace) string {
 
 	return sb.String()
 }
+
+// GenerateMSIXTableHex outputs MSI-X table entries in $readmemh format.
+func GenerateMSIXTableHex(entries []pci.MSIXEntry) string {
+	var sb strings.Builder
+	sb.WriteString("// PCILeechGen - MSI-X Table Init\n")
+	sb.WriteString(fmt.Sprintf("// %d vectors (%d DWORDs)\n", len(entries), len(entries)*4))
+
+	for i, e := range entries {
+		ctrl := e.Control | 0x01 // masked on init
+		sb.WriteString(fmt.Sprintf("%08X // [%d] addr_lo\n", e.AddrLo, i))
+		sb.WriteString(fmt.Sprintf("%08X // [%d] addr_hi\n", e.AddrHi, i))
+		sb.WriteString(fmt.Sprintf("%08X // [%d] data\n", e.Data, i))
+		sb.WriteString(fmt.Sprintf("%08X // [%d] control (masked)\n", ctrl, i))
+	}
+
+	return sb.String()
+}

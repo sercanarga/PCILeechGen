@@ -275,7 +275,7 @@ func TestZeroVendorRegisters(t *testing.T) {
 	}
 }
 
-func TestDisableMSIXIfOutOfBRAM_TableOutside(t *testing.T) {
+func TestRelocateMSIXToBRAM_TableOutside(t *testing.T) {
 	cs := pci.NewConfigSpace()
 	cs.Size = pci.ConfigSpaceSize
 
@@ -284,20 +284,38 @@ func TestDisableMSIXIfOutOfBRAM_TableOutside(t *testing.T) {
 
 	cs.WriteU8(0x90, pci.CapIDMSIX)
 	cs.WriteU8(0x91, 0x00)
-	cs.WriteU16(0x92, 0x8007)
-	cs.WriteU32(0x94, 0x00001000)
-	cs.WriteU32(0x98, 0x00001080)
+	cs.WriteU16(0x92, 0x8007)     // 8 vectors, enabled
+	cs.WriteU32(0x94, 0x00002000) // table at BAR0+0x2000 (outside 4KB)
+	cs.WriteU32(0x98, 0x00002080) // PBA at BAR0+0x2080
 	cs.WriteU32(0x10, 0xFFFFF004)
 
 	scrubbed := ScrubConfigSpace(cs, nil)
 
+	// MSI-X should remain enabled after relocation
 	msgCtl := scrubbed.ReadU16(0x92)
-	if msgCtl&0x8000 != 0 {
-		t.Errorf("MSI-X should be disabled when table is outside BRAM, got 0x%04x", msgCtl)
+	if msgCtl&0x8000 == 0 {
+		t.Errorf("MSI-X should stay enabled after relocation, got 0x%04x", msgCtl)
+	}
+	if msgCtl&0x4000 != 0 {
+		t.Errorf("MSI-X Function Mask should be cleared, got 0x%04x", msgCtl)
+	}
+
+	// table offset should be relocated to 0x1000
+	tableReg := scrubbed.ReadU32(0x94)
+	tableOff := tableReg &^ 0x07
+	if tableOff != 0x1000 {
+		t.Errorf("MSI-X table offset should be relocated to 0x1000, got 0x%X", tableOff)
+	}
+
+	// PBA offset should follow table (8 vectors * 16 bytes = 128 = 0x80)
+	pbaReg := scrubbed.ReadU32(0x98)
+	pbaOff := pbaReg &^ 0x07
+	if pbaOff != 0x1080 {
+		t.Errorf("MSI-X PBA offset should be 0x1080, got 0x%X", pbaOff)
 	}
 }
 
-func TestDisableMSIXIfOutOfBRAM_TableInside(t *testing.T) {
+func TestRelocateMSIXToBRAM_TableInside(t *testing.T) {
 	cs := pci.NewConfigSpace()
 	cs.Size = pci.ConfigSpaceSize
 
@@ -306,14 +324,22 @@ func TestDisableMSIXIfOutOfBRAM_TableInside(t *testing.T) {
 
 	cs.WriteU8(0x90, pci.CapIDMSIX)
 	cs.WriteU8(0x91, 0x00)
-	cs.WriteU16(0x92, 0x8003)
-	cs.WriteU32(0x94, 0x00000000)
-	cs.WriteU32(0x98, 0x00000100)
+	cs.WriteU16(0x92, 0x8003)     // 4 vectors, enabled
+	cs.WriteU32(0x94, 0x00000200) // table at BAR0+0x200 (inside 4KB)
+	cs.WriteU32(0x98, 0x00000280) // PBA at BAR0+0x280
 
 	scrubbed := ScrubConfigSpace(cs, nil)
 
+	// MSI-X should remain enabled
 	msgCtl := scrubbed.ReadU16(0x92)
 	if msgCtl&0x8000 == 0 {
-		t.Errorf("MSI-X should remain enabled when table is inside BRAM, got 0x%04x", msgCtl)
+		t.Errorf("MSI-X should remain enabled, got 0x%04x", msgCtl)
+	}
+
+	// table still relocated to 0x1000 (consistent placement)
+	tableReg := scrubbed.ReadU32(0x94)
+	tableOff := tableReg &^ 0x07
+	if tableOff != 0x1000 {
+		t.Errorf("MSI-X table should be relocated to 0x1000, got 0x%X", tableOff)
 	}
 }

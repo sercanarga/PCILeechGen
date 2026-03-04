@@ -52,6 +52,8 @@ func Apply(cs *pci.ConfigSpace, latCfg *svgen.LatencyConfig, cfg Config) {
 	if latCfg != nil && cfg.TimingJitter > 0 {
 		applyTimingJitter(latCfg, rng, cfg.TimingJitter)
 	}
+
+	embedVSECEntropy(cs, cfg.Seed)
 }
 
 // --- DSN variance ---
@@ -159,6 +161,63 @@ func jitterInt(val int, frac float64, rng *splitMix64, minVal int) int {
 		result = minVal
 	}
 	return result
+}
+
+// --- VSEC entropy embed ---
+
+// embedVSECEntropy writes a VSEC ext cap with build-unique payload.
+func embedVSECEntropy(cs *pci.ConfigSpace, seed uint32) {
+	if cs.Size < pci.ConfigSpaceSize {
+		return
+	}
+
+	// find the last ext cap and the first free offset after it
+	extCaps := pci.ParseExtCapabilities(cs)
+	lastEnd := 0x100 // start of ext config
+	var lastCapOff int
+	for _, cap := range extCaps {
+		capEnd := cap.Offset + len(cap.Data)
+		if capEnd > lastEnd {
+			lastEnd = capEnd
+			lastCapOff = cap.Offset
+		}
+	}
+
+	// VSEC needs 16 bytes: 4 header + 4 VSEC header + 8 payload
+	vsecSize := 16
+	vsecOff := (lastEnd + 3) &^ 3 // DWORD-align
+	if vsecOff+vsecSize > pci.ConfigSpaceSize {
+		return // no room
+	}
+
+	// build payload: FNV-1a hash of seed as 2 DWORDs
+	h := fnv.New64a()
+	var buf [4]byte
+	binary.LittleEndian.PutUint32(buf[:], seed)
+	h.Write(buf[:])
+	entropy := h.Sum64()
+
+	// ext cap header: ID=0x000B (VSEC), version=1, next=0
+	vsecHeader := uint32(pci.ExtCapIDVendorSpecific) | (1 << 16)
+	cs.WriteU32(vsecOff, vsecHeader)
+
+	// VSEC header: VSEC ID=0xFC (private), rev=1, length=16
+	vsecHdr2 := uint32(0xFC) | (1 << 16) | (uint32(vsecSize) << 20)
+	cs.WriteU32(vsecOff+4, vsecHdr2)
+
+	// payload
+	cs.WriteU32(vsecOff+8, uint32(entropy))
+	cs.WriteU32(vsecOff+12, uint32(entropy>>32))
+
+	// chain: update last cap's next pointer
+	if lastCapOff > 0 && lastCapOff >= 0x100 {
+		oldHeader := cs.ReadU32(lastCapOff)
+		newHeader := (oldHeader & 0x000FFFFF) | (uint32(vsecOff) << 20)
+		cs.WriteU32(lastCapOff, newHeader)
+	} else if len(extCaps) == 0 {
+		// no ext caps at all — write at 0x100
+		cs.WriteU32(0x100, vsecHeader)
+	}
 }
 
 // --- splitmix64 PRNG ---

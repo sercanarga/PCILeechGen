@@ -60,6 +60,7 @@ func (c *Collector) Collect(bdf pci.BDF) (*DeviceContext, error) {
 	ctx.BARProfiles = c.collectBARProfiles(bdf, bars)
 	ctx.Capabilities = pci.ParseCapabilities(cs)
 	ctx.ExtCapabilities = pci.ParseExtCapabilities(cs)
+	ctx.MSIXData = c.collectMSIXData(cs, ctx.BARContents)
 
 	return ctx, nil
 }
@@ -141,6 +142,29 @@ func (c *Collector) collectBARProfiles(bdf pci.BDF, bars []pci.BAR) map[int]*BAR
 	}
 
 	return profiles
+}
+
+// collectMSIXData reads MSI-X table entries from BAR memory.
+func (c *Collector) collectMSIXData(cs *pci.ConfigSpace, barContents map[int][]byte) *MSIXData {
+	info := pci.ParseMSIXCap(cs)
+	if info == nil {
+		return nil
+	}
+
+	barData := barContents[info.TableBIR]
+	entries := pci.ReadMSIXTable(barData, info)
+
+	log.Printf("[donor] MSI-X: %d vectors, table BAR%d+0x%X, PBA BAR%d+0x%X",
+		info.TableSize, info.TableBIR, info.TableOffset, info.PBABIR, info.PBAOffset)
+
+	return &MSIXData{
+		TableSize:   info.TableSize,
+		TableBIR:    info.TableBIR,
+		TableOffset: info.TableOffset,
+		PBABIR:      info.PBABIR,
+		PBAOffset:   info.PBAOffset,
+		Entries:     entries,
+	}
 }
 
 // SaveContext dumps a DeviceContext to JSON on disk.
