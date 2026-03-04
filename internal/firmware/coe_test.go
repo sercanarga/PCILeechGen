@@ -539,21 +539,61 @@ func TestScrubBarContent_XHCI_SmallBAR(t *testing.T) {
 }
 
 func TestScrubBarContent_XHCI_ZeroCAPLEN(t *testing.T) {
-	// CAPLENGTH=0 — should use safe default (0x20)
 	classCode := uint32(0x0C0330)
 	bar0 := make([]byte, 4096)
 	bar0[0x00] = 0x00 // CAPLENGTH=0 (invalid)
-
-	// USBSTS at default CAPLENGTH (0x20) + 4 = 0x24: HCHalted=1
-	bar0[0x24] = 0x01
+	bar0[0x24] = 0x01 // USBSTS HCH at default cap+4
 
 	contents := map[int][]byte{0: bar0}
 	ScrubBarContent(contents, classCode)
 
-	// Should use default CAPLENGTH=0x20
-	usbsts := uint32(bar0[0x24])
+	// CAPLENGTH must be written to BRAM
+	if bar0[0x00] != 0x20 {
+		t.Errorf("CAPLENGTH should be 0x20, got 0x%02x", bar0[0x00])
+	}
+	// HCIVERSION must be >= 0x0100
+	hciVer := uint16(bar0[0x02]) | uint16(bar0[0x03])<<8
+	if hciVer < 0x0100 {
+		t.Errorf("HCIVERSION should be >= 0x0100, got 0x%04x", hciVer)
+	}
+	// HCH should be cleared
+	if bar0[0x24]&0x01 != 0 {
+		t.Errorf("USBSTS.HCH should be cleared, got 0x%02x", bar0[0x24])
+	}
+}
+
+func TestScrubBarContent_XHCI_AllZeroBAR0(t *testing.T) {
+	// simulate a fully zero BAR0 — the real-world scenario
+	classCode := uint32(0x0C0330)
+	bar0 := make([]byte, 4096) // all zeros
+
+	contents := map[int][]byte{0: bar0}
+	ScrubBarContent(contents, classCode)
+
+	// CAPLENGTH must be non-zero
+	capLen := int(bar0[0x00])
+	if capLen == 0 {
+		t.Fatal("CAPLENGTH must not be zero after scrub")
+	}
+	// HCIVERSION must be set
+	hciVer := uint16(bar0[0x02]) | uint16(bar0[0x03])<<8
+	if hciVer < 0x0100 {
+		t.Errorf("HCIVERSION should be >= 0x0100, got 0x%04x", hciVer)
+	}
+	// HCSPARAMS1 must have non-zero MaxSlots
+	hcsparams1 := readLE32(bar0, 0x04)
+	if hcsparams1&0xFF == 0 {
+		t.Error("MaxSlots must not be zero")
+	}
+	// USBCMD R/S must be set
+	usbcmd := readLE32(bar0, capLen)
+	if usbcmd&0x01 == 0 {
+		t.Error("USBCMD R/S should be set")
+	}
+	// USBSTS HCH must be cleared
+	usbsts := readLE32(bar0, capLen+4)
 	if usbsts&0x01 != 0 {
-		t.Errorf("xHCI USBSTS.HCHalted should be cleared with default CAPLENGTH, got 0x%02x", usbsts)
+		t.Error("USBSTS HCH should be cleared")
 	}
 }
 
