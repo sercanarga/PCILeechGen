@@ -51,11 +51,11 @@ func TestGenerateProjectTCL(t *testing.T) {
 	if !strings.Contains(tcl, "test_top") {
 		t.Error("TCL should contain top module name")
 	}
-	if !strings.Contains(tcl, "set_property SEED") {
-		t.Error("TCL should contain SEED property for P&R randomization")
+	if strings.Contains(tcl, "SEED") {
+		t.Error("TCL should not contain SEED property (not supported in Vivado 2023.2)")
 	}
 	if strings.Contains(tcl, "MORE OPTIONS") {
-		t.Error("TCL should not use MORE OPTIONS for seed (unsupported in Vivado 2023.2+)")
+		t.Error("TCL should not use MORE OPTIONS for seed")
 	}
 }
 
