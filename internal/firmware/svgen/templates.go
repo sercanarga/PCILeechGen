@@ -357,15 +357,36 @@ module pcileech_tlps128_bar_controller(
     wire        bar0_emu_valid;
     wire        bar0_emu_ready = 1'b1;
 {{ end }}
+{{ if .MSIXConfig }}
+    // MSI-X intermediate wires
+    wire [87:0] bar0_base_ctx;
+    wire [31:0] bar0_base_data;
+    wire        bar0_base_valid;
+
+    wire [87:0] msix_rsp_ctx;
+    wire [31:0] msix_rsp_data;
+    wire        msix_rsp_valid;
+    wire        msix_addr_hit;
+{{ end }}
 
     wire [87:0] bar_rsp_ctx[7];
     wire [31:0] bar_rsp_data[7];
     wire        bar_rsp_valid[7];
 
-{{ if .LatencyConfig }}
+{{ if and .LatencyConfig .MSIXConfig }}
+    // latency → MSI-X mux → bar_rsp[0]
+    assign bar_rsp_ctx[0]   = msix_rsp_valid ? msix_rsp_ctx   : bar0_base_ctx;
+    assign bar_rsp_data[0]  = msix_rsp_valid ? msix_rsp_data  : bar0_base_data;
+    assign bar_rsp_valid[0] = msix_rsp_valid || bar0_base_valid;
+{{ else if .LatencyConfig }}
     assign bar_rsp_ctx[0]   = bar0_emu_ctx;
     assign bar_rsp_data[0]  = bar0_emu_data;
     assign bar_rsp_valid[0] = bar0_emu_valid;
+{{ else if .MSIXConfig }}
+    // MSI-X mux → bar_rsp[0]
+    assign bar_rsp_ctx[0]   = msix_rsp_valid ? msix_rsp_ctx   : bar0_base_ctx;
+    assign bar_rsp_data[0]  = msix_rsp_valid ? msix_rsp_data  : bar0_base_data;
+    assign bar_rsp_valid[0] = msix_rsp_valid || bar0_base_valid;
 {{ end }}
 
     // response mux
@@ -409,6 +430,10 @@ module pcileech_tlps128_bar_controller(
         .rd_rsp_ctx     ( bar0_raw_ctx                  ),
         .rd_rsp_data    ( bar0_raw_data                 ),
         .rd_rsp_valid   ( bar0_raw_valid                )
+{{ else if .MSIXConfig }}
+        .rd_rsp_ctx     ( bar0_base_ctx                 ),
+        .rd_rsp_data    ( bar0_base_data                ),
+        .rd_rsp_valid   ( bar0_base_valid               )
 {{ else }}
         .rd_rsp_ctx     ( bar_rsp_ctx[0]                ),
         .rd_rsp_data    ( bar_rsp_data[0]               ),
@@ -417,7 +442,6 @@ module pcileech_tlps128_bar_controller(
     );
 
 {{ if .LatencyConfig }}
-    // Latency emulator on BAR0 responses
     tlp_latency_emulator i_latency_emu(
         .clk            ( clk                           ),
         .rst            ( rst                           ),
@@ -426,10 +450,38 @@ module pcileech_tlps128_bar_controller(
         .req_data       ( bar0_raw_data                 ),
         .req_addr       ( rd_req_addr                   ),
         .req_ready      (                               ),
+{{ if .MSIXConfig }}
+        .rsp_valid      ( bar0_base_valid               ),
+        .rsp_ctx        ( bar0_base_ctx                 ),
+        .rsp_data       ( bar0_base_data                ),
+{{ else }}
         .rsp_valid      ( bar0_emu_valid                ),
         .rsp_ctx        ( bar0_emu_ctx                  ),
         .rsp_data       ( bar0_emu_data                 ),
+{{ end }}
         .rsp_ready      ( bar0_emu_ready                )
+    );
+{{ end }}
+
+{{ if .MSIXConfig }}
+    pcileech_msix_table #(
+        .NUM_VECTORS    ( {{ .MSIXConfig.NumVectors }}  ),
+        .TABLE_OFFSET   ( 32'h{{ printf "%08X" .MSIXConfig.TableOffset }} ),
+        .PBA_OFFSET     ( 32'h{{ printf "%08X" .MSIXConfig.PBAOffset }}   )
+    ) i_msix_table(
+        .rst            ( rst                           ),
+        .clk            ( clk                           ),
+        .wr_addr        ( wr_addr                       ),
+        .wr_data        ( wr_data                       ),
+        .wr_be          ( wr_be                         ),
+        .wr_valid       ( wr_valid && wr_bar[0]         ),
+        .rd_req_ctx     ( rd_req_ctx                    ),
+        .rd_req_addr    ( rd_req_addr                   ),
+        .rd_req_valid   ( rd_req_valid && rd_req_bar[0] ),
+        .rd_rsp_ctx     ( msix_rsp_ctx                  ),
+        .rd_rsp_data    ( msix_rsp_data                 ),
+        .rd_rsp_valid   ( msix_rsp_valid                ),
+        .addr_hit       ( msix_addr_hit                 )
     );
 {{ end }}
 
@@ -523,6 +575,11 @@ package device_config;
     localparam LATENCY_MIN      = {{ .LatencyConfig.MinCycles }};
     localparam LATENCY_MAX      = {{ .LatencyConfig.MaxCycles }};
     localparam LATENCY_AVG      = {{ .LatencyConfig.AvgCycles }};
+{{ end }}{{ if .MSIXConfig }}
+    // MSI-X Table Replication
+    localparam MSIX_NUM_VECTORS = {{ .MSIXConfig.NumVectors }};
+    localparam MSIX_TABLE_OFF   = 32'h{{ printf "%08X" .MSIXConfig.TableOffset }};
+    localparam MSIX_PBA_OFF     = 32'h{{ printf "%08X" .MSIXConfig.PBAOffset }};
 {{ end }}
     // Feature flags
     localparam HAS_NVME_FSM     = {{ if .IsNVMe }}1{{ else }}0{{ end }};

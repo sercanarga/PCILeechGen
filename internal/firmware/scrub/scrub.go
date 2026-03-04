@@ -142,7 +142,7 @@ func ScrubConfigSpaceWithOverlay(cs *pci.ConfigSpace, b *board.Board) (*pci.Conf
 	}
 
 	clampBARsToFPGA(scrubbed, om)
-	disableMSIXIfOutOfBRAM(scrubbed, om)
+	relocateMSIXToBRAM(scrubbed, om)
 	clampLinkCapability(scrubbed, b, om)
 	clampDeviceCapability(scrubbed, om)
 
@@ -187,25 +187,46 @@ func clampBARsToFPGA(cs *pci.ConfigSpace, om *overlay.Map) {
 	}
 }
 
-// disableMSIXIfOutOfBRAM kills MSI-X if table/PBA sits past 4 KB.
-func disableMSIXIfOutOfBRAM(cs *pci.ConfigSpace, om *overlay.Map) {
+// relocateMSIXToBRAM moves MSI-X table/PBA offsets to 0x1000+ so the
+// separate BRAM module can serve them. Keeps MSI-X enabled.
+func relocateMSIXToBRAM(cs *pci.ConfigSpace, om *overlay.Map) {
 	caps := pci.ParseCapabilities(cs)
 	for _, cap := range caps {
 		if cap.ID != pci.CapIDMSIX {
 			continue
 		}
-		if cap.Offset+8 > pci.ConfigSpaceLegacySize {
+		if cap.Offset+12 > pci.ConfigSpaceLegacySize {
 			continue
 		}
 
-		tableOff := int(cs.ReadU32(cap.Offset+4) &^ 0x07)
-		pbaOff := int(cs.ReadU32(cap.Offset+8) &^ 0x07)
-
-		if tableOff >= BRAMSize || pbaOff >= BRAMSize {
-			msgCtl := cs.ReadU16(cap.Offset + 2)
-			msgCtl &= 0x3FFF
-			om.WriteU16(cap.Offset+2, msgCtl, "disable MSI-X (table/PBA outside BRAM)")
+		info := pci.ParseMSIXCap(cs)
+		if info == nil {
+			continue
 		}
+
+		tableSize := info.TableSize * 16
+		pbaSize := (info.TableSize + 63) / 64 * 8
+		if pbaSize < 8 {
+			pbaSize = 8
+		}
+
+		newTableOffset := uint32(0x1000)
+		newPBAOffset := newTableOffset + uint32(tableSize)
+		newPBAOffset = (newPBAOffset + 7) &^ 7
+
+		tableReg := (newTableOffset & 0xFFFFFFF8) | uint32(info.TableBIR)
+		pbaReg := (newPBAOffset & 0xFFFFFFF8) | uint32(info.PBABIR)
+
+		om.WriteU32(cap.Offset+4, tableReg,
+			fmt.Sprintf("relocate MSI-X table to 0x%X (%d vectors)", newTableOffset, info.TableSize))
+		om.WriteU32(cap.Offset+8, pbaReg,
+			fmt.Sprintf("relocate MSI-X PBA to 0x%X (%d bytes)", newPBAOffset, pbaSize))
+
+		msgCtl := cs.ReadU16(cap.Offset + 2)
+		msgCtl |= 0x8000
+		msgCtl &= ^uint16(0x4000)
+		om.WriteU16(cap.Offset+2, msgCtl, "MSI-X enable (BRAM replicated)")
+
 		break
 	}
 }

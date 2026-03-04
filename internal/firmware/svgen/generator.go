@@ -21,6 +21,7 @@ type SVGeneratorConfig struct {
 	PRNGSeeds     [4]uint32      // computed PRNG seeds for latency emulator
 	IsNVMe        bool           // enable NVMe CC→CSTS state machine
 	IsXHCI        bool           // enable xHCI state machine
+	MSIXConfig    *MSIXConfig    // MSI-X table replication (nil = no MSI-X table)
 }
 
 func renderTemplate(name, tmplStr string, data any) (string, error) {
@@ -45,6 +46,10 @@ func GenerateBarControllerSV(cfg *SVGeneratorConfig) (string, error) {
 
 func GenerateDeviceConfigSV(cfg *SVGeneratorConfig) (string, error) {
 	return renderTemplate("device_config", deviceConfigTmpl, cfg)
+}
+
+func GenerateMSIXTableSV(cfg *SVGeneratorConfig) (string, error) {
+	return renderTemplate("msix_table", msixTableTmpl, cfg)
 }
 
 // svFuncMap provides hex formatting and arithmetic helpers for templates.

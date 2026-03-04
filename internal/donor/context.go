@@ -11,6 +11,16 @@ import (
 	"github.com/sercanarga/pcileechgen/internal/pci"
 )
 
+// MSIXData holds donor MSI-X table content.
+type MSIXData struct {
+	TableSize   int             `json:"table_size"`
+	TableBIR    int             `json:"table_bir"`
+	TableOffset uint32          `json:"table_offset"`
+	PBABIR      int             `json:"pba_bir"`
+	PBAOffset   uint32          `json:"pba_offset"`
+	Entries     []pci.MSIXEntry `json:"entries"`
+}
+
 // DeviceContext is the full snapshot of a donor device.
 type DeviceContext struct {
 	CollectedAt time.Time `json:"collected_at"`
@@ -24,6 +34,7 @@ type DeviceContext struct {
 	BARProfiles     map[int]*BARProfile `json:"-"` // probing results, keyed by BAR index
 	Capabilities    []pci.Capability    `json:"capabilities"`
 	ExtCapabilities []pci.ExtCapability `json:"ext_capabilities,omitempty"`
+	MSIXData        *MSIXData           `json:"msix_data,omitempty"`
 }
 
 // JSON wire format — config space as hex words, BARs as base64.
@@ -39,6 +50,7 @@ type deviceContextJSON struct {
 	BARProfiles     map[string]*BARProfile `json:"bar_profiles,omitempty"`
 	Capabilities    []pci.Capability       `json:"capabilities"`
 	ExtCapabilities []pci.ExtCapability    `json:"ext_capabilities,omitempty"`
+	MSIXData        *MSIXData              `json:"msix_data,omitempty"`
 }
 
 func (dc *DeviceContext) MarshalJSON() ([]byte, error) {
@@ -50,6 +62,7 @@ func (dc *DeviceContext) MarshalJSON() ([]byte, error) {
 		BARs:            dc.BARs,
 		Capabilities:    dc.Capabilities,
 		ExtCapabilities: dc.ExtCapabilities,
+		MSIXData:        dc.MSIXData,
 	}
 
 	if dc.ConfigSpace != nil {
@@ -97,6 +110,7 @@ func FromJSON(data []byte) (*DeviceContext, error) {
 		BARs:            j.BARs,
 		Capabilities:    j.Capabilities,
 		ExtCapabilities: j.ExtCapabilities,
+		MSIXData:        j.MSIXData,
 	}
 
 	// Reconstruct config space from hex words
