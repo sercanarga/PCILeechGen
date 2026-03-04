@@ -177,14 +177,19 @@ Total: 17 boards
 
 ```
 pcileech_datastore/
-  device_context.json
-  pcileech_cfgspace.coe
-  pcileech_cfgspace_writemask.coe
-  pcileech_bar_zero4k.coe
-  vivado_generate_project.tcl
-  vivado_build.tcl
-  src/                          # patched SV sources
-  *.bin                         # bitstream (after Vivado build)
+  device_context.json                    # donor device snapshot
+  pcileech_cfgspace.coe                  # 4KB config space (scrubbed)
+  pcileech_cfgspace_writemask.coe        # per-register write masks
+  pcileech_bar_zero4k.coe               # BAR0 content snapshot
+  pcileech_bar_impl_device.sv           # BAR implementation module
+  pcileech_tlps128_bar_controller.sv    # TLP BAR controller
+  tlp_latency_emulator.sv              # latency emulation
+  device_config.sv                      # device-specific config
+  config_space_init.hex                 # Verilog $readmemh init
+  vivado_generate_project.tcl           # project creation script
+  vivado_build.tcl                      # synthesis script
+  src/                                  # patched board SV sources
+  *.bin                                 # bitstream (after Vivado)
 ```
 
 ## Development
