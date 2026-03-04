@@ -28,9 +28,7 @@ func formatCOE(header string, words []uint32) string {
 	return sb.String()
 }
 
-// GenerateConfigSpaceCOE generates the pcileech_cfgspace.coe file content.
-// Always outputs 1024 DWORDs (4KB) to match the shadow config space BRAM size.
-// If the donor config space is smaller (e.g. 256 bytes), the remaining words are zero-filled.
+// GenerateConfigSpaceCOE outputs 1024 DWORDs (4KB) for pcileech_cfgspace.coe.
 func GenerateConfigSpaceCOE(cs *pci.ConfigSpace) string {
 	words := make([]uint32, shadowCfgSpaceWords)
 
@@ -47,9 +45,7 @@ func GenerateConfigSpaceCOE(cs *pci.ConfigSpace) string {
 	)
 }
 
-// GenerateWritemaskCOE generates the pcileech_cfgspace_writemask.coe file.
-// Always outputs 1024 DWORDs (4KB) to match the shadow config space DROM size.
-// Defines which bits are writable per PCI spec.
+// GenerateWritemaskCOE outputs 1024 DWORDs writemask for pcileech_cfgspace_writemask.coe.
 func GenerateWritemaskCOE(cs *pci.ConfigSpace) string {
 	masks := make([]uint32, shadowCfgSpaceWords)
 
@@ -167,10 +163,8 @@ func applyExtCapabilityWritemasks(cs *pci.ConfigSpace, masks []uint32) {
 	}
 }
 
-// GenerateBarContentCOE generates the pcileech_bar_zero4k.coe file.
-// If BAR memory contents are available from the donor device, they are used to
-// populate the BRAM. Otherwise, the file is zero-filled as a safe fallback.
-// The first active memory BAR's content is used (pcileech-fpga has a single 4KB BRAM).
+// GenerateBarContentCOE outputs pcileech_bar_zero4k.coe from lowest BAR data.
+// Zero-filled if no donor BAR content is available.
 func GenerateBarContentCOE(barContents map[int][]byte) string {
 	words := make([]uint32, shadowCfgSpaceWords)
 
@@ -271,8 +265,8 @@ func scrubNVMeBar0(data []byte) {
 
 const bramSize = 0x1000 // 4KB BAR BRAM
 
-// scrubXHCIBar0 patches xHCI BAR0 registers to fit within the 4KB BRAM
-// and fakes a running controller state (R/S=1, HCH=0).
+// scrubXHCIBar0 clamps xHCI BAR0 registers to 4KB BRAM
+// and sets R/S=1, HCH=0 so the driver sees a running controller.
 func scrubXHCIBar0(data []byte) {
 	if len(data) < 0x20 {
 		return
