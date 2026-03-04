@@ -1,7 +1,5 @@
-// Live MMIO tracer for Linux. Uses kernel mmiotrace via ftrace.
+// Live MMIO tracer. Uses kernel mmiotrace via ftrace.
 // Needs root, CONFIG_MMIOTRACE=y, and debugfs at /sys/kernel/debug.
-//
-//go:build linux
 
 package mmio
 
