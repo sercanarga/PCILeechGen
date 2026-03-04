@@ -10,6 +10,11 @@ import (
 	"github.com/sercanarga/pcileechgen/internal/pci"
 )
 
+const (
+	cmdMask    = 0x0547 // keep BusMaster, IO, Memory, SERR, ParityErr
+	statusMask = 0x06F0 // keep 66MHz, FastB2B, CapList, DevSel bits
+)
+
 // ext caps the FPGA can't emulate
 var unsafeExtCaps = map[uint16]string{
 	pci.ExtCapIDSRIOV:         "SR-IOV",
@@ -97,8 +102,8 @@ func ScrubConfigSpaceWithOverlay(cs *pci.ConfigSpace, b *board.Board) (*pci.Conf
 	om.WriteU8(0x0D, 0x00, "clear Latency Timer")
 	om.WriteU8(0x0C, 0x00, "clear Cache Line Size")
 
-	om.WriteU16(0x04, scrubbed.Command()&0x0547, "sanitize Command register")
-	om.WriteU16(0x06, scrubbed.Status()&0x06F0, "sanitize Status register")
+	om.WriteU16(0x04, scrubbed.Command()&cmdMask, "sanitize Command register")
+	om.WriteU16(0x06, scrubbed.Status()&statusMask, "sanitize Status register")
 
 	caps := pci.ParseCapabilities(scrubbed)
 	for _, cap := range caps {
@@ -143,6 +148,17 @@ func ScrubConfigSpaceWithOverlay(cs *pci.ConfigSpace, b *board.Board) (*pci.Conf
 
 	zeroVendorRegisters(scrubbed, om)
 	applyVendorQuirks(scrubbed, om)
+
+	// prune standard caps the FPGA can't handle
+	if pruned := PruneStandardCaps(scrubbed, om); len(pruned) > 0 {
+		for _, p := range pruned {
+			fmt.Printf("[scrub] pruned standard cap: %s\n", p)
+		}
+	}
+
+	if err := ValidateCapChain(scrubbed); err != nil {
+		fmt.Printf("[scrub] warning: capability chain issue: %v\n", err)
+	}
 
 	return scrubbed, om
 }

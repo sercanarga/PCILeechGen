@@ -105,7 +105,9 @@ func FromJSON(data []byte) (*DeviceContext, error) {
 		dc.ConfigSpace.Size = j.ConfigSpaceSize
 		for i, hexWord := range j.ConfigSpaceHex {
 			var word uint32
-			fmt.Sscanf(hexWord, "%x", &word)
+			if _, err := fmt.Sscanf(hexWord, "%x", &word); err != nil {
+				return nil, fmt.Errorf("invalid config space hex word %d (%q): %w", i, hexWord, err)
+			}
 			dc.ConfigSpace.WriteU32(i*4, word)
 		}
 	}

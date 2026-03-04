@@ -1,0 +1,77 @@
+# Default fallback values for device classes.
+# Used when VFIO/sysfs cannot read certain fields from the donor device.
+
+defaults:
+  bar0_size: 4096          # minimum BRAM-compatible BAR size
+  power_management: true   # most devices have PM cap
+  msi_capable: true        # most modern devices support MSI
+
+# Per-class-code fallbacks (base_class:sub_class)
+device_classes:
+  # Network controllers (02:00)
+  "0200":
+    description: "Ethernet controller"
+    bar0_size: 131072        # 128KB typical for NICs
+    link_speed: 3            # Gen3 (8 GT/s)
+    link_width: 1
+    capabilities:
+      - power_management
+      - msi
+      - msix
+      - pcie
+    bar0_defaults:
+      # common NIC register defaults
+      0x00000000: 0x00000000  # CTRL
+      0x00000008: 0x00000000  # STATUS
+      0x00000018: 0x00000000  # CTRL_EXT
+
+  # NVMe controllers (01:08)
+  "0108":
+    description: "NVMe controller"
+    bar0_size: 16384         # 16KB typical
+    link_speed: 3            # Gen3
+    link_width: 4
+    capabilities:
+      - power_management
+      - msix
+      - pcie
+    bar0_defaults:
+      0x00000000: 0x00020001  # CAP low (MQES=1, CQR=1)
+      0x00000004: 0x00000000  # CAP high
+      0x00000008: 0x00010301  # VS (1.3.1)
+      0x0000000C: 0x00000000  # INTMS
+      0x00000010: 0x00000000  # INTMC
+      0x00000014: 0x00460001  # CC (EN=1, IOSQES=6, IOCQES=4)
+      0x0000001C: 0x00000001  # CSTS (RDY=1)
+      0x00000024: 0x00000000  # AQA
+      0x00002000: 0x00000000  # DBOFF
+
+  # USB controllers - xHCI (0C:03)
+  "0C03":
+    description: "USB xHCI controller"
+    bar0_size: 65536         # 64KB typical
+    link_speed: 2            # Gen2 (5 GT/s)
+    link_width: 1
+    capabilities:
+      - power_management
+      - msix
+      - pcie
+    bar0_defaults:
+      0x00000000: 0x01000960  # CAPLENGTH=0x20, HCIVERSION=1.0
+      0x00000004: 0x01000204  # HCSPARAMS1
+      0x00000008: 0x00000000  # HCSPARAMS2
+      0x0000000C: 0x00000001  # HCSPARAMS3
+      0x00000010: 0x00000020  # HCCPARAMS1
+      0x00000014: 0x00000800  # DBOFF
+      0x00000018: 0x00001000  # RTSOFF
+
+  # Audio controllers (04:03)
+  "0403":
+    description: "HD Audio controller"
+    bar0_size: 16384         # 16KB typical
+    link_speed: 1            # Gen1
+    link_width: 1
+    capabilities:
+      - power_management
+      - msi
+      - pcie

@@ -74,22 +74,8 @@ Example:
 			}
 		}
 
-		fmt.Printf("[pcileechgen] Target board: %s (%s)\n", b.Name, b.FPGAPart)
-		fmt.Printf("[pcileechgen] Output: %s\n", buildOutput)
-		fmt.Printf("[pcileechgen] Device: %04x:%04x %s (rev %02x)\n",
-			ctx.Device.VendorID, ctx.Device.DeviceID,
-			ctx.Device.ClassDescription(), ctx.Device.RevisionID)
-		fmt.Printf("[pcileechgen] Config space: %d bytes\n", ctx.ConfigSpace.Size)
-		fmt.Printf("[pcileechgen] Capabilities: %d standard, %d extended\n",
-			len(ctx.Capabilities), len(ctx.ExtCapabilities))
-		barContentCount := len(ctx.BARContents)
-		if barContentCount > 0 {
-			fmt.Printf("[pcileechgen] BARs: %d (%d with content)\n\n", len(ctx.BARs), barContentCount)
-		} else {
-			fmt.Printf("[pcileechgen] BARs: %d\n\n", len(ctx.BARs))
-		}
+		printBuildSummary(ctx, b)
 
-		// Stage 2 & 3: Build
 		builder := vivado.NewBuilder(b, vivado.BuildOptions{
 			VivadoPath: buildVivadoPath,
 			OutputDir:  buildOutput,
@@ -101,6 +87,23 @@ Example:
 
 		return builder.Build(ctx)
 	},
+}
+
+func printBuildSummary(ctx *donor.DeviceContext, b *board.Board) {
+	fmt.Printf("[pcileechgen] Target board: %s (%s)\n", b.Name, b.FPGAPart)
+	fmt.Printf("[pcileechgen] Output: %s\n", buildOutput)
+	fmt.Printf("[pcileechgen] Device: %04x:%04x %s (rev %02x)\n",
+		ctx.Device.VendorID, ctx.Device.DeviceID,
+		ctx.Device.ClassDescription(), ctx.Device.RevisionID)
+	fmt.Printf("[pcileechgen] Config space: %d bytes\n", ctx.ConfigSpace.Size)
+	fmt.Printf("[pcileechgen] Capabilities: %d standard, %d extended\n",
+		len(ctx.Capabilities), len(ctx.ExtCapabilities))
+	barContentCount := len(ctx.BARContents)
+	if barContentCount > 0 {
+		fmt.Printf("[pcileechgen] BARs: %d (%d with content)\n\n", len(ctx.BARs), barContentCount)
+	} else {
+		fmt.Printf("[pcileechgen] BARs: %d\n\n", len(ctx.BARs))
+	}
 }
 
 func init() {

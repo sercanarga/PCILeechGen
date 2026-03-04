@@ -177,3 +177,35 @@ func GetIOMMUGroup(bdf string) (int, error) {
 	}
 	return group, nil
 }
+
+// QuickStatus returns a short VFIO compatibility label for a device:
+// "ready" (bound to vfio-pci), "no-iommu", "group(N)" (shared group), or "ok".
+func QuickStatus(bdf string) string {
+	if IsBoundToVFIO(bdf) {
+		return "ready"
+	}
+
+	group, err := GetIOMMUGroup(bdf)
+	if err != nil {
+		return "no-iommu"
+	}
+
+	groupDevs, err := ListIOMMUGroupDevices(bdf)
+	if err != nil {
+		return "ok"
+	}
+
+	peers := 0
+	for _, d := range groupDevs {
+		if d != bdf {
+			peers++
+		}
+	}
+
+	if peers > 0 {
+		return fmt.Sprintf("group(%d)", peers+1)
+	}
+
+	_ = group
+	return "ok"
+}
