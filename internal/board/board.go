@@ -9,19 +9,37 @@ import (
 
 // Board represents a supported PCILeech FPGA board (or board variant).
 type Board struct {
-	Name       string `json:"name"`        // canonical board name (unique key)
-	FPGAPart   string `json:"fpga_part"`   // Xilinx FPGA part number (e.g. xc7a35tfgg484-2)
-	PCIeLanes  int    `json:"pcie_lanes"`  // number of PCIe lanes (1 or 4)
-	TopModule  string `json:"top_module"`  // top-level SystemVerilog module name
-	ProjectDir string `json:"project_dir"` // top-level directory in pcileech-fpga (e.g. "CaptainDMA")
-	SubDir     string `json:"sub_dir"`     // optional subdirectory within ProjectDir (e.g. "100t484-1")
-	TCLFile    string `json:"tcl_file"`    // TCL project generation script filename
-	BuildTCL   string `json:"build_tcl"`   // TCL build script filename (defaults to "vivado_build.tcl")
+	Name         string `json:"name"`           // canonical board name (unique key)
+	FPGAPart     string `json:"fpga_part"`      // Xilinx FPGA part number (e.g. xc7a35tfgg484-2)
+	PCIeLanes    int    `json:"pcie_lanes"`     // number of PCIe lanes (1 or 4)
+	MaxLinkSpeed uint8  `json:"max_link_speed"` // max PCIe gen (0 = default to Gen2)
+	BRAMSize     int    `json:"bram_size"`      // BAR BRAM capacity in bytes (0 = default 4096)
+	TopModule    string `json:"top_module"`     // top-level SystemVerilog module name
+	ProjectDir   string `json:"project_dir"`    // top-level directory in pcileech-fpga (e.g. "CaptainDMA")
+	SubDir       string `json:"sub_dir"`        // optional subdirectory within ProjectDir (e.g. "100t484-1")
+	TCLFile      string `json:"tcl_file"`       // TCL project generation script filename
+	BuildTCL     string `json:"build_tcl"`      // TCL build script filename (defaults to "vivado_build.tcl")
 }
 
 // String returns the board name.
 func (b *Board) String() string {
 	return b.Name
+}
+
+// MaxLinkSpeedOrDefault returns the board's max link speed, defaulting to Gen2.
+func (b *Board) MaxLinkSpeedOrDefault() uint8 {
+	if b.MaxLinkSpeed > 0 {
+		return b.MaxLinkSpeed
+	}
+	return 2 // Gen2 — all Xilinx 7-series boards
+}
+
+// BRAMSizeOrDefault returns the board's BAR BRAM size, defaulting to 4096.
+func (b *Board) BRAMSizeOrDefault() int {
+	if b.BRAMSize > 0 {
+		return b.BRAMSize
+	}
+	return 4096
 }
 
 // SrcPath returns the path to source files for this board.

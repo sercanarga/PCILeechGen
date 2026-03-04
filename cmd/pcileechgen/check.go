@@ -6,6 +6,7 @@ import (
 	"github.com/sercanarga/pcileechgen/internal/board"
 	"github.com/sercanarga/pcileechgen/internal/color"
 	"github.com/sercanarga/pcileechgen/internal/donor"
+	"github.com/sercanarga/pcileechgen/internal/donor/vfio"
 	"github.com/sercanarga/pcileechgen/internal/firmware"
 	"github.com/sercanarga/pcileechgen/internal/pci"
 	"github.com/spf13/cobra"
@@ -46,22 +47,21 @@ Example:
 		}
 
 		// Check 3: IOMMU
-		vm := donor.NewVFIOManager()
-		if err := vm.CheckIOMMU(); err != nil {
+		if err := vfio.CheckIOMMU(); err != nil {
 			fmt.Println(color.Failf("IOMMU: %v", err))
 		} else {
 			fmt.Println(color.OK("IOMMU is enabled"))
 		}
 
 		// Check 4: VFIO modules
-		if err := vm.CheckVFIOModules(); err != nil {
+		if err := vfio.CheckVFIOModules(); err != nil {
 			fmt.Println(color.Failf("VFIO modules: %v", err))
 		} else {
 			fmt.Println(color.OK("VFIO modules loaded"))
 		}
 
 		// Check 5: IOMMU group
-		group, err := vm.GetIOMMUGroup(bdf.String())
+		group, err := vfio.GetIOMMUGroup(bdf.String())
 		if err != nil {
 			fmt.Println(color.Warnf("IOMMU group: %v", err))
 		} else {

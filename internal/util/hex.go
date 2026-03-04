@@ -79,3 +79,25 @@ func LEBytesToU16(b []byte) uint16 {
 func SwapEndian32(v uint32) uint32 {
 	return (v>>24)&0xFF | (v>>8)&0xFF00 | (v<<8)&0xFF0000 | (v<<24)&0xFF000000
 }
+
+// ReadLE32 reads a little-endian uint32 from data at the given byte offset.
+// Returns 0 if the read would go out of bounds.
+func ReadLE32(data []byte, off int) uint32 {
+	if off < 0 || off+4 > len(data) {
+		return 0
+	}
+	return uint32(data[off]) | uint32(data[off+1])<<8 |
+		uint32(data[off+2])<<16 | uint32(data[off+3])<<24
+}
+
+// WriteLE32 writes a little-endian uint32 to data at the given byte offset.
+// No-op if the write would go out of bounds.
+func WriteLE32(data []byte, off int, val uint32) {
+	if off < 0 || off+4 > len(data) {
+		return
+	}
+	data[off] = byte(val)
+	data[off+1] = byte(val >> 8)
+	data[off+2] = byte(val >> 16)
+	data[off+3] = byte(val >> 24)
+}

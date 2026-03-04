@@ -1,4 +1,4 @@
-package firmware
+package tclgen
 
 import (
 	"bytes"
@@ -8,6 +8,7 @@ import (
 
 	"github.com/sercanarga/pcileechgen/internal/board"
 	"github.com/sercanarga/pcileechgen/internal/donor"
+	"github.com/sercanarga/pcileechgen/internal/firmware"
 	"github.com/sercanarga/pcileechgen/internal/pci"
 )
 
@@ -244,9 +245,9 @@ exit 0
 // linkSpeedToTCL converts a numeric link speed to Vivado TCL format.
 func linkSpeedToTCL(speed uint8) string {
 	switch speed {
-	case LinkSpeedGen1:
+	case firmware.LinkSpeedGen1:
 		return "2.5_GT/s"
-	case LinkSpeedGen3:
+	case firmware.LinkSpeedGen3:
 		return "8.0_GT/s"
 	default:
 		return "5.0_GT/s" // Gen2 default
@@ -256,9 +257,9 @@ func linkSpeedToTCL(speed uint8) string {
 // linkSpeedToTrgt converts a numeric link speed to Trgt_Link_Speed TCL property.
 func linkSpeedToTrgt(speed uint8) string {
 	switch speed {
-	case LinkSpeedGen1:
+	case firmware.LinkSpeedGen1:
 		return "4'h1"
-	case LinkSpeedGen3:
+	case firmware.LinkSpeedGen3:
 		return "4'h3"
 	default:
 		return "4'h2"
@@ -308,13 +309,14 @@ func barSizeToTCL(sizeBytes uint64) (scale string, size string) {
 
 // GenerateProjectTCL generates the Vivado project creation TCL script.
 func GenerateProjectTCL(ctx *donor.DeviceContext, b *board.Board, libDir string) string {
-	ids := ExtractDeviceIDs(ctx.ConfigSpace, ctx.ExtCapabilities)
+	ids := firmware.ExtractDeviceIDs(ctx.ConfigSpace, ctx.ExtCapabilities)
 
 	// Clamp link width to board physical lanes
 	linkWidth := clampLinkWidth(ids.LinkWidth, b.PCIeLanes)
 	linkSpeed := ids.LinkSpeed
-	if linkSpeed == 0 || linkSpeed > fpgaMaxLinkSpeed {
-		linkSpeed = fpgaMaxLinkSpeed // Xilinx 7-series max: Gen2
+	// Clamp link speed to board's physical capability
+	if linkSpeed == 0 || linkSpeed > b.MaxLinkSpeedOrDefault() {
+		linkSpeed = b.MaxLinkSpeedOrDefault()
 	}
 
 	// BAR0 configuration
@@ -326,10 +328,11 @@ func GenerateProjectTCL(ctx *donor.DeviceContext, b *board.Board, libDir string)
 		bar0 := ctx.BARs[0]
 		if bar0.Size > 0 {
 			bar0Enabled = true
-			// clamp to FPGA BRAM (4 KB)
+			// clamp to FPGA BRAM
 			bar0SizeClamped := bar0.Size
-			if bar0SizeClamped > fpgaBRAMSize {
-				bar0SizeClamped = fpgaBRAMSize
+			bramSize := uint64(b.BRAMSizeOrDefault())
+			if bar0SizeClamped > bramSize {
+				bar0SizeClamped = bramSize
 			}
 			bar0Scale, bar0Size = barSizeToTCL(bar0SizeClamped)
 			bar064bit = bar0.Type == pci.BARTypeMem64
