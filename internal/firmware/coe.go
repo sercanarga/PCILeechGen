@@ -168,29 +168,19 @@ func applyExtCapabilityWritemasks(cs *pci.ConfigSpace, masks []uint32) {
 func GenerateBarContentCOE(barContents map[int][]byte) string {
 	words := make([]uint32, shadowCfgSpaceWords)
 
-	// Find the first BAR with content and populate the BRAM
-	if len(barContents) > 0 {
-		// Use lowest-indexed BAR content available
-		bestIdx := -1
-		for idx := range barContents {
-			if bestIdx == -1 || idx < bestIdx {
-				bestIdx = idx
-			}
-		}
-		if bestIdx >= 0 {
-			data := barContents[bestIdx]
-			// Convert bytes to uint32 words (little-endian)
-			for i := 0; i+3 < len(data) && i/4 < len(words); i += 4 {
-				words[i/4] = uint32(data[i]) |
-					uint32(data[i+1])<<8 |
-					uint32(data[i+2])<<16 |
-					uint32(data[i+3])<<24
-			}
+	// Populate BRAM from the lowest-indexed BAR with content
+	data := lowestBarData(barContents)
+	if data != nil {
+		for i := 0; i+3 < len(data) && i/4 < len(words); i += 4 {
+			words[i/4] = uint32(data[i]) |
+				uint32(data[i+1])<<8 |
+				uint32(data[i+2])<<16 |
+				uint32(data[i+3])<<24
 		}
 	}
 
 	header := "; PCILeechGen - BAR Content (4KB shadow)\n"
-	if len(barContents) > 0 {
+	if data != nil {
 		header += "; Populated from donor device BAR memory\n"
 	} else {
 		header += "; Zero-filled (no donor BAR data available)\n"
@@ -318,16 +308,25 @@ func scrubXHCIBar0(data []byte) {
 
 	if int(dboff)+doorbellSize > bramSize {
 		newDBOFF := bramSize - doorbellSize
+		if newDBOFF < 0 {
+			newDBOFF = capLen + 0x20
+		}
 		newDBOFF = newDBOFF & ^0x1F // align down 32B
 		if newDBOFF < capLen+0x20 {
 			// not enough room, shrink MaxSlots
 			available := bramSize - (capLen + 0x20)
+			if available < 8 {
+				available = 8 // minimum 2 doorbell slots
+			}
 			maxSlots = available/4 - 1
 			if maxSlots < 1 {
 				maxSlots = 1
 			}
 			doorbellSize = (maxSlots + 1) * 4
 			newDBOFF = bramSize - doorbellSize
+			if newDBOFF < 0 {
+				newDBOFF = capLen + 0x20
+			}
 			newDBOFF = newDBOFF & ^0x1F
 		}
 		writeLE32(data, 0x14, uint32(newDBOFF))
@@ -338,7 +337,11 @@ func scrubXHCIBar0(data []byte) {
 
 	// clamp MaxIntrs to fit
 	if rtsoff > 0 && maxIntrs > 0 {
-		maxFit := (bramSize - rtsoff - 0x20) / 0x20
+		remaining := bramSize - rtsoff - 0x20
+		if remaining < 0x20 {
+			remaining = 0x20 // at least 1 interrupter
+		}
+		maxFit := remaining / 0x20
 		if maxFit < 1 {
 			maxFit = 1
 		}
@@ -362,7 +365,11 @@ func scrubXHCIBar0(data []byte) {
 		writeLE32(data, 0x18, uint32(rtsoff))
 
 		// re-check after moving
-		maxFit := (bramSize - rtsoff - 0x20) / 0x20
+		remaining := bramSize - rtsoff - 0x20
+		if remaining < 0x20 {
+			remaining = 0x20
+		}
+		maxFit := remaining / 0x20
 		if maxFit < 1 {
 			maxFit = 1
 		}
