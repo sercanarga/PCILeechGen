@@ -40,7 +40,6 @@ type projectTCLData struct {
 	Bar0Size    string // "4", "8", "16" etc.
 	Bar0Scale   string // "Kilobytes", "Megabytes"
 	Bar064bit   bool
-	ImplSeed    int // P&R seed for bitstream uniqueness
 }
 
 // buildTCLData holds template data for Vivado build script.
@@ -202,7 +201,6 @@ if {[string equal [get_runs -quiet impl_1] ""]} {
 }
 current_run -implementation [get_runs impl_1]
 set_property STEPS.PLACE_DESIGN.ARGS.DIRECTIVE ExtraPostPlacementOpt [get_runs impl_1]
-set_property SEED {{.ImplSeed}} [get_runs impl_1]
 
 puts "Project ${_xil_proj_name_} created successfully."
 `))
@@ -367,7 +365,6 @@ func GenerateProjectTCL(ctx *donor.DeviceContext, b *board.Board, libDir string)
 		Bar0Size:       bar0Size,
 		Bar0Scale:      bar0Scale,
 		Bar064bit:      bar064bit,
-		ImplSeed:       int(ids.LinkSpeed) + int(b.PCIeLanes)*7 + int(ctx.Device.DeviceID%997),
 	}
 
 	var buf bytes.Buffer
