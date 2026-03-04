@@ -1,6 +1,4 @@
-// VFIO device reader — Linux, pure Go via ioctl.
-//
-//go:build linux
+// VFIO device reader — uses ioctl to read config space and BAR memory.
 
 package vfio
 
