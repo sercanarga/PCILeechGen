@@ -6,6 +6,7 @@ package mmio
 import (
 	"bufio"
 	"fmt"
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -32,8 +33,9 @@ func LiveTrace(bdf string, duration time.Duration) (*TraceResult, error) {
 		return nil, fmt.Errorf("cannot read current tracer: %w", err)
 	}
 	defer func() {
-		// restore
-		os.WriteFile(currentTracer, prevTracer, 0644)
+		if err := os.WriteFile(currentTracer, prevTracer, 0644); err != nil {
+			log.Printf("[mmio] warning: failed to restore tracer: %v", err)
+		}
 	}()
 
 	// switch to mmiotrace
@@ -41,9 +43,14 @@ func LiveTrace(bdf string, duration time.Duration) (*TraceResult, error) {
 		return nil, fmt.Errorf("cannot enable mmiotrace (CONFIG_MMIOTRACE=y needed): %w", err)
 	}
 
-	// start tracing
-	os.WriteFile(tracingOnPath, []byte("1"), 0644)
-	defer os.WriteFile(tracingOnPath, []byte("0"), 0644)
+	if err := os.WriteFile(tracingOnPath, []byte("1"), 0644); err != nil {
+		log.Printf("[mmio] warning: failed to enable tracing: %v", err)
+	}
+	defer func() {
+		if err := os.WriteFile(tracingOnPath, []byte("0"), 0644); err != nil {
+			log.Printf("[mmio] warning: failed to disable tracing: %v", err)
+		}
+	}()
 
 	// read from the pipe
 	pipe, err := os.Open(tracePipe)
@@ -82,8 +89,9 @@ func LiveTrace(bdf string, duration time.Duration) (*TraceResult, error) {
 	case <-time.After(duration + 500*time.Millisecond):
 	}
 
-	// kill the pipe reader
-	os.WriteFile(tracingOnPath, []byte("0"), 0644)
+	if err := os.WriteFile(tracingOnPath, []byte("0"), 0644); err != nil {
+		log.Printf("[mmio] warning: failed to stop tracing: %v", err)
+	}
 
 	return result, nil
 }
