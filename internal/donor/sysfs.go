@@ -218,25 +218,25 @@ func (sr *SysfsReader) readBARViaRead(f *os.File, barIndex int, size int) ([]byt
 	return data[:n], nil
 }
 
-func (sr *SysfsReader) readSysfsHex(devPath, name string) (uint64, error) {
+func (sr *SysfsReader) readSysfsHex(devPath, name string, bitSize int) (uint64, error) {
 	data, err := os.ReadFile(filepath.Join(devPath, name))
 	if err != nil {
 		return 0, err
 	}
-	return strconv.ParseUint(strings.TrimSpace(string(data)), 0, 64)
+	return strconv.ParseUint(strings.TrimSpace(string(data)), 0, bitSize)
 }
 
 func (sr *SysfsReader) readHex16(devPath, name string) (uint16, error) {
-	v, err := sr.readSysfsHex(devPath, name)
+	v, err := sr.readSysfsHex(devPath, name, 16)
 	return uint16(v), err
 }
 
 func (sr *SysfsReader) readHex32(devPath, name string) (uint32, error) {
-	v, err := sr.readSysfsHex(devPath, name)
+	v, err := sr.readSysfsHex(devPath, name, 32)
 	return uint32(v), err
 }
 
 func (sr *SysfsReader) readHex8(devPath, name string) (uint8, error) {
-	v, err := sr.readSysfsHex(devPath, name)
+	v, err := sr.readSysfsHex(devPath, name, 8)
 	return uint8(v), err
 }

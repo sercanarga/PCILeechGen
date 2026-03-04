@@ -8,6 +8,8 @@ import (
 
 // CopyFile copies a single file from src to dst.
 func CopyFile(src, dst string) error {
+	src = filepath.Clean(src)
+	dst = filepath.Clean(dst)
 	if src == dst {
 		return nil
 	}
