@@ -23,47 +23,28 @@ type SVGeneratorConfig struct {
 	IsXHCI        bool           // enable xHCI state machine
 }
 
-// GenerateBarImplDeviceSV renders pcileech_bar_impl_device.sv.
-// Falls back to a BRAM wrapper when cfg.BARModel is nil.
+func renderTemplate(name, tmplStr string, data any) (string, error) {
+	tmpl, err := template.New(name).Funcs(svFuncMap()).Parse(tmplStr)
+	if err != nil {
+		return "", fmt.Errorf("parsing %s template: %w", name, err)
+	}
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, data); err != nil {
+		return "", fmt.Errorf("executing %s template: %w", name, err)
+	}
+	return buf.String(), nil
+}
+
 func GenerateBarImplDeviceSV(cfg *SVGeneratorConfig) (string, error) {
-	tmpl, err := template.New("bar_impl_device").Funcs(svFuncMap()).Parse(barImplDeviceTmpl)
-	if err != nil {
-		return "", fmt.Errorf("parsing bar_impl_device template: %w", err)
-	}
-
-	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, cfg); err != nil {
-		return "", fmt.Errorf("executing bar_impl_device template: %w", err)
-	}
-	return buf.String(), nil
+	return renderTemplate("bar_impl_device", barImplDeviceTmpl, cfg)
 }
 
-// GenerateBarControllerSV renders pcileech_tlps128_bar_controller.sv.
 func GenerateBarControllerSV(cfg *SVGeneratorConfig) (string, error) {
-	tmpl, err := template.New("bar_controller").Funcs(svFuncMap()).Parse(barControllerTmpl)
-	if err != nil {
-		return "", fmt.Errorf("parsing bar_controller template: %w", err)
-	}
-
-	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, cfg); err != nil {
-		return "", fmt.Errorf("executing bar_controller template: %w", err)
-	}
-	return buf.String(), nil
+	return renderTemplate("bar_controller", barControllerTmpl, cfg)
 }
 
-// GenerateDeviceConfigSV renders device_config.sv (identity + feature flags).
 func GenerateDeviceConfigSV(cfg *SVGeneratorConfig) (string, error) {
-	tmpl, err := template.New("device_config").Funcs(svFuncMap()).Parse(deviceConfigTmpl)
-	if err != nil {
-		return "", fmt.Errorf("parsing device_config template: %w", err)
-	}
-
-	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, cfg); err != nil {
-		return "", fmt.Errorf("executing device_config template: %w", err)
-	}
-	return buf.String(), nil
+	return renderTemplate("device_config", deviceConfigTmpl, cfg)
 }
 
 // svFuncMap provides hex formatting and arithmetic helpers for templates.

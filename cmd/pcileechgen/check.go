@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/sercanarga/pcileechgen/internal/board"
 	"github.com/sercanarga/pcileechgen/internal/color"
@@ -30,7 +31,8 @@ Example:
 
 		fmt.Printf("Checking device %s...\n\n", color.Bold(bdf.String()))
 
-		// Check 1: Read device info
+		issues := 0
+
 		sr := donor.NewSysfsReader()
 		dev, err := sr.ReadDeviceInfo(bdf)
 		if err != nil {
@@ -38,29 +40,28 @@ Example:
 		}
 		fmt.Println(color.Okf("Device found: %04x:%04x %s", dev.VendorID, dev.DeviceID, dev.ClassDescription()))
 
-		// Check 2: Read config space
 		cs, err := sr.ReadConfigSpace(bdf)
 		if err != nil {
 			fmt.Println(color.Failf("Cannot read config space: %v", err))
+			issues++
 		} else {
 			fmt.Println(color.Okf("Config space readable: %d bytes", cs.Size))
 		}
 
-		// Check 3: IOMMU
 		if err := vfio.CheckIOMMU(); err != nil {
 			fmt.Println(color.Failf("IOMMU: %v", err))
+			issues++
 		} else {
 			fmt.Println(color.OK("IOMMU is enabled"))
 		}
 
-		// Check 4: VFIO modules
 		if err := vfio.CheckVFIOModules(); err != nil {
 			fmt.Println(color.Failf("VFIO modules: %v", err))
+			issues++
 		} else {
 			fmt.Println(color.OK("VFIO modules loaded"))
 		}
 
-		// Check 5: IOMMU group
 		group, err := vfio.GetIOMMUGroup(bdf.String())
 		if err != nil {
 			fmt.Println(color.Warnf("IOMMU group: %v", err))
@@ -68,7 +69,34 @@ Example:
 			fmt.Println(color.Okf("IOMMU group: %d", group))
 		}
 
-		// Check 6: Current driver
+		groupDevs, err := vfio.ListIOMMUGroupDevices(bdf.String())
+		if err == nil && len(groupDevs) > 1 {
+			others := []string{}
+			for _, d := range groupDevs {
+				if d != bdf.String() {
+					others = append(others, d)
+				}
+			}
+			if len(others) > 0 {
+				fmt.Println(color.Warnf("IOMMU group shared with %d device(s): %s",
+					len(others), strings.Join(others, ", ")))
+				fmt.Println(color.Dim("  All devices in the group must be unbound or on vfio-pci"))
+			}
+		} else if err == nil {
+			fmt.Println(color.OK("Device is alone in its IOMMU group"))
+		}
+
+		ps, err := vfio.CheckPowerState(bdf.String())
+		if err == nil {
+			if ps == "D0" {
+				fmt.Println(color.Okf("Power state: %s (active)", ps))
+			} else {
+				fmt.Println(color.Failf("Power state: %s — device should be in D0 for reliable reads", ps))
+				fmt.Println(color.Dim(fmt.Sprintf("  Fix: echo 0 | sudo tee /sys/bus/pci/devices/%s/d3cold_allowed", bdf.String())))
+				issues++
+			}
+		}
+
 		if dev.Driver != "" {
 			if dev.Driver == "vfio-pci" {
 				fmt.Println(color.OK("Already bound to vfio-pci"))
@@ -79,7 +107,6 @@ Example:
 			fmt.Println(color.OK("No driver bound"))
 		}
 
-		// Check 7: Capabilities
 		if cs != nil {
 			caps := pci.ParseCapabilities(cs)
 			fmt.Printf("\nCapabilities (%d):\n", len(caps))
@@ -98,7 +125,6 @@ Example:
 			}
 		}
 
-		// Check 8: BAR info
 		bars, err := sr.ReadResourceFile(bdf)
 		if err == nil {
 			fmt.Printf("\nBARs:\n")
@@ -107,9 +133,15 @@ Example:
 					fmt.Printf("  %s\n", bar.String())
 				}
 			}
+
+			barStatuses := vfio.CheckBARAccessibility(bdf.String())
+			for _, bs := range barStatuses {
+				if !bs.Accessible {
+					fmt.Println(color.Warnf("  BAR%d: not accessible (%s)", bs.Index, bs.Error))
+				}
+			}
 		}
 
-		// Check 9: Board compatibility analysis
 		if cs != nil {
 			fmt.Printf("\n%s\n", color.Header("Board Compatibility"))
 			ids := firmware.ExtractDeviceIDs(cs, pci.ParseExtCapabilities(cs))
@@ -143,7 +175,12 @@ Example:
 			fmt.Printf("\nTotal: %d boards\n", compatible)
 		}
 
-		fmt.Printf("\n%s\n", color.Header("Check complete"))
+		fmt.Printf("\n%s\n", color.Header("Summary"))
+		if issues == 0 {
+			fmt.Println(color.OK("Device is ready for firmware generation"))
+		} else {
+			fmt.Println(color.Failf("%d issue(s) found — see above for details", issues))
+		}
 		return nil
 	},
 }

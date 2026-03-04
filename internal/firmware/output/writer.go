@@ -110,6 +110,19 @@ func (ow *OutputWriter) WriteAll(ctx *donor.DeviceContext, b *board.Board) error
 		return fmt.Errorf("SV module generation failed: %w", err)
 	}
 
+	// build manifest with checksums
+	manifest, err := GenerateManifest(ow.OutputDir, ctx.ToolVersion, "", ids.VendorID, ids.DeviceID)
+	if err != nil {
+		fmt.Printf("[firmware] Warning: manifest generation failed: %v\n", err)
+	} else {
+		manifestPath := ow.OutputDir + "/build_manifest.json"
+		if err := manifest.WriteJSON(manifestPath); err != nil {
+			fmt.Printf("[firmware] Warning: manifest write failed: %v\n", err)
+		} else {
+			fmt.Printf("[firmware] Build manifest: %d files recorded\n", len(manifest.Files))
+		}
+	}
+
 	return nil
 }
 

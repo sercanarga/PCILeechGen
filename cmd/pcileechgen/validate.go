@@ -11,6 +11,7 @@ import (
 	"github.com/sercanarga/pcileechgen/internal/donor"
 	"github.com/sercanarga/pcileechgen/internal/firmware"
 	"github.com/sercanarga/pcileechgen/internal/firmware/codegen"
+	"github.com/sercanarga/pcileechgen/internal/firmware/output"
 	"github.com/sercanarga/pcileechgen/internal/firmware/scrub"
 	"github.com/sercanarga/pcileechgen/internal/pci"
 	"github.com/spf13/cobra"
@@ -154,6 +155,59 @@ Example:
 				passed++
 			} else {
 				fmt.Println(color.Warnf("Only legacy config space (%d bytes) -- extended caps not populated", ctx.ConfigSpace.Size))
+			}
+		}
+
+		// Validate all output files exist
+		fmt.Printf("\n%s\n", color.Header("Output File Check"))
+		vr := output.ValidateOutputDir(validateOutputDir)
+		for _, p := range vr.Passed {
+			fmt.Println(color.OK(p))
+			passed++
+		}
+		for _, f := range vr.Failed {
+			fmt.Println(color.Fail(f))
+			failed++
+		}
+
+		// Validate device_config.sv has correct IDs
+		devCfgPath := filepath.Join(validateOutputDir, "device_config.sv")
+		if svData, err := os.ReadFile(devCfgPath); err == nil {
+			ids := firmware.ExtractDeviceIDs(ctx.ConfigSpace, ctx.ExtCapabilities)
+			if issues := output.ValidateSVIDs(string(svData), ids); len(issues) > 0 {
+				for _, issue := range issues {
+					fmt.Println(color.Fail(issue))
+					failed++
+				}
+			} else {
+				fmt.Println(color.OK("device_config.sv contains correct VendorID and DeviceID"))
+				passed++
+			}
+		}
+
+		// Validate config_space_init.hex format
+		hexPath := filepath.Join(validateOutputDir, "config_space_init.hex")
+		if hexData, err := os.ReadFile(hexPath); err == nil {
+			if err := output.ValidateHexFile(string(hexData), 1024); err != nil {
+				fmt.Println(color.Failf("config_space_init.hex: %v", err))
+				failed++
+			} else {
+				fmt.Println(color.OK("config_space_init.hex: format valid (1024 words)"))
+				passed++
+			}
+		}
+
+		// Validate COE file format
+		for _, coeName := range []string{"pcileech_cfgspace.coe", "pcileech_cfgspace_writemask.coe", "pcileech_bar_zero4k.coe"} {
+			cPath := filepath.Join(validateOutputDir, coeName)
+			if coeData, err := os.ReadFile(cPath); err == nil {
+				if err := output.ValidateCOEFile(string(coeData)); err != nil {
+					fmt.Println(color.Failf("%s: %v", coeName, err))
+					failed++
+				} else {
+					fmt.Println(color.Okf("%s: format valid", coeName))
+					passed++
+				}
 			}
 		}
 

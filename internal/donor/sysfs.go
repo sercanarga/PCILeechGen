@@ -3,6 +3,7 @@ package donor
 import (
 	"bufio"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -201,7 +202,9 @@ func (sr *SysfsReader) readBARViaMmap(f *os.File, size int) ([]byte, error) {
 	data := make([]byte, size)
 	copy(data, mapped)
 
-	syscall.Munmap(mapped)
+	if err := syscall.Munmap(mapped); err != nil {
+		log.Printf("[donor] warning: munmap failed: %v", err)
+	}
 	return data, nil
 }
 
@@ -215,41 +218,25 @@ func (sr *SysfsReader) readBARViaRead(f *os.File, barIndex int, size int) ([]byt
 	return data[:n], nil
 }
 
-// readHex16 reads a hex value from a sysfs file and returns it as uint16.
+func (sr *SysfsReader) readSysfsHex(devPath, name string) (uint64, error) {
+	data, err := os.ReadFile(filepath.Join(devPath, name))
+	if err != nil {
+		return 0, err
+	}
+	return strconv.ParseUint(strings.TrimSpace(string(data)), 0, 64)
+}
+
 func (sr *SysfsReader) readHex16(devPath, name string) (uint16, error) {
-	data, err := os.ReadFile(filepath.Join(devPath, name))
-	if err != nil {
-		return 0, err
-	}
-	val, err := strconv.ParseUint(strings.TrimSpace(string(data)), 0, 16)
-	if err != nil {
-		return 0, err
-	}
-	return uint16(val), nil
+	v, err := sr.readSysfsHex(devPath, name)
+	return uint16(v), err
 }
 
-// readHex32 reads a hex value from a sysfs file and returns it as uint32.
 func (sr *SysfsReader) readHex32(devPath, name string) (uint32, error) {
-	data, err := os.ReadFile(filepath.Join(devPath, name))
-	if err != nil {
-		return 0, err
-	}
-	val, err := strconv.ParseUint(strings.TrimSpace(string(data)), 0, 32)
-	if err != nil {
-		return 0, err
-	}
-	return uint32(val), nil
+	v, err := sr.readSysfsHex(devPath, name)
+	return uint32(v), err
 }
 
-// readHex8 reads a hex value from a sysfs file and returns it as uint8.
 func (sr *SysfsReader) readHex8(devPath, name string) (uint8, error) {
-	data, err := os.ReadFile(filepath.Join(devPath, name))
-	if err != nil {
-		return 0, err
-	}
-	val, err := strconv.ParseUint(strings.TrimSpace(string(data)), 0, 8)
-	if err != nil {
-		return 0, err
-	}
-	return uint8(val), nil
+	v, err := sr.readSysfsHex(devPath, name)
+	return uint8(v), err
 }
