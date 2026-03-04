@@ -39,7 +39,7 @@ func (ow *OutputWriter) WriteAll(ctx *donor.DeviceContext, b *board.Board) error
 		return fmt.Errorf("failed to write device context: %w", err)
 	}
 
-	// Scrub config space before COE generation (clean dangerous/error registers)
+	// scrub before COE gen
 	scrubbedCS := ScrubConfigSpace(ctx.ConfigSpace, b)
 
 	// COE files (using scrubbed config space for shadow BRAM)
