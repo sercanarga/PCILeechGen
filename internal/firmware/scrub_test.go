@@ -787,3 +787,64 @@ func TestDisableMSIXIfOutOfBRAM_PBAOutside(t *testing.T) {
 		t.Errorf("MSI-X should be disabled when PBA is outside BRAM, got msgCtl=0x%04x", msgCtl)
 	}
 }
+
+func TestFakeRenesasFirmwareReady(t *testing.T) {
+	// Renesas xHCI device should get firmware status set to SUCCESS
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+
+	cs.WriteU16(0x00, 0x1912) // Renesas Vendor ID
+	cs.WriteU16(0x02, 0x0014) // uPD720201 Device ID
+	cs.WriteU8(0x09, 0x30)    // ProgIF = xHCI
+	cs.WriteU8(0x0A, 0x03)    // SubClass = USB
+	cs.WriteU8(0x0B, 0x0C)    // BaseClass = Serial Bus
+	cs.WriteU16(0x06, 0x0010) // Status: caps
+
+	// Set ROM_EXISTS bit in ROM Status (word at 0xF6)
+	// DWORD at 0xF4 = FW_STATUS(byte) | FW_STATUS_MSB(byte) | ROM_STATUS(word)
+	cs.WriteU8(0xF4, 0x00)    // FW Status: no result (firmware not loaded)
+	cs.WriteU16(0xF6, 0x8000) // ROM Status: ROM_EXISTS=1, Result=0 (no result)
+
+	scrubbed := ScrubConfigSpace(cs, nil)
+
+	// FW Status should be SUCCESS (0x10) | LOCK (0x80) = 0x90
+	fwStatus := scrubbed.ReadU8(0xF4)
+	if fwStatus&0x10 == 0 {
+		t.Errorf("Renesas FW Status SUCCESS bit should be set, got 0x%02x", fwStatus)
+	}
+	if fwStatus&0x80 == 0 {
+		t.Errorf("Renesas FW Status LOCK bit should be set, got 0x%02x", fwStatus)
+	}
+
+	// ROM Status should have SUCCESS (bit 4) set, ROM_EXISTS preserved
+	romStatus := scrubbed.ReadU16(0xF6)
+	if romStatus&0x0010 == 0 {
+		t.Errorf("Renesas ROM Status SUCCESS bit should be set, got 0x%04x", romStatus)
+	}
+	if romStatus&0x8000 == 0 {
+		t.Errorf("Renesas ROM Status ROM_EXISTS should be preserved, got 0x%04x", romStatus)
+	}
+}
+
+func TestFakeRenesasFirmwareReady_NonRenesas(t *testing.T) {
+	// Non-Renesas xHCI device should NOT get firmware status modified
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+
+	cs.WriteU16(0x00, 0x8086) // Intel Vendor ID
+	cs.WriteU16(0x02, 0xA36D) // Some Intel xHCI
+	cs.WriteU8(0x09, 0x30)    // ProgIF = xHCI
+	cs.WriteU8(0x0A, 0x03)    // SubClass = USB
+	cs.WriteU8(0x0B, 0x0C)    // BaseClass = Serial Bus
+	cs.WriteU16(0x06, 0x0010)
+
+	cs.WriteU8(0xF4, 0x00) // Some value at the same offset
+
+	scrubbed := ScrubConfigSpace(cs, nil)
+
+	// Offset 0xF4 should remain 0x00 (not modified for Intel)
+	fwStatus := scrubbed.ReadU8(0xF4)
+	if fwStatus != 0x00 {
+		t.Errorf("Non-Renesas device offset 0xF4 should not be changed, got 0x%02x", fwStatus)
+	}
+}
