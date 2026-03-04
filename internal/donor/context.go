@@ -1,5 +1,4 @@
-// Package donor handles reading PCI device information from a donor device
-// using Linux sysfs and VFIO.
+// Package donor collects PCI device info for firmware generation.
 package donor
 
 import (
@@ -12,7 +11,7 @@ import (
 	"github.com/sercanarga/pcileechgen/internal/pci"
 )
 
-// DeviceContext holds all collected information about a donor PCI device.
+// DeviceContext is the full snapshot of a donor device.
 type DeviceContext struct {
 	CollectedAt time.Time `json:"collected_at"`
 	ToolVersion string    `json:"tool_version"`
@@ -22,25 +21,26 @@ type DeviceContext struct {
 	ConfigSpace     *pci.ConfigSpace    `json:"config_space"`
 	BARs            []pci.BAR           `json:"bars"`
 	BARContents     map[int][]byte      `json:"-"` // BAR memory contents, keyed by BAR index
+	BARProfiles     map[int]*BARProfile `json:"-"` // probing results, keyed by BAR index
 	Capabilities    []pci.Capability    `json:"capabilities"`
 	ExtCapabilities []pci.ExtCapability `json:"ext_capabilities,omitempty"`
 }
 
-// configSpaceJSON is used for JSON serialization of config space as hex words.
+// JSON wire format — config space as hex words, BARs as base64.
 type deviceContextJSON struct {
-	CollectedAt     time.Time           `json:"collected_at"`
-	ToolVersion     string              `json:"tool_version"`
-	Hostname        string              `json:"hostname"`
-	Device          pci.PCIDevice       `json:"device"`
-	ConfigSpaceHex  []string            `json:"config_space_hex"`
-	ConfigSpaceSize int                 `json:"config_space_size"`
-	BARs            []pci.BAR           `json:"bars"`
-	BARContents     map[string]string   `json:"bar_contents,omitempty"` // key: BAR index, value: base64
-	Capabilities    []pci.Capability    `json:"capabilities"`
-	ExtCapabilities []pci.ExtCapability `json:"ext_capabilities,omitempty"`
+	CollectedAt     time.Time              `json:"collected_at"`
+	ToolVersion     string                 `json:"tool_version"`
+	Hostname        string                 `json:"hostname"`
+	Device          pci.PCIDevice          `json:"device"`
+	ConfigSpaceHex  []string               `json:"config_space_hex"`
+	ConfigSpaceSize int                    `json:"config_space_size"`
+	BARs            []pci.BAR              `json:"bars"`
+	BARContents     map[string]string      `json:"bar_contents,omitempty"` // key: BAR index, value: base64
+	BARProfiles     map[string]*BARProfile `json:"bar_profiles,omitempty"`
+	Capabilities    []pci.Capability       `json:"capabilities"`
+	ExtCapabilities []pci.ExtCapability    `json:"ext_capabilities,omitempty"`
 }
 
-// MarshalJSON implements custom JSON marshaling for DeviceContext.
 func (dc *DeviceContext) MarshalJSON() ([]byte, error) {
 	j := deviceContextJSON{
 		CollectedAt:     dc.CollectedAt,
@@ -64,6 +64,13 @@ func (dc *DeviceContext) MarshalJSON() ([]byte, error) {
 		j.BARContents = make(map[string]string)
 		for idx, data := range dc.BARContents {
 			j.BARContents[strconv.Itoa(idx)] = base64.StdEncoding.EncodeToString(data)
+		}
+	}
+
+	if len(dc.BARProfiles) > 0 {
+		j.BARProfiles = make(map[string]*BARProfile)
+		for idx, profile := range dc.BARProfiles {
+			j.BARProfiles[strconv.Itoa(idx)] = profile
 		}
 	}
 
@@ -109,13 +116,25 @@ func FromJSON(data []byte) (*DeviceContext, error) {
 		for idxStr, b64 := range j.BARContents {
 			idx, err := strconv.Atoi(idxStr)
 			if err != nil {
-				continue
+				return nil, fmt.Errorf("invalid BAR index %q: %w", idxStr, err)
 			}
 			data, err := base64.StdEncoding.DecodeString(b64)
 			if err != nil {
-				continue
+				return nil, fmt.Errorf("failed to decode BAR%d content: %w", idx, err)
 			}
 			dc.BARContents[idx] = data
+		}
+	}
+
+	// Reconstruct BAR profiles
+	if len(j.BARProfiles) > 0 {
+		dc.BARProfiles = make(map[int]*BARProfile)
+		for idxStr, profile := range j.BARProfiles {
+			idx, err := strconv.Atoi(idxStr)
+			if err != nil {
+				return nil, fmt.Errorf("invalid BAR profile index %q: %w", idxStr, err)
+			}
+			dc.BARProfiles[idx] = profile
 		}
 	}
 

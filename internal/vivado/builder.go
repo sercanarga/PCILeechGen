@@ -3,10 +3,11 @@ package vivado
 import (
 	"fmt"
 	"path/filepath"
+	"time"
 
 	"github.com/sercanarga/pcileechgen/internal/board"
 	"github.com/sercanarga/pcileechgen/internal/donor"
-	"github.com/sercanarga/pcileechgen/internal/firmware"
+	fwout "github.com/sercanarga/pcileechgen/internal/firmware/output"
 	"github.com/sercanarga/pcileechgen/internal/util"
 )
 
@@ -47,13 +48,13 @@ func NewBuilder(b *board.Board, opts BuildOptions) *Builder {
 func (b *Builder) Build(ctx *donor.DeviceContext) error {
 	// Stage 2: Generate firmware artifacts
 	fmt.Println("[build] Stage 2: Generating firmware artifacts...")
-	ow := firmware.NewOutputWriter(b.opts.OutputDir, b.opts.LibDir)
+	ow := fwout.NewOutputWriter(b.opts.OutputDir, b.opts.LibDir, b.opts.Jobs, b.opts.Timeout)
 	if err := ow.WriteAll(ctx, b.board); err != nil {
 		return fmt.Errorf("artifact generation failed: %w", err)
 	}
 
 	fmt.Printf("[build] Artifacts written to: %s\n", b.opts.OutputDir)
-	for _, f := range firmware.ListOutputFiles() {
+	for _, f := range fwout.ListOutputFiles() {
 		fmt.Printf("  - %s\n", f)
 	}
 
@@ -71,15 +72,17 @@ func (b *Builder) Build(ctx *donor.DeviceContext) error {
 	}
 	fmt.Printf("[build] Using Vivado %s at %s\n", vivado.Version, vivado.Path)
 
+	timeout := time.Duration(b.opts.Timeout) * time.Second
+
 	// Run project creation
 	projectTCL := "vivado_generate_project.tcl"
-	if err := vivado.RunTCL(projectTCL, b.opts.OutputDir); err != nil {
+	if err := vivado.RunTCL(projectTCL, b.opts.OutputDir, timeout); err != nil {
 		return fmt.Errorf("project creation failed: %w", err)
 	}
 
 	// Run synthesis and implementation
 	buildTCL := "vivado_build.tcl"
-	if err := vivado.RunTCL(buildTCL, b.opts.OutputDir); err != nil {
+	if err := vivado.RunTCL(buildTCL, b.opts.OutputDir, timeout); err != nil {
 		return fmt.Errorf("build failed: %w", err)
 	}
 

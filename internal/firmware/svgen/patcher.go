@@ -1,4 +1,4 @@
-package firmware
+package svgen
 
 import (
 	"fmt"
@@ -6,23 +6,25 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/sercanarga/pcileechgen/internal/firmware"
 )
 
 // PatchResult tracks what was patched in a file.
 type PatchResult struct {
-	File    string
-	Patches []string
+	File     string
+	Patches  []string
+	Warnings []string
 }
 
-// SVPatcher patches pcileech-fpga SystemVerilog source files with donor device data.
+// SVPatcher injects donor IDs into pcileech-fpga SV sources via regex.
 type SVPatcher struct {
-	ids     DeviceIDs
+	ids     firmware.DeviceIDs
 	srcDir  string // path to board's src/ directory
 	results []PatchResult
 }
 
-// NewSVPatcher creates a patcher for the given device IDs and board source directory.
-func NewSVPatcher(ids DeviceIDs, srcDir string) *SVPatcher {
+func NewSVPatcher(ids firmware.DeviceIDs, srcDir string) *SVPatcher {
 	return &SVPatcher{ids: ids, srcDir: srcDir}
 }
 
@@ -31,8 +33,7 @@ func (p *SVPatcher) Results() []PatchResult {
 	return p.results
 }
 
-// PatchAll applies all patches to the board's source directory.
-// Files are modified in-place within the output working copy.
+// PatchAll patches cfg + fifo SV files in-place.
 func (p *SVPatcher) PatchAll() error {
 	if err := p.patchCfgSV(); err != nil {
 		return fmt.Errorf("patching pcileech_pcie_cfg_a7.sv: %w", err)
@@ -42,7 +43,48 @@ func (p *SVPatcher) PatchAll() error {
 		return fmt.Errorf("patching pcileech_fifo.sv: %w", err)
 	}
 
+	// Validate that critical patches were applied
+	p.validatePatchResults()
+
 	return nil
+}
+
+// validatePatchResults warns if fewer patches landed than expected.
+// Catches silent breakage when upstream SV format changes.
+func (p *SVPatcher) validatePatchResults() {
+	fifoPatched := 0
+	cfgPatched := 0
+	for _, r := range p.results {
+		switch r.File {
+		case "pcileech_fifo.sv":
+			fifoPatched = len(r.Patches)
+		case "pcileech_pcie_cfg_a7.sv":
+			cfgPatched = len(r.Patches)
+		}
+	}
+
+	// pcileech_fifo.sv should have at least VendorID + DeviceID patches
+	const minFifoPatches = 2
+	if fifoPatched < minFifoPatches {
+		w := fmt.Sprintf("pcileech_fifo.sv: only %d/%d minimum patches applied — "+
+			"upstream SV format may have changed", fifoPatched, minFifoPatches)
+		fmt.Printf("[WARNING] %s\n", w)
+		p.results = append(p.results, PatchResult{
+			File:     "pcileech_fifo.sv",
+			Warnings: []string{w},
+		})
+	}
+
+	// cfg SV: if device has DSN, at least 1 patch expected
+	if p.ids.HasDSN && cfgPatched == 0 {
+		w := "pcileech_pcie_cfg_a7.sv: DSN patch expected but not applied — " +
+			"upstream SV format may have changed"
+		fmt.Printf("[WARNING] %s\n", w)
+		p.results = append(p.results, PatchResult{
+			File:     "pcileech_pcie_cfg_a7.sv",
+			Warnings: []string{w},
+		})
+	}
 }
 
 // svRegexPatch defines a single regex-based patch operation.
@@ -105,7 +147,7 @@ func (p *SVPatcher) patchCfgSV() error {
 	var patches []svRegexPatch
 
 	if p.ids.HasDSN {
-		dsnHex := DSNToSVHex(p.ids.DSN)
+		dsnHex := firmware.DSNToSVHex(p.ids.DSN)
 		patches = append(patches, svRegexPatch{
 			pattern:     `(rw\[127:64\]\s*<=\s*64'h)[0-9a-fA-F]+(\s*;\s*//.*cfg_dsn)`,
 			replacement: fmt.Sprintf("${1}%s${2}", dsnHex),
@@ -178,9 +220,14 @@ func FormatPatchSummary(results []PatchResult) string {
 
 	var sb strings.Builder
 	for _, r := range results {
-		sb.WriteString(fmt.Sprintf("  %s:\n", r.File))
-		for _, p := range r.Patches {
-			sb.WriteString(fmt.Sprintf("    -> %s\n", p))
+		if len(r.Patches) > 0 {
+			sb.WriteString(fmt.Sprintf("  %s:\n", r.File))
+			for _, p := range r.Patches {
+				sb.WriteString(fmt.Sprintf("    -> %s\n", p))
+			}
+		}
+		for _, w := range r.Warnings {
+			sb.WriteString(fmt.Sprintf("  ⚠ %s\n", w))
 		}
 	}
 	return sb.String()

@@ -10,6 +10,8 @@ import (
 	"github.com/sercanarga/pcileechgen/internal/color"
 	"github.com/sercanarga/pcileechgen/internal/donor"
 	"github.com/sercanarga/pcileechgen/internal/firmware"
+	"github.com/sercanarga/pcileechgen/internal/firmware/codegen"
+	"github.com/sercanarga/pcileechgen/internal/firmware/scrub"
 	"github.com/sercanarga/pcileechgen/internal/pci"
 	"github.com/spf13/cobra"
 )
@@ -56,6 +58,9 @@ Example:
 		passed := 0
 		failed := 0
 
+		// Scrub once — reuse for all checks
+		scrubbedCS := scrub.ScrubConfigSpace(ctx.ConfigSpace, b)
+
 		// Validate config space COE
 		coePath := filepath.Join(validateOutputDir, "pcileech_cfgspace.coe")
 		if _, err := os.Stat(coePath); err == nil {
@@ -64,8 +69,7 @@ Example:
 				return fmt.Errorf("failed to read COE file: %w", err)
 			}
 
-			scrubbedCS := firmware.ScrubConfigSpace(ctx.ConfigSpace, b)
-			expectedCOE := firmware.GenerateConfigSpaceCOE(scrubbedCS)
+			expectedCOE := codegen.GenerateConfigSpaceCOE(scrubbedCS)
 
 			if string(coeData) == expectedCOE {
 				fmt.Println(color.OK("pcileech_cfgspace.coe matches donor config space (scrubbed)"))
@@ -88,8 +92,7 @@ Example:
 				return fmt.Errorf("failed to read writemask COE: %w", err)
 			}
 
-			scrubbedCS := firmware.ScrubConfigSpace(ctx.ConfigSpace, b)
-			expectedWM := firmware.GenerateWritemaskCOE(scrubbedCS)
+			expectedWM := codegen.GenerateWritemaskCOE(scrubbedCS)
 
 			if string(wmData) == expectedWM {
 				fmt.Println(color.OK("pcileech_cfgspace_writemask.coe matches expected writemask"))
@@ -112,7 +115,6 @@ Example:
 				coeStr := string(coeData)
 
 				// Extract first word (VendorID:DeviceID)
-				scrubbedCS := firmware.ScrubConfigSpace(ctx.ConfigSpace, b)
 				expectedWord0 := fmt.Sprintf("%08x", scrubbedCS.ReadU32(0))
 				if strings.Contains(coeStr, expectedWord0) {
 					fmt.Println(color.Okf("VendorID:DeviceID = %04X:%04X present in COE",

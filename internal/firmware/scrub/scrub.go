@@ -1,9 +1,12 @@
-package firmware
+// Package scrub sanitizes donor config space for safe FPGA replay.
+package scrub
 
 import (
 	"fmt"
 
 	"github.com/sercanarga/pcileechgen/internal/board"
+	"github.com/sercanarga/pcileechgen/internal/firmware"
+	"github.com/sercanarga/pcileechgen/internal/firmware/overlay"
 	"github.com/sercanarga/pcileechgen/internal/pci"
 )
 
@@ -22,6 +25,11 @@ var unsafeExtCaps = map[uint16]string{
 	pci.ExtCapIDMulticast:     "Multicast",
 }
 
+// BRAMSize is the FPGA BRAM size in bytes.
+const BRAMSize = 4096
+
+const bar0SizeMask = 0xFFFFF000 // 4 KB aligned
+
 func IsUnsafeExtCap(id uint16) bool {
 	_, ok := unsafeExtCaps[id]
 	return ok
@@ -32,57 +40,6 @@ func UnsafeExtCapName(id uint16) string {
 		return name
 	}
 	return ""
-}
-
-// vendorQuirk ties a vendor+class combo to a fixup.
-// ClassCode 0 = match any class.
-type vendorQuirk struct {
-	VendorID  uint16
-	ClassCode uint32
-	Name      string
-	Apply     func(cs *pci.ConfigSpace)
-}
-
-var vendorQuirks = []vendorQuirk{
-	{
-		VendorID:  0x1912,
-		ClassCode: 0x0C0330,
-		Name:      "Renesas xHCI FW status",
-		Apply:     fixRenesasFirmwareStatus,
-	},
-	// add new vendors here
-}
-
-func applyVendorQuirks(cs *pci.ConfigSpace) {
-	vid := cs.VendorID()
-	cc := cs.ClassCode()
-	for _, q := range vendorQuirks {
-		if q.VendorID != vid {
-			continue
-		}
-		if q.ClassCode != 0 && q.ClassCode != cc {
-			continue
-		}
-		q.Apply(cs)
-	}
-}
-
-// Renesas uPD720201/202: mark FW as loaded.
-// Without this the driver starts a FW download handshake → Code 10.
-func fixRenesasFirmwareStatus(cs *pci.ConfigSpace) {
-	const (
-		fwStatus      = 0xF4
-		romStatus     = 0xF6
-		fwSuccess     = 0x10 // bit 4
-		fwLock        = 0x80 // bit 7
-		romResultMask = 0x0070
-	)
-
-	cs.WriteU8(fwStatus, fwSuccess|fwLock)
-
-	rs := cs.ReadU16(romStatus)
-	rs = (rs &^ uint16(romResultMask)) | uint16(fwSuccess)
-	cs.WriteU16(romStatus, rs)
 }
 
 // min sizes (bytes) for standard PCI caps
@@ -103,7 +60,7 @@ func capSize(id uint8) int {
 }
 
 // zeroVendorRegisters clears 0x40-0xFF bytes not covered by any PCI cap.
-func zeroVendorRegisters(cs *pci.ConfigSpace) {
+func zeroVendorRegisters(cs *pci.ConfigSpace, om *overlay.Map) {
 	covered := make([]bool, pci.ConfigSpaceLegacySize)
 	for i := 0; i < 0x40; i++ {
 		covered[i] = true
@@ -119,47 +76,45 @@ func zeroVendorRegisters(cs *pci.ConfigSpace) {
 
 	for i := 0x40; i < pci.ConfigSpaceLegacySize; i++ {
 		if !covered[i] {
-			cs.WriteU8(i, 0x00)
+			om.WriteU8(i, 0x00, "clear uncovered vendor register")
 		}
 	}
 }
 
-const fpgaBRAMSize = 4096
-const fpgaBAR0SizeMask = 0xFFFFF000    // 4 KB aligned
-const fpgaMaxLinkSpeed = LinkSpeedGen2 // 7-series can't go faster
-
-// ScrubConfigSpace cleans donor config space for COE generation.
+// ScrubConfigSpace is a shorthand that throws away the overlay diff.
 func ScrubConfigSpace(cs *pci.ConfigSpace, b *board.Board) *pci.ConfigSpace {
+	scrubbed, _ := ScrubConfigSpaceWithOverlay(cs, b)
+	return scrubbed
+}
+
+// ScrubConfigSpaceWithOverlay does the real work and logs every byte change.
+func ScrubConfigSpaceWithOverlay(cs *pci.ConfigSpace, b *board.Board) (*pci.ConfigSpace, *overlay.Map) {
 	scrubbed := cs.Clone()
+	om := overlay.NewMap(scrubbed)
 
-	scrubbed.WriteU8(0x0F, 0x00) // BIST
-	scrubbed.WriteU8(0x3C, 0x00) // Interrupt Line
-	scrubbed.WriteU8(0x0D, 0x00) // Latency Timer
-	scrubbed.WriteU8(0x0C, 0x00) // Cache Line Size
+	om.WriteU8(0x0F, 0x00, "clear BIST register")
+	om.WriteU8(0x3C, 0x00, "clear Interrupt Line")
+	om.WriteU8(0x0D, 0x00, "clear Latency Timer")
+	om.WriteU8(0x0C, 0x00, "clear Cache Line Size")
 
-	cmd := scrubbed.Command() & 0x0547
-	scrubbed.WriteU16(0x04, cmd)
-
-	status := scrubbed.Status() & 0x06F0
-	scrubbed.WriteU16(0x06, status)
+	om.WriteU16(0x04, scrubbed.Command()&0x0547, "sanitize Command register")
+	om.WriteU16(0x06, scrubbed.Status()&0x06F0, "sanitize Status register")
 
 	caps := pci.ParseCapabilities(scrubbed)
 	for _, cap := range caps {
 		if cap.ID == pci.CapIDPCIExpress && cap.Offset+10 < pci.ConfigSpaceLegacySize {
-			scrubbed.WriteU16(cap.Offset+10, 0x0000) // device status
+			om.WriteU16(cap.Offset+10, 0x0000, "clear PCIe Device Status")
 			if cap.Offset+18 < pci.ConfigSpaceLegacySize {
-				lstatus := scrubbed.ReadU16(cap.Offset + 18)
-				lstatus &= 0x3FFF
-				scrubbed.WriteU16(cap.Offset+18, lstatus)
+				lstatus := scrubbed.ReadU16(cap.Offset+18) & 0x3FFF
+				om.WriteU16(cap.Offset+18, lstatus, "clear PCIe Link Status RW1C bits")
 			}
 		}
-
 		if cap.ID == pci.CapIDPowerManagement && cap.Offset+4 < pci.ConfigSpaceLegacySize {
 			pmcsr := scrubbed.ReadU16(cap.Offset + 4)
-			pmcsr &= 0xFFFC // D0
-			pmcsr &= 0x7FFF // clear PME_Status
-			pmcsr |= 0x0008 // NoSoftReset
-			scrubbed.WriteU16(cap.Offset+4, pmcsr)
+			pmcsr &= 0xFFFC
+			pmcsr &= 0x7FFF
+			pmcsr |= 0x0008
+			om.WriteU16(cap.Offset+4, pmcsr, "PM: force D0, NoSoftReset, clear PME_Status")
 		}
 	}
 
@@ -167,34 +122,33 @@ func ScrubConfigSpace(cs *pci.ConfigSpace, b *board.Board) *pci.ConfigSpace {
 		extCaps := pci.ParseExtCapabilities(scrubbed)
 		for _, cap := range extCaps {
 			if cap.ID == pci.ExtCapIDAER {
-				if cap.Offset+4+4 <= pci.ConfigSpaceSize {
-					scrubbed.WriteU32(cap.Offset+4, 0) // uncorrectable error status
+				if cap.Offset+8 <= pci.ConfigSpaceSize {
+					om.WriteU32(cap.Offset+4, 0, "clear AER uncorrectable error status")
 				}
-				if cap.Offset+16+4 <= pci.ConfigSpaceSize {
-					scrubbed.WriteU32(cap.Offset+16, 0) // correctable error status
+				if cap.Offset+20 <= pci.ConfigSpaceSize {
+					om.WriteU32(cap.Offset+16, 0, "clear AER correctable error status")
 				}
-				if cap.Offset+28+4 <= pci.ConfigSpaceSize {
-					scrubbed.WriteU32(cap.Offset+28, 0) // root error status
+				if cap.Offset+32 <= pci.ConfigSpaceSize {
+					om.WriteU32(cap.Offset+28, 0, "clear AER root error status")
 				}
 			}
 		}
 		FilterExtCapabilities(scrubbed)
 	}
 
-	clampBARsToFPGA(scrubbed)
-	disableMSIXIfOutOfBRAM(scrubbed)
-	clampLinkCapability(scrubbed, b)
-	clampDeviceCapability(scrubbed)
+	clampBARsToFPGA(scrubbed, om)
+	disableMSIXIfOutOfBRAM(scrubbed, om)
+	clampLinkCapability(scrubbed, b, om)
+	clampDeviceCapability(scrubbed, om)
 
-	// wipe vendor regs, then apply known quirks on top
-	zeroVendorRegisters(scrubbed)
-	applyVendorQuirks(scrubbed)
+	zeroVendorRegisters(scrubbed, om)
+	applyVendorQuirks(scrubbed, om)
 
-	return scrubbed
+	return scrubbed, om
 }
 
 // clampBARsToFPGA shrinks all memory BARs to 4 KB.
-func clampBARsToFPGA(cs *pci.ConfigSpace) {
+func clampBARsToFPGA(cs *pci.ConfigSpace, om *overlay.Map) {
 	for i := 0; i < 6; i++ {
 		barOffset := 0x10 + (i * 4)
 		barVal := cs.BAR(i)
@@ -207,18 +161,18 @@ func clampBARsToFPGA(cs *pci.ConfigSpace) {
 		}
 
 		is64bit := (barVal & 0x06) == 0x04
-		newBar := fpgaBAR0SizeMask | (barVal & 0x0F)
-		cs.WriteU32(barOffset, newBar)
+		newBar := bar0SizeMask | (barVal & 0x0F)
+		om.WriteU32(barOffset, newBar, fmt.Sprintf("clamp BAR%d to 4 KB", i))
 
 		if is64bit && i < 5 {
-			cs.WriteU32(barOffset+4, 0x00000000)
+			om.WriteU32(barOffset+4, 0x00000000, fmt.Sprintf("clear BAR%d upper 32 bits", i+1))
 			i++ // skip upper half
 		}
 	}
 }
 
 // disableMSIXIfOutOfBRAM kills MSI-X if table/PBA sits past 4 KB.
-func disableMSIXIfOutOfBRAM(cs *pci.ConfigSpace) {
+func disableMSIXIfOutOfBRAM(cs *pci.ConfigSpace, om *overlay.Map) {
 	caps := pci.ParseCapabilities(cs)
 	for _, cap := range caps {
 		if cap.ID != pci.CapIDMSIX {
@@ -231,24 +185,29 @@ func disableMSIXIfOutOfBRAM(cs *pci.ConfigSpace) {
 		tableOff := int(cs.ReadU32(cap.Offset+4) &^ 0x07)
 		pbaOff := int(cs.ReadU32(cap.Offset+8) &^ 0x07)
 
-		if tableOff >= fpgaBRAMSize || pbaOff >= fpgaBRAMSize {
+		if tableOff >= BRAMSize || pbaOff >= BRAMSize {
 			msgCtl := cs.ReadU16(cap.Offset + 2)
 			msgCtl &= 0x3FFF
-			cs.WriteU16(cap.Offset+2, msgCtl)
+			om.WriteU16(cap.Offset+2, msgCtl, "disable MSI-X (table/PBA outside BRAM)")
 		}
 		break
 	}
 }
 
 // clampLinkCapability caps link speed/width to match the FPGA + board.
-func clampLinkCapability(cs *pci.ConfigSpace, b *board.Board) {
+func clampLinkCapability(cs *pci.ConfigSpace, b *board.Board, om *overlay.Map) {
 	caps := pci.ParseCapabilities(cs)
 	for _, cap := range caps {
 		if cap.ID != pci.CapIDPCIExpress {
 			continue
 		}
 
-		maxSpeed := uint8(fpgaMaxLinkSpeed)
+		var maxSpeed uint8
+		if b != nil {
+			maxSpeed = b.MaxLinkSpeedOrDefault()
+		} else {
+			maxSpeed = firmware.LinkSpeedGen2
+		}
 		maxWidth := uint8(0)
 		if b != nil && b.PCIeLanes > 0 {
 			maxWidth = uint8(b.PCIeLanes)
@@ -257,38 +216,41 @@ func clampLinkCapability(cs *pci.ConfigSpace, b *board.Board) {
 		// Link Capabilities (cap+0x0C)
 		if cap.Offset+0x0C+4 <= pci.ConfigSpaceLegacySize {
 			linkCap := cs.ReadU32(cap.Offset + 0x0C)
-			if speed := uint8(linkCap & 0x0F); speed > maxSpeed {
-				linkCap = (linkCap & 0xFFFFFFF0) | uint32(maxSpeed)
+			newLinkCap := linkCap
+			if speed := uint8(newLinkCap & 0x0F); speed > maxSpeed {
+				newLinkCap = (newLinkCap & 0xFFFFFFF0) | uint32(maxSpeed)
 			}
 			if maxWidth > 0 {
-				if width := uint8((linkCap >> 4) & 0x3F); width > maxWidth {
-					linkCap = (linkCap & 0xFFFFFC0F) | (uint32(maxWidth) << 4)
+				if width := uint8((newLinkCap >> 4) & 0x3F); width > maxWidth {
+					newLinkCap = (newLinkCap & 0xFFFFFC0F) | (uint32(maxWidth) << 4)
 				}
 			}
-			cs.WriteU32(cap.Offset+0x0C, linkCap)
+			om.WriteU32(cap.Offset+0x0C, newLinkCap, "clamp Link Capabilities")
 		}
 
 		// Link Status (cap+0x12)
 		if cap.Offset+0x12+2 <= pci.ConfigSpaceLegacySize {
 			ls := cs.ReadU16(cap.Offset + 0x12)
-			if speed := uint8(ls & 0x0F); speed > maxSpeed {
-				ls = (ls & 0xFFF0) | uint16(maxSpeed)
+			newLS := ls
+			if speed := uint8(newLS & 0x0F); speed > maxSpeed {
+				newLS = (newLS & 0xFFF0) | uint16(maxSpeed)
 			}
 			if maxWidth > 0 {
-				if width := uint8((ls >> 4) & 0x3F); width > maxWidth {
-					ls = (ls & 0xFC0F) | (uint16(maxWidth) << 4)
+				if width := uint8((newLS >> 4) & 0x3F); width > maxWidth {
+					newLS = (newLS & 0xFC0F) | (uint16(maxWidth) << 4)
 				}
 			}
-			cs.WriteU16(cap.Offset+0x12, ls)
+			om.WriteU16(cap.Offset+0x12, newLS, "clamp Link Status")
 		}
 
 		// Link Control 2 (cap+0x30) — target speed
 		if cap.Offset+0x30+2 <= pci.ConfigSpaceLegacySize {
 			lc2 := cs.ReadU16(cap.Offset + 0x30)
-			if speed := uint8(lc2 & 0x0F); speed > maxSpeed {
-				lc2 = (lc2 & 0xFFF0) | uint16(maxSpeed)
+			newLC2 := lc2
+			if speed := uint8(newLC2 & 0x0F); speed > maxSpeed {
+				newLC2 = (newLC2 & 0xFFF0) | uint16(maxSpeed)
 			}
-			cs.WriteU16(cap.Offset+0x30, lc2)
+			om.WriteU16(cap.Offset+0x30, newLC2, "clamp Link Control 2 target speed")
 		}
 
 		// Link Capabilities 2 (cap+0x2C) — supported speed vector
@@ -299,7 +261,7 @@ func clampLinkCapability(cs *pci.ConfigSpace, b *board.Board) {
 				for s := uint8(1); s <= maxSpeed; s++ {
 					vec |= 1 << s
 				}
-				cs.WriteU32(cap.Offset+0x2C, (lc2&0xFFFFFF01)|vec)
+				om.WriteU32(cap.Offset+0x2C, (lc2&0xFFFFFF01)|vec, "clamp Link Capabilities 2 speed vector")
 			}
 		}
 
@@ -308,7 +270,7 @@ func clampLinkCapability(cs *pci.ConfigSpace, b *board.Board) {
 }
 
 // clampDeviceCapability limits MPS, phantoms, ext tags to FPGA limits.
-func clampDeviceCapability(cs *pci.ConfigSpace) {
+func clampDeviceCapability(cs *pci.ConfigSpace, om *overlay.Map) {
 	caps := pci.ParseCapabilities(cs)
 	for _, cap := range caps {
 		if cap.ID != pci.CapIDPCIExpress {
@@ -318,30 +280,33 @@ func clampDeviceCapability(cs *pci.ConfigSpace) {
 		// DevCap (cap+0x04)
 		if cap.Offset+0x04+4 <= pci.ConfigSpaceLegacySize {
 			devCap := cs.ReadU32(cap.Offset + 0x04)
-			devCap &= ^uint32(0x07) // MPS → 128B
-			devCap &= ^uint32(0x18) // phantom functions off
-			devCap &= ^uint32(0x20) // extended tag off
-			cs.WriteU32(cap.Offset+0x04, devCap)
+			newDevCap := devCap
+			newDevCap &= ^uint32(0x07) // MPS → 128B
+			newDevCap &= ^uint32(0x18) // phantom functions off
+			newDevCap &= ^uint32(0x20) // extended tag off
+			om.WriteU32(cap.Offset+0x04, newDevCap, "clamp Device Capabilities (MPS/phantom/exttag)")
 		}
 
 		// DevCtl (cap+0x08)
 		if cap.Offset+0x08+2 <= pci.ConfigSpaceLegacySize {
 			devCtl := cs.ReadU16(cap.Offset + 0x08)
-			devCtl &= ^uint16(0x00E0) // MPS → 128B
-			devCtl &= ^uint16(0x0100) // ext tag off
-			devCtl &= ^uint16(0x0200) // phantom off
-			if mrrs := (devCtl >> 12) & 0x07; mrrs > 2 {
-				devCtl = (devCtl & 0x8FFF) | (2 << 12)
+			newDevCtl := devCtl
+			newDevCtl &= ^uint16(0x00E0) // MPS → 128B
+			newDevCtl &= ^uint16(0x0100) // ext tag off
+			newDevCtl &= ^uint16(0x0200) // phantom off
+			if mrrs := (newDevCtl >> 12) & 0x07; mrrs > 2 {
+				newDevCtl = (newDevCtl & 0x8FFF) | (2 << 12)
 			}
-			cs.WriteU16(cap.Offset+0x08, devCtl)
+			om.WriteU16(cap.Offset+0x08, newDevCtl, "clamp Device Control (MPS/MRRS/phantom/exttag)")
 		}
 
 		// DevCap2 (cap+0x24)
 		if cap.Offset+0x24+4 <= pci.ConfigSpaceLegacySize {
 			devCap2 := cs.ReadU32(cap.Offset + 0x24)
-			devCap2 &= ^uint32(1 << 16) // 10-bit tag completer off
-			devCap2 &= ^uint32(1 << 17) // 10-bit tag requester off
-			cs.WriteU32(cap.Offset+0x24, devCap2)
+			newDevCap2 := devCap2
+			newDevCap2 &= ^uint32(1 << 16) // 10-bit tag completer off
+			newDevCap2 &= ^uint32(1 << 17) // 10-bit tag requester off
+			om.WriteU32(cap.Offset+0x24, newDevCap2, "clamp Device Capabilities 2 (10-bit tags)")
 		}
 
 		break

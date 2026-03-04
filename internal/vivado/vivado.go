@@ -2,11 +2,14 @@
 package vivado
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 )
 
 // DefaultPaths contains common Vivado installation paths.
@@ -45,12 +48,17 @@ func Find(customPath string) (*Vivado, error) {
 			continue
 		}
 
-		// Find the latest version
-		var latestVersion string
+		// Find the latest version by sorting directory names
+		var versions []string
 		for _, e := range entries {
 			if e.IsDir() {
-				latestVersion = e.Name()
+				versions = append(versions, e.Name())
 			}
+		}
+		sort.Strings(versions)
+		var latestVersion string
+		if len(versions) > 0 {
+			latestVersion = versions[len(versions)-1]
 		}
 
 		if latestVersion != "" {
@@ -86,9 +94,12 @@ func (v *Vivado) BinaryPath() string {
 	return filepath.Join(v.Path, "bin", "vivado")
 }
 
-// RunTCL executes a TCL script in Vivado batch mode.
-func (v *Vivado) RunTCL(tclScript string, workDir string) error {
-	cmd := exec.Command(v.BinaryPath(), "-mode", "batch", "-notrace", "-source", tclScript)
+// RunTCL executes a TCL script in Vivado batch mode with a timeout.
+func (v *Vivado) RunTCL(tclScript string, workDir string, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, v.BinaryPath(), "-mode", "batch", "-notrace", "-source", tclScript)
 	cmd.Dir = workDir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -100,8 +111,12 @@ func (v *Vivado) RunTCL(tclScript string, workDir string) error {
 
 	fmt.Printf("[vivado] Running: %s\n", strings.Join(cmd.Args, " "))
 	fmt.Printf("[vivado] Working directory: %s\n", workDir)
+	fmt.Printf("[vivado] Timeout: %s\n", timeout)
 
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("Vivado timed out after %s", timeout)
+		}
 		return fmt.Errorf("Vivado execution failed: %w", err)
 	}
 
