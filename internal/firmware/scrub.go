@@ -118,6 +118,7 @@ func ScrubConfigSpace(cs *pci.ConfigSpace, b *board.Board) *pci.ConfigSpace {
 	disableMSIXIfOutOfBRAM(scrubbed)
 	clampLinkCapability(scrubbed, b)
 	clampDeviceCapability(scrubbed)
+	fakeRenesasFirmwareReady(scrubbed)
 
 	return scrubbed
 }
@@ -299,6 +300,40 @@ func clampDeviceCapability(cs *pci.ConfigSpace) {
 
 		break
 	}
+}
+
+// Renesas uPD720201/202 firmware download register offsets.
+// Source: Linux kernel drivers/usb/host/xhci-pci-renesas.c
+const (
+	renesasVendorID      = 0x1912
+	renesasFWStatus      = 0xF4   // FW Download Control & Status (byte)
+	renesasROMStatus     = 0xF6   // ROM Control & Status (word)
+	renesasFWSuccess     = 0x10   // Result Code = SUCCESS (bit 4)
+	renesasROMLock       = 0x80   // FW lock bit (bit 7 of FW status)
+	renesasROMResultMask = 0x0070 // Result Code bits [6:4] in ROM Status
+)
+
+// fakeRenesasFirmwareReady sets Renesas firmware status registers to SUCCESS.
+// Renesas uPD720201/202 xHCI chips require firmware to be loaded before the
+// controller can operate. The Windows driver checks config space offset 0xF4
+// (FW Status) and 0xF6 (ROM Status) — if firmware isn't "ready", it attempts
+// a download sequence that the FPGA's static BRAM cannot handle, causing
+// Code 10: "An invalid parameter was passed to a service or function".
+func fakeRenesasFirmwareReady(cs *pci.ConfigSpace) {
+	if cs.VendorID() != renesasVendorID {
+		return
+	}
+	if cs.ClassCode() != 0x0C0330 { // xHCI USB 3.0
+		return
+	}
+
+	// FW Status: Result Code = SUCCESS, set lock bit to prevent re-download
+	cs.WriteU8(renesasFWStatus, renesasFWSuccess|renesasROMLock)
+
+	// ROM Status: preserve ROM_EXISTS and other bits, set Result = SUCCESS
+	romStatus := cs.ReadU16(renesasROMStatus)
+	romStatus = (romStatus &^ uint16(renesasROMResultMask)) | uint16(renesasFWSuccess)
+	cs.WriteU16(renesasROMStatus, romStatus)
 }
 
 // FilterExtCapabilities strips extended capabilities the FPGA can't emulate.
