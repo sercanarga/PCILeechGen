@@ -26,6 +26,13 @@ Generates custom firmware for [PCILeech FPGA](https://github.com/ufrisk/pcileech
 - [x] Write Mask (per-register)
 - [x] Power Management (D-state + NoSoftReset)
 - [x] Capability Filtering (SR-IOV, Resizable BAR, ATS, L1PM, etc.)
+- [x] Capability Pruning (VPD, AGP, HyperTransport, PCI-X)
+- [x] Vendor Quirks (Renesas firmware status, vendor-specific region zeroing)
+- [x] VFIO Diagnostics (power state, BAR accessibility, IOMMU isolation)
+- [x] Fallback Config (class-based defaults for NVMe, xHCI, Ethernet, Audio)
+- [x] Post-Build Validation (output files, SV IDs, HEX/COE format)
+- [x] Vivado Build Report (error categorization, benign warning filter)
+- [x] Build Manifest (JSON with SHA256 checksums)
 
 ## Supported Boards
 
@@ -94,6 +101,8 @@ Checking device 0000:02:00.0...
 [OK] IOMMU is enabled
 [OK] VFIO modules loaded
 [OK] IOMMU group: 9
+[OK] Device is alone in its IOMMU group
+[OK] Power state: D0 (active)
 [OK] Already bound to vfio-pci
 
 Capabilities (3):
@@ -108,7 +117,7 @@ Extended Capabilities (4):
   [0002] VC at offset 0x260
 
 BARs:
-  BAR0: Memory32 at 0xfe800000, size 16 KiB
+  BAR0: Memory32 at 0xfe800000, size 16 KiB [accessible]
 
 --- Board Compatibility ---
 Donor Link: 2.5 GT/s x1
@@ -121,7 +130,8 @@ Compatible boards:
 
 Total: 17 boards
 
---- Check complete ---
+--- Summary ---
+[OK] Device is ready for firmware generation
 ```
 
 ### `build`
@@ -155,6 +165,7 @@ Verify generated artifacts match the donor device context.
 ```bash
 ./bin/pcileechgen validate --json device_context.json --output-dir pcileech_datastore/
 ```
+Checks include: output file existence, vendor/device ID presence in SV, HEX line format, COE structure.
 
 ### `boards`
 List all supported FPGA boards.
@@ -178,6 +189,7 @@ Total: 17 boards
 ```
 pcileech_datastore/
   device_context.json                    # donor device snapshot
+  build_manifest.json                    # file checksums + build metadata
   pcileech_cfgspace.coe                  # 4KB config space (scrubbed)
   pcileech_cfgspace_writemask.coe        # per-register write masks
   pcileech_bar_zero4k.coe               # BAR0 content snapshot
