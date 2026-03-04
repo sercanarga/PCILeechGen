@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/sercanarga/pcileechgen/internal/board"
 	"github.com/sercanarga/pcileechgen/internal/color"
 	"github.com/sercanarga/pcileechgen/internal/donor"
 	"github.com/sercanarga/pcileechgen/internal/firmware"
@@ -15,6 +16,7 @@ import (
 
 var validateJSONPath string
 var validateOutputDir string
+var validateBoard string
 
 var validateCmd = &cobra.Command{
 	Use:   "validate",
@@ -23,8 +25,12 @@ var validateCmd = &cobra.Command{
 original donor device context JSON. Reports any mismatches that could
 cause detection.
 
+Use --board to match exact build conditions (link speed/width clamping).
+Without --board, validation uses no board constraints.
+
 Example:
-  pcileechgen validate --json device_context.json --output-dir pcileech_datastore/`,
+  pcileechgen validate --json device_context.json --output-dir pcileech_datastore/
+  pcileechgen validate --json device_context.json --board PCIeSquirrel`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Load donor context
 		ctx, err := donor.LoadContext(validateJSONPath)
@@ -33,6 +39,19 @@ Example:
 		}
 		fmt.Printf("Loaded donor context: %s\n\n",
 			color.Bold(fmt.Sprintf("%04x:%04x (rev %02x)", ctx.Device.VendorID, ctx.Device.DeviceID, ctx.Device.RevisionID)))
+
+		// Resolve board (optional)
+		var b *board.Board
+		if validateBoard != "" {
+			b, err = board.Find(validateBoard)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("Board: %s (%s x%d)\n\n", b.Name, b.FPGAPart, b.PCIeLanes)
+		} else {
+			fmt.Println(color.Warn("No --board specified: link speed/width clamping not applied in validation"))
+			fmt.Println()
+		}
 
 		passed := 0
 		failed := 0
@@ -45,7 +64,7 @@ Example:
 				return fmt.Errorf("failed to read COE file: %w", err)
 			}
 
-			scrubbedCS := firmware.ScrubConfigSpace(ctx.ConfigSpace, nil)
+			scrubbedCS := firmware.ScrubConfigSpace(ctx.ConfigSpace, b)
 			expectedCOE := firmware.GenerateConfigSpaceCOE(scrubbedCS)
 
 			if string(coeData) == expectedCOE {
@@ -69,7 +88,7 @@ Example:
 				return fmt.Errorf("failed to read writemask COE: %w", err)
 			}
 
-			scrubbedCS := firmware.ScrubConfigSpace(ctx.ConfigSpace, nil)
+			scrubbedCS := firmware.ScrubConfigSpace(ctx.ConfigSpace, b)
 			expectedWM := firmware.GenerateWritemaskCOE(scrubbedCS)
 
 			if string(wmData) == expectedWM {
@@ -93,7 +112,7 @@ Example:
 				coeStr := string(coeData)
 
 				// Extract first word (VendorID:DeviceID)
-				scrubbedCS := firmware.ScrubConfigSpace(ctx.ConfigSpace, nil)
+				scrubbedCS := firmware.ScrubConfigSpace(ctx.ConfigSpace, b)
 				expectedWord0 := fmt.Sprintf("%08x", scrubbedCS.ReadU32(0))
 				if strings.Contains(coeStr, expectedWord0) {
 					fmt.Println(color.Okf("VendorID:DeviceID = %04X:%04X present in COE",
@@ -167,6 +186,7 @@ func reportCOEDiff(got, expected string) {
 func init() {
 	validateCmd.Flags().StringVar(&validateJSONPath, "json", "", "path to device_context.json (required)")
 	validateCmd.Flags().StringVar(&validateOutputDir, "output-dir", ".", "path to firmware output directory")
+	validateCmd.Flags().StringVar(&validateBoard, "board", "", "target FPGA board (for exact build-matching validation)")
 	_ = validateCmd.MarkFlagRequired("json")
 	rootCmd.AddCommand(validateCmd)
 }
