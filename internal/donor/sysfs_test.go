@@ -247,3 +247,103 @@ func TestReadBARContent(t *testing.T) {
 		}
 	})
 }
+
+func TestDeviceContextJSONWithBARContents(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = 256
+	cs.WriteU16(0x00, 0x8086)
+	cs.WriteU16(0x02, 0x1533)
+
+	barContent := make([]byte, 64)
+	barContent[0] = 0xDE
+	barContent[1] = 0xAD
+	barContent[63] = 0xFF
+
+	ctx := &DeviceContext{
+		Device: pci.PCIDevice{
+			BDF:      pci.BDF{Domain: 0, Bus: 3, Device: 0, Function: 0},
+			VendorID: 0x8086,
+			DeviceID: 0x1533,
+		},
+		ConfigSpace: cs,
+		BARs: []pci.BAR{
+			{Index: 0, Type: pci.BARTypeMem32, Address: 0xFE000000, Size: 4096},
+		},
+		BARContents: map[int][]byte{
+			0: barContent,
+		},
+	}
+
+	jsonData, err := ctx.ToJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := FromJSON(jsonData)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(loaded.BARContents) != 1 {
+		t.Fatalf("BARContents roundtrip: got %d entries, want 1", len(loaded.BARContents))
+	}
+	if loaded.BARContents[0][0] != 0xDE || loaded.BARContents[0][1] != 0xAD {
+		t.Errorf("BARContents[0] header mismatch: got %x %x", loaded.BARContents[0][0], loaded.BARContents[0][1])
+	}
+	if loaded.BARContents[0][63] != 0xFF {
+		t.Errorf("BARContents[0][63] = 0x%02x, want 0xFF", loaded.BARContents[0][63])
+	}
+}
+
+func TestSaveAndLoadContext(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = 256
+	cs.WriteU16(0x00, 0x1912)
+	cs.WriteU16(0x02, 0x0014)
+
+	ctx := &DeviceContext{
+		ToolVersion: "test",
+		Device: pci.PCIDevice{
+			BDF:      pci.BDF{Domain: 0, Bus: 1, Device: 0, Function: 0},
+			VendorID: 0x1912,
+			DeviceID: 0x0014,
+		},
+		ConfigSpace: cs,
+	}
+
+	tmpFile := filepath.Join(t.TempDir(), "ctx.json")
+
+	if err := SaveContext(ctx, tmpFile); err != nil {
+		t.Fatalf("SaveContext failed: %v", err)
+	}
+
+	loaded, err := LoadContext(tmpFile)
+	if err != nil {
+		t.Fatalf("LoadContext failed: %v", err)
+	}
+
+	if loaded.Device.VendorID != 0x1912 {
+		t.Errorf("VendorID = 0x%04x, want 0x1912", loaded.Device.VendorID)
+	}
+	if loaded.Device.DeviceID != 0x0014 {
+		t.Errorf("DeviceID = 0x%04x, want 0x0014", loaded.Device.DeviceID)
+	}
+	if loaded.ToolVersion != "test" {
+		t.Errorf("ToolVersion = %q, want 'test'", loaded.ToolVersion)
+	}
+}
+
+func TestLoadContextInvalidFile(t *testing.T) {
+	// Non-existent file
+	_, err := LoadContext("/nonexistent/path/ctx.json")
+	if err == nil {
+		t.Error("LoadContext should fail for missing file")
+	}
+}
+
+func TestFromJSONInvalid(t *testing.T) {
+	_, err := FromJSON([]byte("not json"))
+	if err == nil {
+		t.Error("FromJSON should fail for invalid JSON")
+	}
+}
