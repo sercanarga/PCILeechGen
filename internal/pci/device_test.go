@@ -115,3 +115,32 @@ func TestPCIDeviceSummary(t *testing.T) {
 		t.Error("Summary() returned empty string")
 	}
 }
+
+func TestPCIDeviceProgIF(t *testing.T) {
+	dev := &PCIDevice{ClassCode: 0x0C0330}
+	if dev.ProgIF() != 0x30 {
+		t.Errorf("ProgIF() = 0x%02x, want 0x30", dev.ProgIF())
+	}
+	if dev.SubClass() != 0x03 {
+		t.Errorf("SubClass() = 0x%02x, want 0x03", dev.SubClass())
+	}
+	if dev.BaseClass() != 0x0C {
+		t.Errorf("BaseClass() = 0x%02x, want 0x0C", dev.BaseClass())
+	}
+}
+
+func TestPCIDeviceClassDescriptionUnknown(t *testing.T) {
+	// Unknown class code should fall back to "Class [XXYY]" format
+	dev := &PCIDevice{ClassCode: 0xAB1200}
+	desc := dev.ClassDescription()
+	if desc == "" {
+		t.Error("ClassDescription returned empty for unknown class")
+	}
+
+	// Known base class but unknown subclass should use base class name
+	dev2 := &PCIDevice{ClassCode: 0x019900}
+	desc2 := dev2.ClassDescription()
+	if desc2 != "Mass storage controller" {
+		t.Errorf("ClassDescription() = %q, want base class fallback", desc2)
+	}
+}

@@ -117,3 +117,73 @@ func TestCapabilityNames(t *testing.T) {
 		t.Error("ExtCapabilityName for AER is wrong")
 	}
 }
+
+func TestCapabilityNameAll(t *testing.T) {
+	// Test every standard capability ID returns a non-"Unknown" name
+	knownCaps := []uint8{
+		CapIDPowerManagement, CapIDAGP, CapIDVPD, CapIDSlotID,
+		CapIDMSI, CapIDCompactPCIHotSwap, CapIDPCIX, CapIDHyperTransport,
+		CapIDVendorSpecific, CapIDDebugPort, CapIDCompactPCI, CapIDPCIHotPlug,
+		CapIDBridgeSubsysVID, CapIDAGP8x, CapIDSecureDevice, CapIDPCIExpress,
+		CapIDMSIX, CapIDSATADataIndex, CapIDAdvancedFeatures,
+		CapIDEnhancedAlloc, CapIDFlatteningPortal,
+	}
+	for _, id := range knownCaps {
+		name := CapabilityName(id)
+		if name == "Unknown" {
+			t.Errorf("CapabilityName(0x%02x) = Unknown", id)
+		}
+		if name == "" {
+			t.Errorf("CapabilityName(0x%02x) = empty", id)
+		}
+	}
+
+	// Unknown ID should return "Unknown"
+	if CapabilityName(0xFF) != "Unknown" {
+		t.Error("CapabilityName(0xFF) should be Unknown")
+	}
+}
+
+func TestExtCapabilityNameAll(t *testing.T) {
+	knownExtCaps := []uint16{
+		ExtCapIDAER, ExtCapIDVCNoMFVC, ExtCapIDDeviceSerialNumber,
+		ExtCapIDPowerBudgeting, ExtCapIDRCLinkDeclaration,
+		ExtCapIDVendorSpecific, ExtCapIDACS, ExtCapIDARI,
+		ExtCapIDATS, ExtCapIDSRIOV, ExtCapIDResizableBAR,
+		ExtCapIDLTR, ExtCapIDSecondaryPCIe, ExtCapIDL1PMSubstates,
+		ExtCapIDPTM, ExtCapIDDPC, ExtCapIDPASID,
+	}
+	for _, id := range knownExtCaps {
+		name := ExtCapabilityName(id)
+		if name == "Unknown" {
+			t.Errorf("ExtCapabilityName(0x%04x) = Unknown", id)
+		}
+		if name == "" {
+			t.Errorf("ExtCapabilityName(0x%04x) = empty", id)
+		}
+	}
+
+	// Unknown ID
+	if ExtCapabilityName(0xFFFF) != "Unknown" {
+		t.Error("ExtCapabilityName(0xFFFF) should be Unknown")
+	}
+}
+
+func TestParseExtCapabilitiesInvalidHeaders(t *testing.T) {
+	cs := NewConfigSpace()
+	cs.Size = ConfigSpaceSize
+
+	// All-0xFF header should be skipped
+	cs.WriteU32(0x100, 0xFFFFFFFF)
+	caps := ParseExtCapabilities(cs)
+	if len(caps) != 0 {
+		t.Errorf("Expected 0 caps for 0xFFFFFFFF header, got %d", len(caps))
+	}
+
+	// All-zero header should be skipped
+	cs.WriteU32(0x100, 0x00000000)
+	caps = ParseExtCapabilities(cs)
+	if len(caps) != 0 {
+		t.Errorf("Expected 0 caps for 0x00000000 header, got %d", len(caps))
+	}
+}
