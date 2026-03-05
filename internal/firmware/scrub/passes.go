@@ -22,7 +22,7 @@ type sanitizeCmdStatusPass struct{}
 
 func (p *sanitizeCmdStatusPass) Name() string { return "sanitize Command/Status" }
 func (p *sanitizeCmdStatusPass) Apply(cs *pci.ConfigSpace, b *board.Board, om *overlay.Map) {
-	om.WriteU16(0x04, cs.Command()&cmdMask, "sanitize Command register")
+	om.WriteU16(0x04, (cs.Command()&cmdMask)|cmdForce, "sanitize Command register (force BME+MSE)")
 	om.WriteU16(0x06, cs.Status()&statusMask, "sanitize Status register")
 }
 

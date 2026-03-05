@@ -12,6 +12,7 @@ import (
 
 const (
 	cmdMask    = 0x0547 // keep BusMaster, IO, Memory, SERR, ParityErr
+	cmdForce   = 0x0006 // always set BME(2) + MSE(1) — donor may lack these
 	statusMask = 0x06F0 // keep 66MHz, FastB2B, CapList, DevSel bits
 )
 
@@ -299,6 +300,7 @@ func clampDeviceCapability(cs *pci.ConfigSpace, om *overlay.Map) {
 			newDevCtl &= ^uint16(0x00E0) // MPS → 128B
 			newDevCtl &= ^uint16(0x0100) // ext tag off
 			newDevCtl &= ^uint16(0x0200) // phantom off
+			newDevCtl |= 0x0010          // Relaxed Ordering Enable
 			if mrrs := (newDevCtl >> 12) & 0x07; mrrs > 2 {
 				newDevCtl = (newDevCtl & 0x8FFF) | (2 << 12)
 			}
