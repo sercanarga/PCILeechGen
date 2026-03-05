@@ -24,7 +24,8 @@ type SVGeneratorConfig struct {
 	MSIXConfig    *MSIXConfig    // MSI-X table replication (nil = no MSI-X table)
 }
 
-func renderTemplate(name, tmplStr string, data any) (string, error) {
+func renderTemplate(name string, data any) (string, error) {
+	tmplStr := mustReadTemplate(name + ".sv.tmpl")
 	tmpl, err := template.New(name).Funcs(svFuncMap()).Parse(tmplStr)
 	if err != nil {
 		return "", fmt.Errorf("parsing %s template: %w", name, err)
@@ -37,19 +38,23 @@ func renderTemplate(name, tmplStr string, data any) (string, error) {
 }
 
 func GenerateBarImplDeviceSV(cfg *SVGeneratorConfig) (string, error) {
-	return renderTemplate("bar_impl_device", barImplDeviceTmpl, cfg)
+	return renderTemplate("bar_impl_device", cfg)
 }
 
 func GenerateBarControllerSV(cfg *SVGeneratorConfig) (string, error) {
-	return renderTemplate("bar_controller", barControllerTmpl, cfg)
+	return renderTemplate("bar_controller", cfg)
 }
 
 func GenerateDeviceConfigSV(cfg *SVGeneratorConfig) (string, error) {
-	return renderTemplate("device_config", deviceConfigTmpl, cfg)
+	return renderTemplate("device_config", cfg)
 }
 
 func GenerateMSIXTableSV(cfg *SVGeneratorConfig) (string, error) {
-	return renderTemplate("msix_table", msixTableTmpl, cfg)
+	return renderTemplate("msix_table", cfg)
+}
+
+func GenerateLatencyEmulatorSV(cfg *SVGeneratorConfig) (string, error) {
+	return renderTemplate("latency_emulator", cfg)
 }
 
 // svFuncMap provides hex formatting and arithmetic helpers for templates.

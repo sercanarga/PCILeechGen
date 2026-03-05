@@ -12,6 +12,7 @@ import (
 	"github.com/sercanarga/pcileechgen/internal/firmware"
 	"github.com/sercanarga/pcileechgen/internal/firmware/barmodel"
 	"github.com/sercanarga/pcileechgen/internal/firmware/codegen"
+	"github.com/sercanarga/pcileechgen/internal/firmware/devclass"
 	"github.com/sercanarga/pcileechgen/internal/firmware/scrub"
 	"github.com/sercanarga/pcileechgen/internal/firmware/svgen"
 	"github.com/sercanarga/pcileechgen/internal/firmware/tclgen"
@@ -49,10 +50,36 @@ func (ow *OutputWriter) WriteAll(ctx *donor.DeviceContext, b *board.Board) error
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
-	// extract IDs once — reused by patching and codegen
 	ids := firmware.ExtractDeviceIDs(ctx.ConfigSpace, ctx.ExtCapabilities)
 
-	// save raw device context
+	if err := ow.writeDeviceContext(ctx); err != nil {
+		return err
+	}
+
+	scrubbedCS, entropy := ow.scrubAndVary(ctx, b, ids)
+
+	if err := ow.writeConfigSpaceArtifacts(ctx, scrubbedCS); err != nil {
+		return err
+	}
+
+	if err := ow.writeTCLScripts(ctx, b); err != nil {
+		return err
+	}
+
+	if err := ow.patchSVSources(ctx, b, ids); err != nil {
+		return fmt.Errorf("SV patching failed: %w", err)
+	}
+
+	if err := ow.writeSVModules(ctx, scrubbedCS, ids, entropy); err != nil {
+		return fmt.Errorf("SV module generation failed: %w", err)
+	}
+
+	ow.writeManifest(ctx, ids)
+	return nil
+}
+
+// writeDeviceContext saves the raw device context JSON.
+func (ow *OutputWriter) writeDeviceContext(ctx *donor.DeviceContext) error {
 	data, err := ctx.ToJSON()
 	if err != nil {
 		return fmt.Errorf("failed to marshal device context: %w", err)
@@ -60,19 +87,25 @@ func (ow *OutputWriter) WriteAll(ctx *donor.DeviceContext, b *board.Board) error
 	if err := ow.writeFile("device_context.json", string(data)); err != nil {
 		return fmt.Errorf("failed to write device context: %w", err)
 	}
+	return nil
+}
 
-	// scrub + overlay audit
+// scrubAndVary runs config space scrubbing and per-build variance.
+func (ow *OutputWriter) scrubAndVary(ctx *donor.DeviceContext, b *board.Board, ids firmware.DeviceIDs) (*pci.ConfigSpace, uint32) {
 	scrubbedCS, overlayMap := scrub.ScrubConfigSpaceWithOverlay(ctx.ConfigSpace, b)
 	if overlayMap.Count() > 0 {
 		fmt.Printf("[firmware] Config space scrub: %d modifications\n", overlayMap.Count())
 	}
 
-	// per-build variance so each bitstream differs slightly
 	entropy := svgen.BuildEntropyFromTime()
 	varSeed := variance.BuildVarianceSeed(ids.VendorID, ids.DeviceID, entropy)
 	variance.Apply(scrubbedCS, nil, variance.DefaultConfig(varSeed))
 
-	// COE: config + writemask
+	return scrubbedCS, entropy
+}
+
+// writeConfigSpaceArtifacts generates COE files for config space, writemask, and BAR content.
+func (ow *OutputWriter) writeConfigSpaceArtifacts(ctx *donor.DeviceContext, scrubbedCS *pci.ConfigSpace) error {
 	if err := ow.writeFile("pcileech_cfgspace.coe",
 		codegen.GenerateConfigSpaceCOE(scrubbedCS)); err != nil {
 		return fmt.Errorf("failed to write cfgspace COE: %w", err)
@@ -82,15 +115,16 @@ func (ow *OutputWriter) WriteAll(ctx *donor.DeviceContext, b *board.Board) error
 		return fmt.Errorf("failed to write writemask COE: %w", err)
 	}
 
-	// fix device-class quirks in BAR content (e.g. NVMe CSTS.RDY)
 	scrub.ScrubBarContent(ctx.BARContents, ctx.Device.ClassCode)
-
 	if err := ow.writeFile("pcileech_bar_zero4k.coe",
 		codegen.GenerateBarContentCOE(ctx.BARContents)); err != nil {
 		return fmt.Errorf("failed to write bar zero COE: %w", err)
 	}
+	return nil
+}
 
-	// TCL
+// writeTCLScripts generates Vivado project and build TCL scripts.
+func (ow *OutputWriter) writeTCLScripts(ctx *donor.DeviceContext, b *board.Board) error {
 	if err := ow.writeFile("vivado_generate_project.tcl",
 		tclgen.GenerateProjectTCL(ctx, b, ow.LibDir)); err != nil {
 		return fmt.Errorf("failed to write project TCL: %w", err)
@@ -99,31 +133,22 @@ func (ow *OutputWriter) WriteAll(ctx *donor.DeviceContext, b *board.Board) error
 		tclgen.GenerateBuildTCL(b, ow.Jobs, ow.Timeout)); err != nil {
 		return fmt.Errorf("failed to write build TCL: %w", err)
 	}
+	return nil
+}
 
-	// copy board SV and patch donor IDs in
-	if err := ow.patchSVSources(ctx, b, ids); err != nil {
-		return fmt.Errorf("SV patching failed: %w", err)
-	}
-
-	// generate per-device SV modules + HEX
-	if err := ow.writeSVModules(ctx, scrubbedCS, ids, entropy); err != nil {
-		return fmt.Errorf("SV module generation failed: %w", err)
-	}
-
-	// build manifest with checksums
+// writeManifest generates the build manifest with file checksums.
+func (ow *OutputWriter) writeManifest(ctx *donor.DeviceContext, ids firmware.DeviceIDs) {
 	manifest, err := GenerateManifest(ow.OutputDir, ctx.ToolVersion, "", ids.VendorID, ids.DeviceID)
 	if err != nil {
 		fmt.Printf("[firmware] Warning: manifest generation failed: %v\n", err)
-	} else {
-		manifestPath := ow.OutputDir + "/build_manifest.json"
-		if err := manifest.WriteJSON(manifestPath); err != nil {
-			fmt.Printf("[firmware] Warning: manifest write failed: %v\n", err)
-		} else {
-			fmt.Printf("[firmware] Build manifest: %d files recorded\n", len(manifest.Files))
-		}
+		return
 	}
-
-	return nil
+	manifestPath := ow.OutputDir + "/build_manifest.json"
+	if err := manifest.WriteJSON(manifestPath); err != nil {
+		fmt.Printf("[firmware] Warning: manifest write failed: %v\n", err)
+	} else {
+		fmt.Printf("[firmware] Build manifest: %d files recorded\n", len(manifest.Files))
+	}
 }
 
 // patchSVSources copies the board's SV tree and patches IDs in.
@@ -179,6 +204,20 @@ func ListOutputFiles() []string {
 	}
 }
 
+// svArtifact describes one SV file to generate.
+type svArtifact struct {
+	filename string
+	generate func(cfg *svgen.SVGeneratorConfig) (string, error)
+}
+
+// coreSVArtifacts are always generated.
+var coreSVArtifacts = []svArtifact{
+	{"pcileech_bar_impl_device.sv", svgen.GenerateBarImplDeviceSV},
+	{"pcileech_tlps128_bar_controller.sv", svgen.GenerateBarControllerSV},
+	{"tlp_latency_emulator.sv", svgen.GenerateLatencyEmulatorSV},
+	{"device_config.sv", svgen.GenerateDeviceConfigSV},
+}
+
 // writeSVModules generates device-specific SV and HEX init files.
 func (ow *OutputWriter) writeSVModules(ctx *donor.DeviceContext, scrubbedCS *pci.ConfigSpace, ids firmware.DeviceIDs, entropy uint32) error {
 	barData := firmware.LowestBarData(ctx.BARContents)
@@ -188,11 +227,9 @@ func (ow *OutputWriter) writeSVModules(ctx *donor.DeviceContext, scrubbedCS *pci
 	}
 	bm := barmodel.BuildBARModel(barData, ctx.Device.ClassCode, barProfile)
 
-	baseClass := (ctx.Device.ClassCode >> 16) & 0xFF
-	subClass := (ctx.Device.ClassCode >> 8) & 0xFF
-	progIF := ctx.Device.ClassCode & 0xFF
-	isNVMe := baseClass == 0x01 && subClass == 0x08 && progIF == 0x02
-	isXHCI := baseClass == 0x0C && subClass == 0x03 && progIF == 0x30
+	strategy := devclass.StrategyForClass(ctx.Device.ClassCode)
+	isNVMe := strategy != nil && strategy.IsNVMe()
+	isXHCI := strategy != nil && strategy.IsXHCI()
 
 	latCfg := svgen.DefaultLatencyConfig(ctx.Device.ClassCode)
 	seeds := svgen.BuildPRNGSeeds(ids.VendorID, ids.DeviceID, entropy)
@@ -202,7 +239,7 @@ func (ow *OutputWriter) writeSVModules(ctx *donor.DeviceContext, scrubbedCS *pci
 		BARModel:      bm,
 		ClassCode:     ctx.Device.ClassCode,
 		LatencyConfig: latCfg,
-		HasMSIX:       bm != nil, // MSI-X for known device classes
+		HasMSIX:       bm != nil,
 		BuildEntropy:  entropy,
 		PRNGSeeds:     seeds,
 		IsNVMe:        isNVMe,
@@ -221,40 +258,15 @@ func (ow *OutputWriter) writeSVModules(ctx *donor.DeviceContext, scrubbedCS *pci
 		cfg.HasMSIX = true
 	}
 
-	// pcileech_bar_impl_device.sv
-	barImpl, err := svgen.GenerateBarImplDeviceSV(cfg)
-	if err != nil {
-		return fmt.Errorf("generating bar_impl_device.sv: %w", err)
-	}
-	if err := ow.writeFile("pcileech_bar_impl_device.sv", barImpl); err != nil {
-		return err
-	}
-
-	// pcileech_tlps128_bar_controller.sv
-	barCtrl, err := svgen.GenerateBarControllerSV(cfg)
-	if err != nil {
-		return fmt.Errorf("generating bar_controller.sv: %w", err)
-	}
-	if err := ow.writeFile("pcileech_tlps128_bar_controller.sv", barCtrl); err != nil {
-		return err
-	}
-
-	// tlp_latency_emulator.sv
-	latEmu, err := svgen.GenerateLatencyEmulatorSV(cfg)
-	if err != nil {
-		return fmt.Errorf("generating tlp_latency_emulator.sv: %w", err)
-	}
-	if err := ow.writeFile("tlp_latency_emulator.sv", latEmu); err != nil {
-		return err
-	}
-
-	// device_config.sv
-	devCfg, err := svgen.GenerateDeviceConfigSV(cfg)
-	if err != nil {
-		return fmt.Errorf("generating device_config.sv: %w", err)
-	}
-	if err := ow.writeFile("device_config.sv", devCfg); err != nil {
-		return err
+	// Generate core SV artifacts via pipeline
+	for _, art := range coreSVArtifacts {
+		content, err := art.generate(cfg)
+		if err != nil {
+			return fmt.Errorf("generating %s: %w", art.filename, err)
+		}
+		if err := ow.writeFile(art.filename, content); err != nil {
+			return err
+		}
 	}
 
 	// config_space_init.hex
@@ -263,7 +275,7 @@ func (ow *OutputWriter) writeSVModules(ctx *donor.DeviceContext, scrubbedCS *pci
 		return err
 	}
 
-	// pcileech_msix_table.sv + msix_table_init.hex
+	// MSI-X artifacts (conditional)
 	if cfg.MSIXConfig != nil {
 		msixSV, err := svgen.GenerateMSIXTableSV(cfg)
 		if err != nil {

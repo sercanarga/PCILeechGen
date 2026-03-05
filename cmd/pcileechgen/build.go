@@ -10,17 +10,20 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var (
-	buildBDF        string
-	buildBoard      string
-	buildVivadoPath string
-	buildOutput     string
-	buildSkipVivado bool
-	buildJobs       int
-	buildTimeout    int
-	buildLibDir     string
-	buildFromJSON   string
-)
+// buildFlags groups all build command flags.
+type buildFlags struct {
+	bdf        string
+	board      string
+	vivadoPath string
+	output     string
+	skipVivado bool
+	jobs       int
+	timeout    int
+	libDir     string
+	fromJSON   string
+}
+
+var buildOpts buildFlags
 
 var buildCmd = &cobra.Command{
 	Use:   "build",
@@ -37,61 +40,64 @@ Example:
   pcileechgen build --bdf 03:00.0 --board ZDMA --skip-vivado
   pcileechgen build --from-json device_context.json --board PCIeSquirrel
   pcileechgen build --bdf 0000:03:00.0 --board PCIeSquirrel --vivado-path /tools/Xilinx/Vivado/2022.2`,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		// Find board
-		b, err := board.Find(buildBoard)
-		if err != nil {
-			return err
-		}
+	RunE: runBuild,
+}
 
-		var ctx *donor.DeviceContext
+func runBuild(cmd *cobra.Command, args []string) error {
+	b, err := board.Find(buildOpts.board)
+	if err != nil {
+		return err
+	}
 
-		if buildFromJSON != "" {
-			// Offline mode: load from JSON
-			fmt.Printf("[pcileechgen] Loading device context from: %s\n", buildFromJSON)
-			ctx, err = donor.LoadContext(buildFromJSON)
-			if err != nil {
-				return fmt.Errorf("failed to load device context: %w", err)
-			}
-		} else {
-			// Live mode: read from donor device
-			if buildBDF == "" {
-				return fmt.Errorf("either --bdf or --from-json is required")
-			}
+	ctx, err := loadDonorContext()
+	if err != nil {
+		return err
+	}
 
-			bdf, err := pci.ParseBDF(buildBDF)
-			if err != nil {
-				return fmt.Errorf("invalid BDF: %w", err)
-			}
+	printBuildSummary(ctx, b)
 
-			fmt.Printf("[pcileechgen] Target device: %s\n", bdf.String())
-			fmt.Println("[pcileechgen] Stage 1: Collecting donor device data...")
+	builder := vivado.NewBuilder(b, vivado.BuildOptions{
+		VivadoPath: buildOpts.vivadoPath,
+		OutputDir:  buildOpts.output,
+		LibDir:     buildOpts.libDir,
+		Jobs:       buildOpts.jobs,
+		Timeout:    buildOpts.timeout,
+		SkipVivado: buildOpts.skipVivado,
+	})
 
-			collector := donor.NewCollector()
-			ctx, err = collector.Collect(bdf)
-			if err != nil {
-				return fmt.Errorf("device data collection failed: %w", err)
-			}
-		}
+	return builder.Build(ctx)
+}
 
-		printBuildSummary(ctx, b)
+// loadDonorContext loads device context from JSON or live device.
+func loadDonorContext() (*donor.DeviceContext, error) {
+	if buildOpts.fromJSON != "" {
+		fmt.Printf("[pcileechgen] Loading device context from: %s\n", buildOpts.fromJSON)
+		return donor.LoadContext(buildOpts.fromJSON)
+	}
 
-		builder := vivado.NewBuilder(b, vivado.BuildOptions{
-			VivadoPath: buildVivadoPath,
-			OutputDir:  buildOutput,
-			LibDir:     buildLibDir,
-			Jobs:       buildJobs,
-			Timeout:    buildTimeout,
-			SkipVivado: buildSkipVivado,
-		})
+	if buildOpts.bdf == "" {
+		return nil, fmt.Errorf("either --bdf or --from-json is required")
+	}
 
-		return builder.Build(ctx)
-	},
+	bdf, err := pci.ParseBDF(buildOpts.bdf)
+	if err != nil {
+		return nil, fmt.Errorf("invalid BDF: %w", err)
+	}
+
+	fmt.Printf("[pcileechgen] Target device: %s\n", bdf.String())
+	fmt.Println("[pcileechgen] Stage 1: Collecting donor device data...")
+
+	collector := donor.NewCollector()
+	ctx, err := collector.Collect(bdf)
+	if err != nil {
+		return nil, fmt.Errorf("device data collection failed: %w", err)
+	}
+	return ctx, nil
 }
 
 func printBuildSummary(ctx *donor.DeviceContext, b *board.Board) {
 	fmt.Printf("[pcileechgen] Target board: %s (%s)\n", b.Name, b.FPGAPart)
-	fmt.Printf("[pcileechgen] Output: %s\n", buildOutput)
+	fmt.Printf("[pcileechgen] Output: %s\n", buildOpts.output)
 	fmt.Printf("[pcileechgen] Device: %04x:%04x %s (rev %02x)\n",
 		ctx.Device.VendorID, ctx.Device.DeviceID,
 		ctx.Device.ClassDescription(), ctx.Device.RevisionID)
@@ -107,15 +113,15 @@ func printBuildSummary(ctx *donor.DeviceContext, b *board.Board) {
 }
 
 func init() {
-	buildCmd.Flags().StringVar(&buildBDF, "bdf", "", "donor device BDF address (e.g. 0000:03:00.0)")
-	buildCmd.Flags().StringVar(&buildBoard, "board", "", "target FPGA board name (required, e.g. PCIeSquirrel)")
-	buildCmd.Flags().StringVar(&buildFromJSON, "from-json", "", "load donor device data from JSON file (offline build)")
-	buildCmd.Flags().StringVar(&buildVivadoPath, "vivado-path", "", "path to Vivado installation")
-	buildCmd.Flags().StringVar(&buildOutput, "output", "pcileech_datastore", "output directory")
-	buildCmd.Flags().BoolVar(&buildSkipVivado, "skip-vivado", false, "skip Vivado synthesis (only generate artifacts)")
-	buildCmd.Flags().IntVar(&buildJobs, "jobs", 4, "number of parallel Vivado jobs")
-	buildCmd.Flags().IntVar(&buildTimeout, "timeout", 3600, "Vivado synthesis timeout in seconds")
-	buildCmd.Flags().StringVar(&buildLibDir, "lib-dir", "lib/pcileech-fpga", "path to pcileech-fpga library")
+	buildCmd.Flags().StringVar(&buildOpts.bdf, "bdf", "", "donor device BDF address (e.g. 0000:03:00.0)")
+	buildCmd.Flags().StringVar(&buildOpts.board, "board", "", "target FPGA board name (required, e.g. PCIeSquirrel)")
+	buildCmd.Flags().StringVar(&buildOpts.fromJSON, "from-json", "", "load donor device data from JSON file (offline build)")
+	buildCmd.Flags().StringVar(&buildOpts.vivadoPath, "vivado-path", "", "path to Vivado installation")
+	buildCmd.Flags().StringVar(&buildOpts.output, "output", "pcileech_datastore", "output directory")
+	buildCmd.Flags().BoolVar(&buildOpts.skipVivado, "skip-vivado", false, "skip Vivado synthesis (only generate artifacts)")
+	buildCmd.Flags().IntVar(&buildOpts.jobs, "jobs", 4, "number of parallel Vivado jobs")
+	buildCmd.Flags().IntVar(&buildOpts.timeout, "timeout", 3600, "Vivado synthesis timeout in seconds")
+	buildCmd.Flags().StringVar(&buildOpts.libDir, "lib-dir", "lib/pcileech-fpga", "path to pcileech-fpga library")
 
 	_ = buildCmd.MarkFlagRequired("board")
 

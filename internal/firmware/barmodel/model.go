@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/sercanarga/pcileechgen/internal/donor"
+	"github.com/sercanarga/pcileechgen/internal/firmware/devclass"
 	"github.com/sercanarga/pcileechgen/internal/util"
 )
 
@@ -283,50 +284,15 @@ func SynthesizeBARModel(profile *donor.BARProfile, classCode uint32) *BARModel {
 }
 
 // classRegisterNames returns offset→name hints for known device classes.
+// Derives names from devclass.ProfileForClass to avoid duplication.
 func classRegisterNames(classCode uint32) map[uint32]string {
-	baseClass := (classCode >> 16) & 0xFF
-	subClass := (classCode >> 8) & 0xFF
-	progIF := classCode & 0xFF
-
-	switch {
-	case baseClass == 0x01 && subClass == 0x08 && progIF == 0x02:
-		return nvmeRegisterNames()
-	case baseClass == 0x0C && subClass == 0x03 && progIF == 0x30:
-		return xhciRegisterNames()
-	case baseClass == 0x02:
-		return ethernetRegisterNames()
-	default:
+	profile := devclass.ProfileForClass(classCode)
+	if profile == nil {
 		return nil
 	}
-}
-
-func nvmeRegisterNames() map[uint32]string {
-	return map[uint32]string{
-		0x00: "CAP_LO", 0x04: "CAP_HI", 0x08: "VS",
-		0x0C: "INTMS", 0x10: "INTMC", 0x14: "CC",
-		0x1C: "CSTS", 0x20: "NSSR", 0x24: "AQA",
-		0x28: "ASQ_LO", 0x2C: "ASQ_HI",
-		0x30: "ACQ_LO", 0x34: "ACQ_HI",
+	names := make(map[uint32]string, len(profile.BARDefaults))
+	for _, d := range profile.BARDefaults {
+		names[d.Offset] = d.Name
 	}
-}
-
-func xhciRegisterNames() map[uint32]string {
-	return map[uint32]string{
-		0x00: "CAPLENGTH_HCIVERSION", 0x04: "HCSPARAMS1",
-		0x08: "HCSPARAMS2", 0x0C: "HCSPARAMS3",
-		0x10: "HCCPARAMS1", 0x14: "DBOFF", 0x18: "RTSOFF",
-		0x1C: "HCCPARAMS2", 0x20: "USBCMD", 0x24: "USBSTS",
-		0x28: "PAGESIZE", 0x34: "DNCTRL",
-		0x38: "CRCR_LO", 0x3C: "CRCR_HI",
-		0x50: "DCBAAP_LO", 0x54: "DCBAAP_HI", 0x58: "CONFIG",
-	}
-}
-
-func ethernetRegisterNames() map[uint32]string {
-	return map[uint32]string{
-		0x00: "CTRL", 0x08: "STATUS", 0x10: "EECD", 0x14: "EERD",
-		0x18: "CTRL_EXT", 0x28: "FCAL", 0x2C: "FCAH",
-		0xC0: "ICR", 0xC8: "ICS", 0xD0: "IMS", 0xD8: "IMC",
-		0x100: "RCTL", 0x400: "TCTL",
-	}
+	return names
 }

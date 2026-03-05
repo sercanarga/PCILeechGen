@@ -20,7 +20,6 @@ type projectTCLData struct {
 	IPPath    string
 	TopModule string
 
-	// Donor device identity (pre-formatted hex strings for TCL)
 	DeviceID       string
 	VendorID       string
 	RevisionID     string
@@ -30,15 +29,13 @@ type projectTCLData struct {
 	ClassCodeSub   string
 	ClassCodeIntf  string
 
-	// PCIe link configuration (clamped to board capability)
-	LinkSpeed     string // "2.5_GT/s", "5.0_GT/s", "8.0_GT/s"
-	LinkWidth     string // "X1", "X2", "X4"
-	TrgtLinkSpeed string // "4'h1", "4'h2", "4'h3"
+	LinkSpeed     string
+	LinkWidth     string
+	TrgtLinkSpeed string
 
-	// BAR configuration
 	Bar0Enabled bool
-	Bar0Size    string // "4", "8", "16" etc.
-	Bar0Scale   string // "Kilobytes", "Megabytes"
+	Bar0Size    string
+	Bar0Scale   string
 	Bar064bit   bool
 }
 
@@ -242,71 +239,6 @@ write_cfgmem -format bin -interface SPIx4 -size 16 -loadbit "up 0x0 $bit_file" -
 puts "Build complete! Output: $bin_file"
 exit 0
 `))
-
-// linkSpeedToTCL converts a numeric link speed to Vivado TCL format.
-func linkSpeedToTCL(speed uint8) string {
-	switch speed {
-	case firmware.LinkSpeedGen1:
-		return "2.5_GT/s"
-	case firmware.LinkSpeedGen3:
-		return "8.0_GT/s"
-	default:
-		return "5.0_GT/s" // Gen2 default
-	}
-}
-
-// linkSpeedToTrgt converts a numeric link speed to Trgt_Link_Speed TCL property.
-func linkSpeedToTrgt(speed uint8) string {
-	switch speed {
-	case firmware.LinkSpeedGen1:
-		return "4'h1"
-	case firmware.LinkSpeedGen3:
-		return "4'h3"
-	default:
-		return "4'h2"
-	}
-}
-
-// linkWidthToTCL converts a numeric link width to Vivado TCL format.
-func linkWidthToTCL(width uint8) string {
-	switch width {
-	case 2:
-		return "X2"
-	case 4:
-		return "X4"
-	case 8:
-		return "X8"
-	default:
-		return "X1"
-	}
-}
-
-// clampLinkWidth limits donor link width to board's physical lane count.
-func clampLinkWidth(donorWidth uint8, boardLanes int) uint8 {
-	if int(donorWidth) > boardLanes {
-		return uint8(boardLanes)
-	}
-	if donorWidth == 0 {
-		return uint8(boardLanes)
-	}
-	return donorWidth
-}
-
-// barSizeToTCL converts a BAR size in bytes to Vivado TCL scale and size values.
-func barSizeToTCL(sizeBytes uint64) (scale string, size string) {
-	if sizeBytes == 0 {
-		return "Kilobytes", "4"
-	}
-	if sizeBytes >= 1024*1024 {
-		mb := sizeBytes / (1024 * 1024)
-		return "Megabytes", fmt.Sprintf("%d", mb)
-	}
-	kb := sizeBytes / 1024
-	if kb < 4 {
-		kb = 4 // Minimum 4KB
-	}
-	return "Kilobytes", fmt.Sprintf("%d", kb)
-}
 
 // GenerateProjectTCL generates the Vivado project creation TCL script.
 func GenerateProjectTCL(ctx *donor.DeviceContext, b *board.Board, libDir string) string {

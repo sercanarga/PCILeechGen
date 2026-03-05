@@ -118,66 +118,8 @@ func ScrubConfigSpaceWithOverlay(cs *pci.ConfigSpace, b *board.Board) (*pci.Conf
 	scrubbed := cs.Clone()
 	om := overlay.NewMap(scrubbed)
 
-	om.WriteU8(0x0F, 0x00, "clear BIST register")
-	om.WriteU8(0x3C, 0x00, "clear Interrupt Line")
-	om.WriteU8(0x0D, 0x00, "clear Latency Timer")
-	om.WriteU8(0x0C, 0x00, "clear Cache Line Size")
-
-	om.WriteU16(0x04, scrubbed.Command()&cmdMask, "sanitize Command register")
-	om.WriteU16(0x06, scrubbed.Status()&statusMask, "sanitize Status register")
-
-	caps := pci.ParseCapabilities(scrubbed)
-	for _, cap := range caps {
-		if cap.ID == pci.CapIDPCIExpress && cap.Offset+10 < pci.ConfigSpaceLegacySize {
-			om.WriteU16(cap.Offset+10, 0x0000, "clear PCIe Device Status")
-			if cap.Offset+18 < pci.ConfigSpaceLegacySize {
-				lstatus := scrubbed.ReadU16(cap.Offset+18) & 0x3FFF
-				om.WriteU16(cap.Offset+18, lstatus, "clear PCIe Link Status RW1C bits")
-			}
-		}
-		if cap.ID == pci.CapIDPowerManagement && cap.Offset+4 < pci.ConfigSpaceLegacySize {
-			pmcsr := scrubbed.ReadU16(cap.Offset + 4)
-			pmcsr &= 0xFFFC
-			pmcsr &= 0x7FFF
-			pmcsr |= 0x0008
-			om.WriteU16(cap.Offset+4, pmcsr, "PM: D0, NoSoftReset, clear PME_Status")
-		}
-	}
-
-	if scrubbed.Size >= pci.ConfigSpaceSize {
-		extCaps := pci.ParseExtCapabilities(scrubbed)
-		for _, cap := range extCaps {
-			if cap.ID == pci.ExtCapIDAER {
-				if cap.Offset+8 <= pci.ConfigSpaceSize {
-					om.WriteU32(cap.Offset+4, 0, "clear AER uncorrectable error status")
-				}
-				if cap.Offset+20 <= pci.ConfigSpaceSize {
-					om.WriteU32(cap.Offset+16, 0, "clear AER correctable error status")
-				}
-				if cap.Offset+32 <= pci.ConfigSpaceSize {
-					om.WriteU32(cap.Offset+28, 0, "clear AER root error status")
-				}
-			}
-		}
-		FilterExtCapabilities(scrubbed)
-	}
-
-	clampBARsToFPGA(scrubbed, om)
-	relocateMSIXToBRAM(scrubbed, om)
-	clampLinkCapability(scrubbed, b, om)
-	clampDeviceCapability(scrubbed, om)
-
-	zeroVendorRegisters(scrubbed, om)
-	applyVendorQuirks(scrubbed, om)
-
-	if pruned := PruneStandardCaps(scrubbed, om); len(pruned) > 0 {
-		for _, p := range pruned {
-			fmt.Printf("[scrub] pruned standard cap: %s\n", p)
-		}
-	}
-
-	if err := ValidateCapChain(scrubbed); err != nil {
-		fmt.Printf("[scrub] warning: capability chain issue: %v\n", err)
+	for _, pass := range defaultPipeline() {
+		pass.Apply(scrubbed, b, om)
 	}
 
 	return scrubbed, om
@@ -376,19 +318,18 @@ func clampDeviceCapability(cs *pci.ConfigSpace, om *overlay.Map) {
 	}
 }
 
-// FilterExtCapabilities strips unsupported ext caps and relinks the chain.
-func FilterExtCapabilities(cs *pci.ConfigSpace) []string {
-	var removed []string
+// extCapEntry represents one entry in the extended capability linked list.
+type extCapEntry struct {
+	offset     int
+	id         uint16
+	version    uint8
+	nextOffset int
+	size       int
+}
 
-	type capEntry struct {
-		offset     int
-		id         uint16
-		version    uint8
-		nextOffset int
-		size       int
-	}
-
-	var entries []capEntry
+// parseExtCapChain walks the ext cap linked list and returns all entries.
+func parseExtCapChain(cs *pci.ConfigSpace) []extCapEntry {
+	var entries []extCapEntry
 	visited := make(map[int]bool)
 	offset := 0x100
 
@@ -411,7 +352,7 @@ func FilterExtCapabilities(cs *pci.ConfigSpace) []string {
 			size = pci.ConfigSpaceSize - offset
 		}
 
-		entries = append(entries, capEntry{
+		entries = append(entries, extCapEntry{
 			offset:     offset,
 			id:         capID,
 			version:    capVer,
@@ -424,24 +365,11 @@ func FilterExtCapabilities(cs *pci.ConfigSpace) []string {
 		}
 		offset = nextOff
 	}
+	return entries
+}
 
-	if len(entries) == 0 {
-		return nil
-	}
-
-	removeSet := make(map[int]bool)
-	for i, e := range entries {
-		if IsUnsafeExtCap(e.id) {
-			removeSet[i] = true
-			name := UnsafeExtCapName(e.id)
-			removed = append(removed, fmt.Sprintf("%s (0x%04x) at offset 0x%03x", name, e.id, e.offset))
-		}
-	}
-
-	if len(removeSet) == 0 {
-		return nil
-	}
-
+// relinkExtCapChain patches the next-pointers of surviving entries.
+func relinkExtCapChain(cs *pci.ConfigSpace, entries []extCapEntry, removeSet map[int]bool) {
 	firstSurvivor := -1
 	for i := range entries {
 		if !removeSet[i] {
@@ -449,8 +377,6 @@ func FilterExtCapabilities(cs *pci.ConfigSpace) []string {
 			break
 		}
 	}
-
-	needsRelocate := removeSet[0] && firstSurvivor > 0
 
 	// wipe removed regions
 	for i := range entries {
@@ -465,10 +391,11 @@ func FilterExtCapabilities(cs *pci.ConfigSpace) []string {
 
 	if firstSurvivor < 0 {
 		cs.WriteU32(0x100, 0x00000000) // all gone
-		return removed
+		return
 	}
 
-	if needsRelocate {
+	// if first entry was removed, relocate first survivor to 0x100
+	if removeSet[0] {
 		surv := entries[firstSurvivor]
 
 		for b := 0; b < surv.size && b < surv.offset && surv.offset+b < pci.ConfigSpaceSize; b++ {
@@ -493,6 +420,7 @@ func FilterExtCapabilities(cs *pci.ConfigSpace) []string {
 		entries[firstSurvivor].offset = 0x100
 	}
 
+	// collect survivors and relink next pointers
 	var survivors []int
 	for i := range entries {
 		if !removeSet[i] {
@@ -513,6 +441,29 @@ func FilterExtCapabilities(cs *pci.ConfigSpace) []string {
 		hdr = (hdr & 0x000FFFFF) | (uint32(newNext) << 20)
 		cs.WriteU32(e.offset, hdr)
 	}
+}
 
+// FilterExtCapabilities strips unsupported ext caps and relinks the chain.
+func FilterExtCapabilities(cs *pci.ConfigSpace) []string {
+	entries := parseExtCapChain(cs)
+	if len(entries) == 0 {
+		return nil
+	}
+
+	removeSet := make(map[int]bool)
+	var removed []string
+	for i, e := range entries {
+		if IsUnsafeExtCap(e.id) {
+			removeSet[i] = true
+			name := UnsafeExtCapName(e.id)
+			removed = append(removed, fmt.Sprintf("%s (0x%04x) at offset 0x%03x", name, e.id, e.offset))
+		}
+	}
+
+	if len(removeSet) == 0 {
+		return nil
+	}
+
+	relinkExtCapChain(cs, entries, removeSet)
 	return removed
 }
