@@ -21,14 +21,18 @@ Generates custom firmware for [PCILeech FPGA](https://github.com/ufrisk/pcileech
 - [x] Device Serial Number (64-bit DSN)
 - [x] BAR0 Layout (type, size, 32/64-bit)
 - [x] BAR Content Emulation (donor memory snapshot)
+- [x] NVMe CC->CSTS State Machine (dynamic controller handshake)
+- [x] xHCI USBCMD/USBSTS State Machine (BRAM-aware register clamping)
+- [x] TLP Latency Emulation (PRNG jitter, thermal drift, burst correlation)
 - [x] Link Speed / Width (clamped to board)
-- [x] Config Space (full 4KB shadow + scrubbing)
+- [x] Config Space (full 4KB shadow + scrubbing pipeline)
 - [x] Write Mask (per-register)
 - [x] Power Management (D-state + NoSoftReset)
 - [x] Capability Filtering (SR-IOV, Resizable BAR, ATS, L1PM, etc.)
 - [x] Capability Pruning (VPD, AGP, HyperTransport, PCI-X)
 - [x] Vendor Quirks (Renesas firmware status, vendor-specific region zeroing)
 - [x] MSI-X Table Replication (separate BRAM, donor table + PBA emulation)
+- [x] MSI-X Interrupt Controller (4-state FSM with LFSR jitter)
 - [x] P&R Randomization (per-build Vivado placement seed)
 - [x] VSEC Entropy Embed (build-unique fingerprint in ext config space)
 - [x] VFIO Diagnostics (power state, BAR accessibility, IOMMU isolation)
@@ -170,6 +174,12 @@ Verify generated artifacts match the donor device context.
 ```
 Checks include: output file existence, vendor/device ID presence in SV, HEX line format, COE structure.
 
+### `version`
+Print build version.
+```bash
+./bin/pcileechgen version
+```
+
 ### `boards`
 List all supported FPGA boards.
 ```bash
@@ -196,15 +206,38 @@ pcileech_datastore/
   pcileech_cfgspace.coe                  # 4KB config space (scrubbed)
   pcileech_cfgspace_writemask.coe        # per-register write masks
   pcileech_bar_zero4k.coe               # BAR0 content snapshot
-  pcileech_bar_impl_device.sv           # BAR implementation module
+  pcileech_bar_impl_device.sv           # BAR implementation (register-level)
   pcileech_tlps128_bar_controller.sv    # TLP BAR controller
-  tlp_latency_emulator.sv              # latency emulation
-  device_config.sv                      # device-specific config
-  config_space_init.hex                 # Verilog $readmemh init
+  pcileech_msix_table.sv                # MSI-X table + PBA emulation
+  tlp_latency_emulator.sv              # response latency emulation
+  device_config.sv                      # device identity + feature flags
+  config_space_init.hex                 # config space init ($readmemh)
+  msix_table_init.hex                   # MSI-X table init ($readmemh)
   vivado_generate_project.tcl           # project creation script
   vivado_build.tcl                      # synthesis script
   src/                                  # patched board SV sources
   *.bin                                 # bitstream (after Vivado)
+```
+
+## Architecture
+
+```
+cmd/pcileechgen/          CLI (scan, check, build, validate, boards, version)
+internal/
+  board/                  board registry (embedded JSON, 17 boards)
+  donor/                  VFIO device reader + BAR profiling
+  pci/                    config space parser, capabilities, MSI-X
+  firmware/
+    scrub/                config space scrubbing (14-pass pipeline)
+    barmodel/             BAR register model (spec + profiled)
+    svgen/                SV code generation (embedded .sv.tmpl templates)
+    tclgen/               Vivado TCL script generation
+    devclass/             device class strategy (NVMe, xHCI, Ethernet, Audio)
+    output/               artifact writer (SV pipeline + COE + HEX)
+    overlay/              byte-level diff tracking
+    variance/             config space randomization
+    codegen/              HEX/COE formatters
+  vivado/                 Vivado process runner
 ```
 
 ## Development
