@@ -275,6 +275,97 @@ func TestZeroVendorRegisters(t *testing.T) {
 	}
 }
 
+func TestComputeMSISize(t *testing.T) {
+	tests := []struct {
+		name   string
+		msgCtl uint16
+		wantSz int
+	}{
+		{"32bit_no_masking", 0x0000, 10},
+		{"64bit_no_masking", 0x0080, 14},
+		{"32bit_masking", 0x0100, 20},
+		{"64bit_masking", 0x0180, 24},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cs := pci.NewConfigSpace()
+			cs.WriteU8(0x50, pci.CapIDMSI)
+			cs.WriteU8(0x51, 0x00)
+			cs.WriteU16(0x52, tt.msgCtl)
+
+			got := computeMSISize(cs, 0x50)
+			if got != tt.wantSz {
+				t.Errorf("computeMSISize() = %d, want %d", got, tt.wantSz)
+			}
+		})
+	}
+}
+
+func TestZeroVendorRegisters_PreservesMSI64BitMasking(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+
+	cs.WriteU16(0x00, 0x1102) // Creative
+	cs.WriteU16(0x06, 0x0010) // caps present
+	cs.WriteU8(0x34, 0x40)    // cap ptr
+
+	// PM at 0x40, next -> MSI at 0x50
+	cs.WriteU8(0x40, pci.CapIDPowerManagement)
+	cs.WriteU8(0x41, 0x50)
+	cs.WriteU16(0x42, 0xC9C3)
+	cs.WriteU16(0x44, 0x0008)
+
+	// MSI at 0x50: 64-bit + masking, occupies 24 bytes (0x50-0x67)
+	cs.WriteU8(0x50, pci.CapIDMSI)
+	cs.WriteU8(0x51, 0x70)        // next -> PCIe
+	cs.WriteU16(0x52, 0x0180)     // 64bit + masking
+	cs.WriteU32(0x54, 0xFEE00000) // addr lower
+	cs.WriteU32(0x58, 0x00000000) // addr upper
+	cs.WriteU16(0x5C, 0x4021)     // data
+	cs.WriteU16(0x5E, 0x0000)     // reserved
+	cs.WriteU32(0x60, 0x00000001) // mask bits
+	cs.WriteU32(0x64, 0x00000000) // pending bits
+
+	// PCIe at 0x70
+	cs.WriteU8(0x70, pci.CapIDPCIExpress)
+	cs.WriteU8(0x71, 0x00)
+
+	// Some garbage in uncovered vendor region
+	cs.WriteU32(0xB0, 0xDEADBEEF)
+
+	scrubbed := ScrubConfigSpace(cs, nil)
+
+	// cap header intact
+	if scrubbed.ReadU8(0x50) != pci.CapIDMSI {
+		t.Errorf("MSI cap ID gone, got 0x%02x", scrubbed.ReadU8(0x50))
+	}
+	// next pointer still chained to PCIe
+	if scrubbed.ReadU8(0x51) != 0x70 {
+		t.Errorf("MSI next ptr should be 0x70, got 0x%02x", scrubbed.ReadU8(0x51))
+	}
+	// 64bit + masking flags survived
+	msgCtl := scrubbed.ReadU16(0x52)
+	if msgCtl&0x0180 != 0x0180 {
+		t.Errorf("MSI msgctl 64bit+masking lost, got 0x%04x", msgCtl)
+	}
+	// address not wiped
+	if scrubbed.ReadU32(0x54) != 0xFEE00000 {
+		t.Errorf("MSI addr lower wiped, got 0x%08x", scrubbed.ReadU32(0x54))
+	}
+	// mask bits at 0x60 inside the 24-byte window
+	if scrubbed.ReadU32(0x60) != 0x00000001 {
+		t.Errorf("MSI mask bits wiped, got 0x%08x", scrubbed.ReadU32(0x60))
+	}
+	// PCIe still where it should be
+	if scrubbed.ReadU8(0x70) != pci.CapIDPCIExpress {
+		t.Errorf("PCIe cap ID gone at 0x70, got 0x%02x", scrubbed.ReadU8(0x70))
+	}
+	// uncovered region zeroed
+	if scrubbed.ReadU32(0xB0) != 0 {
+		t.Errorf("vendor register at 0xB0 not zeroed, got 0x%08x", scrubbed.ReadU32(0xB0))
+	}
+}
+
 func TestRelocateMSIXToBRAM_TableOutside(t *testing.T) {
 	cs := pci.NewConfigSpace()
 	cs.Size = pci.ConfigSpaceSize
