@@ -2,50 +2,122 @@
   <img src="https://raw.githubusercontent.com/sercanarga/PCILeechGen/main/docs/logo.png" alt="PCILeechGen" width="200">
 </p>
 
-# PCILeechGen
+<h1 align="center">PCILeechGen</h1>
 
-[![Go Report Card](https://goreportcard.com/badge/github.com/sercanarga/pcileechgen)](https://goreportcard.com/report/github.com/sercanarga/pcileechgen)
-[![CodeQL](https://github.com/sercanarga/PCILeechGen/actions/workflows/codeql.yml/badge.svg)](https://github.com/sercanarga/PCILeechGen/actions/workflows/codeql.yml)
-[![Coverage](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/sercanarga/b85bf5ab915f0f64fc15df8d52b8924c/raw)](https://github.com/sercanarga/PCILeechGen/actions/workflows/ci.yml)
-[![License: CC0-1.0](https://img.shields.io/badge/License-CC0_1.0-lightgrey.svg)](https://github.com/sercanarga/PCILeechGen/blob/main/LICENSE)
-[![Go](https://img.shields.io/github/go-mod/go-version/sercanarga/PCILeechGen)](https://go.dev/)
-[![Discord](https://img.shields.io/discord/1477751220037877881?logo=discord&logoColor=white&label=Discord&color=5865F2)](https://discord.gg/kcWVCAhNSg)
+<p align="center">
+  <strong>Custom firmware generator for <a href="https://github.com/ufrisk/pcileech-fpga">PCILeech FPGA</a> boards</strong><br>
+  Reads a real PCI/PCIe donor device via VFIO, clones its identity, and builds a ready-to-flash <code>.bin</code> firmware through Vivado.
+</p>
 
-Generates custom firmware for [PCILeech FPGA](https://github.com/ufrisk/pcileech-fpga) boards. Reads a real PCI/PCIe donor device via VFIO, clones its identity (IDs, config space, BARs, capabilities), and builds a ready-to-flash `.bin` firmware through Vivado.
+<p align="center">
+  <a href="https://github.com/sercanarga/PCILeechGen/actions/workflows/codeql.yml"><img src="https://github.com/sercanarga/PCILeechGen/actions/workflows/codeql.yml/badge.svg" alt="CodeQL"></a>
+  <a href="https://github.com/sercanarga/PCILeechGen/actions/workflows/ci.yml"><img src="https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/sercanarga/b85bf5ab915f0f64fc15df8d52b8924c/raw" alt="Coverage"></a>
+  <a href="https://goreportcard.com/report/github.com/sercanarga/pcileechgen"><img src="https://goreportcard.com/badge/github.com/sercanarga/pcileechgen" alt="Go Report Card"></a>
+  <a href="https://go.dev/"><img src="https://img.shields.io/github/go-mod/go-version/sercanarga/PCILeechGen" alt="Go"></a>
+  <a href="https://github.com/sercanarga/PCILeechGen/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-CC0_1.0-lightgrey.svg" alt="License: CC0-1.0"></a>
+  <a href="https://github.com/sercanarga/PCILeechGen"><img src="https://img.shields.io/github/repo-size/sercanarga/PCILeechGen" alt="Repo Size"></a>
+  <a href="https://github.com/sercanarga/PCILeechGen/commits"><img src="https://img.shields.io/github/last-commit/sercanarga/PCILeechGen" alt="Last Commit"></a>
+  <a href="https://discord.gg/kcWVCAhNSg"><img src="https://img.shields.io/discord/1477751220037877881?logo=discord&logoColor=white&label=Discord&color=5865F2" alt="Discord"></a>
+</p>
+
+
+## Contents
+
+- [Features](#features)
+- [How It Works](#how-it-works)
+- [Supported Boards](#supported-boards)
+- [Quick Start](#quick-start)
+- [Commands](#commands)
+- [Output](#output)
+- [Architecture](#architecture)
+- [Development](#development)
+- [Special Thanks](#special-thanks)
+- [License](#license)
+- [Legal Notice](#legal-notice)
+
 
 ## Features
 
-- [x] Vendor / Device / Revision ID
-- [x] Subsystem Vendor / Device ID
-- [x] Class Code (base, sub-class, interface)
-- [x] Device Serial Number (64-bit DSN)
-- [x] BAR0 Layout (type, size, 32/64-bit)
-- [x] BAR Content Emulation (donor memory snapshot)
-- [x] NVMe CC->CSTS State Machine (dynamic controller handshake)
-- [x] xHCI USBCMD/USBSTS State Machine (BRAM-aware register clamping)
-- [x] TLP Latency Emulation (PRNG jitter, thermal drift, burst correlation)
-- [x] Link Speed / Width (clamped to board)
-- [x] Config Space (full 4KB shadow + scrubbing pipeline)
-- [x] Write Mask (per-register)
-- [x] Power Management (D-state + NoSoftReset)
-- [x] Capability Filtering (SR-IOV, Resizable BAR, ATS, L1PM, etc.)
-- [x] Capability Pruning (VPD, AGP, HyperTransport, PCI-X)
-- [x] Vendor Quirks (Renesas firmware status, vendor-specific region zeroing)
-- [x] MSI-X Table Replication (separate BRAM, donor table + PBA emulation)
-- [x] MSI-X Interrupt Controller (4-state FSM with LFSR jitter)
-- [x] P&R Randomization (per-build Vivado placement seed)
-- [x] VSEC Entropy Embed (build-unique fingerprint in ext config space)
-- [x] VFIO Diagnostics (power state, BAR accessibility, IOMMU isolation)
-- [x] Fallback Config (class-based defaults for NVMe, xHCI, Ethernet, Audio)
-- [x] Post-Build Validation (output files, SV IDs, HEX/COE format)
-- [x] Vivado Build Report (error categorization, benign warning filter)
-- [x] Build Manifest (JSON with SHA256 checksums)
-- [ ] Donor-Profiled TLP Timing (per-device response histogram reproduction)
+<table>
+<tr><td>
+
+**Device Identity Cloning**
+- Vendor / Device / Revision ID
+- Subsystem Vendor / Device ID
+- Class Code (base, sub-class, interface)
+- Device Serial Number (64-bit DSN)
+
+</td><td>
+
+**BAR Emulation**
+- BAR0 Layout (type, size, 32/64-bit)
+- BAR Content Emulation (donor memory snapshot)
+- NVMe CC→CSTS State Machine
+- xHCI USBCMD/USBSTS State Machine
+
+</td></tr>
+<tr><td>
+
+**Config Space**
+- Full 4KB shadow + scrubbing pipeline
+- Per-register write masks
+- Power Management (D-state + NoSoftReset)
+- Vendor Quirks (Renesas firmware status, vendor-specific region zeroing)
+
+</td><td>
+
+**Capability Management**
+- Capability Filtering (SR-IOV, Resizable BAR, ATS, L1PM, etc.)
+- Capability Pruning (VPD, AGP, HyperTransport, PCI-X)
+- MSI-X Table Replication (separate BRAM, donor table + PBA)
+- MSI-X Interrupt Controller (4-state FSM with LFSR jitter)
+
+</td></tr>
+<tr><td>
+
+**Stealth & Timing**
+- TLP Latency Emulation (PRNG jitter, thermal drift, burst correlation)
+- Link Speed / Width (clamped to board)
+- P&R Randomization (per-build Vivado placement seed)
+- VSEC Entropy Embed (build-unique fingerprint in ext config space)
+
+</td><td>
+
+**Diagnostics & Validation**
+- VFIO Diagnostics (power state, BAR accessibility, IOMMU isolation)
+- Fallback Config (class-based defaults for NVMe, xHCI, Ethernet, Audio)
+- Post-Build Validation (output files, SV IDs, HEX/COE format)
+- Vivado Build Report (error categorization, benign warning filter)
+- Build Manifest (JSON with SHA256 checksums)
+
+</td></tr>
+</table>
+
+> [!TIP]
+> Run `check` before `build` to verify donor device suitability and board compatibility.
+
+**Roadmap:** Donor-Profiled TLP Timing - per-device response histogram reproduction.
+
+## How It Works
+
+```mermaid
+flowchart LR
+    A["scan"] --> B["check"]
+    B --> C["build"]
+    C --> D["flash"]
+
+    A -.- A1["Enumerate PCI devices\nDetect VFIO status"]
+    B -.- B1["Validate donor device\nRead config space & BARs"]
+    C -.- C1["Clone identity → Generate SV/COE/TCL\n→ Vivado synthesis → .bin"]
+    D -.- D1["Flash bitstream\nto FPGA board"]
+```
+
+---
 
 ## Supported Boards
 
 | Board | FPGA | Lanes | Form Factor |
-|---|---|---|---|
+|:------|:-----|:-----:|:-----------:|
 | [CaptainDMA_M2_x1](https://github.com/ufrisk/pcileech-fpga/tree/master/CaptainDMA) | XC7A35T-325 | x1 | M.2 |
 | [CaptainDMA_M2_x4](https://github.com/ufrisk/pcileech-fpga/tree/master/CaptainDMA) | XC7A35T-325 | x4 | M.2 |
 | [CaptainDMA_35T](https://github.com/ufrisk/pcileech-fpga/tree/master/CaptainDMA) | XC7A35T-484 | x1 | PCIe |
@@ -64,29 +136,57 @@ Generates custom firmware for [PCILeech FPGA](https://github.com/ufrisk/pcileech
 | [litefury](https://github.com/ufrisk/pcileech-fpga/tree/master/ZDMA) | XC7A100T-484 | x4 | M.2 |
 | [sp605_ft601](https://github.com/ufrisk/pcileech-fpga/tree/master/sp605_ft601) | XC6SLX45T-484 | x1 | Dev Board |
 
+---
+
 ## Quick Start
 
+### Prerequisites
+
+- **Go** 1.25+
+- **Linux** with IOMMU/VFIO enabled
+- **Vivado** 2023.2+ (for synthesis)
+
+> [!NOTE]
+> VFIO requires IOMMU to be enabled in BIOS and kernel parameters (`intel_iommu=on` or `amd_iommu=on`).
+
+### Installation
+
 ```bash
-# install
 git clone --recurse-submodules https://github.com/sercanarga/PCILeechGen.git
 cd PCILeechGen && make build
+```
 
-# scan devices
+> [!IMPORTANT]
+> The `--recurse-submodules` flag is required to fetch the pcileech-fpga library.
+
+### Usage
+
+```bash
+# 1. Scan for available PCI devices
 sudo ./bin/pcileechgen scan
 
-# build firmware
+# 2. Check if a device is suitable as donor
+sudo ./bin/pcileechgen check --bdf 0000:02:00.0
+
+# 3. Build firmware
 sudo ./bin/pcileechgen build --bdf 0000:03:00.0 --board CaptainDMA_100T
 ```
 
-**Requirements:** Go 1.25+, Linux with IOMMU/VFIO, Vivado 2023.2+ (for synthesis)
+---
 
 ## Commands
 
-### `scan`
-List PCI devices with VFIO compatibility status.
+### `scan` — List PCI Devices
+
+Shows all PCI devices with VFIO compatibility status.
+
 ```bash
 sudo ./bin/pcileechgen scan
 ```
+
+<details>
+<summary>Example output</summary>
+
 ```
 0000:00:00.0 Host bridge [0600]: Intel Corporation Xeon E3-1200 v6/7th Gen Core Processor Host Bridge [8086:591f]
 0000:00:17.0 SATA controller [0106]: Intel Corporation 200 Series PCH SATA controller [8086:a282]
@@ -96,11 +196,19 @@ sudo ./bin/pcileechgen scan
 Total: 16 devices
 ```
 
-### `check`
-Verify a device is suitable as a donor.
+</details>
+
+### `check` — Verify Donor Device
+
+Runs a full diagnostic on a device to verify donor suitability.
+
 ```bash
 sudo ./bin/pcileechgen check --bdf 0000:02:00.0
 ```
+
+<details>
+<summary>Example output</summary>
+
 ```
 Checking device 0000:02:00.0...
 
@@ -142,25 +250,34 @@ Total: 17 boards
 [OK] Device is ready for firmware generation
 ```
 
-### `build`
-Generate firmware and optionally run Vivado synthesis.
+</details>
+
+### `build` — Generate Firmware
+
+Generates firmware artifacts and optionally runs Vivado synthesis.
 
 ```bash
-# full build
+# Full build (artifacts + Vivado synthesis)
 sudo ./bin/pcileechgen build --bdf 0000:03:00.0 --board CaptainDMA_100T
 
-# artifacts only (no Vivado)
+# Artifacts only (no Vivado)
 sudo ./bin/pcileechgen build --bdf 0000:03:00.0 --board CaptainDMA_100T --skip-vivado
 
-# offline build from saved JSON
+# Offline build from saved JSON
 sudo ./bin/pcileechgen build --from-json device_context.json --board CaptainDMA_100T --skip-vivado
 ```
 
+> [!WARNING]
+> Full synthesis may take 30–60 minutes depending on FPGA size. Use `--skip-vivado` to generate only artifacts.
+
+<details>
+<summary>All flags</summary>
+
 | Flag | Default | Description |
-|---|---|---|
-| `--bdf` | | Donor device BDF address |
-| `--board` | | Target FPGA board (required) |
-| `--from-json` | | Load donor data from JSON (offline build) |
+|:-----|:--------|:------------|
+| `--bdf` | — | Donor device BDF address |
+| `--board` | — | Target FPGA board **(required)** |
+| `--from-json` | — | Load donor data from JSON (offline build) |
 | `--output` | `pcileech_datastore` | Output directory |
 | `--lib-dir` | `lib/pcileech-fpga` | Path to pcileech-fpga library |
 | `--skip-vivado` | `false` | Only generate artifacts, skip synthesis |
@@ -168,24 +285,33 @@ sudo ./bin/pcileechgen build --from-json device_context.json --board CaptainDMA_
 | `--jobs` | `4` | Parallel Vivado jobs |
 | `--timeout` | `3600` | Vivado timeout (seconds) |
 
-### `validate`
-Verify generated artifacts match the donor device context.
+</details>
+
+### `validate` — Verify Artifacts
+
+Verifies generated artifacts match the donor device context.
+
 ```bash
 ./bin/pcileechgen validate --json device_context.json --output-dir pcileech_datastore/
 ```
-Checks include: output file existence, vendor/device ID presence in SV, HEX line format, COE structure.
 
-### `version`
-Print build version.
+> Checks include: output file existence, vendor/device ID presence in SV, HEX line format, COE structure.
+
+### `version` — Print Version
+
 ```bash
 ./bin/pcileechgen version
 ```
 
-### `boards`
-List all supported FPGA boards.
+### `boards` — List Supported Boards
+
 ```bash
 ./bin/pcileechgen boards
 ```
+
+<details>
+<summary>Example output</summary>
+
 ```
 NAME              FPGA PART          PCIe  TOP MODULE
 ----              ---------          ----  ----------
@@ -198,61 +324,79 @@ ZDMA              xc7a100tfgg484-2   x4    pcileech_tbx4_100t_top
 Total: 17 boards
 ```
 
+</details>
+
+---
+
 ## Output
+
+The build command generates the following directory structure:
 
 ```
 pcileech_datastore/
-  device_context.json                    # donor device snapshot
-  build_manifest.json                    # file checksums + build metadata
-  pcileech_cfgspace.coe                  # 4KB config space (scrubbed)
-  pcileech_cfgspace_writemask.coe        # per-register write masks
-  pcileech_bar_zero4k.coe               # BAR0 content snapshot
-  pcileech_bar_impl_device.sv           # BAR implementation (register-level)
-  pcileech_tlps128_bar_controller.sv    # TLP BAR controller
-  pcileech_msix_table.sv                # MSI-X table + PBA emulation
-  tlp_latency_emulator.sv              # response latency emulation
-  device_config.sv                      # device identity + feature flags
-  config_space_init.hex                 # config space init ($readmemh)
-  msix_table_init.hex                   # MSI-X table init ($readmemh)
-  vivado_generate_project.tcl           # project creation script
-  vivado_build.tcl                      # synthesis script
-  src/                                  # patched board SV sources
-  *.bin                                 # bitstream (after Vivado)
+├── device_context.json                  # Donor device snapshot
+├── build_manifest.json                  # File checksums + build metadata
+├── pcileech_cfgspace.coe                # 4KB config space (scrubbed)
+├── pcileech_cfgspace_writemask.coe      # Per-register write masks
+├── pcileech_bar_zero4k.coe             # BAR0 content snapshot
+├── pcileech_bar_impl_device.sv         # BAR implementation (register-level)
+├── pcileech_tlps128_bar_controller.sv  # TLP BAR controller
+├── pcileech_msix_table.sv              # MSI-X table + PBA emulation
+├── tlp_latency_emulator.sv            # Response latency emulation
+├── device_config.sv                    # Device identity + feature flags
+├── config_space_init.hex               # Config space init ($readmemh)
+├── msix_table_init.hex                 # MSI-X table init ($readmemh)
+├── vivado_generate_project.tcl         # Project creation script
+├── vivado_build.tcl                    # Synthesis script
+├── src/                                # Patched board SV sources
+└── *.bin                               # Bitstream (after Vivado)
 ```
+
+---
 
 ## Architecture
 
-```
-cmd/pcileechgen/          CLI (scan, check, build, validate, boards, version)
-internal/
-  board/                  board registry (embedded JSON, 17 boards)
-  donor/                  VFIO device reader + BAR profiling
-  pci/                    config space parser, capabilities, MSI-X
-  firmware/
-    scrub/                config space scrubbing (14-pass pipeline)
-    barmodel/             BAR register model (spec + profiled)
-    svgen/                SV code generation (embedded .sv.tmpl templates)
-    tclgen/               Vivado TCL script generation
-    devclass/             device class strategy (NVMe, xHCI, Ethernet, Audio)
-    output/               artifact writer (SV pipeline + COE + HEX)
-    overlay/              byte-level diff tracking
-    variance/             config space randomization
-    codegen/              HEX/COE formatters
-  vivado/                 Vivado process runner
+```mermaid
+block-beta
+  columns 4
+
+  CLI["cmd/pcileechgen\nscan, check, build, validate, boards, version"]:4
+
+  space:4
+
+  board["board\nBoard Registry"]
+  donor["donor\nVFIO Reader"]
+  pci["pci\nConfig Space Parser"]
+  vivado["vivado\nVivado Runner"]
+
+  space:4
+
+  block:firmware:4
+    columns 4
+    label["firmware"]:4
+    scrub["scrub\n14-Pass Pipeline"]
+    barmodel["barmodel\nBAR Register Model"]
+    svgen["svgen\nSV Code Gen"]
+    tclgen["tclgen\nTCL Scripts"]
+    devclass["devclass\nDevice Class Strategy"]
+    output["output\nArtifact Writer"]
+    codegen["codegen\nHEX/COE Formatters"]
+    variance["variance\nConfig Randomization"]
+  end
 ```
 
 ## Development
 
 ```bash
-make test
-make test-coverage
-make lint
+make test             # Run all tests
+make test-coverage    # Run tests with coverage report
+make lint             # Run linter
 ```
 
 ## Special Thanks
 
-- [pcileech-fpga](https://github.com/ufrisk/pcileech-fpga) by Ulf Frisk - the FPGA framework this project builds upon
-- [CaptainDMA](https://captaindma.com) - For best FPGA DMA hardware
+- **[pcileech-fpga](https://github.com/ufrisk/pcileech-fpga)** by Ulf Frisk — the FPGA framework this project builds upon
+- **[CaptainDMA](https://captaindma.com)** — for best FPGA DMA hardware
 
 ## License
 
@@ -260,4 +404,5 @@ make lint
 
 ## Legal Notice
 
-This tool is provided for **educational and research purposes only**. The authors do not condone or encourage the use of this software for cheating, circumventing anti-cheat systems, or any other activity that violates terms of service of any software or platform. Users are solely responsible for ensuring their use of this tool complies with all applicable laws and agreements.
+> [!CAUTION]
+> This tool is provided for **educational and research purposes only**. The authors do not condone or encourage the use of this software for cheating, circumventing anti-cheat systems, or any other activity that violates terms of service of any software or platform. Users are solely responsible for ensuring their use of this tool complies with all applicable laws and agreements.
