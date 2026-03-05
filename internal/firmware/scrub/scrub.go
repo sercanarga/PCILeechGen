@@ -50,14 +50,38 @@ func UnsafeExtCapName(id uint16) string {
 // min sizes (bytes) for standard PCI caps
 var capMinSize = map[uint8]int{
 	pci.CapIDPowerManagement: 8,  // PM: 2 header + 2 PMC + 2 PMCSR + 2 data
-	pci.CapIDMSI:             10, // MSI: varies, 10-24 depending on bits
 	pci.CapIDMSIX:            12, // MSI-X: 2 header + 2 ctl + 4 table + 4 PBA
 	pci.CapIDPCIExpress:      60, // PCIe: 0x3C typical for v2
 	pci.CapIDVendorSpecific:  3,  // at least header + length byte
 }
 
-// capSize returns byte size for a cap ID. Unknown caps default to 8.
-func capSize(id uint8) int {
+// computeMSISize figures out how big the MSI cap really is.
+// MSI varies between 10 and 24 bytes depending on the 64-bit and
+// per-vector masking bits in Message Control (capOffset+2).
+func computeMSISize(cs *pci.ConfigSpace, capOffset int) int {
+	if capOffset+4 > cs.Size {
+		return 10
+	}
+	msgCtl := cs.ReadU16(capOffset + 2)
+	is64bit := (msgCtl & (1 << 7)) != 0
+	hasMasking := (msgCtl & (1 << 8)) != 0
+
+	size := 10 // header + msgctl + addr + data
+	if is64bit {
+		size += 4 // upper address dword
+	}
+	if hasMasking {
+		size += 2 + 8 // reserved + mask + pending
+	}
+	return size
+}
+
+// capSizeAt returns byte size for a cap. MSI is variable so we read the
+// actual register; everything else comes from the static table.
+func capSizeAt(cs *pci.ConfigSpace, id uint8, offset int) int {
+	if id == pci.CapIDMSI {
+		return computeMSISize(cs, offset)
+	}
 	if s, ok := capMinSize[id]; ok {
 		return s
 	}
@@ -73,7 +97,7 @@ func zeroVendorRegisters(cs *pci.ConfigSpace, om *overlay.Map) {
 
 	caps := pci.ParseCapabilities(cs)
 	for _, cap := range caps {
-		size := capSize(cap.ID)
+		size := capSizeAt(cs, cap.ID, cap.Offset)
 		for i := cap.Offset; i < cap.Offset+size && i < pci.ConfigSpaceLegacySize; i++ {
 			covered[i] = true
 		}
