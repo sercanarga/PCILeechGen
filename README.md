@@ -40,6 +40,7 @@ Generates custom firmware for [PCILeech FPGA](https://github.com/ufrisk/pcileech
 - [x] Post-Build Validation (output files, SV IDs, HEX/COE format)
 - [x] Vivado Build Report (error categorization, benign warning filter)
 - [x] Build Manifest (JSON with SHA256 checksums)
+- [ ] Donor-Profiled TLP Timing (per-device response histogram reproduction)
 
 ## Supported Boards
 
