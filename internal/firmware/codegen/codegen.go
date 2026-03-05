@@ -10,8 +10,7 @@ import (
 	"github.com/sercanarga/pcileechgen/internal/util"
 )
 
-// 4KB = 1024 DWORDs, matches pcileech shadow config BRAM.
-const shadowCfgSpaceWords = 1024
+const shadowCfgSpaceWords = 1024 // 4KB shadow BRAM
 
 func formatCOE(header string, words []uint32) string {
 	var sb strings.Builder
@@ -46,16 +45,15 @@ func GenerateConfigSpaceCOE(cs *pci.ConfigSpace) string {
 	)
 }
 
-// GenerateWritemaskCOE outputs 1024 DWORDs writemask for pcileech_cfgspace_writemask.coe.
+// GenerateWritemaskCOE outputs the writemask COE (1=writable, 0=read-only).
 func GenerateWritemaskCOE(cs *pci.ConfigSpace) string {
 	masks := make([]uint32, shadowCfgSpaceWords)
 
-	// PCI Header writable fields (Type 0 header)
-	masks[0x04/4] = 0x0000FFFF // Command register (lower 16 bits writable)
-	masks[0x0C/4] = 0x0000FF00 // Latency timer
+	masks[0x04/4] = 0x0000FFFF // Command
+	masks[0x0C/4] = 0x0000FF00 // Latency Timer
 	masks[0x3C/4] = 0x000000FF // Interrupt Line
 
-	// BAR registers: writable (bits above size alignment)
+	// BARs
 	for i := 0; i < 6; i++ {
 		barOffset := 0x10 + (i * 4)
 		barValue := cs.BAR(i)
@@ -70,13 +68,9 @@ func GenerateWritemaskCOE(cs *pci.ConfigSpace) string {
 		}
 	}
 
-	// Expansion ROM BAR
-	masks[0x30/4] = 0xFFFFF801
+	masks[0x30/4] = 0xFFFFF801 // Expansion ROM
 
-	// Apply capability-specific writemasks (legacy space)
 	applyCapabilityWritemasks(cs, masks)
-
-	// Apply extended capability writemasks (0x100+)
 	applyExtCapabilityWritemasks(cs, masks)
 
 	return formatCOE(
@@ -87,40 +81,60 @@ func GenerateWritemaskCOE(cs *pci.ConfigSpace) string {
 	)
 }
 
-// applyCapabilityWritemasks applies writemasks for known PCI capabilities.
 func applyCapabilityWritemasks(cs *pci.ConfigSpace, masks []uint32) {
 	caps := pci.ParseCapabilities(cs)
 	for _, cap := range caps {
 		switch cap.ID {
 		case pci.CapIDPowerManagement:
-			// PM Control/Status register at cap+4 is partially writable
-			if cap.Offset+4 < pci.ConfigSpaceLegacySize {
-				masks[(cap.Offset+4)/4] = 0x00008103 // PowerState bits + PME_En + PME_Status
+			if cap.Offset+4+4 <= pci.ConfigSpaceLegacySize {
+				masks[(cap.Offset+4)/4] = 0x00008103 // PowerState + PME_En + PME_Status
 			}
 		case pci.CapIDMSI:
-			// MSI Message Control is partially writable
-			if cap.Offset+4 < pci.ConfigSpaceLegacySize {
+			if cap.Offset+4 <= pci.ConfigSpaceLegacySize {
 				masks[(cap.Offset)/4] |= 0x00710000 // Enable + MultiMsg Enable
 			}
+
+			msgCtl := cs.ReadU16(cap.Offset + 2)
+			is64Bit := (msgCtl & 0x0080) != 0
+			hasMask := (msgCtl & 0x0100) != 0
+
+			if cap.Offset+0x04+4 <= pci.ConfigSpaceLegacySize {
+				masks[(cap.Offset+0x04)/4] = 0xFFFFFFFC // addr low
+			}
+
+			if is64Bit {
+				if cap.Offset+0x08+4 <= pci.ConfigSpaceLegacySize {
+					masks[(cap.Offset+0x08)/4] = 0xFFFFFFFF // addr high
+				}
+				if cap.Offset+0x0C+4 <= pci.ConfigSpaceLegacySize {
+					masks[(cap.Offset+0x0C)/4] = 0x0000FFFF // data
+				}
+				if hasMask && cap.Offset+0x10+4 <= pci.ConfigSpaceLegacySize {
+					masks[(cap.Offset+0x10)/4] = 0xFFFFFFFF // mask bits
+				}
+			} else {
+				if cap.Offset+0x08+4 <= pci.ConfigSpaceLegacySize {
+					masks[(cap.Offset+0x08)/4] = 0x0000FFFF // data
+				}
+				if hasMask && cap.Offset+0x0C+4 <= pci.ConfigSpaceLegacySize {
+					masks[(cap.Offset+0x0C)/4] = 0xFFFFFFFF // mask bits
+				}
+			}
 		case pci.CapIDMSIX:
-			// MSI-X Message Control
 			if cap.Offset < pci.ConfigSpaceLegacySize {
 				masks[(cap.Offset)/4] |= 0xC0000000 // Enable + Function Mask
 			}
 		case pci.CapIDPCIExpress:
-			// PCIe Device Control at cap+8
-			if cap.Offset+8 < pci.ConfigSpaceLegacySize {
-				masks[(cap.Offset+8)/4] = 0x0000FFFF
+			if cap.Offset+8+4 <= pci.ConfigSpaceLegacySize {
+				masks[(cap.Offset+8)/4] = 0x0000FFFF // DevCtl
 			}
-			// PCIe Link Control at cap+16 (0x10)
-			if cap.Offset+16 < pci.ConfigSpaceLegacySize {
-				masks[(cap.Offset+16)/4] = 0x0000FFFF
+			if cap.Offset+16+4 <= pci.ConfigSpaceLegacySize {
+				masks[(cap.Offset+16)/4] = 0x0000FFFF // LinkCtl
 			}
 		}
 	}
 }
 
-// applyExtCapabilityWritemasks applies writemasks for PCIe extended capabilities.
 func applyExtCapabilityWritemasks(cs *pci.ConfigSpace, masks []uint32) {
 	if cs.Size < pci.ConfigSpaceSize {
 		return
@@ -135,28 +149,11 @@ func applyExtCapabilityWritemasks(cs *pci.ConfigSpace, masks []uint32) {
 
 		switch cap.ID {
 		case pci.ExtCapIDAER:
-			// AER: Uncorrectable Error Status at cap+4 (RW1C)
-			if wordIdx+1 < len(masks) {
-				masks[wordIdx+1] = 0xFFFFFFFF
-			}
-			// AER: Uncorrectable Error Mask at cap+8
-			if wordIdx+2 < len(masks) {
-				masks[wordIdx+2] = 0xFFFFFFFF
-			}
-			// AER: Uncorrectable Error Severity at cap+12
-			if wordIdx+3 < len(masks) {
-				masks[wordIdx+3] = 0xFFFFFFFF
-			}
-			// AER: Correctable Error Status at cap+16 (RW1C)
-			if wordIdx+4 < len(masks) {
-				masks[wordIdx+4] = 0xFFFFFFFF
-			}
-			// AER: Correctable Error Mask at cap+20
-			if wordIdx+5 < len(masks) {
-				masks[wordIdx+5] = 0xFFFFFFFF
+			// UE status, mask, severity + CE status, mask
+			for i := 1; i <= 5 && wordIdx+i < len(masks); i++ {
+				masks[wordIdx+i] = 0xFFFFFFFF
 			}
 		case pci.ExtCapIDLTR:
-			// LTR: Max Snoop/No-Snoop Latency at cap+4
 			if wordIdx+1 < len(masks) {
 				masks[wordIdx+1] = 0xFFFFFFFF
 			}
@@ -164,12 +161,10 @@ func applyExtCapabilityWritemasks(cs *pci.ConfigSpace, masks []uint32) {
 	}
 }
 
-// GenerateBarContentCOE outputs pcileech_bar_zero4k.coe from lowest BAR data.
-// Zero-filled if no donor BAR content is available.
+// GenerateBarContentCOE outputs BAR shadow COE from the lowest BAR.
 func GenerateBarContentCOE(barContents map[int][]byte) string {
 	words := make([]uint32, shadowCfgSpaceWords)
 
-	// Populate BRAM from the lowest-indexed BAR with content
 	data := firmware.LowestBarData(barContents)
 	if data != nil {
 		for i := 0; i+4 <= len(data) && i/4 < len(words); i += 4 {
@@ -188,9 +183,7 @@ func GenerateBarContentCOE(barContents map[int][]byte) string {
 	return formatCOE(header, words)
 }
 
-// GenerateConfigSpaceHex outputs config space data in Verilog $readmemh format.
-// Each line is one DWORD (8 hex chars), 1024 lines total for 4KB.
-// Can be loaded with $readmemh("config_space_init.hex", mem) in SV.
+// GenerateConfigSpaceHex outputs config space in $readmemh format (1024 DWORDs).
 func GenerateConfigSpaceHex(cs *pci.ConfigSpace) string {
 	var sb strings.Builder
 	sb.WriteString("// PCILeechGen - Config Space Init (4KB = 1024 DWORDs)\n")

@@ -170,6 +170,61 @@ func TestScrubConfigSpace_ClampLinkCapability(t *testing.T) {
 	}
 }
 
+func TestScrubConfigSpace_LinkCtl2ZeroSpeed(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+
+	cs.WriteU16(0x00, 0x1102)
+	cs.WriteU16(0x06, 0x0010)
+	cs.WriteU8(0x34, 0x70)
+
+	cs.WriteU8(0x70, pci.CapIDPCIExpress)
+	cs.WriteU8(0x71, 0x00)
+
+	// LinkCap at 0x7C: Gen1 x1
+	cs.WriteU32(0x7C, uint32(1)|(uint32(1)<<4))
+	// LinkCtl2 at 0xA0: target speed = 0 (invalid)
+	cs.WriteU16(0xA0, 0x0000)
+
+	scrubbed := ScrubConfigSpace(cs, nil)
+
+	lctl2 := scrubbed.ReadU16(0xA0)
+	tgtSpeed := uint8(lctl2 & 0x0F)
+	if tgtSpeed == 0 {
+		t.Errorf("LinkCtl2 target speed should not be 0 after scrub, got 0x%04x", lctl2)
+	}
+	if tgtSpeed > firmware.LinkSpeedGen2 {
+		t.Errorf("LinkCtl2 target speed should be <= Gen2, got %d", tgtSpeed)
+	}
+}
+
+func TestScrubConfigSpace_LinkCap2VectorClamp(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+
+	cs.WriteU16(0x00, 0x1102)
+	cs.WriteU16(0x06, 0x0010)
+	cs.WriteU8(0x34, 0x70)
+
+	cs.WriteU8(0x70, pci.CapIDPCIExpress)
+	cs.WriteU8(0x71, 0x00)
+
+	// LinkCap at 0x7C: Gen1 x1
+	cs.WriteU32(0x7C, uint32(1)|(uint32(1)<<4))
+	// LinkCap2 at 0x9C: only Gen1 supported (bit 1 only)
+	cs.WriteU32(0x9C, 0x02)
+
+	b := &board.Board{PCIeLanes: 1}
+	scrubbed := ScrubConfigSpace(cs, b)
+
+	lc2 := scrubbed.ReadU32(0x9C)
+	vec := lc2 & 0xFE
+	// donor only had Gen1, board supports Gen2 — vector should remain Gen1 only
+	if vec != 0x02 {
+		t.Errorf("LinkCap2 vector should be 0x02 (Gen1 only), got 0x%02x", vec)
+	}
+}
+
 func TestScrubConfigSpace_ClampDeviceCapability(t *testing.T) {
 	cs := pci.NewConfigSpace()
 	cs.Size = pci.ConfigSpaceSize
