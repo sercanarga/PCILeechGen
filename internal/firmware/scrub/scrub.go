@@ -30,7 +30,6 @@ var unsafeExtCaps = map[uint16]string{
 	pci.ExtCapIDMulticast:     "Multicast",
 }
 
-// BRAMSize is the FPGA BRAM size in bytes.
 const BRAMSize = 4096
 
 const bar0SizeMask = 0xFFFFF000 // 4 KB aligned
@@ -55,9 +54,7 @@ var capMinSize = map[uint8]int{
 	pci.CapIDVendorSpecific:  3,  // at least header + length byte
 }
 
-// computeMSISize figures out how big the MSI cap really is.
-// MSI varies between 10 and 24 bytes depending on the 64-bit and
-// per-vector masking bits in Message Control (capOffset+2).
+// computeMSISize returns the actual MSI cap size (10-24 bytes).
 func computeMSISize(cs *pci.ConfigSpace, capOffset int) int {
 	if capOffset+4 > cs.Size {
 		return 10
@@ -76,8 +73,7 @@ func computeMSISize(cs *pci.ConfigSpace, capOffset int) int {
 	return size
 }
 
-// capSizeAt returns byte size for a cap. MSI is variable so we read the
-// actual register; everything else comes from the static table.
+// capSizeAt returns byte size for a cap; MSI is variable, rest is static.
 func capSizeAt(cs *pci.ConfigSpace, id uint8, offset int) int {
 	if id == pci.CapIDMSI {
 		return computeMSISize(cs, offset)
@@ -88,7 +84,7 @@ func capSizeAt(cs *pci.ConfigSpace, id uint8, offset int) int {
 	return 8
 }
 
-// zeroVendorRegisters clears 0x40-0xFF bytes not covered by any PCI cap.
+// zeroVendorRegisters clears 0x40-0xFF bytes not belonging to any cap.
 func zeroVendorRegisters(cs *pci.ConfigSpace, om *overlay.Map) {
 	covered := make([]bool, pci.ConfigSpaceLegacySize)
 	for i := 0; i < 0x40; i++ {
@@ -110,13 +106,14 @@ func zeroVendorRegisters(cs *pci.ConfigSpace, om *overlay.Map) {
 	}
 }
 
-// ScrubConfigSpace is a shorthand that throws away the overlay diff.
+// ScrubConfigSpace shorthand — returns scrubbed copy, discards diff.
 func ScrubConfigSpace(cs *pci.ConfigSpace, b *board.Board) *pci.ConfigSpace {
 	scrubbed, _ := ScrubConfigSpaceWithOverlay(cs, b)
 	return scrubbed
 }
 
-// ScrubConfigSpaceWithOverlay does the real work and logs every byte change.
+// ScrubConfigSpaceWithOverlay scrubs the config space and returns both the
+// scrubbed copy and an overlay map recording every change.
 func ScrubConfigSpaceWithOverlay(cs *pci.ConfigSpace, b *board.Board) (*pci.ConfigSpace, *overlay.Map) {
 	scrubbed := cs.Clone()
 	om := overlay.NewMap(scrubbed)
@@ -143,7 +140,7 @@ func ScrubConfigSpaceWithOverlay(cs *pci.ConfigSpace, b *board.Board) (*pci.Conf
 			pmcsr &= 0xFFFC
 			pmcsr &= 0x7FFF
 			pmcsr |= 0x0008
-			om.WriteU16(cap.Offset+4, pmcsr, "PM: force D0, NoSoftReset, clear PME_Status")
+			om.WriteU16(cap.Offset+4, pmcsr, "PM: D0, NoSoftReset, clear PME_Status")
 		}
 	}
 
@@ -173,7 +170,6 @@ func ScrubConfigSpaceWithOverlay(cs *pci.ConfigSpace, b *board.Board) (*pci.Conf
 	zeroVendorRegisters(scrubbed, om)
 	applyVendorQuirks(scrubbed, om)
 
-	// prune standard caps the FPGA can't handle
 	if pruned := PruneStandardCaps(scrubbed, om); len(pruned) > 0 {
 		for _, p := range pruned {
 			fmt.Printf("[scrub] pruned standard cap: %s\n", p)
@@ -255,7 +251,7 @@ func relocateMSIXToBRAM(cs *pci.ConfigSpace, om *overlay.Map) {
 	}
 }
 
-// clampLinkCapability caps link speed/width to match the FPGA + board.
+// clampLinkCapability caps link speed/width to board limits.
 func clampLinkCapability(cs *pci.ConfigSpace, b *board.Board, om *overlay.Map) {
 	caps := pci.ParseCapabilities(cs)
 	for _, cap := range caps {
@@ -304,25 +300,31 @@ func clampLinkCapability(cs *pci.ConfigSpace, b *board.Board, om *overlay.Map) {
 			om.WriteU16(cap.Offset+0x12, newLS, "clamp Link Status")
 		}
 
-		// Link Control 2 (cap+0x30) — target speed
+		// LinkCtl2 (cap+0x30) — target speed
 		if cap.Offset+0x30+2 <= pci.ConfigSpaceLegacySize {
 			lc2 := cs.ReadU16(cap.Offset + 0x30)
 			newLC2 := lc2
-			if speed := uint8(newLC2 & 0x0F); speed > maxSpeed {
+			speed := uint8(newLC2 & 0x0F)
+			if speed == 0 || speed > maxSpeed {
 				newLC2 = (newLC2 & 0xFFF0) | uint16(maxSpeed)
 			}
 			om.WriteU16(cap.Offset+0x30, newLC2, "clamp Link Control 2 target speed")
 		}
 
-		// Link Capabilities 2 (cap+0x2C) — supported speed vector
+		// LinkCap2 (cap+0x2C) — strip unsupported speeds from the donor vector
 		if cap.Offset+0x2C+4 <= pci.ConfigSpaceLegacySize {
 			lc2 := cs.ReadU32(cap.Offset + 0x2C)
 			if lc2 != 0 {
-				var vec uint32
+				donorVec := lc2 & 0xFE // bits [7:1]
+				var mask uint32
 				for s := uint8(1); s <= maxSpeed; s++ {
-					vec |= 1 << s
+					mask |= 1 << s
 				}
-				om.WriteU32(cap.Offset+0x2C, (lc2&0xFFFFFF01)|vec, "clamp Link Capabilities 2 speed vector")
+				clampedVec := donorVec & mask
+				if clampedVec == 0 {
+					clampedVec = 0x02 // at least Gen1
+				}
+				om.WriteU32(cap.Offset+0x2C, (lc2&0xFFFFFF01)|clampedVec, "clamp Link Capabilities 2 speed vector")
 			}
 		}
 
@@ -330,7 +332,7 @@ func clampLinkCapability(cs *pci.ConfigSpace, b *board.Board, om *overlay.Map) {
 	}
 }
 
-// clampDeviceCapability limits MPS, phantoms, ext tags to FPGA limits.
+// clampDeviceCapability forces MPS=128B, disables phantoms and ext tags.
 func clampDeviceCapability(cs *pci.ConfigSpace, om *overlay.Map) {
 	caps := pci.ParseCapabilities(cs)
 	for _, cap := range caps {
@@ -374,7 +376,7 @@ func clampDeviceCapability(cs *pci.ConfigSpace, om *overlay.Map) {
 	}
 }
 
-// FilterExtCapabilities removes unsupported ext caps and relinks the chain.
+// FilterExtCapabilities strips unsupported ext caps and relinks the chain.
 func FilterExtCapabilities(cs *pci.ConfigSpace) []string {
 	var removed []string
 

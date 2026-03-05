@@ -52,6 +52,70 @@ func TestGenerateWritemaskCOE(t *testing.T) {
 	}
 }
 
+func TestGenerateWritemaskCOE_MSI64BitMasking(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	cs.WriteU16(0x06, 0x0010)
+	cs.WriteU8(0x34, 0x50)
+
+	// MSI at 0x50: 64-bit + per-vector masking
+	cs.WriteU8(0x50, pci.CapIDMSI)
+	cs.WriteU8(0x51, 0x00)
+	cs.WriteU16(0x52, 0x0180) // 64bit + masking
+
+	masks := make([]uint32, shadowCfgSpaceWords)
+	applyCapabilityWritemasks(cs, masks)
+
+	// Message Control (DWORD at 0x50): Enable + MultiMsg bits
+	if masks[0x50/4]&0x00710000 == 0 {
+		t.Error("MSI msg control writable bits missing")
+	}
+	// Addr Low (0x54): bits [31:2]
+	if masks[0x54/4] != 0xFFFFFFFC {
+		t.Errorf("MSI addr low mask: got 0x%08x, want 0xFFFFFFFC", masks[0x54/4])
+	}
+	// Addr High (0x58): fully writable
+	if masks[0x58/4] != 0xFFFFFFFF {
+		t.Errorf("MSI addr high mask: got 0x%08x, want 0xFFFFFFFF", masks[0x58/4])
+	}
+	// Data (0x5C): lower 16 bits
+	if masks[0x5C/4] != 0x0000FFFF {
+		t.Errorf("MSI data mask: got 0x%08x, want 0x0000FFFF", masks[0x5C/4])
+	}
+	// Mask Bits (0x60): fully writable
+	if masks[0x60/4] != 0xFFFFFFFF {
+		t.Errorf("MSI mask bits mask: got 0x%08x, want 0xFFFFFFFF", masks[0x60/4])
+	}
+}
+
+func TestGenerateWritemaskCOE_MSI32BitNoMask(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	cs.WriteU16(0x06, 0x0010)
+	cs.WriteU8(0x34, 0x50)
+
+	// MSI at 0x50: 32-bit, no masking
+	cs.WriteU8(0x50, pci.CapIDMSI)
+	cs.WriteU8(0x51, 0x00)
+	cs.WriteU16(0x52, 0x0000)
+
+	masks := make([]uint32, shadowCfgSpaceWords)
+	applyCapabilityWritemasks(cs, masks)
+
+	// Addr Low (0x54)
+	if masks[0x54/4] != 0xFFFFFFFC {
+		t.Errorf("MSI addr low mask: got 0x%08x, want 0xFFFFFFFC", masks[0x54/4])
+	}
+	// Data at 0x58 (32-bit layout)
+	if masks[0x58/4] != 0x0000FFFF {
+		t.Errorf("MSI data mask (32-bit): got 0x%08x, want 0x0000FFFF", masks[0x58/4])
+	}
+	// 0x5C should be 0 (no addr_hi, no mask bits)
+	if masks[0x5C/4] != 0 {
+		t.Errorf("no mask bits expected at 0x5C for 32-bit no-mask MSI, got 0x%08x", masks[0x5C/4])
+	}
+}
+
 func TestGenerateBarContentCOE_Empty(t *testing.T) {
 	coe := GenerateBarContentCOE(nil)
 	if !strings.Contains(coe, "Zero-filled") {
