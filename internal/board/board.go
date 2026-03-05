@@ -2,6 +2,8 @@
 package board
 
 import (
+	"embed"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -9,29 +11,27 @@ import (
 
 // Board represents a supported PCILeech FPGA board (or board variant).
 type Board struct {
-	Name         string `json:"name"`           // canonical board name (unique key)
-	FPGAPart     string `json:"fpga_part"`      // Xilinx FPGA part number (e.g. xc7a35tfgg484-2)
-	PCIeLanes    int    `json:"pcie_lanes"`     // number of PCIe lanes (1 or 4)
-	MaxLinkSpeed uint8  `json:"max_link_speed"` // max PCIe gen (0 = default to Gen2)
-	BRAMSize     int    `json:"bram_size"`      // BAR BRAM capacity in bytes (0 = default 4096)
-	TopModule    string `json:"top_module"`     // top-level SystemVerilog module name
-	ProjectDir   string `json:"project_dir"`    // top-level directory in pcileech-fpga (e.g. "CaptainDMA")
-	SubDir       string `json:"sub_dir"`        // optional subdirectory within ProjectDir (e.g. "100t484-1")
-	TCLFile      string `json:"tcl_file"`       // TCL project generation script filename
-	BuildTCL     string `json:"build_tcl"`      // TCL build script filename (defaults to "vivado_build.tcl")
+	Name         string `json:"name"`
+	FPGAPart     string `json:"fpga_part"`
+	PCIeLanes    int    `json:"pcie_lanes"`
+	MaxLinkSpeed uint8  `json:"max_link_speed"`
+	BRAMSize     int    `json:"bram_size"`
+	TopModule    string `json:"top_module"`
+	ProjectDir   string `json:"project_dir"`
+	SubDir       string `json:"sub_dir"`
+	TCLFile      string `json:"tcl_file"`
+	BuildTCL     string `json:"build_tcl"`
 }
 
 // String returns the board name.
-func (b *Board) String() string {
-	return b.Name
-}
+func (b *Board) String() string { return b.Name }
 
 // MaxLinkSpeedOrDefault returns the board's max link speed, defaulting to Gen2.
 func (b *Board) MaxLinkSpeedOrDefault() uint8 {
 	if b.MaxLinkSpeed > 0 {
 		return b.MaxLinkSpeed
 	}
-	return 2 // Gen2 — all Xilinx 7-series boards
+	return 2
 }
 
 // BRAMSizeOrDefault returns the board's BAR BRAM size, defaulting to 4096.
@@ -86,184 +86,30 @@ func (b *Board) LibPath(libDir string) string {
 	return filepath.Join(libDir, b.ProjectDir)
 }
 
-// registry holds all supported boards and their variants.
-// Data sourced directly from pcileech-fpga submodule TCL files.
-var registry = []Board{
-	// ─── PCIeSquirrel ───────────────────────────────────────────
-	{
-		Name:       "PCIeSquirrel",
-		FPGAPart:   "xc7a35tfgg484-2",
-		PCIeLanes:  1,
-		TopModule:  "pcileech_squirrel_top",
-		ProjectDir: "PCIeSquirrel",
-		TCLFile:    "vivado_generate_project.tcl",
-	},
+//go:embed boards.json
+var boardsJSON embed.FS
 
-	// ─── ScreamerM2 ────────────────────────────────────────────
-	{
-		Name:       "ScreamerM2",
-		FPGAPart:   "xc7a35tcsg325-2",
-		PCIeLanes:  1,
-		TopModule:  "pcileech_screamer_m2_top",
-		ProjectDir: "ScreamerM2",
-		TCLFile:    "vivado_generate_project.tcl",
-	},
+// registry holds all supported boards, loaded from embedded JSON at init.
+var registry []Board
 
-	// ─── pciescreamer (original) ───────────────────────────────
-	{
-		Name:       "pciescreamer",
-		FPGAPart:   "xc7a35tfgg484-2",
-		PCIeLanes:  1,
-		TopModule:  "pcileech_pciescreamer_top",
-		ProjectDir: "pciescreamer",
-		TCLFile:    "vivado_generate_project.tcl",
-	},
-
-	// ─── EnigmaX1 ──────────────────────────────────────────────
-	{
-		Name:       "EnigmaX1",
-		FPGAPart:   "xc7a75tfgg484-2",
-		PCIeLanes:  1,
-		TopModule:  "pcileech_enigma_x1_top",
-		ProjectDir: "EnigmaX1",
-		TCLFile:    "vivado_generate_project.tcl",
-	},
-
-	// ─── CaptainDMA M2 x1 (35T, CSG325 package) ───────────────
-	{
-		Name:       "CaptainDMA_M2_x1",
-		FPGAPart:   "xc7a35tcsg325-2",
-		PCIeLanes:  1,
-		TopModule:  "pcileech_35t325_x1_top",
-		ProjectDir: "CaptainDMA",
-		SubDir:     "35t325_x1",
-		TCLFile:    "vivado_generate_project_captaindma_m2x1.tcl",
-	},
-
-	// ─── CaptainDMA M2 x4 (35T, CSG325 package) ───────────────
-	{
-		Name:       "CaptainDMA_M2_x4",
-		FPGAPart:   "xc7a35tcsg325-2",
-		PCIeLanes:  4,
-		TopModule:  "pcileech_35t325_x4_top",
-		ProjectDir: "CaptainDMA",
-		SubDir:     "35t325_x4",
-		TCLFile:    "vivado_generate_project_captaindma_m2x4.tcl",
-	},
-
-	// ─── CaptainDMA 4.1th (35T, FGG484 package) ───────────────
-	{
-		Name:       "CaptainDMA_35T",
-		FPGAPart:   "xc7a35tfgg484-2",
-		PCIeLanes:  1,
-		TopModule:  "pcileech_35t484_x1_top",
-		ProjectDir: "CaptainDMA",
-		SubDir:     "35t484_x1",
-		TCLFile:    "vivado_generate_project_captaindma_35t.tcl",
-	},
-
-	// ─── CaptainDMA 75T ────────────────────────────────────────
-	{
-		Name:       "CaptainDMA_75T",
-		FPGAPart:   "xc7a75tfgg484-2",
-		PCIeLanes:  1,
-		TopModule:  "pcileech_75t484_x1_top",
-		ProjectDir: "CaptainDMA",
-		SubDir:     "75t484_x1",
-		TCLFile:    "vivado_generate_project_captaindma_75t.tcl",
-	},
-
-	// ─── CaptainDMA 100T ───────────────────────────────────────
-	{
-		Name:       "CaptainDMA_100T",
-		FPGAPart:   "xc7a100tfgg484-2",
-		PCIeLanes:  1,
-		TopModule:  "pcileech_100t484_x1_top",
-		ProjectDir: "CaptainDMA",
-		SubDir:     "100t484-1",
-		TCLFile:    "vivado_generate_project_captaindma_100t.tcl",
-	},
-
-	// ─── ZDMA (LambdaConcept / LightingZDMA - 100T) ───────────
-	{
-		Name:       "ZDMA",
-		FPGAPart:   "xc7a100tfgg484-2",
-		PCIeLanes:  4,
-		TopModule:  "pcileech_tbx4_100t_top",
-		ProjectDir: "ZDMA",
-		TCLFile:    "vivado_generate_project_100t.tcl",
-		BuildTCL:   "vivado_build_100t.tcl",
-	},
-
-	// ─── GBOX ──────────────────────────────────────────────────
-	{
-		Name:       "GBOX",
-		FPGAPart:   "xc7a35tfgg484-2",
-		PCIeLanes:  1,
-		TopModule:  "pcileech_gbox_top",
-		ProjectDir: "GBOX",
-		TCLFile:    "vivado_generate_project.tcl",
-	},
-
-	// ─── NeTV2 (35T variant) ───────────────────────────────────
-	{
-		Name:       "NeTV2_35T",
-		FPGAPart:   "xc7a35tfgg484-2",
-		PCIeLanes:  1,
-		TopModule:  "pcileech_netv2_top",
-		ProjectDir: "NeTV2",
-		TCLFile:    "vivado_generate_project_35t.tcl",
-	},
-
-	// ─── NeTV2 (100T variant) ──────────────────────────────────
-	{
-		Name:       "NeTV2_100T",
-		FPGAPart:   "xc7a100tfgg484-2",
-		PCIeLanes:  1,
-		TopModule:  "pcileech_netv2_top",
-		ProjectDir: "NeTV2",
-		TCLFile:    "vivado_generate_project_100t.tcl",
-	},
-
-	// ─── ac701_ft601 ───────────────────────────────────────────
-	{
-		Name:       "ac701_ft601",
-		FPGAPart:   "xc7a200tfbg676-2",
-		PCIeLanes:  4,
-		TopModule:  "pcileech_ac701_ft601_top",
-		ProjectDir: "ac701_ft601",
-		TCLFile:    "vivado_generate_project.tcl",
-	},
-
-	// ─── Acorn (SQRL Acorn CLE-215+) ──────────────────────────
-	{
-		Name:       "acorn",
-		FPGAPart:   "xc7a200tfbg484-3",
-		PCIeLanes:  4,
-		TopModule:  "pcileech_acorn_top",
-		ProjectDir: "acorn_ft2232h",
-		TCLFile:    "vivado_generate_project_acorn.tcl",
-	},
-
-	// ─── LiteFury (RHS Research LiteFury) ──────────────────────
-	{
-		Name:       "litefury",
-		FPGAPart:   "xc7a100tfgg484-2",
-		PCIeLanes:  4,
-		TopModule:  "pcileech_acorn_top",
-		ProjectDir: "acorn_ft2232h",
-		TCLFile:    "vivado_generate_project_litefury.tcl",
-	},
-
-	// ─── sp605_ft601 (legacy) ──────────────────────────────────
-	{
-		Name:       "sp605_ft601",
-		FPGAPart:   "xc6slx45tfgg484-2",
-		PCIeLanes:  1,
-		TopModule:  "pcileech_top",
-		ProjectDir: "sp605_ft601",
-		TCLFile:    "vivado_generate_project.tcl",
-	},
+func init() {
+	data, err := boardsJSON.ReadFile("boards.json")
+	if err != nil {
+		panic("failed to read embedded boards.json: " + err.Error())
+	}
+	if err := json.Unmarshal(data, &registry); err != nil {
+		panic("failed to parse embedded boards.json: " + err.Error())
+	}
+	// Validate: every board must have name, fpga_part, top_module
+	for i, b := range registry {
+		if b.Name == "" || b.FPGAPart == "" || b.TopModule == "" {
+			panic(fmt.Sprintf("boards.json entry %d: missing required field (name=%q, fpga_part=%q, top_module=%q)",
+				i, b.Name, b.FPGAPart, b.TopModule))
+		}
+		if b.PCIeLanes == 0 {
+			registry[i].PCIeLanes = 1
+		}
+	}
 }
 
 // Find looks up a board by name (case-insensitive).

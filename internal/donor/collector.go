@@ -85,10 +85,7 @@ func (c *Collector) collectBARMemory(bdf pci.BDF, bars []pci.BAR) map[int][]byte
 	contents := make(map[int][]byte)
 	sysfsBarFailed := false
 
-	for _, bar := range bars {
-		if bar.IsDisabled() || bar.IsIO() || bar.Size == 0 {
-			continue
-		}
+	for _, bar := range eligibleBARs(bars) {
 		data, err := c.sysfs.ReadBARContent(bdf, bar.Index, maxBARReadSize)
 		if err != nil {
 			log.Printf("[donor] Warning: could not read BAR%d via sysfs: %v", bar.Index, err)
@@ -121,10 +118,7 @@ func (c *Collector) collectBARProfiles(bdf pci.BDF, bars []pci.BAR) map[int]*BAR
 	profiler := NewBARProfiler()
 	profiles := make(map[int]*BARProfile)
 
-	for _, bar := range bars {
-		if bar.IsDisabled() || bar.IsIO() || bar.Size == 0 {
-			continue
-		}
+	for _, bar := range eligibleBARs(bars) {
 		resourcePath := fmt.Sprintf("%s/%s/resource%d", c.sysfs.basePath, bdf.String(), bar.Index)
 		profile, err := profiler.ProfileBAR(resourcePath, bar.Index, maxBARReadSize)
 		if err != nil {
@@ -142,6 +136,17 @@ func (c *Collector) collectBARProfiles(bdf pci.BDF, bars []pci.BAR) map[int]*BAR
 	}
 
 	return profiles
+}
+
+// eligibleBARs filters out disabled, IO, and zero-size BARs.
+func eligibleBARs(bars []pci.BAR) []pci.BAR {
+	var result []pci.BAR
+	for _, bar := range bars {
+		if !bar.IsDisabled() && !bar.IsIO() && bar.Size > 0 {
+			result = append(result, bar)
+		}
+	}
+	return result
 }
 
 // collectMSIXData reads MSI-X table entries from BAR memory.

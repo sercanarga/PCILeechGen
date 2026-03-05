@@ -21,6 +21,16 @@ var validateJSONPath string
 var validateOutputDir string
 var validateBoard string
 
+// validator bundles state for a single validation run.
+type validator struct {
+	ctx       *donor.DeviceContext
+	b         *board.Board
+	outputDir string
+	scrubbed  *pci.ConfigSpace
+	passed    int
+	failed    int
+}
+
 var validateCmd = &cobra.Command{
 	Use:   "validate",
 	Short: "Validate generated firmware artifacts against donor data",
@@ -35,7 +45,6 @@ Example:
   pcileechgen validate --json device_context.json --output-dir pcileech_datastore/
   pcileechgen validate --json device_context.json --board PCIeSquirrel`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// Load donor context
 		ctx, err := donor.LoadContext(validateJSONPath)
 		if err != nil {
 			return fmt.Errorf("failed to load device context: %w", err)
@@ -43,7 +52,6 @@ Example:
 		fmt.Printf("Loaded donor context: %s\n\n",
 			color.Bold(fmt.Sprintf("%04x:%04x (rev %02x)", ctx.Device.VendorID, ctx.Device.DeviceID, ctx.Device.RevisionID)))
 
-		// Resolve board (optional)
 		var b *board.Board
 		if validateBoard != "" {
 			b, err = board.Find(validateBoard)
@@ -56,167 +64,190 @@ Example:
 			fmt.Println()
 		}
 
-		passed := 0
-		failed := 0
-
-		// Scrub once — reuse for all checks
-		scrubbedCS := scrub.ScrubConfigSpace(ctx.ConfigSpace, b)
-
-		// Validate config space COE
-		coePath := filepath.Join(validateOutputDir, "pcileech_cfgspace.coe")
-		if _, err := os.Stat(coePath); err == nil {
-			coeData, err := os.ReadFile(coePath)
-			if err != nil {
-				return fmt.Errorf("failed to read COE file: %w", err)
-			}
-
-			expectedCOE := codegen.GenerateConfigSpaceCOE(scrubbedCS)
-
-			if string(coeData) == expectedCOE {
-				fmt.Println(color.OK("pcileech_cfgspace.coe matches donor config space (scrubbed)"))
-				passed++
-			} else {
-				fmt.Println(color.Fail("pcileech_cfgspace.coe MISMATCH"))
-				reportCOEDiff(string(coeData), expectedCOE)
-				failed++
-			}
-		} else {
-			fmt.Println(color.Warn("pcileech_cfgspace.coe not found"))
-			failed++
+		v := &validator{
+			ctx:       ctx,
+			b:         b,
+			outputDir: validateOutputDir,
+			scrubbed:  scrub.ScrubConfigSpace(ctx.ConfigSpace, b),
 		}
 
-		// Validate writemask COE
-		wmPath := filepath.Join(validateOutputDir, "pcileech_cfgspace_writemask.coe")
-		if _, err := os.Stat(wmPath); err == nil {
-			wmData, err := os.ReadFile(wmPath)
-			if err != nil {
-				return fmt.Errorf("failed to read writemask COE: %w", err)
-			}
+		v.validateCOEFiles()
+		v.validateIdentity()
+		v.validateOutputFiles()
+		v.validateSVIDs()
+		v.validateFormats()
 
-			expectedWM := codegen.GenerateWritemaskCOE(scrubbedCS)
-
-			if string(wmData) == expectedWM {
-				fmt.Println(color.OK("pcileech_cfgspace_writemask.coe matches expected writemask"))
-				passed++
-			} else {
-				fmt.Println(color.Fail("pcileech_cfgspace_writemask.coe MISMATCH"))
-				failed++
-			}
-		} else {
-			fmt.Println(color.Warn("pcileech_cfgspace_writemask.coe not found"))
-			failed++
-		}
-
-		// Validate critical fields in COE match donor identity
-		if ctx.ConfigSpace != nil {
-			fmt.Printf("\n%s\n", color.Header("Identity Verification"))
-
-			coePath := filepath.Join(validateOutputDir, "pcileech_cfgspace.coe")
-			if coeData, err := os.ReadFile(coePath); err == nil {
-				coeStr := string(coeData)
-
-				// Extract first word (VendorID:DeviceID)
-				expectedWord0 := fmt.Sprintf("%08x", scrubbedCS.ReadU32(0))
-				if strings.Contains(coeStr, expectedWord0) {
-					fmt.Println(color.Okf("VendorID:DeviceID = %04X:%04X present in COE",
-						ctx.Device.VendorID, ctx.Device.DeviceID))
-					passed++
-				} else {
-					fmt.Println(color.Failf("VendorID:DeviceID = %04X:%04X NOT in COE",
-						ctx.Device.VendorID, ctx.Device.DeviceID))
-					failed++
-				}
-
-				// Check subsystem IDs (offset 0x2C)
-				expectedSubsys := fmt.Sprintf("%08x", scrubbedCS.ReadU32(0x2C))
-				if strings.Contains(coeStr, expectedSubsys) {
-					fmt.Println(color.Okf("SubsysVendorID:SubsysDeviceID = %04X:%04X present in COE",
-						ctx.Device.SubsysVendorID, ctx.Device.SubsysDeviceID))
-					passed++
-				} else {
-					fmt.Println(color.Fail("Subsystem IDs NOT in COE"))
-					failed++
-				}
-			}
-
-			// Check DSN
-			ids := firmware.ExtractDeviceIDs(ctx.ConfigSpace, ctx.ExtCapabilities)
-			if ids.HasDSN {
-				fmt.Println(color.Okf("DSN = 0x%s (will be patched into SV)", firmware.DSNToSVHex(ids.DSN)))
-				passed++
-			} else {
-				fmt.Println(color.Warn("No DSN found in donor (serial number emulation disabled)"))
-			}
-
-			// Check extended config space coverage
-			if ctx.ConfigSpace.Size >= pci.ConfigSpaceSize {
-				extCaps := pci.ParseExtCapabilities(ctx.ConfigSpace)
-				fmt.Println(color.Okf("Extended config space: %d capabilities covered", len(extCaps)))
-				passed++
-			} else {
-				fmt.Println(color.Warnf("Only legacy config space (%d bytes) -- extended caps not populated", ctx.ConfigSpace.Size))
-			}
-		}
-
-		// Validate all output files exist
-		fmt.Printf("\n%s\n", color.Header("Output File Check"))
-		vr := output.ValidateOutputDir(validateOutputDir)
-		for _, p := range vr.Passed {
-			fmt.Println(color.OK(p))
-			passed++
-		}
-		for _, f := range vr.Failed {
-			fmt.Println(color.Fail(f))
-			failed++
-		}
-
-		// Validate device_config.sv has correct IDs
-		devCfgPath := filepath.Join(validateOutputDir, "device_config.sv")
-		if svData, err := os.ReadFile(devCfgPath); err == nil {
-			ids := firmware.ExtractDeviceIDs(ctx.ConfigSpace, ctx.ExtCapabilities)
-			if issues := output.ValidateSVIDs(string(svData), ids); len(issues) > 0 {
-				for _, issue := range issues {
-					fmt.Println(color.Fail(issue))
-					failed++
-				}
-			} else {
-				fmt.Println(color.OK("device_config.sv contains correct VendorID and DeviceID"))
-				passed++
-			}
-		}
-
-		// Validate config_space_init.hex format
-		hexPath := filepath.Join(validateOutputDir, "config_space_init.hex")
-		if hexData, err := os.ReadFile(hexPath); err == nil {
-			if err := output.ValidateHexFile(string(hexData), 1024); err != nil {
-				fmt.Println(color.Failf("config_space_init.hex: %v", err))
-				failed++
-			} else {
-				fmt.Println(color.OK("config_space_init.hex: format valid (1024 words)"))
-				passed++
-			}
-		}
-
-		// Validate COE file format
-		for _, coeName := range []string{"pcileech_cfgspace.coe", "pcileech_cfgspace_writemask.coe", "pcileech_bar_zero4k.coe"} {
-			cPath := filepath.Join(validateOutputDir, coeName)
-			if coeData, err := os.ReadFile(cPath); err == nil {
-				if err := output.ValidateCOEFile(string(coeData)); err != nil {
-					fmt.Println(color.Failf("%s: %v", coeName, err))
-					failed++
-				} else {
-					fmt.Println(color.Okf("%s: format valid", coeName))
-					passed++
-				}
-			}
-		}
-
-		fmt.Printf("\n%s\n", color.Header(fmt.Sprintf("Validation complete: %d passed, %d failed", passed, failed)))
-		if failed > 0 {
-			return fmt.Errorf("%d validation(s) failed", failed)
+		fmt.Printf("\n%s\n", color.Header(fmt.Sprintf("Validation complete: %d passed, %d failed", v.passed, v.failed)))
+		if v.failed > 0 {
+			return fmt.Errorf("%d validation(s) failed", v.failed)
 		}
 		return nil
 	},
+}
+
+// validateCOEFiles checks config space and writemask COE against expected output.
+func (v *validator) validateCOEFiles() {
+	// Config space COE
+	coePath := filepath.Join(v.outputDir, "pcileech_cfgspace.coe")
+	if _, err := os.Stat(coePath); err == nil {
+		coeData, err := os.ReadFile(coePath)
+		if err != nil {
+			fmt.Println(color.Failf("pcileech_cfgspace.coe read error: %v", err))
+			v.failed++
+			return
+		}
+
+		expectedCOE := codegen.GenerateConfigSpaceCOE(v.scrubbed)
+		if string(coeData) == expectedCOE {
+			fmt.Println(color.OK("pcileech_cfgspace.coe matches donor config space (scrubbed)"))
+			v.passed++
+		} else {
+			fmt.Println(color.Fail("pcileech_cfgspace.coe MISMATCH"))
+			reportCOEDiff(string(coeData), expectedCOE)
+			v.failed++
+		}
+	} else {
+		fmt.Println(color.Warn("pcileech_cfgspace.coe not found"))
+		v.failed++
+	}
+
+	// Writemask COE
+	wmPath := filepath.Join(v.outputDir, "pcileech_cfgspace_writemask.coe")
+	if _, err := os.Stat(wmPath); err == nil {
+		wmData, err := os.ReadFile(wmPath)
+		if err != nil {
+			fmt.Println(color.Failf("pcileech_cfgspace_writemask.coe read error: %v", err))
+			v.failed++
+			return
+		}
+
+		expectedWM := codegen.GenerateWritemaskCOE(v.scrubbed)
+		if string(wmData) == expectedWM {
+			fmt.Println(color.OK("pcileech_cfgspace_writemask.coe matches expected writemask"))
+			v.passed++
+		} else {
+			fmt.Println(color.Fail("pcileech_cfgspace_writemask.coe MISMATCH"))
+			v.failed++
+		}
+	} else {
+		fmt.Println(color.Warn("pcileech_cfgspace_writemask.coe not found"))
+		v.failed++
+	}
+}
+
+// validateIdentity checks that critical IDs, DSN, and ext caps are correct.
+func (v *validator) validateIdentity() {
+	if v.ctx.ConfigSpace == nil {
+		return
+	}
+
+	fmt.Printf("\n%s\n", color.Header("Identity Verification"))
+
+	coePath := filepath.Join(v.outputDir, "pcileech_cfgspace.coe")
+	if coeData, err := os.ReadFile(coePath); err == nil {
+		coeStr := string(coeData)
+
+		// VendorID:DeviceID
+		expectedWord0 := fmt.Sprintf("%08x", v.scrubbed.ReadU32(0))
+		if strings.Contains(coeStr, expectedWord0) {
+			fmt.Println(color.Okf("VendorID:DeviceID = %04X:%04X present in COE",
+				v.ctx.Device.VendorID, v.ctx.Device.DeviceID))
+			v.passed++
+		} else {
+			fmt.Println(color.Failf("VendorID:DeviceID = %04X:%04X NOT in COE",
+				v.ctx.Device.VendorID, v.ctx.Device.DeviceID))
+			v.failed++
+		}
+
+		// Subsystem IDs
+		expectedSubsys := fmt.Sprintf("%08x", v.scrubbed.ReadU32(0x2C))
+		if strings.Contains(coeStr, expectedSubsys) {
+			fmt.Println(color.Okf("SubsysVendorID:SubsysDeviceID = %04X:%04X present in COE",
+				v.ctx.Device.SubsysVendorID, v.ctx.Device.SubsysDeviceID))
+			v.passed++
+		} else {
+			fmt.Println(color.Fail("Subsystem IDs NOT in COE"))
+			v.failed++
+		}
+	}
+
+	// DSN
+	ids := firmware.ExtractDeviceIDs(v.ctx.ConfigSpace, v.ctx.ExtCapabilities)
+	if ids.HasDSN {
+		fmt.Println(color.Okf("DSN = 0x%s (will be patched into SV)", firmware.DSNToSVHex(ids.DSN)))
+		v.passed++
+	} else {
+		fmt.Println(color.Warn("No DSN found in donor (serial number emulation disabled)"))
+	}
+
+	// Extended config space coverage
+	if v.ctx.ConfigSpace.Size >= pci.ConfigSpaceSize {
+		extCaps := pci.ParseExtCapabilities(v.ctx.ConfigSpace)
+		fmt.Println(color.Okf("Extended config space: %d capabilities covered", len(extCaps)))
+		v.passed++
+	} else {
+		fmt.Println(color.Warnf("Only legacy config space (%d bytes) -- extended caps not populated", v.ctx.ConfigSpace.Size))
+	}
+}
+
+// validateOutputFiles checks that all expected output files exist.
+func (v *validator) validateOutputFiles() {
+	fmt.Printf("\n%s\n", color.Header("Output File Check"))
+	vr := output.ValidateOutputDir(v.outputDir)
+	for _, p := range vr.Passed {
+		fmt.Println(color.OK(p))
+		v.passed++
+	}
+	for _, f := range vr.Failed {
+		fmt.Println(color.Fail(f))
+		v.failed++
+	}
+}
+
+// validateSVIDs checks device_config.sv and config_space_init.hex.
+func (v *validator) validateSVIDs() {
+	// device_config.sv
+	devCfgPath := filepath.Join(v.outputDir, "device_config.sv")
+	if svData, err := os.ReadFile(devCfgPath); err == nil {
+		ids := firmware.ExtractDeviceIDs(v.ctx.ConfigSpace, v.ctx.ExtCapabilities)
+		if issues := output.ValidateSVIDs(string(svData), ids); len(issues) > 0 {
+			for _, issue := range issues {
+				fmt.Println(color.Fail(issue))
+				v.failed++
+			}
+		} else {
+			fmt.Println(color.OK("device_config.sv contains correct VendorID and DeviceID"))
+			v.passed++
+		}
+	}
+
+	// config_space_init.hex
+	hexPath := filepath.Join(v.outputDir, "config_space_init.hex")
+	if hexData, err := os.ReadFile(hexPath); err == nil {
+		if err := output.ValidateHexFile(string(hexData), 1024); err != nil {
+			fmt.Println(color.Failf("config_space_init.hex: %v", err))
+			v.failed++
+		} else {
+			fmt.Println(color.OK("config_space_init.hex: format valid (1024 words)"))
+			v.passed++
+		}
+	}
+}
+
+// validateFormats checks COE file format validity.
+func (v *validator) validateFormats() {
+	for _, coeName := range []string{"pcileech_cfgspace.coe", "pcileech_cfgspace_writemask.coe", "pcileech_bar_zero4k.coe"} {
+		cPath := filepath.Join(v.outputDir, coeName)
+		if coeData, err := os.ReadFile(cPath); err == nil {
+			if err := output.ValidateCOEFile(string(coeData)); err != nil {
+				fmt.Println(color.Failf("%s: %v", coeName, err))
+				v.failed++
+			} else {
+				fmt.Println(color.Okf("%s: format valid", coeName))
+				v.passed++
+			}
+		}
+	}
 }
 
 // reportCOEDiff reports first differing line between two COE files.
