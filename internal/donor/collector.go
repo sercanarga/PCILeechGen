@@ -62,7 +62,52 @@ func (c *Collector) Collect(bdf pci.BDF) (*DeviceContext, error) {
 	ctx.ExtCapabilities = pci.ParseExtCapabilities(cs)
 	ctx.MSIXData = c.collectMSIXData(cs, ctx.BARContents)
 
+	if err := c.validateBARContents(ctx); err != nil {
+		return nil, err
+	}
+
 	return ctx, nil
+}
+
+// barCriticalClass returns true for device classes where empty BAR contents
+// will cause the Windows driver to fail with Code 10.
+func barCriticalClass(classCode uint32) bool {
+	switch classCode {
+	case 0x010802: // NVMe
+		return true
+	case 0x0C0330: // xHCI USB 3.0
+		return true
+	}
+	return false
+}
+
+func (c *Collector) validateBARContents(ctx *DeviceContext) error {
+	eligible := eligibleBARs(ctx.BARs)
+	if len(eligible) == 0 {
+		return nil
+	}
+
+	hasContent := false
+	for _, bar := range eligible {
+		if data, ok := ctx.BARContents[bar.Index]; ok && len(data) > 0 {
+			hasContent = true
+			break
+		}
+	}
+
+	if !hasContent {
+		hint := "Make sure the device is bound to vfio-pci and retry"
+		if barCriticalClass(ctx.Device.ClassCode) {
+			hint += " - this device class is known to produce Code 10 without BAR data"
+		}
+		return fmt.Errorf(
+			"BAR content collection failed for %d eligible BAR(s) (class 0x%06X, driver %q). "+
+				"Without BAR register data the firmware will likely produce Code 10 in Windows. %s",
+			len(eligible), ctx.Device.ClassCode, ctx.Device.Driver, hint,
+		)
+	}
+
+	return nil
 }
 
 func (c *Collector) collectConfigSpace(bdf pci.BDF) (*pci.ConfigSpace, error) {
