@@ -8,6 +8,7 @@ pcileech_datastore/
 *.bin
 *.bit
 *.json
+!internal/board/boards.json
 
 # Go
 *.exe
