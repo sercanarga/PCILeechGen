@@ -50,6 +50,13 @@ func createMockSysfs(t *testing.T) string {
 `
 	writeFile(t, devDir, "resource", resourceContent)
 
+	// Write mock BAR0 resource data so collectBARMemory succeeds
+	bar0Data := make([]byte, 4096)
+	bar0Data[0] = 0x01 // non-zero so it looks populated
+	if err := os.WriteFile(filepath.Join(devDir, "resource0"), bar0Data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
 	return base
 }
 
