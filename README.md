@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Custom firmware generator for <a href="https://github.com/ufrisk/pcileech-fpga">PCILeech FPGA</a> boards</strong><br>
-  Reads a real PCI/PCIe donor device via VFIO, clones its identity, and builds a ready-to-flash <code>.bin</code> firmware through Vivado.
+  Reads a real PCI/PCIe donor device via VFIO, clones its complete identity including config space, BARs, and capabilities, and builds a ready-to-flash <code>.bin</code> firmware through Vivado.
 </p>
 
 <p align="center">
@@ -15,8 +15,6 @@
   <a href="https://goreportcard.com/report/github.com/sercanarga/pcileechgen"><img src="https://goreportcard.com/badge/github.com/sercanarga/pcileechgen" alt="Go Report Card"></a>
   <a href="https://go.dev/"><img src="https://img.shields.io/github/go-mod/go-version/sercanarga/PCILeechGen" alt="Go"></a>
   <a href="https://github.com/sercanarga/PCILeechGen/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-CC0_1.0-lightgrey.svg" alt="License: CC0-1.0"></a>
-  <a href="https://github.com/sercanarga/PCILeechGen"><img src="https://img.shields.io/github/repo-size/sercanarga/PCILeechGen" alt="Repo Size"></a>
-  <a href="https://github.com/sercanarga/PCILeechGen/commits"><img src="https://img.shields.io/github/last-commit/sercanarga/PCILeechGen" alt="Last Commit"></a>
   <a href="https://discord.gg/kcWVCAhNSg"><img src="https://img.shields.io/discord/1477751220037877881?logo=discord&logoColor=white&label=Discord&color=5865F2" alt="Discord"></a>
 </p>
 
@@ -39,7 +37,7 @@
 ## Features
 
 <table>
-<tr><td>
+<tr><td valign="top">
 
 **Device Identity Cloning**
 - Vendor / Device / Revision ID
@@ -47,7 +45,7 @@
 - Class Code (base, sub-class, interface)
 - Device Serial Number (64-bit DSN)
 
-</td><td>
+</td><td valign="top">
 
 **BAR Emulation**
 - BAR0 Layout (type, size, 32/64-bit)
@@ -56,7 +54,7 @@
 - xHCI USBCMD/USBSTS State Machine
 
 </td></tr>
-<tr><td>
+<tr><td valign="top">
 
 **Config Space**
 - Full 4KB shadow + scrubbing pipeline
@@ -64,7 +62,7 @@
 - Power Management (D-state + NoSoftReset)
 - Vendor Quirks (Renesas firmware status, vendor-specific region zeroing)
 
-</td><td>
+</td><td valign="top">
 
 **Capability Management**
 - Capability Filtering (SR-IOV, Resizable BAR, ATS, L1PM, etc.)
@@ -73,7 +71,7 @@
 - MSI-X Interrupt Controller (4-state FSM with LFSR jitter)
 
 </td></tr>
-<tr><td>
+<tr><td valign="top">
 
 **Stealth & Timing**
 - TLP Latency Emulation (PRNG jitter, thermal drift, burst correlation)
@@ -81,7 +79,7 @@
 - P&R Randomization (per-build Vivado placement seed)
 - VSEC Entropy Embed (build-unique fingerprint in ext config space)
 
-</td><td>
+</td><td valign="top">
 
 **Diagnostics & Validation**
 - VFIO Diagnostics (power state, BAR accessibility, IOMMU isolation)
@@ -96,7 +94,7 @@
 > [!TIP]
 > Run `check` before `build` to verify donor device suitability and board compatibility.
 
-**Roadmap:** Donor-Profiled TLP Timing - per-device response histogram reproduction.
+
 
 ## How It Works
 
@@ -106,10 +104,10 @@ flowchart LR
     B --> C["build"]
     C --> D["flash"]
 
-    A -.- A1["Enumerate PCI devices\nDetect VFIO status"]
-    B -.- B1["Validate donor device\nRead config space & BARs"]
-    C -.- C1["Clone identity → Generate SV/COE/TCL\n→ Vivado synthesis → .bin"]
-    D -.- D1["Flash bitstream\nto FPGA board"]
+    A -.- A1["Enumerate PCI devices<br>Detect VFIO status"]
+    B -.- B1["Validate donor device<br>Read config space & BARs"]
+    C -.- C1["Clone identity → Generate SV/COE/TCL<br>→ Vivado synthesis → .bin"]
+    D -.- D1["Flash bitstream<br>to FPGA board"]
 ```
 
 ---
@@ -356,33 +354,25 @@ pcileech_datastore/
 
 ## Architecture
 
-```mermaid
-block-beta
-  columns 4
-
-  CLI["cmd/pcileechgen\nscan, check, build, validate, boards, version"]:4
-
-  space:4
-
-  board["board\nBoard Registry"]
-  donor["donor\nVFIO Reader"]
-  pci["pci\nConfig Space Parser"]
-  vivado["vivado\nVivado Runner"]
-
-  space:4
-
-  block:firmware:4
-    columns 4
-    label["firmware"]:4
-    scrub["scrub\n14-Pass Pipeline"]
-    barmodel["barmodel\nBAR Register Model"]
-    svgen["svgen\nSV Code Gen"]
-    tclgen["tclgen\nTCL Scripts"]
-    devclass["devclass\nDevice Class Strategy"]
-    output["output\nArtifact Writer"]
-    codegen["codegen\nHEX/COE Formatters"]
-    variance["variance\nConfig Randomization"]
-  end
+```
+cmd/pcileechgen/              CLI entry point
+│                             scan, check, build, validate, boards, version
+│
+internal/
+├── board/                    Board registry (embedded JSON, 17 boards)
+├── donor/                    VFIO device reader + BAR profiling
+├── pci/                      Config space parser, capabilities, MSI-X
+├── firmware/
+│   ├── scrub/                Config space scrubbing (14-pass pipeline)
+│   ├── barmodel/             BAR register model (spec + profiled)
+│   ├── svgen/                SV code generation (embedded .sv.tmpl templates)
+│   ├── tclgen/               Vivado TCL script generation
+│   ├── devclass/             Device class strategy (NVMe, xHCI, Ethernet, Audio)
+│   ├── output/               Artifact writer (SV pipeline + COE + HEX)
+│   ├── overlay/              Byte-level diff tracking
+│   ├── variance/             Config space randomization
+│   └── codegen/              HEX/COE formatters
+└── vivado/                   Vivado process runner
 ```
 
 ## Development
