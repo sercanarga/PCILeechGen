@@ -1,0 +1,36 @@
+#
+# PCILeechGen - Vivado Build Script
+# Board: {{.BoardName}}
+#
+
+open_project {{.BoardName}}/{{.BoardName}}.xpr
+
+# Run synthesis
+puts "Starting synthesis..."
+launch_runs synth_1 -jobs {{.Jobs}}
+wait_on_run synth_1 -timeout {{.Timeout}}
+
+if {[get_property STATUS [get_runs synth_1]] != "synth_design Complete!"} {
+  puts "ERROR: Synthesis failed!"
+  exit 1
+}
+puts "Synthesis completed successfully."
+
+# Run implementation
+puts "Starting implementation..."
+launch_runs impl_1 -to_step write_bitstream -jobs {{.Jobs}}
+wait_on_run impl_1 -timeout {{.Timeout}}
+
+if {[get_property STATUS [get_runs impl_1]] != "write_bitstream Complete!"} {
+  puts "ERROR: Implementation failed!"
+  exit 1
+}
+puts "Implementation completed successfully."
+
+# Generate .bin from .bit
+set bit_file [glob {{.BoardName}}/{{.BoardName}}.runs/impl_1/*.bit]
+set bin_file [file rootname $bit_file].bin
+write_cfgmem -format bin -interface SPIx4 -size 16 -loadbit "up 0x0 $bit_file" -file $bin_file -force
+
+puts "Build complete! Output: $bin_file"
+exit 0
