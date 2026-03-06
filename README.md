@@ -50,7 +50,7 @@
 **BAR Emulation**
 - BAR0 Layout (type, size, 32/64-bit)
 - BAR Content Emulation (donor memory snapshot)
-- NVMe CC→CSTS State Machine
+- NVMe CC->CSTS State Machine
 - NVMe Admin Queue Responder (Identify, Set/Get Features, Create IO CQ/SQ)
 - xHCI USBCMD/USBSTS State Machine
 
