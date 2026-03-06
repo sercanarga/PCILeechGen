@@ -7,7 +7,7 @@
 // Features:
 //   - Register-accurate BAR read/write with byte-enable + RW mask
 //   - 2-cycle read pipeline latency
-{{ if .IsNVMe }}//   - NVMe CC.EN → CSTS.RDY state machine (dynamic handshake)
+{{ if eq .DeviceClass "nvme" }}//   - NVMe CC.EN → CSTS.RDY state machine (dynamic handshake)
 {{ end }}{{ if .HasMSIX }}//   - MSI-X interrupt controller (4-state FSM with LFSR jitter)
 {{ end }}//
 
@@ -31,7 +31,15 @@ module pcileech_bar_impl_device #(
     output reg [87:0]   rd_rsp_ctx,
     output reg [31:0]   rd_rsp_data,
     output reg          rd_rsp_valid
-);
+{{ if eq .DeviceClass "nvme" }}    ,
+    // NVMe register outputs for admin responder
+    output wire [31:0]  nvme_cc,
+    output wire [31:0]  nvme_aqa,
+    output wire [31:0]  nvme_asq_lo,
+    output wire [31:0]  nvme_asq_hi,
+    output wire [31:0]  nvme_acq_lo,
+    output wire [31:0]  nvme_acq_hi
+{{ end }});
 
     // ========================================================================
     // Register Storage
@@ -39,7 +47,7 @@ module pcileech_bar_impl_device #(
 {{ range .BARModel.Registers }}
     reg [{{ sub (mul .Width 8) 1 }}:0] reg_0x{{ hex08 .Offset }};  // {{ .Name }}
 {{ end }}
-{{ if .IsNVMe }}
+{{ if eq .DeviceClass "nvme" }}
     // ========================================================================
     // NVMe CC → CSTS State Machine
     // stornvme.sys polls CSTS.RDY after writing CC.EN — this is the #1 cause
@@ -77,6 +85,62 @@ module pcileech_bar_impl_device #(
                     reg_0x0000001C[3:2] <= 2'b00;  // CSTS.SHST = no shutdown
                     csts_rdy_pending    <= 1'b0;
                 end
+            end
+        end
+    end
+{{ end }}
+{{ if eq .DeviceClass "nvme" }}
+    // NVMe register output wiring
+    assign nvme_cc     = reg_0x00000014;
+    assign nvme_aqa    = reg_0x00000024;
+    assign nvme_asq_lo = reg_0x00000028;
+    assign nvme_asq_hi = reg_0x0000002C;
+    assign nvme_acq_lo = reg_0x00000030;
+    assign nvme_acq_hi = reg_0x00000034;
+{{ end }}
+{{ if eq .DeviceClass "xhci" }}
+    // xHCI HCRST auto-clear
+    // usbxhci.sys writes USBCMD.HCRST (bit 1) then waits for it to drop.
+    // we count a few cycles and clear it so the driver doesn't hang.
+    reg [3:0] hcrst_cnt;
+    reg       hcrst_pending;
+
+    always @(posedge clk) begin
+        if (rst) begin
+            hcrst_cnt     <= 4'h0;
+            hcrst_pending <= 1'b0;
+        end else begin
+            if (reg_0x00000020[1] && !hcrst_pending) begin
+                hcrst_pending <= 1'b1;
+                hcrst_cnt     <= 4'h0;
+            end
+            if (hcrst_pending) begin
+                hcrst_cnt <= hcrst_cnt + 1'b1;
+                if (hcrst_cnt >= 4'h4) begin
+                    reg_0x00000020[1] <= 1'b0;    // clear HCRST
+                    reg_0x00000024    <= 32'h0001; // USBSTS = HCH (halted after reset)
+                    hcrst_pending     <= 1'b0;
+                end
+            end
+        end
+    end
+{{ end }}
+{{ if eq .DeviceClass "audio" }}
+    // HDA GCTL.CRST handshake
+    // hdaudio.sys writes CRST=0 (assert reset), then CRST=1 (deassert).
+    // after deassert, we reload STATESTS so codec discovery works.
+    // STATESTS lives in the upper 16 bits of the DWORD at 0x0C.
+    reg crst_prev;
+
+    always @(posedge clk) begin
+        if (rst) begin
+            crst_prev <= 1'b1;
+        end else begin
+            crst_prev <= reg_0x00000008[0];
+
+            // rising edge on CRST — controller coming out of reset
+            if (reg_0x00000008[0] && !crst_prev) begin
+                reg_0x0000000C[16] <= 1'b1;  // STATESTS bit 0 = codec 0 present
             end
         end
     end

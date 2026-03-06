@@ -7,11 +7,11 @@ func ethernetProfile() *DeviceProfile {
 		ClassName:         "Ethernet",
 		PreferredBAR:      0,
 		MinBARSize:        4096,
-		Uses64BitBAR:      false, // many NICs use 32-bit BAR0
+		Uses64BitBAR:      false,
 		BARIsPrefetchable: false,
 
 		PrefersMSIX:    true,
-		MinMSIXVectors: 3, // admin + rx + tx queues
+		MinMSIXVectors: 3,
 
 		ExpectedCaps: []uint8{
 			pci.CapIDPowerManagement,
@@ -28,21 +28,30 @@ func ethernetProfile() *DeviceProfile {
 		MaxPowerState: 3,
 
 		BARDefaults: []BARDefault{
-			// CTRL — Device Control Register
+			// CTRL — device control
 			{Offset: 0x00, Width: 4, Name: "CTRL", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
-			// STATUS — Device Status Register
-			{Offset: 0x08, Width: 4, Name: "STATUS", Reset: 0x00000002, RWMask: 0x00000000},
-			// CTRL_EXT — Extended Device Control
+			// STATUS — link up, speed 1000Mb
+			{Offset: 0x08, Width: 4, Name: "STATUS", Reset: 0x00000082, RWMask: 0x00000000},
+			// EECD — EEPROM control (Auto-Read Done + EEPROM Present)
+			{Offset: 0x10, Width: 4, Name: "EECD", Reset: 0x00000300, RWMask: 0x00000000},
+			// CTRL_EXT — extended control
 			{Offset: 0x18, Width: 4, Name: "CTRL_EXT", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
-			// EECD — EEPROM/Flash Control & Data
-			{Offset: 0x10, Width: 4, Name: "EECD", Reset: 0x00000100, RWMask: 0x00000000},
-			// ICR — Interrupt Cause Read
+			// MDIC — PHY access, auto-complete reads
+			{Offset: 0x20, Width: 4, Name: "MDIC", Reset: 0x10000000, RWMask: 0x0FFFFFFF},
+			// ICR — interrupt cause (read-clear)
 			{Offset: 0xC0, Width: 4, Name: "ICR", Reset: 0x00000000, RWMask: 0x00000000},
-			// IMS — Interrupt Mask Set
+			// IMS — interrupt mask set
 			{Offset: 0xD0, Width: 4, Name: "IMS", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
+			// IMC — interrupt mask clear
+			{Offset: 0xD8, Width: 4, Name: "IMC", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
+			// RAL0 — receive address low (fake MAC: 02:DE:AD:BE:EF:00)
+			{Offset: 0x5400, Width: 4, Name: "RAL0", Reset: 0xADDE0200, RWMask: 0xFFFFFFFF},
+			// RAH0 — receive address high + AV (address valid)
+			{Offset: 0x5404, Width: 4, Name: "RAH0", Reset: 0x8000EFBE, RWMask: 0xFFFFFFFF},
 		},
 
-		Notes: "Intel GbE (I210/I211/I350) style profile. e1000e/igb driver probes CTRL/STATUS " +
-			"first, then checks EECD for NVM presence. MAC address is typically at BAR0+0x5400.",
+		Notes: "Intel GbE profile. STATUS.LU=1 + speed bits. EECD has Auto-Read Done " +
+			"and EEPROM Present. RAL0/RAH0 provide a locally-administered MAC address. " +
+			"MDIC.Ready=1 so PHY reads complete instantly.",
 	}
 }

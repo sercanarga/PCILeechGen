@@ -16,8 +16,9 @@
 {{ if .DeviceIDs.HasPCIeCap }}// PCIe Link:       Speed={{ .DeviceIDs.LinkSpeed }} Width=x{{ .DeviceIDs.LinkWidth }}{{ end }}
 //
 // Features:
-{{ if .IsNVMe }}//   - NVMe CC→CSTS state machine (dynamic handshake)
-{{ end }}{{ if .IsXHCI }}//   - xHCI USBCMD/USBSTS state machine
+{{ if eq .DeviceClass "nvme" }}//   - NVMe CC→CSTS state machine (dynamic handshake)
+{{ end }}{{ if eq .DeviceClass "xhci" }}//   - xHCI USBCMD/USBSTS state machine
+{{ end }}{{ if eq .DeviceClass "audio" }}//   - HD Audio GCTL.CRST handshake
 {{ end }}{{ if .HasMSIX }}//   - MSI-X interrupt controller
 {{ end }}{{ if .LatencyConfig }}//   - TLP latency emulation (min={{ .LatencyConfig.MinCycles }}, max={{ .LatencyConfig.MaxCycles }}, avg={{ .LatencyConfig.AvgCycles }})
 {{ end }}
@@ -55,9 +56,10 @@ package device_config;
     localparam MSIX_PBA_OFF     = 32'h{{ printf "%08X" .MSIXConfig.PBAOffset }};
 {{ end }}
     // Feature flags
-    localparam HAS_NVME_FSM     = {{ if .IsNVMe }}1{{ else }}0{{ end }};
-    localparam HAS_NVME_RESP    = {{ if and .IsNVMe .NVMeIdentify }}1{{ else }}0{{ end }};
-    localparam HAS_XHCI_FSM     = {{ if .IsXHCI }}1{{ else }}0{{ end }};
+    localparam HAS_NVME_FSM     = {{ if eq .DeviceClass "nvme" }}1{{ else }}0{{ end }};
+    localparam HAS_NVME_RESP    = {{ if and (eq .DeviceClass "nvme") .NVMeIdentify }}1{{ else }}0{{ end }};
+    localparam HAS_XHCI_FSM     = {{ if eq .DeviceClass "xhci" }}1{{ else }}0{{ end }};
+    localparam HAS_AUDIO_FSM    = {{ if eq .DeviceClass "audio" }}1{{ else }}0{{ end }};
     localparam HAS_MSIX_INT     = {{ if .HasMSIX }}1{{ else }}0{{ end }};
     localparam HAS_LATENCY_EMU  = {{ if .LatencyConfig }}1{{ else }}0{{ end }};
 endpackage

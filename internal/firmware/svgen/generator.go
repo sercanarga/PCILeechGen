@@ -20,8 +20,7 @@ type SVGeneratorConfig struct {
 	HasMSIX       bool               // generate MSI-X interrupt controller logic
 	BuildEntropy  uint32             // seed for PRNG uniqueness per build
 	PRNGSeeds     [4]uint32          // computed PRNG seeds for latency emulator
-	IsNVMe        bool               // enable NVMe CC→CSTS state machine
-	IsXHCI        bool               // enable xHCI state machine
+	DeviceClass   string             // "nvme", "xhci", "audio", "ethernet", or ""
 	MSIXConfig    *MSIXConfig        // MSI-X table replication (nil = no MSI-X table)
 	NVMeIdentify  *nvme.IdentifyData // NVMe Identify Controller/Namespace data (nil = no responder)
 }
@@ -61,6 +60,11 @@ func GenerateLatencyEmulatorSV(cfg *SVGeneratorConfig) (string, error) {
 
 func GenerateNVMeResponderSV(cfg *SVGeneratorConfig) (string, error) {
 	return renderTemplate("nvme_admin_responder", cfg)
+}
+
+// GenerateNVMeDMABridgeSV renders the NVMe DMA TLP bridge module.
+func GenerateNVMeDMABridgeSV(cfg *SVGeneratorConfig) (string, error) {
+	return renderTemplate("nvme_dma_bridge", cfg)
 }
 
 // svFuncMap provides hex formatting and arithmetic helpers for templates.
