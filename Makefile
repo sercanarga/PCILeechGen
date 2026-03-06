@@ -42,3 +42,6 @@ fmt:
 # Vet code
 vet:
 	$(GO) vet ./...
+
+# Run all checks (vet + lint + test)
+check: vet lint test

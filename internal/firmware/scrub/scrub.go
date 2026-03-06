@@ -119,8 +119,9 @@ func ScrubConfigSpaceWithOverlay(cs *pci.ConfigSpace, b *board.Board) (*pci.Conf
 	om := overlay.NewMap(scrubbed)
 
 	ctx := &ScrubContext{
-		Caps:    pci.ParseCapabilities(scrubbed),
-		ExtCaps: pci.ParseExtCapabilities(scrubbed),
+		Caps:      pci.ParseCapabilities(scrubbed),
+		ExtCaps:   pci.ParseExtCapabilities(scrubbed),
+		ClassCode: cs.ReadU32(0x08) >> 8, // bytes 0x09-0x0B: ProgIf + SubClass + BaseClass
 	}
 
 	for _, pass := range defaultPipeline() {
