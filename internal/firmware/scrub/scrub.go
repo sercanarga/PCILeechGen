@@ -84,7 +84,44 @@ func capSizeAt(cs *pci.ConfigSpace, id uint8, offset int) int {
 	return 8
 }
 
-// zeroVendorRegisters clears 0x40-0xFF bytes not belonging to any cap.
+// vendorCapRange defines a known vendor-specific register region worth preserving.
+type vendorCapRange struct {
+	VendorID uint16
+	Start    int
+	End      int // exclusive
+	Name     string
+}
+
+// knownVendorCaps lists vendor-specific register regions that should NOT be zeroed.
+// Zeroing these can trigger driver errors or detection (e.g. missing firmware status).
+var knownVendorCaps = []vendorCapRange{
+	{0x8086, 0x40, 0x60, "Intel PCIe advanced error"},
+	{0x8086, 0xE0, 0x100, "Intel device-specific config"},
+	{0x10EC, 0x40, 0x60, "Realtek PHY control"},
+	{0x10EC, 0x80, 0xA0, "Realtek LED/WOL config"},
+	{0x14E4, 0x48, 0x60, "Broadcom device control"},
+	{0x168C, 0x40, 0x70, "Qualcomm Atheros radio config"},
+	{0x1912, 0xF0, 0x100, "Renesas firmware status"},
+	{0x1B21, 0x40, 0x60, "ASMedia link training"},
+	{0x1B73, 0xA0, 0xC0, "Fresco Logic xHCI quirks"},
+}
+
+// vendorWhitelist returns a coverage bitmap for vendor-specific register regions
+// that should be preserved for the given vendor ID.
+func vendorWhitelist(vid uint16) []bool {
+	covered := make([]bool, pci.ConfigSpaceLegacySize)
+	for _, vc := range knownVendorCaps {
+		if vc.VendorID == vid {
+			for i := vc.Start; i < vc.End && i < pci.ConfigSpaceLegacySize; i++ {
+				covered[i] = true
+			}
+		}
+	}
+	return covered
+}
+
+// zeroVendorRegisters clears 0x40-0xFF bytes not belonging to any cap
+// or known vendor-specific region.
 func zeroVendorRegisters(cs *pci.ConfigSpace, om *overlay.Map) {
 	covered := make([]bool, pci.ConfigSpaceLegacySize)
 	for i := 0; i < 0x40; i++ {
@@ -95,6 +132,15 @@ func zeroVendorRegisters(cs *pci.ConfigSpace, om *overlay.Map) {
 	for _, cap := range caps {
 		size := capSizeAt(cs, cap.ID, cap.Offset)
 		for i := cap.Offset; i < cap.Offset+size && i < pci.ConfigSpaceLegacySize; i++ {
+			covered[i] = true
+		}
+	}
+
+	// preserve known vendor-specific register regions
+	vid := cs.VendorID()
+	whitelist := vendorWhitelist(vid)
+	for i := 0x40; i < pci.ConfigSpaceLegacySize; i++ {
+		if whitelist[i] {
 			covered[i] = true
 		}
 	}

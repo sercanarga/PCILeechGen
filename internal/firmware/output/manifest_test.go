@@ -133,3 +133,89 @@ func TestFileHash(t *testing.T) {
 		t.Error("fileHash should fail for non-existent file")
 	}
 }
+
+func TestVerifyManifest_AllPass(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	os.WriteFile(filepath.Join(tmpDir, "test.coe"), []byte("content"), 0644)
+
+	hash, _ := fileHash(filepath.Join(tmpDir, "test.coe"))
+	m := &BuildManifest{
+		Files: []ManifestEntry{
+			{Name: "test.coe", Size: 7, SHA256: hash},
+		},
+	}
+	manifestPath := filepath.Join(tmpDir, "manifest.json")
+	m.WriteJSON(manifestPath)
+
+	v, err := VerifyManifest(manifestPath, tmpDir)
+	if err != nil {
+		t.Fatalf("VerifyManifest error: %v", err)
+	}
+	if !v.OK() {
+		t.Errorf("expected OK, got: %s", v.Summary())
+	}
+	if len(v.Passed) != 1 {
+		t.Errorf("Passed = %d, want 1", len(v.Passed))
+	}
+}
+
+func TestVerifyManifest_MissingFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	m := &BuildManifest{
+		Files: []ManifestEntry{
+			{Name: "missing.coe", Size: 100, SHA256: "abc"},
+		},
+	}
+	manifestPath := filepath.Join(tmpDir, "manifest.json")
+	m.WriteJSON(manifestPath)
+
+	v, err := VerifyManifest(manifestPath, tmpDir)
+	if err != nil {
+		t.Fatalf("VerifyManifest error: %v", err)
+	}
+	if v.OK() {
+		t.Error("expected failure for missing file")
+	}
+	if len(v.Missing) != 1 {
+		t.Errorf("Missing = %d, want 1", len(v.Missing))
+	}
+}
+
+func TestVerifyManifest_HashMismatch(t *testing.T) {
+	tmpDir := t.TempDir()
+	os.WriteFile(filepath.Join(tmpDir, "test.coe"), []byte("content"), 0644)
+
+	m := &BuildManifest{
+		Files: []ManifestEntry{
+			{Name: "test.coe", Size: 7, SHA256: "wrong_hash"},
+		},
+	}
+	manifestPath := filepath.Join(tmpDir, "manifest.json")
+	m.WriteJSON(manifestPath)
+
+	v, err := VerifyManifest(manifestPath, tmpDir)
+	if err != nil {
+		t.Fatalf("VerifyManifest error: %v", err)
+	}
+	if v.OK() {
+		t.Error("expected failure for hash mismatch")
+	}
+	if len(v.Failed) != 1 {
+		t.Errorf("Failed = %d, want 1", len(v.Failed))
+	}
+}
+
+func TestLoadManifest_Invalid(t *testing.T) {
+	_, err := LoadManifest("/nonexistent")
+	if err == nil {
+		t.Error("LoadManifest should fail for non-existent file")
+	}
+
+	tmpDir := t.TempDir()
+	os.WriteFile(filepath.Join(tmpDir, "bad.json"), []byte("not json"), 0644)
+	_, err = LoadManifest(filepath.Join(tmpDir, "bad.json"))
+	if err == nil {
+		t.Error("LoadManifest should fail for invalid JSON")
+	}
+}

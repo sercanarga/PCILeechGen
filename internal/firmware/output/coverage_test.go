@@ -36,7 +36,7 @@ func TestScrubAndVary(t *testing.T) {
 	ow := NewOutputWriter(t.TempDir(), "", 0, 0)
 	ids := firmware.ExtractDeviceIDs(ctx.ConfigSpace, ctx.ExtCapabilities)
 
-	scrubbed, entropy := ow.scrubAndVary(ctx, nil, ids)
+	scrubbed, entropy, _ := ow.scrubAndVary(ctx, nil, ids)
 	if scrubbed == nil {
 		t.Fatal("scrubbed config space should not be nil")
 	}
