@@ -222,6 +222,22 @@ var coreSVArtifacts = []svArtifact{
 
 // writeSVModules generates device-specific SV and HEX init files.
 func (ow *OutputWriter) writeSVModules(ctx *donor.DeviceContext, scrubbedCS *pci.ConfigSpace, ids firmware.DeviceIDs, entropy uint32) error {
+	cfg := ow.buildSVConfig(ctx, ids, entropy)
+
+	if err := ow.writeCoreSVArtifacts(cfg, scrubbedCS); err != nil {
+		return err
+	}
+
+	if err := ow.writeConditionalArtifacts(cfg, ctx); err != nil {
+		return err
+	}
+
+	ow.logSVSummary(cfg)
+	return nil
+}
+
+// buildSVConfig assembles the SVGeneratorConfig from donor context.
+func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, ids firmware.DeviceIDs, entropy uint32) *svgen.SVGeneratorConfig {
 	barData := firmware.LowestBarData(ctx.BARContents)
 	var barProfile *donor.BARProfile
 	if ctx.BARProfiles != nil {
@@ -233,22 +249,18 @@ func (ow *OutputWriter) writeSVModules(ctx *donor.DeviceContext, scrubbedCS *pci
 	isNVMe := strategy != nil && strategy.IsNVMe()
 	isXHCI := strategy != nil && strategy.IsXHCI()
 
-	latCfg := svgen.DefaultLatencyConfig(ctx.Device.ClassCode)
-	seeds := svgen.BuildPRNGSeeds(ids.VendorID, ids.DeviceID, entropy)
-
 	cfg := &svgen.SVGeneratorConfig{
 		DeviceIDs:     ids,
 		BARModel:      bm,
 		ClassCode:     ctx.Device.ClassCode,
-		LatencyConfig: latCfg,
+		LatencyConfig: svgen.DefaultLatencyConfig(ctx.Device.ClassCode),
 		HasMSIX:       bm != nil,
 		BuildEntropy:  entropy,
-		PRNGSeeds:     seeds,
+		PRNGSeeds:     svgen.BuildPRNGSeeds(ids.VendorID, ids.DeviceID, entropy),
 		IsNVMe:        isNVMe,
 		IsXHCI:        isXHCI,
 	}
 
-	// NVMe Identify data generation
 	if isNVMe {
 		cfg.NVMeIdentify = nvme.BuildIdentifyData(ids, barData)
 	}
@@ -265,7 +277,11 @@ func (ow *OutputWriter) writeSVModules(ctx *donor.DeviceContext, scrubbedCS *pci
 		cfg.HasMSIX = true
 	}
 
-	// Generate core SV artifacts via pipeline
+	return cfg
+}
+
+// writeCoreSVArtifacts generates core SV modules and config space HEX.
+func (ow *OutputWriter) writeCoreSVArtifacts(cfg *svgen.SVGeneratorConfig, scrubbedCS *pci.ConfigSpace) error {
 	for _, art := range coreSVArtifacts {
 		content, err := art.generate(cfg)
 		if err != nil {
@@ -276,13 +292,12 @@ func (ow *OutputWriter) writeSVModules(ctx *donor.DeviceContext, scrubbedCS *pci
 		}
 	}
 
-	// config_space_init.hex
 	hex := codegen.GenerateConfigSpaceHex(scrubbedCS)
-	if err := ow.writeFile("config_space_init.hex", hex); err != nil {
-		return err
-	}
+	return ow.writeFile("config_space_init.hex", hex)
+}
 
-	// MSI-X artifacts (conditional)
+// writeConditionalArtifacts generates MSI-X and NVMe artifacts when applicable.
+func (ow *OutputWriter) writeConditionalArtifacts(cfg *svgen.SVGeneratorConfig, ctx *donor.DeviceContext) error {
 	if cfg.MSIXConfig != nil {
 		msixSV, err := svgen.GenerateMSIXTableSV(cfg)
 		if err != nil {
@@ -299,13 +314,11 @@ func (ow *OutputWriter) writeSVModules(ctx *donor.DeviceContext, scrubbedCS *pci
 				entries[i].Control = 0x01 // masked
 			}
 		}
-		msixHex := codegen.GenerateMSIXTableHex(entries)
-		if err := ow.writeFile("msix_table_init.hex", msixHex); err != nil {
+		if err := ow.writeFile("msix_table_init.hex", codegen.GenerateMSIXTableHex(entries)); err != nil {
 			return err
 		}
 	}
 
-	// NVMe Responder artifacts (conditional)
 	if cfg.NVMeIdentify != nil {
 		nvmeSV, err := svgen.GenerateNVMeResponderSV(cfg)
 		if err != nil {
@@ -314,33 +327,34 @@ func (ow *OutputWriter) writeSVModules(ctx *donor.DeviceContext, scrubbedCS *pci
 		if err := ow.writeFile("pcileech_nvme_admin_responder.sv", nvmeSV); err != nil {
 			return err
 		}
-
-		idHex := nvme.IdentifyDataToHex(cfg.NVMeIdentify)
-		if err := ow.writeFile("identify_init.hex", idHex); err != nil {
+		if err := ow.writeFile("identify_init.hex", nvme.IdentifyDataToHex(cfg.NVMeIdentify)); err != nil {
 			return err
 		}
 	}
 
-	features := []string{}
-	if isNVMe {
+	return nil
+}
+
+// logSVSummary prints a summary of generated SV features.
+func (ow *OutputWriter) logSVSummary(cfg *svgen.SVGeneratorConfig) {
+	var features []string
+	if cfg.IsNVMe {
 		features = append(features, "NVMe FSM")
 		if cfg.NVMeIdentify != nil {
 			features = append(features, "NVMe Admin Responder")
 		}
 	}
-	if isXHCI {
+	if cfg.IsXHCI {
 		features = append(features, "xHCI FSM")
 	}
 	if cfg.MSIXConfig != nil {
 		features = append(features, fmt.Sprintf("MSI-X %d vectors", cfg.MSIXConfig.NumVectors))
 	}
-	if bm != nil {
-		features = append(features, fmt.Sprintf("%d registers", len(bm.Registers)))
+	if cfg.BARModel != nil {
+		features = append(features, fmt.Sprintf("%d registers", len(cfg.BARModel.Registers)))
 	} else {
 		features = append(features, "BRAM fallback")
 	}
 	features = append(features, "latency emulator", "interrupt controller")
 	fmt.Printf("[firmware] SV modules generated: %s\n", strings.Join(features, ", "))
-
-	return nil
 }

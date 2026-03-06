@@ -216,21 +216,3 @@ func (c *Collector) collectMSIXData(cs *pci.ConfigSpace, barContents map[int][]b
 		Entries:     entries,
 	}
 }
-
-// SaveContext dumps a DeviceContext to JSON on disk.
-func SaveContext(ctx *DeviceContext, path string) error {
-	data, err := ctx.ToJSON()
-	if err != nil {
-		return fmt.Errorf("failed to marshal device context: %w", err)
-	}
-	return os.WriteFile(path, data, 0644)
-}
-
-// LoadContext restores a DeviceContext from a JSON file.
-func LoadContext(path string) (*DeviceContext, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read device context file: %w", err)
-	}
-	return FromJSON(data)
-}
