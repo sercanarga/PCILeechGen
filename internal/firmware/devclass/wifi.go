@@ -1,6 +1,27 @@
 package devclass
 
-import "github.com/sercanarga/pcileechgen/internal/pci"
+import (
+	"github.com/sercanarga/pcileechgen/internal/pci"
+	"github.com/sercanarga/pcileechgen/internal/util"
+)
+
+type wifiStrategy struct{ baseStrategy }
+
+func (s *wifiStrategy) ScrubBAR(data []byte) {
+	if len(data) < 0x28 {
+		return
+	}
+	util.WriteLE32(data, 0x24, 0x00000080)
+	if len(data) >= 0x58 {
+		util.WriteLE32(data, 0x54, 0x00000001)
+	}
+}
+
+func (s *wifiStrategy) PostInitRegisters(regs map[uint32]*uint32) {
+	if v, ok := regs[0x24]; ok {
+		*v = 0x00000080
+	}
+}
 
 func wifiProfile() *DeviceProfile {
 	return &DeviceProfile{

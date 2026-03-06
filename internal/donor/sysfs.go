@@ -3,7 +3,7 @@ package donor
 import (
 	"bufio"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -203,7 +203,7 @@ func (sr *SysfsReader) readBARViaMmap(f *os.File, size int) ([]byte, error) {
 	copy(data, mapped)
 
 	if err := syscall.Munmap(mapped); err != nil {
-		log.Printf("[donor] warning: munmap failed: %v", err)
+		slog.Warn("munmap failed", "error", err)
 	}
 	return data, nil
 }

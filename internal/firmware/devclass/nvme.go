@@ -1,6 +1,36 @@
 package devclass
 
-import "github.com/sercanarga/pcileechgen/internal/pci"
+import (
+	"github.com/sercanarga/pcileechgen/internal/pci"
+	"github.com/sercanarga/pcileechgen/internal/util"
+)
+
+type nvmeStrategy struct{ baseStrategy }
+
+func (s *nvmeStrategy) ScrubBAR(data []byte) {
+	if len(data) < 0x38 {
+		return
+	}
+	csts := util.ReadLE32(data, 0x1C)
+	csts |= 0x01
+	csts &= ^uint32(0x1E)
+	util.WriteLE32(data, 0x1C, csts)
+
+	cc := util.ReadLE32(data, 0x14)
+	cc |= 0x01
+	util.WriteLE32(data, 0x14, cc)
+
+	for _, off := range []int{0x0C, 0x10, 0x20, 0x24, 0x28, 0x2C, 0x30, 0x34} {
+		util.WriteLE32(data, off, 0x00)
+	}
+}
+
+func (s *nvmeStrategy) PostInitRegisters(regs map[uint32]*uint32) {
+	if v, ok := regs[0x1C]; ok {
+		*v |= 0x00000001
+		*v &^= 0x0000000C
+	}
+}
 
 func nvmeProfile() *DeviceProfile {
 	return &DeviceProfile{

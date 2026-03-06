@@ -2,7 +2,7 @@ package scrub
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 
 	"github.com/sercanarga/pcileechgen/internal/firmware/overlay"
 	"github.com/sercanarga/pcileechgen/internal/pci"
@@ -44,7 +44,7 @@ func PruneStandardCaps(cs *pci.ConfigSpace, om *overlay.Map) []string {
 
 		if _, bad := unsafeStandardCaps[capID]; bad {
 			name := unsafeStandardCaps[capID]
-			log.Printf("[scrub] pruning standard cap %s (0x%02X) at offset 0x%02X", name, capID, ptr)
+			slog.Info("pruning standard cap", "name", name, "id", fmt.Sprintf("0x%02X", capID), "offset", fmt.Sprintf("0x%02X", ptr))
 
 			om.WriteU8(prevNextOff, uint8(nextPtr),
 				fmt.Sprintf("prune cap 0x%02X (%s): relink", capID, name))

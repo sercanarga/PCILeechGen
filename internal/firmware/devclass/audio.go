@@ -1,6 +1,33 @@
 package devclass
 
-import "github.com/sercanarga/pcileechgen/internal/pci"
+import (
+	"github.com/sercanarga/pcileechgen/internal/pci"
+	"github.com/sercanarga/pcileechgen/internal/util"
+)
+
+type audioStrategy struct{ baseStrategy }
+
+func (s *audioStrategy) ScrubBAR(data []byte) {
+	if len(data) < 0x10 {
+		return
+	}
+	gctl := util.ReadLE32(data, 0x08)
+	gctl |= 0x01
+	util.WriteLE32(data, 0x08, gctl)
+
+	statests := util.ReadLE32(data, 0x0C)
+	statests |= 0x00010000
+	util.WriteLE32(data, 0x0C, statests)
+}
+
+func (s *audioStrategy) PostInitRegisters(regs map[uint32]*uint32) {
+	if v, ok := regs[0x08]; ok {
+		*v |= 0x00000001
+	}
+	if v, ok := regs[0x0C]; ok {
+		*v |= 0x00010000
+	}
+}
 
 func audioProfile() *DeviceProfile {
 	return &DeviceProfile{

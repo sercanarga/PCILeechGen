@@ -1,6 +1,34 @@
 package devclass
 
-import "github.com/sercanarga/pcileechgen/internal/pci"
+import (
+	"github.com/sercanarga/pcileechgen/internal/pci"
+	"github.com/sercanarga/pcileechgen/internal/util"
+)
+
+type sataStrategy struct{ baseStrategy }
+
+func (s *sataStrategy) ScrubBAR(data []byte) {
+	if len(data) < 0x20 {
+		return
+	}
+	ghc := util.ReadLE32(data, 0x04)
+	ghc |= 0x80000000
+	ghc &^= 0x02
+	util.WriteLE32(data, 0x04, ghc)
+
+	util.WriteLE32(data, 0x08, 0x00000000)
+
+	if len(data) >= 0x12C {
+		util.WriteLE32(data, 0x128, 0x00000113)
+	}
+}
+
+func (s *sataStrategy) PostInitRegisters(regs map[uint32]*uint32) {
+	if v, ok := regs[0x04]; ok {
+		*v |= 0x80000000
+		*v &^= 0x02
+	}
+}
 
 func sataProfile() *DeviceProfile {
 	return &DeviceProfile{

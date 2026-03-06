@@ -1,6 +1,31 @@
 package devclass
 
-import "github.com/sercanarga/pcileechgen/internal/pci"
+import (
+	"github.com/sercanarga/pcileechgen/internal/pci"
+	"github.com/sercanarga/pcileechgen/internal/util"
+)
+
+type ethernetStrategy struct{ baseStrategy }
+
+func (s *ethernetStrategy) ScrubBAR(data []byte) {
+	if len(data) < 0x14 {
+		return
+	}
+	util.WriteLE32(data, 0x08, 0x00000082)
+	util.WriteLE32(data, 0x10, 0x00000300)
+	if len(data) >= 0x24 {
+		util.WriteLE32(data, 0x20, 0x10000000)
+	}
+}
+
+func (s *ethernetStrategy) PostInitRegisters(regs map[uint32]*uint32) {
+	if v, ok := regs[0x08]; ok {
+		*v |= 0x00000082
+	}
+	if v, ok := regs[0x10]; ok {
+		*v |= 0x00000300
+	}
+}
 
 func ethernetProfile() *DeviceProfile {
 	return &DeviceProfile{

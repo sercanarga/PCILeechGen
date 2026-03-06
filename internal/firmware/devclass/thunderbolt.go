@@ -1,6 +1,25 @@
 package devclass
 
-import "github.com/sercanarga/pcileechgen/internal/pci"
+import (
+	"github.com/sercanarga/pcileechgen/internal/pci"
+	"github.com/sercanarga/pcileechgen/internal/util"
+)
+
+type thunderboltStrategy struct{ baseStrategy }
+
+func (s *thunderboltStrategy) ScrubBAR(data []byte) {
+	if len(data) < 0x14 {
+		return
+	}
+	util.WriteLE32(data, 0x08, 0x00000001)
+	util.WriteLE32(data, 0x10, 0x00000000)
+}
+
+func (s *thunderboltStrategy) PostInitRegisters(regs map[uint32]*uint32) {
+	if v, ok := regs[0x08]; ok {
+		*v |= 0x00000001
+	}
+}
 
 func thunderboltProfile() *DeviceProfile {
 	return &DeviceProfile{

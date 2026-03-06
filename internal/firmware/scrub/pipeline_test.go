@@ -47,7 +47,7 @@ func TestClearMiscPass(t *testing.T) {
 
 	om := overlay.NewMap(cs)
 	pass := &clearMiscPass{}
-	pass.Apply(cs, nil, om)
+	pass.Apply(cs, nil, om, ctxFor(cs))
 
 	if cs.Data[0x0F] != 0 {
 		t.Error("BIST should be cleared")
@@ -75,7 +75,7 @@ func TestSanitizeCmdStatusPass(t *testing.T) {
 	cs := pci.NewConfigSpaceFromBytes(data)
 	om := overlay.NewMap(cs)
 	pass := &sanitizeCmdStatusPass{}
-	pass.Apply(cs, nil, om)
+	pass.Apply(cs, nil, om, ctxFor(cs))
 
 	cmd := cs.Command()
 	if cmd != (0xFFFF & cmdMask) {
@@ -92,7 +92,7 @@ func TestFilterExtCapsPass_SmallCS(t *testing.T) {
 	cs := pci.NewConfigSpaceFromBytes(make([]byte, 256))
 	om := overlay.NewMap(cs)
 	pass := &filterExtCapsPass{}
-	pass.Apply(cs, nil, om) // should not panic
+	pass.Apply(cs, nil, om, ctxFor(cs)) // should not panic
 }
 
 func TestClampBARsPass(t *testing.T) {
@@ -106,7 +106,7 @@ func TestClampBARsPass(t *testing.T) {
 	cs := pci.NewConfigSpaceFromBytes(data)
 	om := overlay.NewMap(cs)
 	pass := &clampBARsPass{}
-	pass.Apply(cs, nil, om)
+	pass.Apply(cs, nil, om, ctxFor(cs))
 	// should not panic; BAR clamping applies 4KB mask
 }
 
@@ -117,12 +117,12 @@ func TestClampLinkPass_NilBoard(t *testing.T) {
 	pass := &clampLinkPass{}
 	// nil board uses defaults
 	b := &board.Board{}
-	pass.Apply(cs, b, om) // should not panic
+	pass.Apply(cs, b, om, ctxFor(cs)) // should not panic
 }
 
 func TestValidateCapChainPass_EmptyCS(t *testing.T) {
 	cs := pci.NewConfigSpaceFromBytes(make([]byte, 256))
 	om := overlay.NewMap(cs)
 	pass := &validateCapChainPass{}
-	pass.Apply(cs, nil, om) // should not panic
+	pass.Apply(cs, nil, om, ctxFor(cs)) // should not panic
 }

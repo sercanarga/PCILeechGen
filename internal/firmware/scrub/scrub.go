@@ -118,8 +118,13 @@ func ScrubConfigSpaceWithOverlay(cs *pci.ConfigSpace, b *board.Board) (*pci.Conf
 	scrubbed := cs.Clone()
 	om := overlay.NewMap(scrubbed)
 
+	ctx := &ScrubContext{
+		Caps:    pci.ParseCapabilities(scrubbed),
+		ExtCaps: pci.ParseExtCapabilities(scrubbed),
+	}
+
 	for _, pass := range defaultPipeline() {
-		pass.Apply(scrubbed, b, om)
+		pass.Apply(scrubbed, b, om, ctx)
 	}
 
 	return scrubbed, om
@@ -151,8 +156,7 @@ func clampBARsToFPGA(cs *pci.ConfigSpace, om *overlay.Map) {
 
 // relocateMSIXToBRAM moves MSI-X table/PBA offsets to 0x1000+ so the
 // separate BRAM module can serve them. Keeps MSI-X enabled.
-func relocateMSIXToBRAM(cs *pci.ConfigSpace, om *overlay.Map) {
-	caps := pci.ParseCapabilities(cs)
+func relocateMSIXToBRAM(cs *pci.ConfigSpace, om *overlay.Map, caps []pci.Capability) {
 	for _, cap := range caps {
 		if cap.ID != pci.CapIDMSIX {
 			continue

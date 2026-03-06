@@ -3,7 +3,7 @@ package fallback
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 
 	"gopkg.in/yaml.v3"
@@ -64,12 +64,12 @@ func Apply(cfg *Config, classCode uint32, barContents map[int][]byte) []ApplyRes
 
 	dc, ok := cfg.DeviceClasses[key]
 	if !ok {
-		log.Printf("[fallback] no class-specific fallbacks for %s", key)
+		slog.Info("no class-specific fallbacks", "class", key)
 		return nil
 	}
 
 	var results []ApplyResult
-	log.Printf("[fallback] applying %s defaults for %s", dc.Description, key)
+	slog.Info("applying fallback defaults", "description", dc.Description, "class", key)
 
 	bar0, hasBAR0 := barContents[0]
 	if hasBAR0 && len(bar0) >= 4 && dc.BAR0Defaults != nil {
