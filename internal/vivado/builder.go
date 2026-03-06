@@ -2,7 +2,7 @@ package vivado
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"path/filepath"
 	"time"
 
@@ -38,48 +38,46 @@ func (opts BuildOptions) WithDefaults() BuildOptions {
 
 // Builder runs firmware generation and optional Vivado synthesis.
 type Builder struct {
-	opts   BuildOptions
-	board  *board.Board
-	logger *log.Logger
+	opts  BuildOptions
+	board *board.Board
 }
 
 // NewBuilder creates a new Builder.
 func NewBuilder(b *board.Board, opts BuildOptions) *Builder {
 	opts = opts.WithDefaults()
 	return &Builder{
-		opts:   opts,
-		board:  b,
-		logger: log.Default(),
+		opts:  opts,
+		board: b,
 	}
 }
 
 // Build generates firmware artifacts and optionally runs Vivado.
 func (b *Builder) Build(ctx *donor.DeviceContext) error {
 	// Stage 2: Generate firmware artifacts
-	b.logger.Println("[build] Stage 2: Generating firmware artifacts...")
+	slog.Info("generating firmware artifacts")
 	ow := fwout.NewOutputWriter(b.opts.OutputDir, b.opts.LibDir, b.opts.Jobs, b.opts.Timeout)
 	if err := ow.WriteAll(ctx, b.board); err != nil {
 		return fmt.Errorf("artifact generation failed: %w", err)
 	}
 
-	b.logger.Printf("[build] Artifacts written to: %s\n", b.opts.OutputDir)
+	slog.Info("artifacts written", "dir", b.opts.OutputDir)
 	for _, f := range fwout.ListOutputFiles() {
-		b.logger.Printf("  - %s\n", f)
+		slog.Info("artifact", "file", f)
 	}
 
 	if b.opts.SkipVivado {
-		b.logger.Println("[build] Vivado synthesis skipped (--skip-vivado)")
+		slog.Info("Vivado synthesis skipped")
 		return nil
 	}
 
 	// Stage 3: Run Vivado synthesis
-	b.logger.Println("[build] Stage 3: Running Vivado synthesis...")
+	slog.Info("running Vivado synthesis")
 
 	vivado, err := Find(b.opts.VivadoPath)
 	if err != nil {
 		return fmt.Errorf("Vivado not found: %w", err)
 	}
-	b.logger.Printf("[build] Using Vivado %s at %s\n", vivado.Version, vivado.Path)
+	slog.Info("Vivado found", "version", vivado.Version, "path", vivado.Path)
 
 	timeout := time.Duration(b.opts.Timeout) * time.Second
 
@@ -100,19 +98,19 @@ func (b *Builder) Build(ctx *donor.DeviceContext) error {
 	binFiles, _ := filepath.Glob(filepath.Join(b.opts.OutputDir, "*.bin"))
 
 	for _, f := range bitFiles {
-		b.logger.Printf("[build] Bitstream: %s\n", f)
+		slog.Info("bitstream", "file", f)
 	}
 	for _, f := range binFiles {
-		b.logger.Printf("[build] Binary: %s\n", f)
+		slog.Info("binary", "file", f)
 	}
 
 	for _, f := range append(bitFiles, binFiles...) {
 		dst := filepath.Join(b.opts.OutputDir, filepath.Base(f))
 		if err := util.CopyFile(f, dst); err != nil {
-			b.logger.Printf("[build] Warning: failed to copy %s: %v\n", f, err)
+			slog.Warn("failed to copy output file", "file", f, "error", err)
 		}
 	}
 
-	b.logger.Println("[build] Build completed successfully!")
+	slog.Info("build completed successfully")
 	return nil
 }

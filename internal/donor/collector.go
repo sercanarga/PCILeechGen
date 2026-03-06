@@ -2,7 +2,7 @@ package donor
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"time"
 
@@ -13,22 +13,19 @@ import (
 
 // Collector gathers donor PCI data from sysfs.
 type Collector struct {
-	sysfs  *SysfsReader
-	logger *log.Logger
+	sysfs *SysfsReader
 }
 
 func NewCollector() *Collector {
 	return &Collector{
-		sysfs:  NewSysfsReader(),
-		logger: log.Default(),
+		sysfs: NewSysfsReader(),
 	}
 }
 
 // NewCollectorWithSysfs lets tests inject a fake sysfs reader.
 func NewCollectorWithSysfs(sr *SysfsReader) *Collector {
 	return &Collector{
-		sysfs:  sr,
-		logger: log.Default(),
+		sysfs: sr,
 	}
 }
 
@@ -116,7 +113,7 @@ func (c *Collector) validateBARContents(ctx *DeviceContext) error {
 func (c *Collector) collectConfigSpace(bdf pci.BDF) (*pci.ConfigSpace, error) {
 	cs, err := c.sysfs.ReadConfigSpace(bdf)
 	if err != nil {
-		c.logger.Printf("[donor] sysfs config read failed, trying VFIO: %v", err)
+		slog.Info("sysfs config read failed, trying VFIO", "error", err)
 		if bindErr := vfio.BindToVFIO(bdf.String()); bindErr != nil {
 			return nil, fmt.Errorf("config space read failed for %s (sysfs: %v, VFIO: %v)", bdf, err, bindErr)
 		}
@@ -136,25 +133,25 @@ func (c *Collector) collectBARMemory(bdf pci.BDF, bars []pci.BAR) map[int][]byte
 	for _, bar := range eligibleBARs(bars) {
 		data, err := c.sysfs.ReadBARContent(bdf, bar.Index, maxBARReadSize)
 		if err != nil {
-			c.logger.Printf("[donor] Warning: could not read BAR%d via sysfs: %v", bar.Index, err)
+			slog.Warn("could not read BAR via sysfs", "bar", bar.Index, "error", err)
 			sysfsBarFailed = true
 			continue
 		}
 		contents[bar.Index] = data
-		c.logger.Printf("[donor] Read %d bytes from BAR%d", len(data), bar.Index)
+		slog.Info("BAR read complete", "bar", bar.Index, "bytes", len(data))
 	}
 
 	if sysfsBarFailed && vfio.IsBoundToVFIO(bdf.String()) {
-		c.logger.Println("[donor] Trying VFIO for failed BAR reads...")
+		slog.Info("trying VFIO for failed BAR reads")
 		if dump, err := vfio.Collect(bdf.String()); err == nil {
 			for idx, data := range dump.BARContents {
 				if _, already := contents[idx]; !already && len(data) > 0 {
 					contents[idx] = data
-					c.logger.Printf("[donor] Read %d bytes from BAR%d via VFIO", len(data), idx)
+					slog.Info("BAR read via VFIO", "bar", idx, "bytes", len(data))
 				}
 			}
 		} else {
-			c.logger.Printf("[donor] VFIO BAR fallback failed: %v", err)
+			slog.Warn("VFIO BAR fallback failed", "error", err)
 		}
 	}
 
@@ -170,7 +167,7 @@ func (c *Collector) collectBARProfiles(bdf pci.BDF, bars []pci.BAR) map[int]*BAR
 		resourcePath := fmt.Sprintf("%s/%s/resource%d", c.sysfs.basePath, bdf.String(), bar.Index)
 		profile, err := profiler.ProfileBAR(resourcePath, bar.Index, maxBARReadSize)
 		if err != nil {
-			c.logger.Printf("[donor] BAR%d profiling skipped: %v", bar.Index, err)
+			slog.Info("BAR profiling skipped", "bar", bar.Index, "error", err)
 			continue
 		}
 		profiles[bar.Index] = profile
@@ -180,7 +177,7 @@ func (c *Collector) collectBARProfiles(bdf pci.BDF, bars []pci.BAR) map[int]*BAR
 				activeRegs++
 			}
 		}
-		c.logger.Printf("[donor] Profiled BAR%d: %d active registers detected", bar.Index, activeRegs)
+		slog.Info("BAR profiled", "bar", bar.Index, "active_registers", activeRegs)
 	}
 
 	return profiles
@@ -207,8 +204,13 @@ func (c *Collector) collectMSIXData(cs *pci.ConfigSpace, barContents map[int][]b
 	barData := barContents[info.TableBIR]
 	entries := pci.ReadMSIXTable(barData, info)
 
-	c.logger.Printf("[donor] MSI-X: %d vectors, table BAR%d+0x%X, PBA BAR%d+0x%X",
-		info.TableSize, info.TableBIR, info.TableOffset, info.PBABIR, info.PBAOffset)
+	slog.Info("MSI-X detected",
+		"vectors", info.TableSize,
+		"table_bar", info.TableBIR,
+		"table_offset", fmt.Sprintf("0x%X", info.TableOffset),
+		"pba_bar", info.PBABIR,
+		"pba_offset", fmt.Sprintf("0x%X", info.PBAOffset),
+	)
 
 	return &MSIXData{
 		TableSize:   info.TableSize,
