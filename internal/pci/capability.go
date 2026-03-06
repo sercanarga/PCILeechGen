@@ -74,96 +74,66 @@ type ExtCapability struct {
 	Data    []byte `json:"data"`
 }
 
+// capabilityNames maps standard PCI capability IDs to human-readable names.
+var capabilityNames = map[uint8]string{
+	CapIDPowerManagement:   "Power Management",
+	CapIDAGP:               "AGP",
+	CapIDVPD:               "Vital Product Data",
+	CapIDSlotID:            "Slot Identification",
+	CapIDMSI:               "MSI",
+	CapIDCompactPCIHotSwap: "CompactPCI HotSwap",
+	CapIDPCIX:              "PCI-X",
+	CapIDHyperTransport:    "HyperTransport",
+	CapIDVendorSpecific:    "Vendor Specific",
+	CapIDDebugPort:         "Debug Port",
+	CapIDCompactPCI:        "CompactPCI",
+	CapIDPCIHotPlug:        "PCI Hot-Plug",
+	CapIDBridgeSubsysVID:   "Bridge Subsystem VID",
+	CapIDAGP8x:             "AGP 8x",
+	CapIDSecureDevice:      "Secure Device",
+	CapIDPCIExpress:        "PCI Express",
+	CapIDMSIX:              "MSI-X",
+	CapIDSATADataIndex:     "SATA Data/Index",
+	CapIDAdvancedFeatures:  "Advanced Features",
+	CapIDEnhancedAlloc:     "Enhanced Allocation",
+	CapIDFlatteningPortal:  "Flattening Portal Bridge",
+}
+
 // CapabilityName returns the human-readable name for a standard PCI capability ID.
 func CapabilityName(id uint8) string {
-	switch id {
-	case CapIDPowerManagement:
-		return "Power Management"
-	case CapIDAGP:
-		return "AGP"
-	case CapIDVPD:
-		return "Vital Product Data"
-	case CapIDSlotID:
-		return "Slot Identification"
-	case CapIDMSI:
-		return "MSI"
-	case CapIDCompactPCIHotSwap:
-		return "CompactPCI HotSwap"
-	case CapIDPCIX:
-		return "PCI-X"
-	case CapIDHyperTransport:
-		return "HyperTransport"
-	case CapIDVendorSpecific:
-		return "Vendor Specific"
-	case CapIDDebugPort:
-		return "Debug Port"
-	case CapIDCompactPCI:
-		return "CompactPCI"
-	case CapIDPCIHotPlug:
-		return "PCI Hot-Plug"
-	case CapIDBridgeSubsysVID:
-		return "Bridge Subsystem VID"
-	case CapIDAGP8x:
-		return "AGP 8x"
-	case CapIDSecureDevice:
-		return "Secure Device"
-	case CapIDPCIExpress:
-		return "PCI Express"
-	case CapIDMSIX:
-		return "MSI-X"
-	case CapIDSATADataIndex:
-		return "SATA Data/Index"
-	case CapIDAdvancedFeatures:
-		return "Advanced Features"
-	case CapIDEnhancedAlloc:
-		return "Enhanced Allocation"
-	case CapIDFlatteningPortal:
-		return "Flattening Portal Bridge"
-	default:
-		return "Unknown"
+	if name, ok := capabilityNames[id]; ok {
+		return name
 	}
+	return "Unknown"
+}
+
+// extCapabilityNames maps extended PCI capability IDs to human-readable names.
+var extCapabilityNames = map[uint16]string{
+	ExtCapIDAER:                "Advanced Error Reporting",
+	ExtCapIDVCNoMFVC:           "Virtual Channel (No MFVC)",
+	ExtCapIDDeviceSerialNumber: "Device Serial Number",
+	ExtCapIDPowerBudgeting:     "Power Budgeting",
+	ExtCapIDRCLinkDeclaration:  "Root Complex Link Declaration",
+	ExtCapIDVendorSpecific:     "Vendor Specific",
+	ExtCapIDACS:                "Access Control Services",
+	ExtCapIDARI:                "Alternative Routing-ID Interpretation",
+	ExtCapIDATS:                "Address Translation Services",
+	ExtCapIDSRIOV:              "Single Root I/O Virtualization",
+	ExtCapIDResizableBAR:       "Resizable BAR",
+	ExtCapIDLTR:                "Latency Tolerance Reporting",
+	ExtCapIDSecondaryPCIe:      "Secondary PCI Express",
+	ExtCapIDL1PMSubstates:      "L1 PM Substates",
+	ExtCapIDPTM:                "Precision Time Measurement",
+	ExtCapIDDPC:                "Downstream Port Containment",
+	ExtCapIDPASID:              "Process Address Space ID",
 }
 
 // ExtCapabilityName returns the human-readable name for an extended capability ID.
 func ExtCapabilityName(id uint16) string {
-	switch id {
-	case ExtCapIDAER:
-		return "Advanced Error Reporting"
-	case ExtCapIDVCNoMFVC:
-		return "Virtual Channel (No MFVC)"
-	case ExtCapIDDeviceSerialNumber:
-		return "Device Serial Number"
-	case ExtCapIDPowerBudgeting:
-		return "Power Budgeting"
-	case ExtCapIDRCLinkDeclaration:
-		return "Root Complex Link Declaration"
-	case ExtCapIDVendorSpecific:
-		return "Vendor Specific"
-	case ExtCapIDACS:
-		return "Access Control Services"
-	case ExtCapIDARI:
-		return "Alternative Routing-ID Interpretation"
-	case ExtCapIDATS:
-		return "Address Translation Services"
-	case ExtCapIDSRIOV:
-		return "Single Root I/O Virtualization"
-	case ExtCapIDResizableBAR:
-		return "Resizable BAR"
-	case ExtCapIDLTR:
-		return "Latency Tolerance Reporting"
-	case ExtCapIDSecondaryPCIe:
-		return "Secondary PCI Express"
-	case ExtCapIDL1PMSubstates:
-		return "L1 PM Substates"
-	case ExtCapIDPTM:
-		return "Precision Time Measurement"
-	case ExtCapIDDPC:
-		return "Downstream Port Containment"
-	case ExtCapIDPASID:
-		return "Process Address Space ID"
-	default:
-		return "Unknown"
+	if name, ok := extCapabilityNames[id]; ok {
+		return name
 	}
+	return "Unknown"
 }
 
 // ParseCapabilities walks the standard PCI capability linked list from config space.
