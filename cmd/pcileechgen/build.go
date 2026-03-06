@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 
 	"github.com/sercanarga/pcileechgen/internal/board"
 	"github.com/sercanarga/pcileechgen/internal/donor"
@@ -71,7 +72,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 // loadDonorContext loads device context from JSON or live device.
 func loadDonorContext() (*donor.DeviceContext, error) {
 	if buildOpts.fromJSON != "" {
-		fmt.Printf("[pcileechgen] Loading device context from: %s\n", buildOpts.fromJSON)
+		slog.Info("loading device context", "file", buildOpts.fromJSON)
 		return donor.LoadContext(buildOpts.fromJSON)
 	}
 
@@ -84,8 +85,8 @@ func loadDonorContext() (*donor.DeviceContext, error) {
 		return nil, fmt.Errorf("invalid BDF: %w", err)
 	}
 
-	fmt.Printf("[pcileechgen] Target device: %s\n", bdf.String())
-	fmt.Println("[pcileechgen] Stage 1: Collecting donor device data...")
+	slog.Info("target device", "bdf", bdf.String())
+	slog.Info("collecting donor device data")
 
 	collector := donor.NewCollector()
 	ctx, err := collector.Collect(bdf)
@@ -96,20 +97,24 @@ func loadDonorContext() (*donor.DeviceContext, error) {
 }
 
 func printBuildSummary(ctx *donor.DeviceContext, b *board.Board) {
-	fmt.Printf("[pcileechgen] Target board: %s (%s)\n", b.Name, b.FPGAPart)
-	fmt.Printf("[pcileechgen] Output: %s\n", buildOpts.output)
-	fmt.Printf("[pcileechgen] Device: %04x:%04x %s (rev %02x)\n",
-		ctx.Device.VendorID, ctx.Device.DeviceID,
-		ctx.Device.ClassDescription(), ctx.Device.RevisionID)
-	fmt.Printf("[pcileechgen] Config space: %d bytes\n", ctx.ConfigSpace.Size)
-	fmt.Printf("[pcileechgen] Capabilities: %d standard, %d extended\n",
-		len(ctx.Capabilities), len(ctx.ExtCapabilities))
-	barContentCount := len(ctx.BARContents)
-	if barContentCount > 0 {
-		fmt.Printf("[pcileechgen] BARs: %d (%d with content)\n\n", len(ctx.BARs), barContentCount)
-	} else {
-		fmt.Printf("[pcileechgen] BARs: %d\n\n", len(ctx.BARs))
-	}
+	slog.Info("build target",
+		"board", b.Name,
+		"fpga", b.FPGAPart,
+		"output", buildOpts.output,
+	)
+	slog.Info("donor device",
+		"vendor", fmt.Sprintf("%04x", ctx.Device.VendorID),
+		"device", fmt.Sprintf("%04x", ctx.Device.DeviceID),
+		"class", ctx.Device.ClassDescription(),
+		"revision", fmt.Sprintf("%02x", ctx.Device.RevisionID),
+	)
+	slog.Info("config space",
+		"bytes", ctx.ConfigSpace.Size,
+		"std_caps", len(ctx.Capabilities),
+		"ext_caps", len(ctx.ExtCapabilities),
+		"bars", len(ctx.BARs),
+		"bars_with_content", len(ctx.BARContents),
+	)
 }
 
 func init() {

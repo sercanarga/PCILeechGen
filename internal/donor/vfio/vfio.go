@@ -10,6 +10,14 @@ import (
 	"strings"
 )
 
+var sysfsBase = "/sys/bus/pci/devices"
+
+// SetSysfsBase overrides the sysfs path (for testing).
+func SetSysfsBase(path string) { sysfsBase = path }
+
+// ResetSysfsBase restores the default sysfs path.
+func ResetSysfsBase() { sysfsBase = "/sys/bus/pci/devices" }
+
 // DeviceDump is everything we pulled from a single device.
 type DeviceDump struct {
 	BDF             string         `json:"bdf"`
@@ -32,7 +40,7 @@ func (d *DeviceDump) ToJSON() ([]byte, error) {
 
 // ResolveIOMMUGroup returns the /dev/vfio/<N> path for a BDF.
 func ResolveIOMMUGroup(bdf string) (string, error) {
-	linkPath := filepath.Join("/sys/bus/pci/devices", bdf, "iommu_group")
+	linkPath := filepath.Join(sysfsBase, bdf, "iommu_group")
 	target, err := os.Readlink(linkPath)
 	if err != nil {
 		return "", fmt.Errorf("cannot resolve IOMMU group for %s: %w (is IOMMU enabled?)", bdf, err)
@@ -43,7 +51,7 @@ func ResolveIOMMUGroup(bdf string) (string, error) {
 
 // IsBoundToVFIO returns true if the device's current driver is vfio-pci.
 func IsBoundToVFIO(bdf string) bool {
-	driverLink := filepath.Join("/sys/bus/pci/devices", bdf, "driver")
+	driverLink := filepath.Join(sysfsBase, bdf, "driver")
 	target, err := os.Readlink(driverLink)
 	if err != nil {
 		return false
@@ -102,7 +110,7 @@ func CheckVFIOModules() error {
 
 // BindToVFIO unbinds from the current driver and rebinds to vfio-pci.
 func BindToVFIO(bdf string) error {
-	devPath := filepath.Join("/sys/bus/pci/devices", bdf)
+	devPath := filepath.Join(sysfsBase, bdf)
 
 	driverLink, err := os.Readlink(filepath.Join(devPath, "driver"))
 	if err == nil && filepath.Base(driverLink) == "vfio-pci" {
@@ -151,7 +159,7 @@ func BindToVFIO(bdf string) error {
 
 // UnbindFromVFIO detaches from vfio-pci and re-probes for the original driver.
 func UnbindFromVFIO(bdf string) error {
-	devPath := filepath.Join("/sys/bus/pci/devices", bdf)
+	devPath := filepath.Join(sysfsBase, bdf)
 	_ = os.WriteFile(filepath.Join(devPath, "driver_override"), []byte(""), 0200)
 
 	if err := os.WriteFile("/sys/bus/pci/drivers/vfio-pci/unbind", []byte(bdf), 0200); err != nil {
@@ -166,7 +174,7 @@ func UnbindFromVFIO(bdf string) error {
 
 // GetIOMMUGroup reads the IOMMU group number from sysfs.
 func GetIOMMUGroup(bdf string) (int, error) {
-	link, err := os.Readlink(filepath.Join("/sys/bus/pci/devices", bdf, "iommu_group"))
+	link, err := os.Readlink(filepath.Join(sysfsBase, bdf, "iommu_group"))
 	if err != nil {
 		return -1, fmt.Errorf("failed to read IOMMU group: %w", err)
 	}
@@ -185,7 +193,7 @@ func QuickStatus(bdf string) string {
 		return "ready"
 	}
 
-	group, err := GetIOMMUGroup(bdf)
+	_, err := GetIOMMUGroup(bdf)
 	if err != nil {
 		return "no-iommu"
 	}
@@ -206,6 +214,5 @@ func QuickStatus(bdf string) string {
 		return fmt.Sprintf("group(%d)", peers+1)
 	}
 
-	_ = group
 	return "ok"
 }

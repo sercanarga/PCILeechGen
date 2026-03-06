@@ -4,6 +4,7 @@ package vivado
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -109,9 +110,7 @@ func (v *Vivado) RunTCL(tclScript string, workDir string, timeout time.Duration)
 	env = append(env, fmt.Sprintf("XILINX_VIVADO=%s", v.Path))
 	cmd.Env = env
 
-	fmt.Printf("[vivado] Running: %s\n", strings.Join(cmd.Args, " "))
-	fmt.Printf("[vivado] Working directory: %s\n", workDir)
-	fmt.Printf("[vivado] Timeout: %s\n", timeout)
+	slog.Info("running Vivado", "cmd", strings.Join(cmd.Args, " "), "dir", workDir, "timeout", timeout)
 
 	if err := cmd.Run(); err != nil {
 		if ctx.Err() == context.DeadlineExceeded {

@@ -16,7 +16,7 @@ type BARStatus struct {
 
 // CheckPowerState reads D-state from sysfs (D0/D1/D2/D3hot/D3cold).
 func CheckPowerState(bdf string) (string, error) {
-	path := filepath.Join("/sys/bus/pci/devices", bdf, "power_state")
+	path := filepath.Join(sysfsBase, bdf, "power_state")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "unknown", fmt.Errorf("cannot read power state: %w", err)
@@ -26,7 +26,7 @@ func CheckPowerState(bdf string) (string, error) {
 
 // ListIOMMUGroupDevices returns all BDFs sharing the same IOMMU group.
 func ListIOMMUGroupDevices(bdf string) ([]string, error) {
-	groupLink := filepath.Join("/sys/bus/pci/devices", bdf, "iommu_group", "devices")
+	groupLink := filepath.Join(sysfsBase, bdf, "iommu_group", "devices")
 	entries, err := os.ReadDir(groupLink)
 	if err != nil {
 		return nil, fmt.Errorf("cannot list IOMMU group devices: %w", err)
@@ -43,7 +43,7 @@ func ListIOMMUGroupDevices(bdf string) ([]string, error) {
 func CheckBARAccessibility(bdf string) []BARStatus {
 	var results []BARStatus
 	for i := 0; i < 6; i++ {
-		resPath := filepath.Join("/sys/bus/pci/devices", bdf, fmt.Sprintf("resource%d", i))
+		resPath := filepath.Join(sysfsBase, bdf, fmt.Sprintf("resource%d", i))
 		info, err := os.Stat(resPath)
 		if err != nil {
 			continue // BAR doesn't exist or is disabled
@@ -129,7 +129,7 @@ func RunDiagnostics(bdf string) []DiagnosticResult {
 	if IsBoundToVFIO(bdf) {
 		results = append(results, DiagnosticResult{"Driver", true, "vfio-pci"})
 	} else {
-		driverLink, err := os.Readlink(filepath.Join("/sys/bus/pci/devices", bdf, "driver"))
+		driverLink, err := os.Readlink(filepath.Join(sysfsBase, bdf, "driver"))
 		if err == nil {
 			drv := filepath.Base(driverLink)
 			results = append(results, DiagnosticResult{

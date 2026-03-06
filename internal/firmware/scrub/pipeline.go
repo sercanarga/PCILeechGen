@@ -8,8 +8,9 @@ import (
 
 // ScrubContext holds pre-parsed data shared across all pipeline passes.
 type ScrubContext struct {
-	Caps    []pci.Capability
-	ExtCaps []pci.ExtCapability
+	Caps      []pci.Capability
+	ExtCaps   []pci.ExtCapability
+	ClassCode uint32
 }
 
 // ScrubPass is one step in the config space scrubbing pipeline.
