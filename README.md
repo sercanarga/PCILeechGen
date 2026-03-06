@@ -51,6 +51,7 @@
 - BAR0 Layout (type, size, 32/64-bit)
 - BAR Content Emulation (donor memory snapshot)
 - NVMe CC→CSTS State Machine
+- NVMe Admin Queue Responder (Identify, Set/Get Features, Create IO CQ/SQ)
 - xHCI USBCMD/USBSTS State Machine
 
 </td></tr>
@@ -75,6 +76,7 @@
 
 **Stealth & Timing**
 - TLP Latency Emulation (PRNG jitter, thermal drift, burst correlation)
+- Donor-Profiled TLP Timing (per-device response histogram CDF reproduction)
 - Link Speed / Width (clamped to board)
 - P&R Randomization (per-build Vivado placement seed)
 - VSEC Entropy Embed (build-unique fingerprint in ext config space)
@@ -340,10 +342,12 @@ pcileech_datastore/
 ├── pcileech_bar_impl_device.sv         # BAR implementation (register-level)
 ├── pcileech_tlps128_bar_controller.sv  # TLP BAR controller
 ├── pcileech_msix_table.sv              # MSI-X table + PBA emulation
+├── pcileech_nvme_admin_responder.sv    # NVMe admin queue FSM (if NVMe)
 ├── tlp_latency_emulator.sv            # Response latency emulation
 ├── device_config.sv                    # Device identity + feature flags
 ├── config_space_init.hex               # Config space init ($readmemh)
 ├── msix_table_init.hex                 # MSI-X table init ($readmemh)
+├── identify_init.hex                   # NVMe Identify ROM (if NVMe)
 ├── vivado_generate_project.tcl         # Project creation script
 ├── vivado_build.tcl                    # Synthesis script
 ├── src/                                # Patched board SV sources
@@ -366,6 +370,7 @@ internal/
 │   ├── scrub/                Config space scrubbing (14-pass pipeline)
 │   ├── barmodel/             BAR register model (spec + profiled)
 │   ├── svgen/                SV code generation (embedded .sv.tmpl templates)
+│   ├── nvme/                 NVMe Identify data generation
 │   ├── tclgen/               Vivado TCL script generation
 │   ├── devclass/             Device class strategy (NVMe, xHCI, Ethernet, Audio)
 │   ├── output/               Artifact writer (SV pipeline + COE + HEX)
