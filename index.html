@@ -31,8 +31,33 @@
                 placeholder: 'Search',
                 noData: 'No results',
                 depth: 3
+            },
+            markdown: {
+                renderer: {
+                    code: function (code, lang) {
+                        if (lang === 'mermaid') {
+                            return '<div class="mermaid">' + code + '</div>';
+                        }
+                        return this.origin.code.apply(this, arguments);
+                    }
+                }
             }
         };
+    </script>
+    <!-- Mermaid -->
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <script>
+        mermaid.initialize({ startOnLoad: false, theme: 'dark' });
+        // Re-render mermaid blocks after docsify renders the page
+        document.addEventListener('DOMContentLoaded', function () {
+            var observer = new MutationObserver(function () {
+                mermaid.run({ querySelector: '.mermaid' });
+            });
+            var target = document.getElementById('app');
+            if (target) {
+                observer.observe(target, { childList: true, subtree: true });
+            }
+        });
     </script>
     <!-- Docsify -->
     <script src="https://cdn.jsdelivr.net/npm/docsify@4/lib/docsify.min.js"></script>
