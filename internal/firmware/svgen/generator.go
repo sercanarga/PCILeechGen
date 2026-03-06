@@ -8,6 +8,7 @@ import (
 
 	"github.com/sercanarga/pcileechgen/internal/firmware"
 	"github.com/sercanarga/pcileechgen/internal/firmware/barmodel"
+	"github.com/sercanarga/pcileechgen/internal/firmware/nvme"
 )
 
 // SVGeneratorConfig is the input data for all SV template renders.
@@ -15,13 +16,14 @@ type SVGeneratorConfig struct {
 	DeviceIDs     firmware.DeviceIDs
 	BARModel      *barmodel.BARModel // nil = generic fallback (uses BRAM-based zerowrite4k)
 	ClassCode     uint32
-	LatencyConfig *LatencyConfig // TLP response timing (nil = no latency emulator)
-	HasMSIX       bool           // generate MSI-X interrupt controller logic
-	BuildEntropy  uint32         // seed for PRNG uniqueness per build
-	PRNGSeeds     [4]uint32      // computed PRNG seeds for latency emulator
-	IsNVMe        bool           // enable NVMe CC→CSTS state machine
-	IsXHCI        bool           // enable xHCI state machine
-	MSIXConfig    *MSIXConfig    // MSI-X table replication (nil = no MSI-X table)
+	LatencyConfig *LatencyConfig     // TLP response timing (nil = no latency emulator)
+	HasMSIX       bool               // generate MSI-X interrupt controller logic
+	BuildEntropy  uint32             // seed for PRNG uniqueness per build
+	PRNGSeeds     [4]uint32          // computed PRNG seeds for latency emulator
+	IsNVMe        bool               // enable NVMe CC→CSTS state machine
+	IsXHCI        bool               // enable xHCI state machine
+	MSIXConfig    *MSIXConfig        // MSI-X table replication (nil = no MSI-X table)
+	NVMeIdentify  *nvme.IdentifyData // NVMe Identify Controller/Namespace data (nil = no responder)
 }
 
 func renderTemplate(name string, data any) (string, error) {
@@ -55,6 +57,10 @@ func GenerateMSIXTableSV(cfg *SVGeneratorConfig) (string, error) {
 
 func GenerateLatencyEmulatorSV(cfg *SVGeneratorConfig) (string, error) {
 	return renderTemplate("latency_emulator", cfg)
+}
+
+func GenerateNVMeResponderSV(cfg *SVGeneratorConfig) (string, error) {
+	return renderTemplate("nvme_admin_responder", cfg)
 }
 
 // svFuncMap provides hex formatting and arithmetic helpers for templates.

@@ -221,6 +221,82 @@ module pcileech_tlps128_bar_controller(
     );
 {{ end }}
 
+{{ if and .IsNVMe .NVMeIdentify }}
+    // ========================================================================
+    // NVMe Admin Command Responder
+    // Intercepts doorbell writes at BAR0+0x1000 (SQ0 Tail Doorbell)
+    // and processes admin commands via DMA to/from host memory.
+    // ========================================================================
+
+    // Doorbell write detection
+    wire nvme_sq0_db_wr = wr_valid && wr_bar[0] && (wr_addr[31:0] == 32'h00001000);
+
+    // DMA interface wires for NVMe responder
+    wire        nvme_dma_rd_req;
+    wire [63:0] nvme_dma_rd_addr;
+    wire [9:0]  nvme_dma_rd_len;
+    wire        nvme_dma_rd_valid;
+    wire [31:0] nvme_dma_rd_data;
+    wire        nvme_dma_rd_done;
+    wire        nvme_dma_wr_req;
+    wire [63:0] nvme_dma_wr_addr;
+    wire [31:0] nvme_dma_wr_data;
+    wire [3:0]  nvme_dma_wr_be;
+    wire        nvme_dma_wr_valid;
+    wire        nvme_dma_wr_done;
+    wire        nvme_msix_trigger;
+
+    // Identify ROM BRAM interface
+    wire [12:0] nvme_id_rom_addr;
+    wire [31:0] nvme_id_rom_data;
+
+    pcileech_nvme_admin_responder i_nvme_responder(
+        .rst                ( rst                           ),
+        .clk                ( clk                           ),
+        .cc_en              ( 1'b1                          ),
+        .asq_lo             ( 32'h0                         ),
+        .asq_hi             ( 32'h0                         ),
+        .acq_lo             ( 32'h0                         ),
+        .acq_hi             ( 32'h0                         ),
+        .aqa                ( 32'h001F001F                  ),
+        .sq0_doorbell_wr    ( nvme_sq0_db_wr                ),
+        .sq0_doorbell_val   ( wr_data[15:0]                 ),
+        .dma_rd_req         ( nvme_dma_rd_req               ),
+        .dma_rd_addr        ( nvme_dma_rd_addr              ),
+        .dma_rd_len         ( nvme_dma_rd_len               ),
+        .dma_rd_valid       ( nvme_dma_rd_valid             ),
+        .dma_rd_data        ( nvme_dma_rd_data              ),
+        .dma_rd_done        ( nvme_dma_rd_done              ),
+        .dma_wr_req         ( nvme_dma_wr_req               ),
+        .dma_wr_addr        ( nvme_dma_wr_addr              ),
+        .dma_wr_data        ( nvme_dma_wr_data              ),
+        .dma_wr_be          ( nvme_dma_wr_be                ),
+        .dma_wr_valid       ( nvme_dma_wr_valid             ),
+        .dma_wr_done        ( nvme_dma_wr_done              ),
+        .msix_trigger       ( nvme_msix_trigger             ),
+        .id_rom_addr        ( nvme_id_rom_addr              ),
+        .id_rom_data        ( nvme_id_rom_data              )
+    );
+
+    // NVMe Identify Data ROM (8KB = 2048 x 32-bit)
+    // Initialized from identify_init.hex at synthesis time
+    reg [31:0] nvme_identify_rom [0:2047];
+    initial $readmemh("identify_init.hex", nvme_identify_rom);
+
+    reg [31:0] nvme_id_rom_data_r;
+    always @(posedge clk)
+        nvme_id_rom_data_r <= nvme_identify_rom[nvme_id_rom_addr[12:2]];
+    assign nvme_id_rom_data = nvme_id_rom_data_r;
+
+    // DMA loopback stubs — these connect to the PCILeech DMA core
+    // In the actual design, these would be wired to the TLP engine
+    // For now, provide ready/done feedback
+    assign nvme_dma_rd_valid = 1'b0;
+    assign nvme_dma_rd_data  = 32'h0;
+    assign nvme_dma_rd_done  = 1'b0;
+    assign nvme_dma_wr_done  = 1'b0;
+{{ end }}
+
     // BAR1: address loopback
     pcileech_bar_impl_loopaddr i_bar1(
         .rst            ( rst                           ),
