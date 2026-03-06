@@ -19,7 +19,7 @@ func ScrubBarContent(barContents map[int][]byte, classCode uint32) {
 		strategy.ScrubBAR(data)
 	}
 
-	// xHCI needs BRAM-size-aware clamping that the strategy can't do alone
+	// xHCI needs additional BRAM-size-aware clamping beyond what the strategy does
 	if strategy != nil && strategy.DeviceClass() == devclass.ClassXHCI {
 		scrubXHCIBar0(data)
 	}

@@ -525,7 +525,7 @@ func TestClampLinkCapability(t *testing.T) {
 	b := &board.Board{PCIeLanes: 1, MaxLinkSpeed: 2} // Gen2 x1
 	om := overlay.NewMap(cs)
 
-	clampLinkCapability(cs, b, om)
+	clampLinkCapability(cs, b, om, pci.ParseCapabilities(cs))
 
 	// Link Capabilities speed should be 2 (Gen2)
 	linkCap := cs.ReadU32(0x4C)
@@ -555,7 +555,7 @@ func TestClampLinkCapability(t *testing.T) {
 func TestClampLinkCapability_NilBoard(t *testing.T) {
 	cs := makeTestCS()
 	om := overlay.NewMap(cs)
-	clampLinkCapability(cs, nil, om) // should default to Gen2
+	clampLinkCapability(cs, nil, om, pci.ParseCapabilities(cs)) // should default to Gen2
 	linkCap := cs.ReadU32(0x4C)
 	speed := uint8(linkCap & 0x0F)
 	if speed != 2 {
@@ -567,7 +567,7 @@ func TestClampDeviceCapability(t *testing.T) {
 	cs := makeTestCS()
 	om := overlay.NewMap(cs)
 
-	clampDeviceCapability(cs, om)
+	clampDeviceCapability(cs, om, pci.ParseCapabilities(cs))
 
 	devCap := cs.ReadU32(0x44)
 	if devCap&0x07 != 0 {
@@ -691,7 +691,7 @@ func TestRelocateMSIXToBRAM(t *testing.T) {
 	cs.WriteU32(0x88, 0x00000040) // PBA: BAR0, offset 0x40
 
 	om := overlay.NewMap(cs)
-	relocateMSIXToBRAM(cs, om)
+	relocateMSIXToBRAM(cs, om, pci.ParseCapabilities(cs))
 
 	// Table should be relocated to 0x1000
 	tableReg := cs.ReadU32(0x84)

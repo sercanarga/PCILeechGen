@@ -1,6 +1,24 @@
 package devclass
 
-import "github.com/sercanarga/pcileechgen/internal/pci"
+import (
+	"github.com/sercanarga/pcileechgen/internal/pci"
+	"github.com/sercanarga/pcileechgen/internal/util"
+)
+
+type gpuStrategy struct{ baseStrategy }
+
+func (s *gpuStrategy) ScrubBAR(data []byte) {
+	if len(data) < 0x204 {
+		return
+	}
+	util.WriteLE32(data, 0x200, 0xFFFFFFFF)
+}
+
+func (s *gpuStrategy) PostInitRegisters(regs map[uint32]*uint32) {
+	if v, ok := regs[0x200]; ok {
+		*v = 0xFFFFFFFF
+	}
+}
 
 func gpuProfile() *DeviceProfile {
 	return &DeviceProfile{

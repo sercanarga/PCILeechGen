@@ -6,7 +6,7 @@ package mmio
 import (
 	"bufio"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -34,7 +34,7 @@ func LiveTrace(bdf string, duration time.Duration) (*TraceResult, error) {
 	}
 	defer func() {
 		if err := os.WriteFile(currentTracer, prevTracer, 0644); err != nil {
-			log.Printf("[mmio] warning: failed to restore tracer: %v", err)
+			slog.Warn("failed to restore tracer", "error", err)
 		}
 	}()
 
@@ -44,11 +44,11 @@ func LiveTrace(bdf string, duration time.Duration) (*TraceResult, error) {
 	}
 
 	if err := os.WriteFile(tracingOnPath, []byte("1"), 0644); err != nil {
-		log.Printf("[mmio] warning: failed to enable tracing: %v", err)
+		slog.Warn("failed to enable tracing", "error", err)
 	}
 	defer func() {
 		if err := os.WriteFile(tracingOnPath, []byte("0"), 0644); err != nil {
-			log.Printf("[mmio] warning: failed to disable tracing: %v", err)
+			slog.Warn("failed to disable tracing", "error", err)
 		}
 	}()
 
@@ -90,7 +90,7 @@ func LiveTrace(bdf string, duration time.Duration) (*TraceResult, error) {
 	}
 
 	if err := os.WriteFile(tracingOnPath, []byte("0"), 0644); err != nil {
-		log.Printf("[mmio] warning: failed to stop tracing: %v", err)
+		slog.Warn("failed to stop tracing", "error", err)
 	}
 
 	return result, nil

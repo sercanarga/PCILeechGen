@@ -33,30 +33,9 @@ type BARDefault struct {
 }
 
 // ProfileForClass returns a profile for the class code, or a generic fallback.
+// Delegates to StrategyForClass to avoid duplicating the class dispatch logic.
 func ProfileForClass(classCode uint32) *DeviceProfile {
-	baseClass := (classCode >> 16) & 0xFF
-	subClass := (classCode >> 8) & 0xFF
-
-	switch {
-	case baseClass == 0x01 && subClass == 0x08:
-		return nvmeProfile()
-	case baseClass == 0x0C && subClass == 0x03:
-		return xhciProfile()
-	case baseClass == 0x02 && subClass == 0x00:
-		return ethernetProfile()
-	case baseClass == 0x04 && subClass == 0x03:
-		return audioProfile()
-	case baseClass == 0x03 && subClass == 0x00:
-		return gpuProfile()
-	case baseClass == 0x01 && subClass == 0x06:
-		return sataProfile()
-	case baseClass == 0x02 && subClass == 0x80:
-		return wifiProfile()
-	case baseClass == 0x0C && subClass == 0x80:
-		return thunderboltProfile()
-	default:
-		return genericProfile()
-	}
+	return StrategyForClass(classCode).Profile()
 }
 
 // AllProfiles lists every known device profile.

@@ -1,6 +1,46 @@
 package devclass
 
-import "github.com/sercanarga/pcileechgen/internal/pci"
+import (
+	"github.com/sercanarga/pcileechgen/internal/pci"
+	"github.com/sercanarga/pcileechgen/internal/util"
+)
+
+type xhciStrategy struct{ baseStrategy }
+
+func (s *xhciStrategy) ScrubBAR(data []byte) {
+	if len(data) < 0x28 {
+		return
+	}
+	usbcmd := util.ReadLE32(data, 0x20)
+	usbcmd |= 0x01
+	util.WriteLE32(data, 0x20, usbcmd)
+
+	util.WriteLE32(data, 0x24, 0x00000000)
+
+	if len(data) > 0x2C {
+		util.WriteLE32(data, 0x28, 0x00000001)
+	}
+
+	if len(data) > 0x1C {
+		dboff := util.ReadLE32(data, 0x14)
+		if dboff > 0x800 {
+			util.WriteLE32(data, 0x14, 0x00000100)
+		}
+		rtsoff := util.ReadLE32(data, 0x18)
+		if rtsoff > 0xC00 {
+			util.WriteLE32(data, 0x18, 0x00000200)
+		}
+	}
+}
+
+func (s *xhciStrategy) PostInitRegisters(regs map[uint32]*uint32) {
+	if v, ok := regs[0x20]; ok {
+		*v |= 0x00000001
+	}
+	if v, ok := regs[0x24]; ok {
+		*v &^= 0x00000001
+	}
+}
 
 func xhciProfile() *DeviceProfile {
 	return &DeviceProfile{

@@ -8,6 +8,13 @@ import (
 	"github.com/sercanarga/pcileechgen/internal/pci"
 )
 
+func ctxFor(cs *pci.ConfigSpace) *ScrubContext {
+	return &ScrubContext{
+		Caps:    pci.ParseCapabilities(cs),
+		ExtCaps: pci.ParseExtCapabilities(cs),
+	}
+}
+
 // --- Pass tests ---
 
 func TestClearMiscPass_AllFields(t *testing.T) {
@@ -20,7 +27,7 @@ func TestClearMiscPass_AllFields(t *testing.T) {
 
 	om := overlay.NewMap(cs)
 	p := &clearMiscPass{}
-	p.Apply(cs, nil, om)
+	p.Apply(cs, nil, om, ctxFor(cs))
 
 	if cs.ReadU8(0x0F) != 0 {
 		t.Error("BIST should be cleared")
@@ -44,7 +51,7 @@ func TestSanitizeCmdStatusPass_Force(t *testing.T) {
 
 	om := overlay.NewMap(cs)
 	p := &sanitizeCmdStatusPass{}
-	p.Apply(cs, nil, om)
+	p.Apply(cs, nil, om, ctxFor(cs))
 
 	cmd := cs.ReadU16(0x04)
 	if cmd&0x06 == 0 {
@@ -64,7 +71,7 @@ func TestScrubPCIeCapPass(t *testing.T) {
 
 	om := overlay.NewMap(cs)
 	p := &scrubPCIeCapPass{}
-	p.Apply(cs, nil, om)
+	p.Apply(cs, nil, om, ctxFor(cs))
 
 	if cs.ReadU16(0x4A) != 0 {
 		t.Errorf("Device Status = 0x%04x, want 0", cs.ReadU16(0x4A))
@@ -86,7 +93,7 @@ func TestScrubPMCapPass(t *testing.T) {
 
 	om := overlay.NewMap(cs)
 	p := &scrubPMCapPass{}
-	p.Apply(cs, nil, om)
+	p.Apply(cs, nil, om, ctxFor(cs))
 
 	pmcsr := cs.ReadU16(0x44)
 	if pmcsr&0x03 != 0 {
@@ -112,7 +119,7 @@ func TestScrubAERPass(t *testing.T) {
 
 	om := overlay.NewMap(cs)
 	p := &scrubAERPass{}
-	p.Apply(cs, nil, om)
+	p.Apply(cs, nil, om, ctxFor(cs))
 
 	if cs.ReadU32(0x104) != 0 {
 		t.Error("AER uncorrectable status should be cleared")
@@ -130,7 +137,7 @@ func TestScrubAERPass_SmallCS(t *testing.T) {
 	cs.Size = pci.ConfigSpaceLegacySize // no ext caps
 	om := overlay.NewMap(cs)
 	p := &scrubAERPass{}
-	p.Apply(cs, nil, om) // should be no-op
+	p.Apply(cs, nil, om, ctxFor(cs)) // should be no-op
 }
 
 func TestFilterExtCapsPass(t *testing.T) {
@@ -140,7 +147,7 @@ func TestFilterExtCapsPass(t *testing.T) {
 	cs.WriteU32(0x100, uint32(pci.ExtCapIDAER)|(1<<16))
 	om := overlay.NewMap(cs)
 	p := &filterExtCapsPass{}
-	p.Apply(cs, nil, om) // should not remove AER
+	p.Apply(cs, nil, om, ctxFor(cs)) // should not remove AER
 }
 
 func TestClampBARsPass_Memory(t *testing.T) {
@@ -149,7 +156,7 @@ func TestClampBARsPass_Memory(t *testing.T) {
 	cs.WriteU32(0x10, 0xFFF00004)
 	om := overlay.NewMap(cs)
 	p := &clampBARsPass{}
-	p.Apply(cs, nil, om)
+	p.Apply(cs, nil, om, ctxFor(cs))
 }
 
 func TestRelocateMSIXPass(t *testing.T) {
@@ -157,7 +164,7 @@ func TestRelocateMSIXPass(t *testing.T) {
 	cs.Size = pci.ConfigSpaceSize
 	om := overlay.NewMap(cs)
 	p := &relocateMSIXPass{}
-	p.Apply(cs, nil, om) // no MSI-X — should be no-op
+	p.Apply(cs, nil, om, ctxFor(cs)) // no MSI-X — should be no-op
 }
 
 func TestClampLinkPass(t *testing.T) {
@@ -165,14 +172,14 @@ func TestClampLinkPass(t *testing.T) {
 	b := &board.Board{PCIeLanes: 1, MaxLinkSpeed: 2}
 	om := overlay.NewMap(cs)
 	p := &clampLinkPass{}
-	p.Apply(cs, b, om)
+	p.Apply(cs, b, om, ctxFor(cs))
 }
 
 func TestClampDeviceCapPass(t *testing.T) {
 	cs := makeTestCS()
 	om := overlay.NewMap(cs)
 	p := &clampDeviceCapPass{}
-	p.Apply(cs, nil, om)
+	p.Apply(cs, nil, om, ctxFor(cs))
 }
 
 func TestZeroVendorPass(t *testing.T) {
@@ -184,7 +191,7 @@ func TestZeroVendorPass(t *testing.T) {
 	cs.WriteU8(0x41, 0x00)
 	om := overlay.NewMap(cs)
 	p := &zeroVendorPass{}
-	p.Apply(cs, nil, om)
+	p.Apply(cs, nil, om, ctxFor(cs))
 }
 
 func TestApplyVendorQuirksPass(t *testing.T) {
@@ -192,7 +199,7 @@ func TestApplyVendorQuirksPass(t *testing.T) {
 	cs.Size = pci.ConfigSpaceSize
 	om := overlay.NewMap(cs)
 	p := &applyVendorQuirksPass{}
-	p.Apply(cs, nil, om)
+	p.Apply(cs, nil, om, ctxFor(cs))
 }
 
 func TestPruneStdCapsPass(t *testing.T) {
@@ -200,7 +207,7 @@ func TestPruneStdCapsPass(t *testing.T) {
 	cs.Size = pci.ConfigSpaceSize
 	om := overlay.NewMap(cs)
 	p := &pruneStdCapsPass{}
-	p.Apply(cs, nil, om)
+	p.Apply(cs, nil, om, ctxFor(cs))
 }
 
 func TestValidateCapChainPass(t *testing.T) {
@@ -208,7 +215,7 @@ func TestValidateCapChainPass(t *testing.T) {
 	cs.Size = pci.ConfigSpaceSize
 	om := overlay.NewMap(cs)
 	p := &validateCapChainPass{}
-	p.Apply(cs, nil, om)
+	p.Apply(cs, nil, om, ctxFor(cs))
 }
 
 // --- Pass name tests ---

@@ -8,8 +8,7 @@ import (
 )
 
 // clampLinkCapability caps link speed/width to board limits.
-func clampLinkCapability(cs *pci.ConfigSpace, b *board.Board, om *overlay.Map) {
-	caps := pci.ParseCapabilities(cs)
+func clampLinkCapability(cs *pci.ConfigSpace, b *board.Board, om *overlay.Map, caps []pci.Capability) {
 	for _, cap := range caps {
 		if cap.ID != pci.CapIDPCIExpress {
 			continue
@@ -89,8 +88,7 @@ func clampLinkCapability(cs *pci.ConfigSpace, b *board.Board, om *overlay.Map) {
 }
 
 // clampDeviceCapability forces MPS=128B, disables phantoms and ext tags.
-func clampDeviceCapability(cs *pci.ConfigSpace, om *overlay.Map) {
-	caps := pci.ParseCapabilities(cs)
+func clampDeviceCapability(cs *pci.ConfigSpace, om *overlay.Map, caps []pci.Capability) {
 	for _, cap := range caps {
 		if cap.ID != pci.CapIDPCIExpress {
 			continue
