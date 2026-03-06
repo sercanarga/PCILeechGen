@@ -27,27 +27,44 @@ func xhciProfile() *DeviceProfile {
 		MaxPowerState: 3,
 
 		BARDefaults: []BARDefault{
-			// CAPLENGTH + HCIVERSION
-			{Offset: 0x00, Width: 4, Name: "CAPLENGTH_HCIVER", Reset: 0x01000020, RWMask: 0x00000000},
+			// CAPLENGTH=0x20, HCIVERSION=1.10
+			{Offset: 0x00, Width: 4, Name: "CAPLENGTH_HCIVER", Reset: 0x01100020, RWMask: 0x00000000},
 			// HCSPARAMS1: MaxSlots=32, MaxIntrs=1, MaxPorts=2
 			{Offset: 0x04, Width: 4, Name: "HCSPARAMS1", Reset: 0x02000120, RWMask: 0x00000000},
-			// HCSPARAMS2: scratchpad=0
+			// HCSPARAMS2: no scratchpad
 			{Offset: 0x08, Width: 4, Name: "HCSPARAMS2", Reset: 0x00000000, RWMask: 0x00000000},
-			// HCSPARAMS3
+			// HCSPARAMS3: exit latencies
 			{Offset: 0x0C, Width: 4, Name: "HCSPARAMS3", Reset: 0x00000000, RWMask: 0x00000000},
-			// HCCPARAMS1: xECP=0 (cleared for FPGA)
-			{Offset: 0x10, Width: 4, Name: "HCCPARAMS1", Reset: 0x00000000, RWMask: 0x00000000},
-			// DBOFF — doorbell offset, clamped for BRAM
+			// HCCPARAMS1: 64-bit capable, no xECP
+			{Offset: 0x10, Width: 4, Name: "HCCPARAMS1", Reset: 0x00000001, RWMask: 0x00000000},
+			// DBOFF — doorbell array offset
 			{Offset: 0x14, Width: 4, Name: "DBOFF", Reset: 0x00000100, RWMask: 0x00000000},
-			// RTSOFF — runtime register offset
+			// RTSOFF — runtime register space offset
 			{Offset: 0x18, Width: 4, Name: "RTSOFF", Reset: 0x00000200, RWMask: 0x00000000},
-			// USBCMD — run/stop=1
+			// Operational registers (at CAPLENGTH offset 0x20)
+			// USBCMD — R/S=1 (running)
 			{Offset: 0x20, Width: 4, Name: "USBCMD", Reset: 0x00000001, RWMask: 0x00001F0F},
-			// USBSTS — HCH=0 (running)
+			// USBSTS — HCH=0 (not halted)
 			{Offset: 0x24, Width: 4, Name: "USBSTS", Reset: 0x00000000, RWMask: 0x0000041C},
+			// PAGESIZE — 4KB pages
+			{Offset: 0x28, Width: 4, Name: "PAGESIZE", Reset: 0x00000001, RWMask: 0x00000000},
+			// DNCTRL — device notification control
+			{Offset: 0x34, Width: 4, Name: "DNCTRL", Reset: 0x00000000, RWMask: 0x0000FFFF},
+			// CRCR — command ring control
+			{Offset: 0x38, Width: 4, Name: "CRCR_LO", Reset: 0x00000000, RWMask: 0xFFFFFFF0},
+			{Offset: 0x3C, Width: 4, Name: "CRCR_HI", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
+			// DCBAAP — device context base address
+			{Offset: 0x50, Width: 4, Name: "DCBAAP_LO", Reset: 0x00000000, RWMask: 0xFFFFFFC0},
+			{Offset: 0x54, Width: 4, Name: "DCBAAP_HI", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
+			// CONFIG — max device slots enabled
+			{Offset: 0x58, Width: 4, Name: "CONFIG", Reset: 0x00000000, RWMask: 0x000000FF},
+			// PORTSC1 — port 1 status/control (powered, no device)
+			{Offset: 0x420, Width: 4, Name: "PORTSC1", Reset: 0x000002A0, RWMask: 0x8EFFC3F2},
+			// PORTSC2 — port 2 status/control
+			{Offset: 0x430, Width: 4, Name: "PORTSC2", Reset: 0x000002A0, RWMask: 0x8EFFC3F2},
 		},
 
-		Notes: "xHCI 1.1 profile. Registers clamped to 4KB BRAM. DBOFF/RTSOFF must " +
-			"be within BRAM range. usbxhci driver reads CAPLENGTH then accesses operational regs.",
+		Notes: "xHCI 1.1 profile. HCCPARAMS1 bit 0 = AC64 (64-bit capable). " +
+			"PORTSC powered+PP with no device attached. USBCMD R/S=1, USBSTS HCH=0.",
 	}
 }

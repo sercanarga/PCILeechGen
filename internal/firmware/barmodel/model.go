@@ -44,14 +44,13 @@ func BuildBARModel(barData []byte, classCode uint32, profile *donor.BARProfile) 
 
 	switch {
 	case baseClass == 0x01 && subClass == 0x08 && progIF == 0x02:
-		// NVMe controller (class 0x010802)
 		return buildNVMeBARModel(barData)
 	case baseClass == 0x0C && subClass == 0x03 && progIF == 0x30:
-		// xHCI USB controller (class 0x0C0330)
 		return buildXHCIBARModel(barData)
 	case baseClass == 0x02:
-		// Ethernet controller (class 0x02XXXX)
 		return buildEthernetBARModel(barData)
+	case baseClass == 0x04 && subClass == 0x03:
+		return buildAudioBARModel(barData)
 	default:
 		return nil
 	}
@@ -188,45 +187,106 @@ func populateResetValues(regs []BARRegister, barData []byte) {
 // Based on Intel I210/I350 datasheet register layout.
 func buildEthernetBARModel(barData []byte) *BARModel {
 	regs := []BARRegister{
-		// Device Control
 		{Offset: 0x00, Width: 4, Name: "CTRL", RWMask: 0xFFFFFFFF},
-		// Device Status (read-only)
 		{Offset: 0x08, Width: 4, Name: "STATUS", RWMask: 0x00000000},
-		// EEPROM/Flash Control & Data
 		{Offset: 0x10, Width: 4, Name: "EECD", RWMask: 0x000000FF},
-		// EEPROM Read
 		{Offset: 0x14, Width: 4, Name: "EERD", RWMask: 0x0000FFFF},
-		// Extended Device Control
 		{Offset: 0x18, Width: 4, Name: "CTRL_EXT", RWMask: 0xFFFFFFFF},
-		// Flow Control Address Low
+		{Offset: 0x20, Width: 4, Name: "MDIC", RWMask: 0x0FFFFFFF},
 		{Offset: 0x28, Width: 4, Name: "FCAL", RWMask: 0xFFFFFFFF},
-		// Flow Control Address High
 		{Offset: 0x2C, Width: 4, Name: "FCAH", RWMask: 0x0000FFFF},
-
-		// Interrupt Cause Read (RW1C — read clears)
 		{Offset: 0xC0, Width: 4, Name: "ICR", RWMask: 0x00000000},
-		// Interrupt Cause Set
 		{Offset: 0xC8, Width: 4, Name: "ICS", RWMask: 0xFFFFFFFF},
-		// Interrupt Mask Set/Read
 		{Offset: 0xD0, Width: 4, Name: "IMS", RWMask: 0xFFFFFFFF},
-		// Interrupt Mask Clear
 		{Offset: 0xD8, Width: 4, Name: "IMC", RWMask: 0xFFFFFFFF},
-
-		// Receive Control
 		{Offset: 0x100, Width: 4, Name: "RCTL", RWMask: 0xFFFFFFFF},
-		// Transmit Control
 		{Offset: 0x400, Width: 4, Name: "TCTL", RWMask: 0xFFFFFFFF},
-		// NOTE: RAL0/RAH0 (MAC addr) at 0x5400 are outside the 4K BRAM window
-		// and cannot be emulated. Driver reads them but gets zero from BRAM.
+		// MAC address — needs 32KB BAR to be reachable
+		{Offset: 0x5400, Width: 4, Name: "RAL0", RWMask: 0xFFFFFFFF},
+		{Offset: 0x5404, Width: 4, Name: "RAH0", RWMask: 0xFFFFFFFF},
 	}
 
 	populateResetValues(regs, barData)
 
-	// Ensure link up: STATUS.LU=1 so driver sees link
 	for i := range regs {
-		if regs[i].Offset == 0x08 {
-			regs[i].Reset |= 0x00000002 // LU bit
-			break
+		switch regs[i].Offset {
+		case 0x08:
+			regs[i].Reset |= 0x00000082 // STATUS: link up + 1000Mb
+		case 0x10:
+			regs[i].Reset |= 0x00000300 // EECD: Auto-Read Done + EEPROM Present
+		case 0x20:
+			regs[i].Reset |= 0x10000000 // MDIC: Ready bit
+		case 0x5400:
+			if regs[i].Reset == 0 {
+				regs[i].Reset = 0xADDE0200 // locally-administered MAC low
+			}
+		case 0x5404:
+			if regs[i].Reset == 0 {
+				regs[i].Reset = 0x8000EFBE // MAC high + AV (address valid)
+			}
+		}
+	}
+
+	return &BARModel{
+		Size:      32768, // 32KB to reach RAL0/RAH0 at 0x5400
+		Registers: regs,
+	}
+}
+
+// buildAudioBARModel creates the HD Audio controller BAR0 register map.
+// All registers are DWORD-aligned — sub-word HDA registers are packed into
+// DWORD slots so the template's 32-bit write logic works correctly.
+func buildAudioBARModel(barData []byte) *BARModel {
+	regs := []BARRegister{
+		// GCAP(16) + VMIN(8) + VMAJ(8) packed into one DWORD
+		{Offset: 0x00, Width: 4, Name: "GCAP_VMIN_VMAJ", RWMask: 0x00000000},
+		// GCTL — global control, CRST (bit 0) is the key writable bit
+		{Offset: 0x08, Width: 4, Name: "GCTL", RWMask: 0x00000103},
+		// WAKEEN(16) + STATESTS(16) packed into one DWORD
+		{Offset: 0x0C, Width: 4, Name: "WAKEEN_STATESTS", RWMask: 0x7FFFFFFF},
+		// INTCTL — interrupt control
+		{Offset: 0x20, Width: 4, Name: "INTCTL", RWMask: 0xC00000FF},
+		// INTSTS — interrupt status
+		{Offset: 0x24, Width: 4, Name: "INTSTS", RWMask: 0x00000000},
+		// CORB lower base address
+		{Offset: 0x40, Width: 4, Name: "CORBLBASE", RWMask: 0xFFFFFF80},
+		// CORB upper base address
+		{Offset: 0x44, Width: 4, Name: "CORBUBASE", RWMask: 0xFFFFFFFF},
+		// CORBWP(16) + CORBRP(16) packed
+		{Offset: 0x48, Width: 4, Name: "CORBWP_CORBRP", RWMask: 0x80FF00FF},
+		// CORBCTL(8) + CORBSTS(8) + CORBSIZE(8) packed
+		{Offset: 0x4C, Width: 4, Name: "CORBCTL_STS_SIZE", RWMask: 0x00030300},
+		// RIRB lower base address
+		{Offset: 0x50, Width: 4, Name: "RIRBLBASE", RWMask: 0xFFFFFF80},
+		// RIRB upper base address
+		{Offset: 0x54, Width: 4, Name: "RIRBUBASE", RWMask: 0xFFFFFFFF},
+		// RIRBWP(16) + RINTCNT(16)
+		{Offset: 0x58, Width: 4, Name: "RIRBWP_RINTCNT", RWMask: 0x800000FF},
+		// RIRBCTL(8) + RIRBSTS(8) + RIRBSIZE(8)
+		{Offset: 0x5C, Width: 4, Name: "RIRBCTL_STS_SIZE", RWMask: 0x00070700},
+	}
+
+	populateResetValues(regs, barData)
+
+	// set up sensible defaults for codec discovery
+	for i := range regs {
+		switch regs[i].Offset {
+		case 0x00:
+			if regs[i].Reset == 0 {
+				regs[i].Reset = 0x01004401 // GCAP=4401h, VMIN=0, VMAJ=1
+			}
+		case 0x08:
+			regs[i].Reset |= 0x00000001 // GCTL.CRST=1 (out of reset)
+		case 0x0C:
+			regs[i].Reset |= 0x00010000 // STATESTS: codec 0 present (upper 16 bits)
+		case 0x4C:
+			if regs[i].Reset == 0 {
+				regs[i].Reset = 0x00420000 // CORBSIZE=0x42 (supports 256/16/2)
+			}
+		case 0x5C:
+			if regs[i].Reset == 0 {
+				regs[i].Reset = 0x00420000 // RIRBSIZE=0x42
+			}
 		}
 	}
 

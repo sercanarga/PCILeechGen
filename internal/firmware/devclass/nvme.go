@@ -33,12 +33,23 @@ func nvmeProfile() *DeviceProfile {
 			{Offset: 0x04, Width: 4, Name: "CAP_HI", Reset: 0x00000020, RWMask: 0x00000000},
 			// Version (VS) — NVMe 1.4
 			{Offset: 0x08, Width: 4, Name: "VS", Reset: 0x00010400, RWMask: 0x00000000},
+			// Interrupt Mask Set/Clear (RO in emulation — MSI-X used)
+			{Offset: 0x0C, Width: 4, Name: "INTMS", Reset: 0x00000000, RWMask: 0x00000000},
+			{Offset: 0x10, Width: 4, Name: "INTMC", Reset: 0x00000000, RWMask: 0x00000000},
 			// Controller Configuration (CC)
 			{Offset: 0x14, Width: 4, Name: "CC", Reset: 0x00460001, RWMask: 0x00FFFFF1},
 			// Controller Status (CSTS) — RDY=1
 			{Offset: 0x1C, Width: 4, Name: "CSTS", Reset: 0x00000001, RWMask: 0x00000000},
+			// NVM Subsystem Reset (NSSR)
+			{Offset: 0x20, Width: 4, Name: "NSSR", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
 			// Admin Queue Attributes (AQA)
 			{Offset: 0x24, Width: 4, Name: "AQA", Reset: 0x001F001F, RWMask: 0x0FFF0FFF},
+			// Admin Submission Queue Base Address (ASQ)
+			{Offset: 0x28, Width: 4, Name: "ASQ_LO", Reset: 0x00000000, RWMask: 0xFFFFF000},
+			{Offset: 0x2C, Width: 4, Name: "ASQ_HI", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
+			// Admin Completion Queue Base Address (ACQ)
+			{Offset: 0x30, Width: 4, Name: "ACQ_LO", Reset: 0x00000000, RWMask: 0xFFFFF000},
+			{Offset: 0x34, Width: 4, Name: "ACQ_HI", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
 		},
 
 		Notes: "NVMe 1.4 profile. CC.EN→CSTS.RDY handshake is implemented in SV FSM. " +

@@ -40,8 +40,9 @@ func buildIdentifyController(ids firmware.DeviceIDs, barData []byte) [4096]byte 
 	mn := modelNumberForVendor(ids.VendorID)
 	copy(data[0x018:0x040], padASCII(mn, 40))
 
-	// FR (8B ASCII)
-	copy(data[0x040:0x048], padASCII("1.0     ", 8))
+	// FR (8B ASCII) — vendor-appropriate firmware revision
+	fr := firmwareRevisionForVendor(ids.VendorID)
+	copy(data[0x040:0x048], padASCII(fr, 8))
 
 	data[0x048] = 6 // RAB
 
@@ -69,6 +70,7 @@ func buildIdentifyController(ids firmware.DeviceIDs, barData []byte) [4096]byte 
 	data[0x106] = 0x3F                                  // ELPE
 	data[0x107] = 0                                     // NPSS (1 power state)
 	data[0x108] = 0x01                                  // AVSCC
+	data[0x111] = 0x01                                  // CNTRLTYPE — I/O Controller
 
 	// NVM Command Set Attributes (0x200)
 	data[0x200] = 0x66                                  // SQES min=max=64B
@@ -81,6 +83,13 @@ func buildIdentifyController(ids firmware.DeviceIDs, barData []byte) [4096]byte 
 	data[0x20D] = 0x01                                  // VWC present
 	binary.LittleEndian.PutUint16(data[0x20E:], 0x0000) // AWUN
 	binary.LittleEndian.PutUint16(data[0x210:], 0x0000) // AWUPF
+
+	// NVMe Qualified Name — helps identify the controller to host software
+	subnqn := fmt.Sprintf("nqn.2014.08.org.nvmexpress:%04x-%04x", ids.VendorID, ids.DeviceID)
+	if len(subnqn) > 256 {
+		subnqn = subnqn[:256]
+	}
+	copy(data[0x300:0x300+256], padASCII(subnqn, 256))
 
 	// Power State 0 (0x800)
 	binary.LittleEndian.PutUint16(data[0x800:], 500) // MP 5.00W
@@ -195,6 +204,27 @@ func ouiForVendor(vid uint16) [3]byte {
 		return [3]byte{0x00, 0xAD, 0x00}
 	default:
 		return [3]byte{0x00, 0x00, 0x00}
+	}
+}
+
+func firmwareRevisionForVendor(vid uint16) string {
+	switch vid {
+	case 0x144D:
+		return "5B2QGXA7"
+	case 0x1179:
+		return "ADHA0101"
+	case 0x1987:
+		return "RKT4CB.2"
+	case 0x15B7:
+		return "620311WD"
+	case 0x1C5C:
+		return "41062C20"
+	case 0x8086:
+		return "002C"
+	case 0x1E0F:
+		return "1102"
+	default:
+		return "1.0"
 	}
 }
 

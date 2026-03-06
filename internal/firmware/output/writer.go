@@ -199,6 +199,7 @@ func ListOutputFiles() []string {
 		"pcileech_tlps128_bar_controller.sv",
 		"pcileech_msix_table.sv",
 		"pcileech_nvme_admin_responder.sv",
+		"pcileech_nvme_dma_bridge.sv",
 		"tlp_latency_emulator.sv",
 		"device_config.sv",
 		"config_space_init.hex",
@@ -246,8 +247,10 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, ids firmware.Dev
 	bm := barmodel.BuildBARModel(barData, ctx.Device.ClassCode, barProfile)
 
 	strategy := devclass.StrategyForClass(ctx.Device.ClassCode)
-	isNVMe := strategy != nil && strategy.IsNVMe()
-	isXHCI := strategy != nil && strategy.IsXHCI()
+	devClass := ""
+	if strategy != nil {
+		devClass = strategy.DeviceClass()
+	}
 
 	cfg := &svgen.SVGeneratorConfig{
 		DeviceIDs:     ids,
@@ -257,11 +260,10 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, ids firmware.Dev
 		HasMSIX:       bm != nil,
 		BuildEntropy:  entropy,
 		PRNGSeeds:     svgen.BuildPRNGSeeds(ids.VendorID, ids.DeviceID, entropy),
-		IsNVMe:        isNVMe,
-		IsXHCI:        isXHCI,
+		DeviceClass:   devClass,
 	}
 
-	if isNVMe {
+	if devClass == devclass.ClassNVMe {
 		cfg.NVMeIdentify = nvme.BuildIdentifyData(ids, barData)
 	}
 
@@ -327,6 +329,15 @@ func (ow *OutputWriter) writeConditionalArtifacts(cfg *svgen.SVGeneratorConfig, 
 		if err := ow.writeFile("pcileech_nvme_admin_responder.sv", nvmeSV); err != nil {
 			return err
 		}
+
+		bridgeSV, err := svgen.GenerateNVMeDMABridgeSV(cfg)
+		if err != nil {
+			return fmt.Errorf("generating pcileech_nvme_dma_bridge.sv: %w", err)
+		}
+		if err := ow.writeFile("pcileech_nvme_dma_bridge.sv", bridgeSV); err != nil {
+			return err
+		}
+
 		if err := ow.writeFile("identify_init.hex", nvme.IdentifyDataToHex(cfg.NVMeIdentify)); err != nil {
 			return err
 		}
@@ -338,14 +349,16 @@ func (ow *OutputWriter) writeConditionalArtifacts(cfg *svgen.SVGeneratorConfig, 
 // logSVSummary prints a summary of generated SV features.
 func (ow *OutputWriter) logSVSummary(cfg *svgen.SVGeneratorConfig) {
 	var features []string
-	if cfg.IsNVMe {
+	switch cfg.DeviceClass {
+	case devclass.ClassNVMe:
 		features = append(features, "NVMe FSM")
 		if cfg.NVMeIdentify != nil {
-			features = append(features, "NVMe Admin Responder")
+			features = append(features, "NVMe Admin Responder", "NVMe DMA Bridge")
 		}
-	}
-	if cfg.IsXHCI {
+	case devclass.ClassXHCI:
 		features = append(features, "xHCI FSM")
+	case devclass.ClassAudio:
+		features = append(features, "HD Audio FSM")
 	}
 	if cfg.MSIXConfig != nil {
 		features = append(features, fmt.Sprintf("MSI-X %d vectors", cfg.MSIXConfig.NumVectors))
