@@ -2,6 +2,7 @@ package vivado
 
 import (
 	"fmt"
+	"log"
 	"path/filepath"
 	"time"
 
@@ -21,14 +22,8 @@ type BuildOptions struct {
 	SkipVivado bool
 }
 
-// Builder runs firmware generation and optional Vivado synthesis.
-type Builder struct {
-	opts  BuildOptions
-	board *board.Board
-}
-
-// NewBuilder creates a new Builder.
-func NewBuilder(b *board.Board, opts BuildOptions) *Builder {
+// WithDefaults returns a copy of opts with zero values replaced by sensible defaults.
+func (opts BuildOptions) WithDefaults() BuildOptions {
 	if opts.Jobs <= 0 {
 		opts.Jobs = 4
 	}
@@ -38,39 +33,53 @@ func NewBuilder(b *board.Board, opts BuildOptions) *Builder {
 	if opts.OutputDir == "" {
 		opts.OutputDir = "pcileech_datastore"
 	}
+	return opts
+}
+
+// Builder runs firmware generation and optional Vivado synthesis.
+type Builder struct {
+	opts   BuildOptions
+	board  *board.Board
+	logger *log.Logger
+}
+
+// NewBuilder creates a new Builder.
+func NewBuilder(b *board.Board, opts BuildOptions) *Builder {
+	opts = opts.WithDefaults()
 	return &Builder{
-		opts:  opts,
-		board: b,
+		opts:   opts,
+		board:  b,
+		logger: log.Default(),
 	}
 }
 
 // Build generates firmware artifacts and optionally runs Vivado.
 func (b *Builder) Build(ctx *donor.DeviceContext) error {
 	// Stage 2: Generate firmware artifacts
-	fmt.Println("[build] Stage 2: Generating firmware artifacts...")
+	b.logger.Println("[build] Stage 2: Generating firmware artifacts...")
 	ow := fwout.NewOutputWriter(b.opts.OutputDir, b.opts.LibDir, b.opts.Jobs, b.opts.Timeout)
 	if err := ow.WriteAll(ctx, b.board); err != nil {
 		return fmt.Errorf("artifact generation failed: %w", err)
 	}
 
-	fmt.Printf("[build] Artifacts written to: %s\n", b.opts.OutputDir)
+	b.logger.Printf("[build] Artifacts written to: %s\n", b.opts.OutputDir)
 	for _, f := range fwout.ListOutputFiles() {
-		fmt.Printf("  - %s\n", f)
+		b.logger.Printf("  - %s\n", f)
 	}
 
 	if b.opts.SkipVivado {
-		fmt.Println("[build] Vivado synthesis skipped (--skip-vivado)")
+		b.logger.Println("[build] Vivado synthesis skipped (--skip-vivado)")
 		return nil
 	}
 
 	// Stage 3: Run Vivado synthesis
-	fmt.Println("[build] Stage 3: Running Vivado synthesis...")
+	b.logger.Println("[build] Stage 3: Running Vivado synthesis...")
 
 	vivado, err := Find(b.opts.VivadoPath)
 	if err != nil {
 		return fmt.Errorf("Vivado not found: %w", err)
 	}
-	fmt.Printf("[build] Using Vivado %s at %s\n", vivado.Version, vivado.Path)
+	b.logger.Printf("[build] Using Vivado %s at %s\n", vivado.Version, vivado.Path)
 
 	timeout := time.Duration(b.opts.Timeout) * time.Second
 
@@ -91,19 +100,19 @@ func (b *Builder) Build(ctx *donor.DeviceContext) error {
 	binFiles, _ := filepath.Glob(filepath.Join(b.opts.OutputDir, "*.bin"))
 
 	for _, f := range bitFiles {
-		fmt.Printf("[build] Bitstream: %s\n", f)
+		b.logger.Printf("[build] Bitstream: %s\n", f)
 	}
 	for _, f := range binFiles {
-		fmt.Printf("[build] Binary: %s\n", f)
+		b.logger.Printf("[build] Binary: %s\n", f)
 	}
 
 	for _, f := range append(bitFiles, binFiles...) {
 		dst := filepath.Join(b.opts.OutputDir, filepath.Base(f))
 		if err := util.CopyFile(f, dst); err != nil {
-			fmt.Printf("[build] Warning: failed to copy %s: %v\n", f, err)
+			b.logger.Printf("[build] Warning: failed to copy %s: %v\n", f, err)
 		}
 	}
 
-	fmt.Println("[build] Build completed successfully!")
+	b.logger.Println("[build] Build completed successfully!")
 	return nil
 }

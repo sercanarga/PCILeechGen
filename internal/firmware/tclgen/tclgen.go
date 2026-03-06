@@ -51,37 +51,47 @@ var projectTCLTmpl = template.Must(template.New("project").ParseFS(templateFS, "
 
 var buildTCLTmpl = template.Must(template.New("build").ParseFS(templateFS, "templates/build.tcl.tmpl"))
 
+// bar0Config holds BAR0 parameters for the TCL project template.
+type bar0Config struct {
+	Enabled bool
+	Scale   string
+	Size    string
+	Is64bit bool
+}
+
+// buildBAR0Config computes BAR0 configuration clamped to FPGA BRAM size.
+func buildBAR0Config(ctx *donor.DeviceContext, b *board.Board) bar0Config {
+	cfg := bar0Config{Scale: "Kilobytes", Size: "4"}
+	if len(ctx.BARs) == 0 {
+		return cfg
+	}
+	bar0 := ctx.BARs[0]
+	if bar0.Size == 0 {
+		return cfg
+	}
+	cfg.Enabled = true
+	bar0Size := bar0.Size
+	bramSize := uint64(b.BRAMSizeOrDefault())
+	if bar0Size > bramSize {
+		bar0Size = bramSize
+	}
+	cfg.Scale, cfg.Size = barSizeToTCL(bar0Size)
+	cfg.Is64bit = bar0.Type == pci.BARTypeMem64
+	return cfg
+}
+
 // GenerateProjectTCL generates the Vivado project creation TCL script.
 func GenerateProjectTCL(ctx *donor.DeviceContext, b *board.Board, libDir string) string {
 	ids := firmware.ExtractDeviceIDs(ctx.ConfigSpace, ctx.ExtCapabilities)
 
-	// Clamp link width to board physical lanes
+	// Clamp link width/speed to board physical capability
 	linkWidth := clampLinkWidth(ids.LinkWidth, b.PCIeLanes)
 	linkSpeed := ids.LinkSpeed
-	// Clamp link speed to board's physical capability
 	if linkSpeed == 0 || linkSpeed > b.MaxLinkSpeedOrDefault() {
 		linkSpeed = b.MaxLinkSpeedOrDefault()
 	}
 
-	// BAR0 configuration
-	bar0Enabled := false
-	bar0Scale := "Kilobytes"
-	bar0Size := "4"
-	bar064bit := false
-	if len(ctx.BARs) > 0 {
-		bar0 := ctx.BARs[0]
-		if bar0.Size > 0 {
-			bar0Enabled = true
-			// clamp to FPGA BRAM
-			bar0SizeClamped := bar0.Size
-			bramSize := uint64(b.BRAMSizeOrDefault())
-			if bar0SizeClamped > bramSize {
-				bar0SizeClamped = bramSize
-			}
-			bar0Scale, bar0Size = barSizeToTCL(bar0SizeClamped)
-			bar064bit = bar0.Type == pci.BARTypeMem64
-		}
-	}
+	bar0 := buildBAR0Config(ctx, b)
 
 	// Resolve to absolute paths so TCL works from any working directory
 	srcAbs, _ := filepath.Abs(b.SrcPath(libDir))
@@ -104,10 +114,10 @@ func GenerateProjectTCL(ctx *donor.DeviceContext, b *board.Board, libDir string)
 		LinkSpeed:      linkSpeedToTCL(linkSpeed),
 		LinkWidth:      linkWidthToTCL(linkWidth),
 		TrgtLinkSpeed:  linkSpeedToTrgt(linkSpeed),
-		Bar0Enabled:    bar0Enabled,
-		Bar0Size:       bar0Size,
-		Bar0Scale:      bar0Scale,
-		Bar064bit:      bar064bit,
+		Bar0Enabled:    bar0.Enabled,
+		Bar0Size:       bar0.Size,
+		Bar0Scale:      bar0.Scale,
+		Bar064bit:      bar0.Is64bit,
 	}
 
 	var buf bytes.Buffer

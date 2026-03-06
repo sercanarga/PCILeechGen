@@ -1,7 +1,7 @@
 package scrub
 
 import (
-	"fmt"
+	"log"
 
 	"github.com/sercanarga/pcileechgen/internal/board"
 	"github.com/sercanarga/pcileechgen/internal/firmware/overlay"
@@ -138,7 +138,7 @@ func (p *pruneStdCapsPass) Name() string { return "prune standard caps" }
 func (p *pruneStdCapsPass) Apply(cs *pci.ConfigSpace, b *board.Board, om *overlay.Map) {
 	if pruned := PruneStandardCaps(cs, om); len(pruned) > 0 {
 		for _, pr := range pruned {
-			fmt.Printf("[scrub] pruned standard cap: %s\n", pr)
+			log.Printf("[scrub] pruned standard cap: %s\n", pr)
 		}
 	}
 }
@@ -148,6 +148,6 @@ type validateCapChainPass struct{}
 func (p *validateCapChainPass) Name() string { return "validate cap chain" }
 func (p *validateCapChainPass) Apply(cs *pci.ConfigSpace, b *board.Board, om *overlay.Map) {
 	if err := ValidateCapChain(cs); err != nil {
-		fmt.Printf("[scrub] warning: capability chain issue: %v\n", err)
+		log.Printf("[scrub] warning: capability chain issue: %v\n", err)
 	}
 }

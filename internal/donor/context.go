@@ -96,23 +96,21 @@ func (dc *DeviceContext) ToJSON() ([]byte, error) {
 	return json.MarshalIndent(dc, "", "  ")
 }
 
-// FromJSON deserializes a DeviceContext from JSON.
-func FromJSON(data []byte) (*DeviceContext, error) {
+// UnmarshalJSON implements json.Unmarshaler for DeviceContext.
+func (dc *DeviceContext) UnmarshalJSON(data []byte) error {
 	var j deviceContextJSON
 	if err := json.Unmarshal(data, &j); err != nil {
-		return nil, fmt.Errorf("failed to parse device context JSON: %w", err)
+		return fmt.Errorf("failed to parse device context JSON: %w", err)
 	}
 
-	dc := &DeviceContext{
-		CollectedAt:     j.CollectedAt,
-		ToolVersion:     j.ToolVersion,
-		Hostname:        j.Hostname,
-		Device:          j.Device,
-		BARs:            j.BARs,
-		Capabilities:    j.Capabilities,
-		ExtCapabilities: j.ExtCapabilities,
-		MSIXData:        j.MSIXData,
-	}
+	dc.CollectedAt = j.CollectedAt
+	dc.ToolVersion = j.ToolVersion
+	dc.Hostname = j.Hostname
+	dc.Device = j.Device
+	dc.BARs = j.BARs
+	dc.Capabilities = j.Capabilities
+	dc.ExtCapabilities = j.ExtCapabilities
+	dc.MSIXData = j.MSIXData
 
 	// Reconstruct config space from hex words
 	if len(j.ConfigSpaceHex) > 0 {
@@ -121,7 +119,7 @@ func FromJSON(data []byte) (*DeviceContext, error) {
 		for i, hexWord := range j.ConfigSpaceHex {
 			var word uint32
 			if _, err := fmt.Sscanf(hexWord, "%x", &word); err != nil {
-				return nil, fmt.Errorf("invalid config space hex word %d (%q): %w", i, hexWord, err)
+				return fmt.Errorf("invalid config space hex word %d (%q): %w", i, hexWord, err)
 			}
 			dc.ConfigSpace.WriteU32(i*4, word)
 		}
@@ -133,13 +131,13 @@ func FromJSON(data []byte) (*DeviceContext, error) {
 		for idxStr, b64 := range j.BARContents {
 			idx, err := strconv.Atoi(idxStr)
 			if err != nil {
-				return nil, fmt.Errorf("invalid BAR index %q: %w", idxStr, err)
+				return fmt.Errorf("invalid BAR index %q: %w", idxStr, err)
 			}
-			data, err := base64.StdEncoding.DecodeString(b64)
+			barData, err := base64.StdEncoding.DecodeString(b64)
 			if err != nil {
-				return nil, fmt.Errorf("failed to decode BAR%d content: %w", idx, err)
+				return fmt.Errorf("failed to decode BAR%d content: %w", idx, err)
 			}
-			dc.BARContents[idx] = data
+			dc.BARContents[idx] = barData
 		}
 	}
 
@@ -149,12 +147,21 @@ func FromJSON(data []byte) (*DeviceContext, error) {
 		for idxStr, profile := range j.BARProfiles {
 			idx, err := strconv.Atoi(idxStr)
 			if err != nil {
-				return nil, fmt.Errorf("invalid BAR profile index %q: %w", idxStr, err)
+				return fmt.Errorf("invalid BAR profile index %q: %w", idxStr, err)
 			}
 			dc.BARProfiles[idx] = profile
 		}
 	}
 
+	return nil
+}
+
+// FromJSON deserializes a DeviceContext from JSON.
+func FromJSON(data []byte) (*DeviceContext, error) {
+	dc := &DeviceContext{}
+	if err := json.Unmarshal(data, dc); err != nil {
+		return nil, err
+	}
 	return dc, nil
 }
 
