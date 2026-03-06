@@ -9,7 +9,7 @@ import (
 // ScrubBarContent patches BAR data for device-class-specific quirks.
 // Call before GenerateBarContentCOE.
 func ScrubBarContent(barContents map[int][]byte, classCode uint32) {
-	data := firmware.LowestBarData(barContents)
+	data := firmware.LowestBar(barContents)
 	if data == nil {
 		return
 	}

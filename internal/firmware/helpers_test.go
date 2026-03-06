@@ -7,57 +7,57 @@ import (
 	"github.com/sercanarga/pcileechgen/internal/pci"
 )
 
-func TestLowestBarData_EmptyMap(t *testing.T) {
-	result := LowestBarData(nil)
+func TestLowestBar_ByteSlice_EmptyMap(t *testing.T) {
+	result := LowestBar(map[int][]byte(nil))
 	if result != nil {
 		t.Error("nil map should return nil")
 	}
 
-	result = LowestBarData(map[int][]byte{})
+	result = LowestBar(map[int][]byte{})
 	if result != nil {
 		t.Error("empty map should return nil")
 	}
 }
 
-func TestLowestBarData_SingleEntry(t *testing.T) {
+func TestLowestBar_ByteSlice_SingleEntry(t *testing.T) {
 	data := []byte{0x01, 0x02, 0x03, 0x04}
-	result := LowestBarData(map[int][]byte{2: data})
+	result := LowestBar(map[int][]byte{2: data})
 	if result == nil || len(result) != 4 {
 		t.Error("should return single entry data")
 	}
 }
 
-func TestLowestBarData_MultipleEntries(t *testing.T) {
+func TestLowestBar_ByteSlice_MultipleEntries(t *testing.T) {
 	bar0 := []byte{0xAA}
 	bar2 := []byte{0xBB}
 	bar4 := []byte{0xCC}
 
-	result := LowestBarData(map[int][]byte{4: bar4, 0: bar0, 2: bar2})
+	result := LowestBar(map[int][]byte{4: bar4, 0: bar0, 2: bar2})
 	if result == nil || result[0] != 0xAA {
 		t.Errorf("should pick BAR0 (lowest index), got %v", result)
 	}
 }
 
-func TestLowestBarProfile_EmptyMap(t *testing.T) {
-	result := LowestBarProfile(nil)
+func TestLowestBar_Profile_EmptyMap(t *testing.T) {
+	result := LowestBar(map[int]*donor.BARProfile(nil))
 	if result != nil {
 		t.Error("nil map should return nil")
 	}
 }
 
-func TestLowestBarProfile_SingleEntry(t *testing.T) {
+func TestLowestBar_Profile_SingleEntry(t *testing.T) {
 	p := &donor.BARProfile{}
-	result := LowestBarProfile(map[int]*donor.BARProfile{1: p})
+	result := LowestBar(map[int]*donor.BARProfile{1: p})
 	if result == nil {
 		t.Error("should return the single profile")
 	}
 }
 
-func TestLowestBarProfile_PicksLowest(t *testing.T) {
+func TestLowestBar_Profile_PicksLowest(t *testing.T) {
 	p0 := &donor.BARProfile{}
 	p2 := &donor.BARProfile{}
 
-	result := LowestBarProfile(map[int]*donor.BARProfile{2: p2, 0: p0})
+	result := LowestBar(map[int]*donor.BARProfile{2: p2, 0: p0})
 	if result != p0 {
 		t.Error("should pick BAR0 (lowest index)")
 	}

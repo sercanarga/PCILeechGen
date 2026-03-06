@@ -84,11 +84,13 @@ func ValidateHexFile(hexContent string, expectedWords int) error {
 		return fmt.Errorf("hex file is empty")
 	}
 
+	nonEmpty := 0
 	for i, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
+		nonEmpty++
 		if len(line) != 8 {
 			return fmt.Errorf("line %d: expected 8 hex chars, got %d (%q)", i+1, len(line), line)
 		}
@@ -96,13 +98,6 @@ func ValidateHexFile(hexContent string, expectedWords int) error {
 			if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
 				return fmt.Errorf("line %d: invalid hex character %q", i+1, string(c))
 			}
-		}
-	}
-
-	nonEmpty := 0
-	for _, l := range lines {
-		if strings.TrimSpace(l) != "" {
-			nonEmpty++
 		}
 	}
 

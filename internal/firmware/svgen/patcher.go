@@ -68,7 +68,6 @@ func (p *SVPatcher) validatePatchResults() {
 	if fifoPatched < minFifoPatches {
 		w := fmt.Sprintf("pcileech_fifo.sv: only %d/%d minimum patches applied — "+
 			"upstream SV format may have changed", fifoPatched, minFifoPatches)
-		fmt.Printf("[WARNING] %s\n", w)
 		p.results = append(p.results, PatchResult{
 			File:     "pcileech_fifo.sv",
 			Warnings: []string{w},
@@ -79,7 +78,6 @@ func (p *SVPatcher) validatePatchResults() {
 	if p.ids.HasDSN && cfgPatched == 0 {
 		w := "pcileech_pcie_cfg_a7.sv: DSN patch expected but not applied — " +
 			"upstream SV format may have changed"
-		fmt.Printf("[WARNING] %s\n", w)
 		p.results = append(p.results, PatchResult{
 			File:     "pcileech_pcie_cfg_a7.sv",
 			Warnings: []string{w},

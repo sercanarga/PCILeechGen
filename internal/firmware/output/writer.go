@@ -3,6 +3,7 @@ package output
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,6 +29,7 @@ type OutputWriter struct {
 	LibDir    string
 	Jobs      int
 	Timeout   int
+	logger    *log.Logger
 }
 
 func NewOutputWriter(outputDir, libDir string, jobs, timeout int) *OutputWriter {
@@ -42,6 +44,7 @@ func NewOutputWriter(outputDir, libDir string, jobs, timeout int) *OutputWriter 
 		LibDir:    libDir,
 		Jobs:      jobs,
 		Timeout:   timeout,
+		logger:    log.Default(),
 	}
 }
 
@@ -95,7 +98,7 @@ func (ow *OutputWriter) writeDeviceContext(ctx *donor.DeviceContext) error {
 func (ow *OutputWriter) scrubAndVary(ctx *donor.DeviceContext, b *board.Board, ids firmware.DeviceIDs) (*pci.ConfigSpace, uint32) {
 	scrubbedCS, overlayMap := scrub.ScrubConfigSpaceWithOverlay(ctx.ConfigSpace, b)
 	if overlayMap.Count() > 0 {
-		fmt.Printf("[firmware] Config space scrub: %d modifications\n", overlayMap.Count())
+		ow.logger.Printf("[firmware] Config space scrub: %d modifications\n", overlayMap.Count())
 	}
 
 	entropy := svgen.BuildEntropyFromTime()
@@ -141,14 +144,14 @@ func (ow *OutputWriter) writeTCLScripts(ctx *donor.DeviceContext, b *board.Board
 func (ow *OutputWriter) writeManifest(ctx *donor.DeviceContext, ids firmware.DeviceIDs) {
 	manifest, err := GenerateManifest(ow.OutputDir, ctx.ToolVersion, "", ids.VendorID, ids.DeviceID)
 	if err != nil {
-		fmt.Printf("[firmware] Warning: manifest generation failed: %v\n", err)
+		ow.logger.Printf("[firmware] Warning: manifest generation failed: %v\n", err)
 		return
 	}
 	manifestPath := ow.OutputDir + "/build_manifest.json"
 	if err := manifest.WriteJSON(manifestPath); err != nil {
-		fmt.Printf("[firmware] Warning: manifest write failed: %v\n", err)
+		ow.logger.Printf("[firmware] Warning: manifest write failed: %v\n", err)
 	} else {
-		fmt.Printf("[firmware] Build manifest: %d files recorded\n", len(manifest.Files))
+		ow.logger.Printf("[firmware] Build manifest: %d files recorded\n", len(manifest.Files))
 	}
 }
 
@@ -158,8 +161,8 @@ func (ow *OutputWriter) patchSVSources(ctx *donor.DeviceContext, b *board.Board,
 	dstDir := filepath.Join(ow.OutputDir, "src")
 
 	if _, err := os.Stat(srcDir); os.IsNotExist(err) {
-		fmt.Printf("[firmware] Warning: board source dir not found: %s\n", srcDir)
-		fmt.Println("[firmware] Run: git submodule update --init --recursive")
+		ow.logger.Printf("[firmware] Warning: board source dir not found: %s\n", srcDir)
+		ow.logger.Println("[firmware] Run: git submodule update --init --recursive")
 		return fmt.Errorf("board sources not found at %s (is the pcileech-fpga submodule initialized?)", srcDir)
 	}
 
@@ -174,8 +177,8 @@ func (ow *OutputWriter) patchSVSources(ctx *donor.DeviceContext, b *board.Board,
 	}
 
 	if results := patcher.Results(); len(results) > 0 {
-		fmt.Println("[firmware] SV patches applied:")
-		fmt.Print(svgen.FormatPatchSummary(results))
+		ow.logger.Println("[firmware] SV patches applied:")
+		ow.logger.Print(svgen.FormatPatchSummary(results))
 	}
 
 	return nil
@@ -239,10 +242,10 @@ func (ow *OutputWriter) writeSVModules(ctx *donor.DeviceContext, scrubbedCS *pci
 
 // buildSVConfig assembles the SVGeneratorConfig from donor context.
 func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, ids firmware.DeviceIDs, entropy uint32) *svgen.SVGeneratorConfig {
-	barData := firmware.LowestBarData(ctx.BARContents)
+	barData := firmware.LowestBar(ctx.BARContents)
 	var barProfile *donor.BARProfile
 	if ctx.BARProfiles != nil {
-		barProfile = firmware.LowestBarProfile(ctx.BARProfiles)
+		barProfile = firmware.LowestBar(ctx.BARProfiles)
 	}
 	bm := barmodel.BuildBARModel(barData, ctx.Device.ClassCode, barProfile)
 
@@ -369,5 +372,5 @@ func (ow *OutputWriter) logSVSummary(cfg *svgen.SVGeneratorConfig) {
 		features = append(features, "BRAM fallback")
 	}
 	features = append(features, "latency emulator", "interrupt controller")
-	fmt.Printf("[firmware] SV modules generated: %s\n", strings.Join(features, ", "))
+	ow.logger.Printf("[firmware] SV modules generated: %s\n", strings.Join(features, ", "))
 }
