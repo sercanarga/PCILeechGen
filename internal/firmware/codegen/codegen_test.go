@@ -153,3 +153,110 @@ func TestGenerateConfigSpaceHex(t *testing.T) {
 		t.Errorf("HEX should have 1026 lines, got %d", len(lines))
 	}
 }
+
+
+func TestGenerateMSIXTableHex(t *testing.T) {
+	entries := []pci.MSIXEntry{
+		{AddrLo: 0xFEE00000, AddrHi: 0x00000000, Data: 0x00004021, Control: 0x00},
+		{AddrLo: 0xFEE00000, AddrHi: 0x00000000, Data: 0x00004022, Control: 0x01},
+	}
+
+	hex := GenerateMSIXTableHex(entries)
+
+	if !strings.Contains(hex, "MSI-X Table Init") {
+		t.Error("HEX should contain MSI-X header")
+	}
+	if !strings.Contains(hex, "2 vectors") {
+		t.Error("HEX should mention vector count")
+	}
+	// Each entry = 4 DWORDs, with Control masked (|0x01)
+	if !strings.Contains(hex, "FEE00000") {
+		t.Error("HEX should contain addr_lo")
+	}
+	if !strings.Contains(hex, "00004021") {
+		t.Error("HEX should contain data for first vector")
+	}
+	// Control for entry 0: 0x00 | 0x01 = 0x01
+	if !strings.Contains(hex, "00000001") {
+		t.Error("HEX should contain masked control (0x01)")
+	}
+
+	lines := strings.Split(strings.TrimSpace(hex), "\n")
+	// 2 header lines + 2*4 data lines = 10
+	if len(lines) != 10 {
+		t.Errorf("Expected 10 lines, got %d", len(lines))
+	}
+}
+
+func TestGenerateMSIXTableHex_Empty(t *testing.T) {
+	hex := GenerateMSIXTableHex(nil)
+	if !strings.Contains(hex, "0 vectors") {
+		t.Error("Empty MSI-X should show 0 vectors")
+	}
+}
+
+func TestApplyPCIeWritemask(t *testing.T) {
+	masks := make([]uint32, shadowCfgSpaceWords)
+	cap := pci.Capability{ID: pci.CapIDPCIExpress, Offset: 0x40}
+	applyPCIeWritemask(cap, masks)
+
+	// DevCtl at cap+8 = 0x48
+	if masks[0x48/4] != 0x0000FFFF {
+		t.Errorf("DevCtl writemask = 0x%08x, want 0x0000FFFF", masks[0x48/4])
+	}
+	// LinkCtl at cap+16 = 0x50
+	if masks[0x50/4] != 0x0000FFFF {
+		t.Errorf("LinkCtl writemask = 0x%08x, want 0x0000FFFF", masks[0x50/4])
+	}
+}
+
+func TestApplyExtCapabilityWritemasks_AER(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+
+	// Write AER ext cap at 0x100
+	aerHeader := uint32(pci.ExtCapIDAER) | (1 << 16)
+	cs.WriteU32(0x100, aerHeader)
+
+	masks := make([]uint32, shadowCfgSpaceWords)
+	applyExtCapabilityWritemasks(cs, masks)
+
+	wordIdx := 0x100 / 4
+	for i := 1; i <= 5; i++ {
+		if masks[wordIdx+i] != 0xFFFFFFFF {
+			t.Errorf("AER mask at word %d = 0x%08x, want 0xFFFFFFFF", wordIdx+i, masks[wordIdx+i])
+		}
+	}
+}
+
+func TestApplyExtCapabilityWritemasks_LTR(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+
+	// Write LTR ext cap at 0x100
+	ltrHeader := uint32(pci.ExtCapIDLTR) | (1 << 16)
+	cs.WriteU32(0x100, ltrHeader)
+
+	masks := make([]uint32, shadowCfgSpaceWords)
+	applyExtCapabilityWritemasks(cs, masks)
+
+	wordIdx := 0x100 / 4
+	if masks[wordIdx+1] != 0xFFFFFFFF {
+		t.Errorf("LTR mask = 0x%08x, want 0xFFFFFFFF", masks[wordIdx+1])
+	}
+}
+
+func TestApplyExtCapabilityWritemasks_SmallConfigSpace(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceLegacySize // 256 bytes only
+
+	masks := make([]uint32, shadowCfgSpaceWords)
+	applyExtCapabilityWritemasks(cs, masks)
+
+	// Should be a no-op for legacy config space
+	for i, m := range masks {
+		if m != 0 {
+			t.Errorf("mask[%d] = 0x%08x, want 0 for legacy config space", i, m)
+		}
+	}
+}

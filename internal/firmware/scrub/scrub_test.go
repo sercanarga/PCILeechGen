@@ -5,6 +5,7 @@ import (
 
 	"github.com/sercanarga/pcileechgen/internal/board"
 	"github.com/sercanarga/pcileechgen/internal/firmware"
+	"github.com/sercanarga/pcileechgen/internal/firmware/overlay"
 	"github.com/sercanarga/pcileechgen/internal/pci"
 )
 
@@ -488,4 +489,256 @@ func TestRelocateMSIXToBRAM_TableInside(t *testing.T) {
 	if tableOff != 0x1000 {
 		t.Errorf("MSI-X table should be relocated to 0x1000, got 0x%X", tableOff)
 	}
+}
+
+func makeTestCS() *pci.ConfigSpace {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	cs.WriteU16(0x00, 0x8086) // vendor
+	cs.WriteU16(0x02, 0x1533) // device
+	cs.WriteU16(0x06, 0x0010) // status: cap list
+	cs.WriteU8(0x34, 0x40)    // cap pointer
+
+	// PCIe cap at 0x40
+	cs.WriteU8(0x40, pci.CapIDPCIExpress)
+	cs.WriteU8(0x41, 0x00) // no next
+	// DevCap at 0x44
+	cs.WriteU32(0x44, 0x000128FF) // MPS=128, phantoms, ext tag
+	// DevCtl at 0x48
+	cs.WriteU16(0x48, 0x3BEF) // various bits set
+	// LinkCap at 0x4C: Gen3, x4
+	cs.WriteU32(0x4C, 0x00000043) // speed=3, width=4
+	// LinkStatus at 0x52: Gen3, x4
+	cs.WriteU16(0x52, 0x0043)
+	// LinkCtl2 at 0x70: target speed Gen3
+	cs.WriteU16(0x70, 0x0003)
+	// LinkCap2 at 0x6C: speed vector
+	cs.WriteU32(0x6C, 0x0000000E) // Gen1,2,3
+	// DevCap2 at 0x64
+	cs.WriteU32(0x64, 0x00030000) // 10-bit tags
+
+	return cs
+}
+
+func TestClampLinkCapability(t *testing.T) {
+	cs := makeTestCS()
+	b := &board.Board{PCIeLanes: 1, MaxLinkSpeed: 2} // Gen2 x1
+	om := overlay.NewMap(cs)
+
+	clampLinkCapability(cs, b, om)
+
+	// Link Capabilities speed should be 2 (Gen2)
+	linkCap := cs.ReadU32(0x4C)
+	speed := uint8(linkCap & 0x0F)
+	if speed != 2 {
+		t.Errorf("Link speed = %d, want 2 (Gen2)", speed)
+	}
+	width := uint8((linkCap >> 4) & 0x3F)
+	if width != 1 {
+		t.Errorf("Link width = %d, want 1", width)
+	}
+
+	// Link Status
+	ls := cs.ReadU16(0x52)
+	lsSpeed := uint8(ls & 0x0F)
+	if lsSpeed != 2 {
+		t.Errorf("Link Status speed = %d, want 2", lsSpeed)
+	}
+
+	// LinkCtl2 target speed
+	lc2 := cs.ReadU16(0x70)
+	if uint8(lc2&0x0F) != 2 {
+		t.Errorf("LinkCtl2 speed = %d, want 2", lc2&0x0F)
+	}
+}
+
+func TestClampLinkCapability_NilBoard(t *testing.T) {
+	cs := makeTestCS()
+	om := overlay.NewMap(cs)
+	clampLinkCapability(cs, nil, om) // should default to Gen2
+	linkCap := cs.ReadU32(0x4C)
+	speed := uint8(linkCap & 0x0F)
+	if speed != 2 {
+		t.Errorf("Nil board link speed = %d, want 2 (Gen2 default)", speed)
+	}
+}
+
+func TestClampDeviceCapability(t *testing.T) {
+	cs := makeTestCS()
+	om := overlay.NewMap(cs)
+
+	clampDeviceCapability(cs, om)
+
+	devCap := cs.ReadU32(0x44)
+	if devCap&0x07 != 0 {
+		t.Error("MPS should be cleared to 128B")
+	}
+	if devCap&0x18 != 0 {
+		t.Error("Phantom functions should be disabled")
+	}
+	if devCap&0x20 != 0 {
+		t.Error("Extended tag should be disabled")
+	}
+
+	devCap2 := cs.ReadU32(0x64)
+	if devCap2&(1<<16) != 0 {
+		t.Error("10-bit tag completer should be off")
+	}
+	if devCap2&(1<<17) != 0 {
+		t.Error("10-bit tag requester should be off")
+	}
+}
+
+func TestClampBARsToFPGA(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	// BAR0: memory, 1MB
+	cs.WriteU32(0x10, 0xFFF00004) // 64-bit memory BAR
+	cs.WriteU32(0x14, 0x00000001) // upper 32 bits
+	// BAR2: IO BAR
+	cs.WriteU32(0x18, 0x0000FF01) // IO bar
+
+	om := overlay.NewMap(cs)
+	clampBARsToFPGA(cs, om)
+
+	// BAR0 should be clamped to 4KB
+	bar0 := cs.ReadU32(0x10)
+	if bar0&bar0SizeMask != bar0SizeMask {
+		t.Errorf("BAR0 should be clamped to 4KB, got 0x%08x", bar0)
+	}
+	// BAR1 (upper 32 bits) should be zeroed
+	if cs.ReadU32(0x14) != 0 {
+		t.Errorf("BAR1 upper bits should be zeroed, got 0x%08x", cs.ReadU32(0x14))
+	}
+	// BAR2 (IO) should be unchanged
+	if cs.ReadU32(0x18) != 0x0000FF01 {
+		t.Errorf("IO BAR should not change, got 0x%08x", cs.ReadU32(0x18))
+	}
+}
+
+func TestFilterExtCapabilities(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+
+	// Write 3 ext caps: DSN (safe) → SR-IOV (unsafe) → AER (safe)
+	// DSN at 0x100
+	cs.WriteU32(0x100, uint32(pci.ExtCapIDDeviceSerialNumber)|(1<<16)|(0x110<<20))
+	cs.WriteU32(0x104, 0x11223344)
+	cs.WriteU32(0x108, 0x55667788)
+	// SR-IOV at 0x110
+	cs.WriteU32(0x110, uint32(pci.ExtCapIDSRIOV)|(1<<16)|(0x150<<20))
+	// AER at 0x150
+	cs.WriteU32(0x150, uint32(pci.ExtCapIDAER)|(1<<16))
+
+	removed := FilterExtCapabilities(cs)
+
+	if len(removed) != 1 {
+		t.Fatalf("Expected 1 removed cap, got %d: %v", len(removed), removed)
+	}
+	if !contains(removed[0], "SR-IOV") {
+		t.Errorf("Expected SR-IOV to be removed, got %q", removed[0])
+	}
+}
+
+func TestFilterExtCapabilities_NoCaps(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	removed := FilterExtCapabilities(cs)
+	if removed != nil {
+		t.Errorf("Expected nil, got %v", removed)
+	}
+}
+
+func TestFilterExtCapabilities_AllSafe(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	cs.WriteU32(0x100, uint32(pci.ExtCapIDAER)|(1<<16))
+	removed := FilterExtCapabilities(cs)
+	if removed != nil {
+		t.Errorf("Expected nil (all safe), got %v", removed)
+	}
+}
+
+func TestIsUnsafeExtCap_Known(t *testing.T) {
+	if !IsUnsafeExtCap(pci.ExtCapIDSRIOV) {
+		t.Error("SR-IOV should be unsafe")
+	}
+	if IsUnsafeExtCap(pci.ExtCapIDAER) {
+		t.Error("AER should be safe")
+	}
+}
+
+func TestUnsafeExtCapName(t *testing.T) {
+	if name := UnsafeExtCapName(pci.ExtCapIDSRIOV); name != "SR-IOV" {
+		t.Errorf("SR-IOV name = %q", name)
+	}
+	if name := UnsafeExtCapName(0xFFFF); name != "" {
+		t.Errorf("Unknown cap name = %q, want empty", name)
+	}
+}
+
+func TestRelocateMSIXToBRAM(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	cs.WriteU16(0x06, 0x0010) // status: cap list
+	cs.WriteU8(0x34, 0x80)    // cap pointer
+
+	// MSI-X at 0x80
+	cs.WriteU8(0x80, pci.CapIDMSIX)
+	cs.WriteU8(0x81, 0x00)
+	cs.WriteU16(0x82, 0x0003)     // 4 vectors, function unmasked
+	cs.WriteU32(0x84, 0x00000000) // table: BAR0, offset 0
+	cs.WriteU32(0x88, 0x00000040) // PBA: BAR0, offset 0x40
+
+	om := overlay.NewMap(cs)
+	relocateMSIXToBRAM(cs, om)
+
+	// Table should be relocated to 0x1000
+	tableReg := cs.ReadU32(0x84)
+	tableOff := tableReg & 0xFFFFFFF8
+	if tableOff != 0x1000 {
+		t.Errorf("Table offset = 0x%x, want 0x1000", tableOff)
+	}
+
+	// MSI-X control should be enabled
+	msgCtl := cs.ReadU16(0x82)
+	if msgCtl&0x8000 == 0 {
+		t.Error("MSI-X should be enabled")
+	}
+}
+
+func TestZeroVendorRegisters_ClearsUncovered(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	cs.WriteU16(0x06, 0x0010) // has caps
+	cs.WriteU8(0x34, 0x40)    // cap at 0x40
+	cs.WriteU8(0x40, pci.CapIDPCIExpress)
+	cs.WriteU8(0x41, 0x00)
+
+	// Write junk to uncovered vendor area
+	cs.WriteU8(0x90, 0xFF)
+	cs.WriteU8(0x91, 0xAA)
+
+	om := overlay.NewMap(cs)
+	zeroVendorRegisters(cs, om)
+
+	if cs.ReadU8(0x90) != 0 {
+		t.Error("Uncovered vendor register at 0x90 should be zeroed")
+	}
+	if cs.ReadU8(0x91) != 0 {
+		t.Error("Uncovered vendor register at 0x91 should be zeroed")
+	}
+}
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsSubstring(s, substr))
+}
+
+func containsSubstring(s, sub string) bool {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
 }

@@ -91,3 +91,81 @@ func TestLEBytesToU32Short(t *testing.T) {
 		t.Error("LEBytesToU32 with short slice should return 0")
 	}
 }
+
+func TestReadLE32(t *testing.T) {
+	data := []byte{0x78, 0x56, 0x34, 0x12}
+	got := ReadLE32(data, 0)
+	if got != 0x12345678 {
+		t.Errorf("ReadLE32 = 0x%08x, want 0x12345678", got)
+	}
+}
+
+func TestReadLE32_OutOfBounds(t *testing.T) {
+	data := []byte{0x01, 0x02}
+	got := ReadLE32(data, 0)
+	if got != 0 {
+		t.Errorf("ReadLE32 OOB = 0x%08x, want 0", got)
+	}
+}
+
+func TestReadLE32_NegativeOffset(t *testing.T) {
+	data := []byte{0x01, 0x02, 0x03, 0x04}
+	got := ReadLE32(data, -1)
+	if got != 0 {
+		t.Errorf("ReadLE32 negative = 0x%08x, want 0", got)
+	}
+}
+
+func TestWriteLE32(t *testing.T) {
+	data := make([]byte, 8)
+	WriteLE32(data, 0, 0xDEADBEEF)
+	if data[0] != 0xEF || data[1] != 0xBE || data[2] != 0xAD || data[3] != 0xDE {
+		t.Errorf("WriteLE32 = %02x %02x %02x %02x", data[0], data[1], data[2], data[3])
+	}
+}
+
+func TestWriteLE32_OutOfBounds(t *testing.T) {
+	data := make([]byte, 2)
+	WriteLE32(data, 0, 0x12345678) // should be no-op
+	if data[0] != 0 || data[1] != 0 {
+		t.Error("WriteLE32 OOB should not write")
+	}
+}
+
+func TestWriteLE32_NegativeOffset(t *testing.T) {
+	data := make([]byte, 4)
+	WriteLE32(data, -1, 0x12345678) // should be no-op
+	for i, b := range data {
+		if b != 0 {
+			t.Errorf("data[%d] = %02x, want 0", i, b)
+		}
+	}
+}
+
+func TestLEBytesToU16_Short(t *testing.T) {
+	got := LEBytesToU16([]byte{0x01})
+	if got != 0 {
+		t.Errorf("LEBytesToU16 short = %d, want 0", got)
+	}
+}
+
+func TestSwapEndian32_Roundtrip(t *testing.T) {
+	got := SwapEndian32(0x12345678)
+	if got != 0x78563412 {
+		t.Errorf("SwapEndian32 = 0x%08x, want 0x78563412", got)
+	}
+}
+
+func TestCopyFile_NonExistent(t *testing.T) {
+	err := CopyFile("/nonexistent/src", "/tmp/dst")
+	if err == nil {
+		t.Error("CopyFile should fail for non-existent source")
+	}
+}
+
+func TestCopyDir_NonExistent(t *testing.T) {
+	err := CopyDir("/nonexistent/src", "/tmp/dst")
+	if err == nil {
+		t.Error("CopyDir should fail for non-existent source")
+	}
+}

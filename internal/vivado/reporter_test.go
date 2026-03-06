@@ -1,6 +1,7 @@
 package vivado
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -102,4 +103,148 @@ func containsStr(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+func TestParseOutput_SynthComplete(t *testing.T) {
+	output := `INFO: [Synth 8-7080] Merged and optimized
+WARNING: [Synth 8-3331] design has unconnected port
+synth_design completed successfully`
+
+	r := ParseOutput(output)
+	if !r.SynthComplete {
+		t.Error("SynthComplete should be true")
+	}
+	if r.ImplComplete {
+		t.Error("ImplComplete should be false")
+	}
+	if r.Warnings != 1 {
+		t.Errorf("Warnings = %d, want 1", r.Warnings)
+	}
+}
+
+func TestParseOutput_FullBuild(t *testing.T) {
+	output := `synth_design completed successfully
+place_design completed successfully
+route_design completed successfully
+write_bitstream completed successfully`
+
+	r := ParseOutput(output)
+	if !r.SynthComplete {
+		t.Error("SynthComplete should be true")
+	}
+	if !r.ImplComplete {
+		t.Error("ImplComplete should be true")
+	}
+	if !r.BitstreamReady {
+		t.Error("BitstreamReady should be true")
+	}
+}
+
+func TestParseOutput_MultipleErrors(t *testing.T) {
+	output := `ERROR: [DRC 23-20] Rule violation critical
+ERROR: [Place 30-574] cannot place component
+WARNING: [Vivado 12-584] input port not connected`
+
+	r := ParseOutput(output)
+	if r.Errors != 2 {
+		t.Errorf("Errors = %d, want 2", r.Errors)
+	}
+	if r.Warnings != 1 {
+		t.Errorf("Warnings = %d, want 1", r.Warnings)
+	}
+}
+
+func TestParseOutput_CriticalWarnings(t *testing.T) {
+	output := `CRITICAL WARNING: [Timing 38-282] The design failed to meet timing`
+	r := ParseOutput(output)
+	if r.CriticalWarns != 1 {
+		t.Errorf("CriticalWarns = %d, want 1", r.CriticalWarns)
+	}
+}
+
+func TestIsBenign_KnownCodes(t *testing.T) {
+	benign := LogEntry{Severity: SeverityWarning, Code: "Synth 8-7080"}
+	if !benign.IsBenign() {
+		t.Error("Synth 8-7080 should be benign")
+	}
+
+	notBenign := LogEntry{Severity: SeverityWarning, Code: "Unknown-999"}
+	if notBenign.IsBenign() {
+		t.Error("Unknown-999 should not be benign")
+	}
+}
+
+func TestActionableEntries_FiltersBenign(t *testing.T) {
+	output := `INFO: [Common 17-206] data loaded
+WARNING: [Synth 8-7080] benign warning
+WARNING: [Place 30-123] real warning
+ERROR: [DRC 23-20] violation`
+
+	r := ParseOutput(output)
+	actionable := r.ActionableEntries()
+
+	// Should filter out INFO and benign
+	if len(actionable) != 2 {
+		t.Errorf("Actionable = %d, want 2", len(actionable))
+	}
+}
+
+func TestSummary_SuccessBuild(t *testing.T) {
+	output := `synth_design completed successfully
+route_design completed successfully
+write_bitstream completed successfully
+WARNING: [Synth 8-7080] benign`
+
+	r := ParseOutput(output)
+	summary := r.Summary()
+	if !strings.Contains(summary, "SUCCESS") {
+		t.Error("Summary should say SUCCESS for bitstream ready")
+	}
+	if !strings.Contains(summary, "benign") {
+		t.Error("Summary should mention filtered benign warnings")
+	}
+}
+
+func TestSummary_FailedBuild(t *testing.T) {
+	output := `ERROR: [Place 30-574] cannot place`
+	r := ParseOutput(output)
+	summary := r.Summary()
+	if !strings.Contains(summary, "FAILED") {
+		t.Error("Summary should say FAILED when errors exist")
+	}
+}
+
+func TestSummary_Unknown(t *testing.T) {
+	output := `some random output`
+	r := ParseOutput(output)
+	summary := r.Summary()
+	if !strings.Contains(summary, "unknown") {
+		t.Error("Summary should say unknown for no progress")
+	}
+}
+
+func TestSummary_SynthOnly(t *testing.T) {
+	output := `synth_design completed successfully`
+	r := ParseOutput(output)
+	summary := r.Summary()
+	if !strings.Contains(summary, "synthesis complete") {
+		t.Error("Summary should mention synthesis complete")
+	}
+}
+
+func TestSummary_ImplOnly(t *testing.T) {
+	output := `synth_design completed successfully
+place_design completed successfully`
+	r := ParseOutput(output)
+	summary := r.Summary()
+	if !strings.Contains(summary, "implementation complete") {
+		t.Error("Summary should mention implementation complete")
+	}
+}
+
+func TestParseLogFile_NonExistent(t *testing.T) {
+	_, err := ParseLogFile("/nonexistent/log.txt")
+	if err == nil {
+		t.Error("ParseLogFile should fail for non-existent file")
+	}
 }
