@@ -13,6 +13,7 @@ import (
 	"github.com/sercanarga/pcileechgen/internal/firmware/barmodel"
 	"github.com/sercanarga/pcileechgen/internal/firmware/codegen"
 	"github.com/sercanarga/pcileechgen/internal/firmware/devclass"
+	"github.com/sercanarga/pcileechgen/internal/firmware/nvme"
 	"github.com/sercanarga/pcileechgen/internal/firmware/scrub"
 	"github.com/sercanarga/pcileechgen/internal/firmware/svgen"
 	"github.com/sercanarga/pcileechgen/internal/firmware/tclgen"
@@ -197,6 +198,7 @@ func ListOutputFiles() []string {
 		"pcileech_bar_impl_device.sv",
 		"pcileech_tlps128_bar_controller.sv",
 		"pcileech_msix_table.sv",
+		"pcileech_nvme_admin_responder.sv",
 		"tlp_latency_emulator.sv",
 		"device_config.sv",
 		"config_space_init.hex",
@@ -244,6 +246,11 @@ func (ow *OutputWriter) writeSVModules(ctx *donor.DeviceContext, scrubbedCS *pci
 		PRNGSeeds:     seeds,
 		IsNVMe:        isNVMe,
 		IsXHCI:        isXHCI,
+	}
+
+	// NVMe Identify data generation
+	if isNVMe {
+		cfg.NVMeIdentify = nvme.BuildIdentifyData(ids, barData)
 	}
 
 	if ctx.MSIXData != nil && ctx.MSIXData.TableSize > 0 {
@@ -298,9 +305,28 @@ func (ow *OutputWriter) writeSVModules(ctx *donor.DeviceContext, scrubbedCS *pci
 		}
 	}
 
+	// NVMe Responder artifacts (conditional)
+	if cfg.NVMeIdentify != nil {
+		nvmeSV, err := svgen.GenerateNVMeResponderSV(cfg)
+		if err != nil {
+			return fmt.Errorf("generating pcileech_nvme_admin_responder.sv: %w", err)
+		}
+		if err := ow.writeFile("pcileech_nvme_admin_responder.sv", nvmeSV); err != nil {
+			return err
+		}
+
+		idHex := nvme.IdentifyDataToHex(cfg.NVMeIdentify)
+		if err := ow.writeFile("identify_init.hex", idHex); err != nil {
+			return err
+		}
+	}
+
 	features := []string{}
 	if isNVMe {
 		features = append(features, "NVMe FSM")
+		if cfg.NVMeIdentify != nil {
+			features = append(features, "NVMe Admin Responder")
+		}
 	}
 	if isXHCI {
 		features = append(features, "xHCI FSM")
