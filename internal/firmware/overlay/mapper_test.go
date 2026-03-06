@@ -131,3 +131,140 @@ func TestMultipleChanges(t *testing.T) {
 		t.Error("diff should preserve chronological order")
 	}
 }
+
+
+func TestConfigSpace(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	om := NewMap(cs)
+
+	got := om.ConfigSpace()
+	if got != cs {
+		t.Error("ConfigSpace() should return the original config space")
+	}
+}
+
+func TestWriteU32_SameValue(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	cs.WriteU32(0x10, 0x12345678)
+	om := NewMap(cs)
+	om.WriteU32(0x10, 0x12345678, "same value") // no change
+	if om.Count() != 0 {
+		t.Error("WriteU32 with same value should be no-op")
+	}
+}
+
+func TestWriteU16_NoOp(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	cs.WriteU16(0x04, 0x1234)
+	om := NewMap(cs)
+	om.WriteU16(0x04, 0x1234, "same value")
+	if om.Count() != 0 {
+		t.Error("WriteU16 with same value should be no-op")
+	}
+}
+
+func TestWriteU8_NoOp(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	cs.WriteU8(0x08, 0x42)
+	om := NewMap(cs)
+	om.WriteU8(0x08, 0x42, "same value")
+	if om.Count() != 0 {
+		t.Error("WriteU8 with same value should be no-op")
+	}
+}
+
+func TestZeroRange_Values(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	for i := 0x80; i < 0x90; i++ {
+		cs.WriteU8(i, 0xFF)
+	}
+	om := NewMap(cs)
+	om.ZeroRange(0x80, 0x90, "test zero")
+	if om.Count() != 1 {
+		t.Errorf("Count = %d, want 1", om.Count())
+	}
+	for i := 0x80; i < 0x90; i++ {
+		if cs.ReadU8(i) != 0 {
+			t.Errorf("Byte 0x%02x = 0x%02x, want 0", i, cs.ReadU8(i))
+		}
+	}
+}
+
+func TestZeroRange_NoChange(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	om := NewMap(cs)
+	om.ZeroRange(0x80, 0x90, "test zero")
+	if om.Count() != 0 {
+		t.Error("ZeroRange on already-zero should be no-op")
+	}
+}
+
+func TestDiff(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	cs.WriteU32(0x10, 0x12345678)
+	om := NewMap(cs)
+	om.WriteU32(0x10, 0xAAAABBBB, "test change")
+
+	diff := om.Diff()
+	if len(diff) != 1 {
+		t.Fatalf("Diff len = %d, want 1", len(diff))
+	}
+	if diff[0].OldValue != 0x12345678 {
+		t.Errorf("OldValue = 0x%08x", diff[0].OldValue)
+	}
+	if diff[0].NewValue != 0xAAAABBBB {
+		t.Errorf("NewValue = 0x%08x", diff[0].NewValue)
+	}
+	if diff[0].Reason != "test change" {
+		t.Errorf("Reason = %q", diff[0].Reason)
+	}
+}
+
+func TestFormatDiff_NoChanges(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	om := NewMap(cs)
+	s := om.FormatDiff()
+	if !strings.Contains(s, "No modifications") {
+		t.Error("FormatDiff should say 'No modifications'")
+	}
+}
+
+func TestFormatDiff_WithChanges(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	cs.WriteU32(0x10, 0x12345678)
+	cs.WriteU8(0x20, 0xAA)
+	om := NewMap(cs)
+	om.WriteU32(0x10, 0xAAAABBBB, "test U32")
+	om.WriteU8(0x20, 0xBB, "test U8")
+
+	s := om.FormatDiff()
+	if !strings.Contains(s, "2 changes") {
+		t.Error("Should mention 2 changes")
+	}
+	if !strings.Contains(s, "test U32") {
+		t.Error("Should contain reason 'test U32'")
+	}
+}
+
+func TestFormatDiff_RangeZero(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	for i := 0x80; i < 0x90; i++ {
+		cs.WriteU8(i, 0xFF)
+	}
+	om := NewMap(cs)
+	om.ZeroRange(0x80, 0x90, "zero vendor")
+	s := om.FormatDiff()
+	if !strings.Contains(s, "zeroed") {
+		t.Error("FormatDiff should show 'zeroed' for range zero")
+	}
+}

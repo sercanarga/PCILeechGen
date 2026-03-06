@@ -99,3 +99,120 @@ func TestSynthesizeBARModel_RW1C(t *testing.T) {
 		t.Error("RW1C register should have RWMask=0 (conservative)")
 	}
 }
+
+
+func TestBuildEthernetBARModel(t *testing.T) {
+	barData := make([]byte, 4096)
+	barData[0] = 0x00 // CTRL
+	barData[8] = 0x02 // STATUS
+
+	model := buildEthernetBARModel(barData)
+	if model == nil {
+		t.Fatal("buildEthernetBARModel returned nil")
+	}
+	if len(model.Registers) == 0 {
+		t.Error("Ethernet BAR model should have registers")
+	}
+	// Check that CTRL register exists
+	found := false
+	for _, r := range model.Registers {
+		if r.Name == "CTRL" && r.Offset == 0x0000 {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("Should have CTRL register at offset 0x0000")
+	}
+}
+
+func TestBuildEthernetBARModel_NilData(t *testing.T) {
+	model := buildEthernetBARModel(nil)
+	if model == nil {
+		t.Fatal("Ethernet model should not be nil with nil data")
+	}
+	if len(model.Registers) == 0 {
+		t.Error("Should still create register definitions without data")
+	}
+}
+
+func TestBuildBARModel_Ethernet(t *testing.T) {
+	barData := make([]byte, 4096)
+	model := BuildBARModel(barData, 0x020000, nil)
+	if model == nil {
+		t.Fatal("BuildBARModel for Ethernet should not be nil")
+	}
+}
+
+func TestBuildBARModel_WithProfile(t *testing.T) {
+	profile := &donor.BARProfile{
+		Size: 4096,
+		Probes: []donor.BARProbeResult{
+			{Offset: 0x00, Original: 0x12345678, RWMask: 0xFFFF0000},
+			{Offset: 0x04, Original: 0x00, RWMask: 0x00},
+		},
+	}
+	model := BuildBARModel(nil, 0x020000, profile)
+	if model == nil {
+		t.Fatal("BuildBARModel with profile should not be nil")
+	}
+}
+
+func TestSynthesizeBARModel_WithProbe(t *testing.T) {
+	profile := &donor.BARProfile{
+		Size: 4096,
+		Probes: []donor.BARProbeResult{
+			{Offset: 0x00, Original: 0x12345678, RWMask: 0xFFFF0000},
+			{Offset: 0x04, Original: 0x00, RWMask: 0x00},
+			{Offset: 0x08, Original: 0xABCD, RWMask: 0xFF},
+		},
+	}
+	model := SynthesizeBARModel(profile, 0x020000)
+	if model == nil {
+		t.Fatal("SynthesizeBARModel should not be nil")
+	}
+	// Dead registers (zero value + zero mask) should be dropped
+	for _, r := range model.Registers {
+		if r.Offset == 0x04 {
+			t.Error("Dead register at 0x04 should be dropped")
+		}
+	}
+}
+
+func TestClassRegisterNames(t *testing.T) {
+	names := classRegisterNames(0x020000) // Ethernet
+	if names == nil {
+		t.Skip("No class-specific names for Ethernet")
+	}
+	// Just verify it doesn't panic
+}
+
+func TestClassRegisterNames_NVMe(t *testing.T) {
+	names := classRegisterNames(0x010802) // NVMe
+	if names == nil {
+		t.Skip("No class-specific names for NVMe")
+	}
+}
+
+func TestPopulateResetValues(t *testing.T) {
+	regs := []BARRegister{
+		{Offset: 0x00, Width: 4, Reset: 0},
+		{Offset: 0x04, Width: 4, Reset: 0},
+	}
+	barData := []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08}
+	populateResetValues(regs, barData)
+	if regs[0].Reset != 0x04030201 {
+		t.Errorf("Reset[0] = 0x%08x, want 0x04030201", regs[0].Reset)
+	}
+}
+
+func TestPopulateResetValues_NilData(t *testing.T) {
+	regs := []BARRegister{
+		{Offset: 0x00, Width: 4, Reset: 0},
+	}
+	populateResetValues(regs, nil)
+	// Should not panic, values stay zero
+	if regs[0].Reset != 0 {
+		t.Errorf("Reset = 0x%08x with nil data, want 0", regs[0].Reset)
+	}
+}

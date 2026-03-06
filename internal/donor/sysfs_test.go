@@ -354,3 +354,74 @@ func TestFromJSONInvalid(t *testing.T) {
 		t.Error("FromJSON should fail for invalid JSON")
 	}
 }
+
+
+func TestProfileBARFromBuffer(t *testing.T) {
+	buf := make([]byte, 64) // 16 DWORDs
+
+	// Set some registers with known values
+	buf[0] = 0x78
+	buf[1] = 0x56
+	buf[2] = 0x34
+	buf[3] = 0x12
+
+	profile := ProfileBARFromBuffer(buf, 0)
+	if profile == nil {
+		t.Fatal("ProfileBARFromBuffer should not return nil")
+	}
+	if profile.BarIndex != 0 {
+		t.Errorf("BarIndex = %d, want 0", profile.BarIndex)
+	}
+	if profile.Size != 64 {
+		t.Errorf("Size = %d, want 64", profile.Size)
+	}
+	if len(profile.Probes) != 16 {
+		t.Errorf("Probes = %d, want 16", len(profile.Probes))
+	}
+	// First probe should have Original value
+	if profile.Probes[0].Offset != 0 {
+		t.Errorf("First probe offset = %d, want 0", profile.Probes[0].Offset)
+	}
+}
+
+func TestProfileBARFromBuffer_Empty(t *testing.T) {
+	buf := make([]byte, 0)
+	profile := ProfileBARFromBuffer(buf, 1)
+	if profile == nil {
+		t.Fatal("ProfileBARFromBuffer should not return nil for empty buffer")
+	}
+	if len(profile.Probes) != 0 {
+		t.Errorf("Empty buffer should have 0 probes, got %d", len(profile.Probes))
+	}
+}
+
+func TestNewBARProfiler(t *testing.T) {
+	p := NewBARProfiler()
+	if p == nil {
+		t.Error("NewBARProfiler should not return nil")
+	}
+}
+
+func TestProfileBAR_InvalidPath(t *testing.T) {
+	p := NewBARProfiler()
+	_, err := p.ProfileBAR("/nonexistent/resource", 0, 4096)
+	if err == nil {
+		t.Error("ProfileBAR should fail with invalid path")
+	}
+}
+
+func TestBarCriticalClass(t *testing.T) {
+	// NVMe and xHCI should be critical
+	if !barCriticalClass(0x010802) {
+		t.Error("NVMe should be BAR-critical")
+	}
+	if !barCriticalClass(0x0C0330) {
+		t.Error("xHCI should be BAR-critical")
+	}
+	if barCriticalClass(0x020000) {
+		t.Error("Ethernet should not be BAR-critical")
+	}
+	if barCriticalClass(0xFF0000) {
+		t.Error("Unknown class should not be BAR-critical")
+	}
+}
