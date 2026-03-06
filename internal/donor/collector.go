@@ -96,14 +96,19 @@ func (c *Collector) validateBARContents(ctx *DeviceContext) error {
 	}
 
 	if !hasContent {
-		hint := "Make sure the device is bound to vfio-pci and retry"
+		msg := fmt.Sprintf(
+			"BAR content collection failed for %d eligible BAR(s) (class 0x%06X, driver %q)",
+			len(eligible), ctx.Device.ClassCode, ctx.Device.Driver,
+		)
 		if barCriticalClass(ctx.Device.ClassCode) {
-			hint += " - this device class is known to produce Code 10 without BAR data"
+			return fmt.Errorf(
+				"%s. This device class requires BAR data — without it Windows will produce Code 10. "+
+					"Make sure the device is bound to vfio-pci and retry", msg,
+			)
 		}
-		return fmt.Errorf(
-			"BAR content collection failed for %d eligible BAR(s) (class 0x%06X, driver %q). "+
-				"Without BAR register data the firmware will likely produce Code 10 in Windows. %s",
-			len(eligible), ctx.Device.ClassCode, ctx.Device.Driver, hint,
+		slog.Warn("proceeding without BAR content — firmware will use zeroed BAR registers",
+			"eligible_bars", len(eligible),
+			"class", fmt.Sprintf("0x%06X", ctx.Device.ClassCode),
 		)
 	}
 
@@ -141,17 +146,26 @@ func (c *Collector) collectBARMemory(bdf pci.BDF, bars []pci.BAR) map[int][]byte
 		slog.Info("BAR read complete", "bar", bar.Index, "bytes", len(data))
 	}
 
-	if sysfsBarFailed && vfio.IsBoundToVFIO(bdf.String()) {
-		slog.Info("trying VFIO for failed BAR reads")
-		if dump, err := vfio.Collect(bdf.String()); err == nil {
-			for idx, data := range dump.BARContents {
-				if _, already := contents[idx]; !already && len(data) > 0 {
-					contents[idx] = data
-					slog.Info("BAR read via VFIO", "bar", idx, "bytes", len(data))
-				}
+	if sysfsBarFailed {
+		if !vfio.IsBoundToVFIO(bdf.String()) {
+			slog.Info("no driver bound, attempting auto-bind to vfio-pci for BAR access")
+			if err := vfio.BindToVFIO(bdf.String()); err != nil {
+				slog.Warn("auto-bind to vfio-pci failed", "error", err)
 			}
-		} else {
-			slog.Warn("VFIO BAR fallback failed", "error", err)
+		}
+
+		if vfio.IsBoundToVFIO(bdf.String()) {
+			slog.Info("trying VFIO for failed BAR reads")
+			if dump, err := vfio.Collect(bdf.String()); err == nil {
+				for idx, data := range dump.BARContents {
+					if _, already := contents[idx]; !already && len(data) > 0 {
+						contents[idx] = data
+						slog.Info("BAR read via VFIO", "bar", idx, "bytes", len(data))
+					}
+				}
+			} else {
+				slog.Warn("VFIO BAR fallback failed", "error", err)
+			}
 		}
 	}
 
