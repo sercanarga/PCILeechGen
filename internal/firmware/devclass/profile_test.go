@@ -60,10 +60,65 @@ func TestProfileForClass_Audio(t *testing.T) {
 	}
 }
 
-func TestProfileForClass_Unknown(t *testing.T) {
+func TestProfileForClass_GPU(t *testing.T) {
+	p := ProfileForClass(0x030000)
+	if p == nil {
+		t.Fatal("GPU profile should not be nil")
+	}
+	if p.ClassName != "GPU" {
+		t.Errorf("got %q, want GPU", p.ClassName)
+	}
+	if !p.BARIsPrefetchable {
+		t.Error("GPU BAR should be prefetchable")
+	}
+	if !p.Uses64BitBAR {
+		t.Error("GPU should use 64-bit BAR")
+	}
+}
+
+func TestProfileForClass_SATA(t *testing.T) {
+	p := ProfileForClass(0x010601)
+	if p == nil {
+		t.Fatal("SATA profile should not be nil")
+	}
+	if p.ClassName != "SATA AHCI" {
+		t.Errorf("got %q, want SATA AHCI", p.ClassName)
+	}
+	if p.PreferredBAR != 5 {
+		t.Errorf("SATA ABAR should be BAR5, got %d", p.PreferredBAR)
+	}
+}
+
+func TestProfileForClass_WiFi(t *testing.T) {
+	p := ProfileForClass(0x028000)
+	if p == nil {
+		t.Fatal("Wi-Fi profile should not be nil")
+	}
+	if p.ClassName != "Wi-Fi" {
+		t.Errorf("got %q, want Wi-Fi", p.ClassName)
+	}
+	if !p.PrefersMSIX {
+		t.Error("Wi-Fi should prefer MSI-X")
+	}
+}
+
+func TestProfileForClass_Thunderbolt(t *testing.T) {
+	p := ProfileForClass(0x0C8000)
+	if p == nil {
+		t.Fatal("Thunderbolt profile should not be nil")
+	}
+	if p.ClassName != "Thunderbolt" {
+		t.Errorf("got %q, want Thunderbolt", p.ClassName)
+	}
+}
+
+func TestProfileForClass_Generic(t *testing.T) {
 	p := ProfileForClass(0xFF0000)
-	if p != nil {
-		t.Error("unknown class should return nil")
+	if p == nil {
+		t.Fatal("generic fallback should not be nil")
+	}
+	if p.ClassName != "Generic" {
+		t.Errorf("got %q, want Generic", p.ClassName)
 	}
 }
 
@@ -76,8 +131,8 @@ func TestProfileForClass_ProgIFAgnostic(t *testing.T) {
 
 func TestAllProfiles(t *testing.T) {
 	profiles := AllProfiles()
-	if len(profiles) != 4 {
-		t.Errorf("expected 4 profiles, got %d", len(profiles))
+	if len(profiles) != 9 {
+		t.Errorf("expected 9 profiles, got %d", len(profiles))
 	}
 	names := make(map[string]bool)
 	for _, p := range profiles {
@@ -86,7 +141,10 @@ func TestAllProfiles(t *testing.T) {
 		}
 		names[p.ClassName] = true
 	}
-	for _, expected := range []string{"NVMe", "xHCI USB", "Ethernet", "HD Audio"} {
+	for _, expected := range []string{
+		"NVMe", "xHCI USB", "Ethernet", "HD Audio",
+		"GPU", "SATA AHCI", "Wi-Fi", "Thunderbolt", "Generic",
+	} {
 		if !names[expected] {
 			t.Errorf("missing profile: %s", expected)
 		}
@@ -95,6 +153,10 @@ func TestAllProfiles(t *testing.T) {
 
 func TestAllProfiles_BARDefaults(t *testing.T) {
 	for _, p := range AllProfiles() {
+		// Generic has no BAR defaults, skip
+		if p.ClassName == "Generic" {
+			continue
+		}
 		if len(p.BARDefaults) == 0 {
 			t.Errorf("%s profile has no BAR defaults", p.ClassName)
 		}
@@ -111,6 +173,9 @@ func TestAllProfiles_BARDefaults(t *testing.T) {
 
 func TestAllProfiles_ExpectedCaps(t *testing.T) {
 	for _, p := range AllProfiles() {
+		if p.ClassName == "Generic" {
+			continue
+		}
 		if len(p.ExpectedCaps) == 0 {
 			t.Errorf("%s profile has no expected capabilities", p.ClassName)
 		}
@@ -201,4 +266,33 @@ func TestEthernetProfile_MAC(t *testing.T) {
 	if !ral0 || !rah0 {
 		t.Error("Ethernet profile should have RAL0 and RAH0")
 	}
+}
+
+func TestGPUProfile_PMCEnable(t *testing.T) {
+	p := gpuProfile()
+	found := false
+	for _, d := range p.BARDefaults {
+		if d.Name == "PMC_ENABLE" {
+			found = true
+			if d.Reset != 0xFFFFFFFF {
+				t.Errorf("PMC_ENABLE default should be 0xFFFFFFFF, got 0x%08X", d.Reset)
+			}
+		}
+	}
+	if !found {
+		t.Error("PMC_ENABLE not found in GPU profile")
+	}
+}
+
+func TestSATAProfile_GHC(t *testing.T) {
+	p := sataProfile()
+	for _, d := range p.BARDefaults {
+		if d.Name == "GHC" {
+			if d.Reset&0x80000000 == 0 {
+				t.Error("GHC.AE should be set")
+			}
+			return
+		}
+	}
+	t.Error("GHC not found in SATA profile")
 }

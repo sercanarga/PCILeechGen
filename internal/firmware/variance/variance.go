@@ -53,6 +53,8 @@ func Apply(cs *pci.ConfigSpace, latCfg *svgen.LatencyConfig, cfg Config) {
 		applyTimingJitter(latCfg, rng, cfg.TimingJitter)
 	}
 
+	applyPMTimingVariance(cs, rng)
+
 	embedVSECEntropy(cs, cfg.Seed)
 }
 
@@ -217,6 +219,34 @@ func embedVSECEntropy(cs *pci.ConfigSpace, seed uint32) {
 	} else if len(extCaps) == 0 {
 		// no ext caps at all — write at 0x100
 		cs.WriteU32(0x100, vsecHeader)
+	}
+}
+
+// applyPMTimingVariance adds per-build jitter to PM D-state transition times.
+func applyPMTimingVariance(cs *pci.ConfigSpace, rng *splitMix64) {
+	caps := pci.ParseCapabilities(cs)
+	for _, cap := range caps {
+		if cap.ID != pci.CapIDPowerManagement {
+			continue
+		}
+		// PMC register (cap+0x02): D1/D2 support flags + recovery time
+		if cap.Offset+4 >= pci.ConfigSpaceLegacySize {
+			continue
+		}
+		pmc := cs.ReadU16(cap.Offset + 2)
+		// bits [12:9] = D3hot→D0 recovery scale, vary within valid range
+		scale := (pmc >> 9) & 0x0F
+		noise := int16(rng.next()%3) - 1 // -1, 0, +1
+		newScale := int16(scale) + noise
+		if newScale < 0 {
+			newScale = 0
+		}
+		if newScale > 15 {
+			newScale = 15
+		}
+		pmc = (pmc & 0xE1FF) | (uint16(newScale) << 9)
+		cs.WriteU16(cap.Offset+2, pmc)
+		break
 	}
 }
 

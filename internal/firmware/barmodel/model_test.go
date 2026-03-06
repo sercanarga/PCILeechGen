@@ -454,8 +454,8 @@ func TestClassRegisterNames_Audio(t *testing.T) {
 
 func TestClassRegisterNames_Unknown(t *testing.T) {
 	names := classRegisterNames(0xFF0000)
-	if names != nil {
-		t.Error("unknown class should return nil names")
+	if len(names) != 0 {
+		t.Error("unknown class should return empty names map")
 	}
 }
 

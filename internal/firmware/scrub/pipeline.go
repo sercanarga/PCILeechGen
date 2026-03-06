@@ -21,6 +21,8 @@ func defaultPipeline() []ScrubPass {
 		&scrubPCIeCapPass{},
 		&scrubPMCapPass{},
 		&scrubAERPass{},
+		&normalizeAERMasksPass{},
+		&scrubASPMPass{},
 		&filterExtCapsPass{},
 		&clampBARsPass{},
 		&relocateMSIXPass{},

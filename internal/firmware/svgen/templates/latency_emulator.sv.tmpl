@@ -10,6 +10,9 @@ module tlp_latency_emulator #(
     parameter ENABLE_JITTER      = 1,
     parameter BURST_CORRELATION  = {{ .LatencyConfig.BurstCorrelation }},
     parameter THERMAL_DRIFT_PERIOD = {{ .LatencyConfig.ThermalPeriod }},
+    parameter WR_MIN_LATENCY     = {{ .LatencyConfig.WrMinCycles }},
+    parameter WR_MAX_LATENCY     = {{ .LatencyConfig.WrMaxCycles }},
+    parameter CPL_TIMEOUT_CYCLES = {{ .LatencyConfig.CplTimeoutCycles }},
     parameter [31:0] PRNG_SEED_0 = 32'h{{ hex08 (index .PRNGSeeds 0) }},
     parameter [31:0] PRNG_SEED_1 = 32'h{{ hex08 (index .PRNGSeeds 1) }},
     parameter [31:0] PRNG_SEED_2 = 32'h{{ hex08 (index .PRNGSeeds 2) }},
@@ -18,6 +21,7 @@ module tlp_latency_emulator #(
     input wire          clk,
     input wire          rst,
 
+    // read path
     input wire          req_valid,
     input wire [87:0]   req_ctx,
     input wire [31:0]   req_data,
@@ -27,7 +31,12 @@ module tlp_latency_emulator #(
     output reg          rsp_valid,
     output reg [87:0]   rsp_ctx,
     output reg [31:0]   rsp_data,
-    input wire          rsp_ready
+    input wire          rsp_ready,
+
+    // write acknowledge path
+    input wire          wr_valid,
+    input wire [31:0]   wr_addr,
+    output reg          wr_ack
 );
 
     reg [7:0] latency_counter;
@@ -40,6 +49,11 @@ module tlp_latency_emulator #(
     reg [31:0] prev_addr;
     reg [7:0]  prev_latency;
     reg        prev_valid;
+
+    // completion timeout counter
+    reg [16:0] timeout_counter;
+    wire timeout_expired = (CPL_TIMEOUT_CYCLES > 0) && request_pending &&
+                           (timeout_counter >= CPL_TIMEOUT_CYCLES[16:0]);
 
     // xorshift128+ PRNG
     reg [31:0] prng_s0, prng_s1, prng_s2, prng_s3;
@@ -56,7 +70,7 @@ module tlp_latency_emulator #(
             prng_s1 <= PRNG_SEED_1;
             prng_s2 <= PRNG_SEED_2;
             prng_s3 <= PRNG_SEED_3;
-        end else if (req_valid && req_ready) begin
+        end else if ((req_valid && req_ready) || wr_valid) begin
             prng_s0 <= prng_s1;
             prng_s1 <= prng_s2;
             prng_s2 <= prng_s3;
@@ -64,7 +78,7 @@ module tlp_latency_emulator #(
         end
     end
 
-    // Thermal drift — gradual baseline shift
+    // thermal drift
     reg [15:0] thermal_counter;
     reg [3:0]  thermal_offset;
 
@@ -84,7 +98,7 @@ module tlp_latency_emulator #(
         end
     end
 
-    // Address-region latency variation
+    // address-region latency variation
     wire [2:0] addr_region = req_addr[14:12];
     wire [7:0] region_adjust = (addr_region == 3'h0) ? 8'h00 :
                                (addr_region == 3'h1) ? 8'h02 :
@@ -92,14 +106,14 @@ module tlp_latency_emulator #(
                                (addr_region == 3'h3) ? 8'h01 :
                                8'h03;
 
-    // Burst correlation — sequential accesses get correlated timing
+    // burst correlation
     wire is_sequential = prev_valid && ((req_addr[31:8] == prev_addr[31:8]) ||
                                         (req_addr[31:8] == prev_addr[31:8] + 1'b1));
     wire [7:0] corr_weight = is_sequential ? BURST_CORRELATION[7:0] : 8'h00;
     wire [7:0] correlated_latency = ((prev_latency * corr_weight) +
                                      (prng_out[7:0] * (8'hFF - corr_weight))) >> 8;
 
-    // Donor-profiled CDF lookup — 16 entries map PRNG → latency bucket
+    // donor-profiled CDF lookup
     reg [7:0] cdf_table [0:15];
     initial begin
         cdf_table[0]  = 8'd{{ cdfVal .LatencyConfig.CDF 0 }};
@@ -140,7 +154,7 @@ module tlp_latency_emulator #(
         else if (prng_out[7:0] < cdf_table[14]) cdf_bucket = 4'd14;
     end
 
-    // Final latency computation
+    // read latency computation
     wire [7:0] latency_range = MAX_LATENCY_CYCLES - MIN_LATENCY_CYCLES + 1;
     wire [7:0] cdf_latency = MIN_LATENCY_CYCLES + ((cdf_bucket * latency_range) >> 4);
     wire [7:0] base_jitter = is_sequential ? correlated_latency : cdf_latency;
@@ -151,11 +165,19 @@ module tlp_latency_emulator #(
                              MIN_LATENCY_CYCLES + region_adj;
     wire [7:0] computed_latency = ENABLE_JITTER ? jittered : AVG_LATENCY_CYCLES;
 
+    // write latency computation
+    wire [7:0] wr_range = WR_MAX_LATENCY - WR_MIN_LATENCY + 1;
+    wire [7:0] wr_latency = WR_MIN_LATENCY + (prng_out[15:8] % wr_range);
+
+    reg [7:0] wr_counter;
+    reg [7:0] wr_target;
+    reg       wr_pending;
+
     always @(*) begin
         req_ready = !request_pending;
     end
 
-    // Latency state machine
+    // read latency FSM
     always @(posedge clk) begin
         if (rst) begin
             request_pending <= 1'b0;
@@ -167,12 +189,24 @@ module tlp_latency_emulator #(
             prev_addr       <= 32'h0;
             prev_latency    <= AVG_LATENCY_CYCLES;
             prev_valid      <= 1'b0;
+            timeout_counter <= 17'h0;
         end else begin
             if (rsp_valid && rsp_ready)
                 rsp_valid <= 1'b0;
 
             if (request_pending) begin
-                if (latency_counter < target_latency) begin
+                timeout_counter <= timeout_counter + 1'b1;
+
+                if (timeout_expired) begin
+                    // timeout: release with stored data (UR would need TLP layer changes)
+                    rsp_valid       <= 1'b1;
+                    rsp_ctx         <= stored_ctx;
+                    rsp_data        <= 32'hFFFFFFFF;
+                    request_pending <= 1'b0;
+                    latency_counter <= 8'h0;
+                    timeout_counter <= 17'h0;
+                    prev_valid      <= 1'b0;
+                end else if (latency_counter < target_latency) begin
                     latency_counter <= latency_counter + 8'h1;
                 end else if (!rsp_valid || rsp_ready) begin
                     rsp_valid       <= 1'b1;
@@ -180,6 +214,7 @@ module tlp_latency_emulator #(
                     rsp_data        <= stored_data;
                     request_pending <= 1'b0;
                     latency_counter <= 8'h0;
+                    timeout_counter <= 17'h0;
                     prev_latency    <= target_latency;
                     prev_valid      <= 1'b1;
                 end
@@ -189,7 +224,34 @@ module tlp_latency_emulator #(
                 stored_data     <= req_data;
                 prev_addr       <= req_addr;
                 latency_counter <= 8'h0;
+                timeout_counter <= 17'h0;
                 target_latency  <= computed_latency;
+            end
+        end
+    end
+
+    // write acknowledge FSM — delays wr_ack to emulate MMIO write latency
+    always @(posedge clk) begin
+        if (rst) begin
+            wr_pending <= 1'b0;
+            wr_counter <= 8'h0;
+            wr_target  <= WR_MIN_LATENCY;
+            wr_ack     <= 1'b0;
+        end else begin
+            wr_ack <= 1'b0;
+
+            if (wr_pending) begin
+                if (wr_counter < wr_target) begin
+                    wr_counter <= wr_counter + 8'h1;
+                end else begin
+                    wr_ack     <= 1'b1;
+                    wr_pending <= 1'b0;
+                    wr_counter <= 8'h0;
+                end
+            end else if (wr_valid) begin
+                wr_pending <= 1'b1;
+                wr_counter <= 8'h0;
+                wr_target  <= wr_latency;
             end
         end
     end
