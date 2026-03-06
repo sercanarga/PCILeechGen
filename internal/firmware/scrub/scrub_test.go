@@ -301,7 +301,7 @@ func TestZeroVendorRegisters(t *testing.T) {
 	cs := pci.NewConfigSpace()
 	cs.Size = pci.ConfigSpaceSize
 
-	cs.WriteU16(0x00, 0x8086)
+	cs.WriteU16(0x00, 0x1234) // unknown vendor — no whitelist
 	cs.WriteU16(0x06, 0x0010)
 	cs.WriteU8(0x34, 0x40)
 
@@ -328,6 +328,30 @@ func TestZeroVendorRegisters(t *testing.T) {
 	}
 	if scrubbed.ReadU8(0x70) != pci.CapIDPCIExpress {
 		t.Errorf("PCIe cap ID should be preserved, got 0x%02x", scrubbed.ReadU8(0x70))
+	}
+}
+
+func TestZeroVendorRegisters_WhitelistPreserves(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+
+	cs.WriteU16(0x00, 0x8086) // Intel — 0xE0-0xFF whitelisted
+	cs.WriteU16(0x06, 0x0010)
+	cs.WriteU8(0x34, 0x40)
+	cs.WriteU8(0x40, pci.CapIDPCIExpress)
+	cs.WriteU8(0x41, 0x00)
+
+	cs.WriteU32(0xE4, 0xDEADBEEF) // in Intel whitelist range
+	cs.WriteU32(0xB0, 0xCAFEBABE) // outside any cap or whitelist
+
+	om := overlay.NewMap(cs)
+	zeroVendorRegisters(cs, om)
+
+	if cs.ReadU32(0xE4) != 0xDEADBEEF {
+		t.Errorf("Intel whitelisted register at 0xE4 should be preserved, got 0x%08x", cs.ReadU32(0xE4))
+	}
+	if cs.ReadU32(0xB0) != 0 {
+		t.Errorf("non-whitelisted register at 0xB0 should be zeroed, got 0x%08x", cs.ReadU32(0xB0))
 	}
 }
 

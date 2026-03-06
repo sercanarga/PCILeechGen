@@ -15,6 +15,7 @@ import (
 	"github.com/sercanarga/pcileechgen/internal/firmware/codegen"
 	"github.com/sercanarga/pcileechgen/internal/firmware/devclass"
 	"github.com/sercanarga/pcileechgen/internal/firmware/nvme"
+	"github.com/sercanarga/pcileechgen/internal/firmware/overlay"
 	"github.com/sercanarga/pcileechgen/internal/firmware/scrub"
 	"github.com/sercanarga/pcileechgen/internal/firmware/svgen"
 	"github.com/sercanarga/pcileechgen/internal/firmware/tclgen"
@@ -58,7 +59,7 @@ func (ow *OutputWriter) WriteAll(ctx *donor.DeviceContext, b *board.Board) error
 		return err
 	}
 
-	scrubbedCS, entropy := ow.scrubAndVary(ctx, b, ids)
+	scrubbedCS, entropy, overlayMap := ow.scrubAndVary(ctx, b, ids)
 
 	if err := ow.writeConfigSpaceArtifacts(ctx, scrubbedCS); err != nil {
 		return err
@@ -74,6 +75,13 @@ func (ow *OutputWriter) WriteAll(ctx *donor.DeviceContext, b *board.Board) error
 
 	if err := ow.writeSVModules(ctx, scrubbedCS, ids, entropy); err != nil {
 		return fmt.Errorf("SV module generation failed: %w", err)
+	}
+
+	// write diff report
+	if overlayMap.Count() > 0 {
+		if err := ow.writeFile("scrub_diff_report.txt", overlayMap.FormatDiff()); err != nil {
+			slog.Warn("failed to write diff report", "error", err)
+		}
 	}
 
 	ow.writeManifest(ctx, ids)
@@ -93,7 +101,7 @@ func (ow *OutputWriter) writeDeviceContext(ctx *donor.DeviceContext) error {
 }
 
 // scrubAndVary runs config space scrubbing and per-build variance.
-func (ow *OutputWriter) scrubAndVary(ctx *donor.DeviceContext, b *board.Board, ids firmware.DeviceIDs) (*pci.ConfigSpace, uint32) {
+func (ow *OutputWriter) scrubAndVary(ctx *donor.DeviceContext, b *board.Board, ids firmware.DeviceIDs) (*pci.ConfigSpace, uint32, *overlay.Map) {
 	scrubbedCS, overlayMap := scrub.ScrubConfigSpaceWithOverlay(ctx.ConfigSpace, b)
 	if overlayMap.Count() > 0 {
 		slog.Info("config space scrubbed", "modifications", overlayMap.Count())
@@ -103,7 +111,7 @@ func (ow *OutputWriter) scrubAndVary(ctx *donor.DeviceContext, b *board.Board, i
 	varSeed := variance.BuildVarianceSeed(ids.VendorID, ids.DeviceID, entropy)
 	variance.Apply(scrubbedCS, nil, variance.DefaultConfig(varSeed))
 
-	return scrubbedCS, entropy
+	return scrubbedCS, entropy, overlayMap
 }
 
 // writeConfigSpaceArtifacts generates COE files for config space, writemask, and BAR content.
@@ -204,6 +212,8 @@ func ListOutputFiles() []string {
 		"device_config.sv",
 		"config_space_init.hex",
 		"msix_table_init.hex",
+		"scrub_diff_report.txt",
+		"build_manifest.json",
 	}
 }
 

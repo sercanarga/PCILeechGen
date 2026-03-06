@@ -108,3 +108,74 @@ func fileHash(path string) (string, error) {
 	}
 	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
+
+// LoadManifest reads a build manifest from a JSON file.
+func LoadManifest(path string) (*BuildManifest, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read manifest: %w", err)
+	}
+	var m BuildManifest
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, fmt.Errorf("failed to parse manifest: %w", err)
+	}
+	return &m, nil
+}
+
+// ManifestVerification holds the result of verifying a build manifest.
+type ManifestVerification struct {
+	Passed  []string
+	Failed  []string
+	Missing []string
+}
+
+func (v *ManifestVerification) OK() bool {
+	return len(v.Failed) == 0 && len(v.Missing) == 0
+}
+
+func (v *ManifestVerification) Summary() string {
+	return fmt.Sprintf("%d passed, %d failed, %d missing",
+		len(v.Passed), len(v.Failed), len(v.Missing))
+}
+
+// VerifyManifest checks that all files in the manifest exist and match their checksums.
+func VerifyManifest(manifestPath, outputDir string) (*ManifestVerification, error) {
+	m, err := LoadManifest(manifestPath)
+	if err != nil {
+		return nil, err
+	}
+
+	v := &ManifestVerification{}
+
+	for _, entry := range m.Files {
+		filePath := filepath.Join(outputDir, entry.Name)
+
+		info, err := os.Stat(filePath)
+		if err != nil {
+			v.Missing = append(v.Missing, entry.Name)
+			continue
+		}
+
+		if info.Size() != entry.Size {
+			v.Failed = append(v.Failed,
+				fmt.Sprintf("%s: size mismatch (got %d, expected %d)", entry.Name, info.Size(), entry.Size))
+			continue
+		}
+
+		hash, err := fileHash(filePath)
+		if err != nil {
+			v.Failed = append(v.Failed, fmt.Sprintf("%s: hash error: %v", entry.Name, err))
+			continue
+		}
+
+		if hash != entry.SHA256 {
+			v.Failed = append(v.Failed,
+				fmt.Sprintf("%s: SHA256 mismatch", entry.Name))
+			continue
+		}
+
+		v.Passed = append(v.Passed, entry.Name)
+	}
+
+	return v, nil
+}

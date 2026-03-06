@@ -61,7 +61,8 @@
 - Full 4KB shadow + scrubbing pipeline
 - Per-register write masks
 - Power Management (D-state + NoSoftReset)
-- Vendor Quirks (Renesas firmware status, vendor-specific region zeroing)
+- Vendor Quirks (Renesas firmware status)
+- Vendor-Specific Capability Preservation (Intel, Realtek, Broadcom, Qualcomm, ASMedia)
 
 </td><td valign="top">
 
@@ -89,6 +90,8 @@
 - Post-Build Validation (output files, SV IDs, HEX/COE format)
 - Vivado Build Report (error categorization, benign warning filter)
 - Build Manifest (JSON with SHA256 checksums)
+- Manifest Verification (`verify-manifest` — integrity check)
+- Config Space Diff Report (per-byte change log with reasons)
 
 </td></tr>
 </table>
@@ -293,9 +296,18 @@ Verifies generated artifacts match the donor device context.
 
 ```bash
 ./bin/pcileechgen validate --json device_context.json --output-dir pcileech_datastore/
+./bin/pcileechgen validate --json device_context.json --board PCIeSquirrel  # exact build match
 ```
 
 > Checks include: output file existence, vendor/device ID presence in SV, HEX line format, COE structure.
+
+### `verify-manifest` — Verify Build Integrity
+
+Checks that all build artifacts match their SHA256 checksums in the manifest.
+
+```bash
+./bin/pcileechgen verify-manifest --manifest pcileech_datastore/build_manifest.json --output-dir pcileech_datastore/
+```
 
 ### `version` — Print Version
 
@@ -335,7 +347,6 @@ The build command generates the following directory structure:
 ```
 pcileech_datastore/
 ├── device_context.json                  # Donor device snapshot
-├── build_manifest.json                  # File checksums + build metadata
 ├── pcileech_cfgspace.coe                # 4KB config space (scrubbed)
 ├── pcileech_cfgspace_writemask.coe      # Per-register write masks
 ├── pcileech_bar_zero4k.coe             # BAR0 content snapshot
@@ -348,6 +359,8 @@ pcileech_datastore/
 ├── config_space_init.hex               # Config space init ($readmemh)
 ├── msix_table_init.hex                 # MSI-X table init ($readmemh)
 ├── identify_init.hex                   # NVMe Identify ROM (if NVMe)
+├── scrub_diff_report.txt               # Config space change log (per-byte)
+├── build_manifest.json                 # File checksums + build metadata
 ├── vivado_generate_project.tcl         # Project creation script
 ├── vivado_build.tcl                    # Synthesis script
 ├── src/                                # Patched board SV sources
@@ -360,7 +373,7 @@ pcileech_datastore/
 
 ```
 cmd/pcileechgen/              CLI entry point
-│                             scan, check, build, validate, boards, version
+│                             scan, check, build, validate, verify-manifest, boards, version
 │
 internal/
 ├── board/                    Board registry (embedded JSON, 17 boards)
@@ -386,6 +399,7 @@ internal/
 make test             # Run all tests
 make test-coverage    # Run tests with coverage report
 make lint             # Run linter
+make check            # Run vet + lint + test (all checks)
 ```
 
 ## Special Thanks
