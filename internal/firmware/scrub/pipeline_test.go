@@ -10,8 +10,8 @@ import (
 
 func TestDefaultPipeline_HasAllPasses(t *testing.T) {
 	pipeline := defaultPipeline()
-	if len(pipeline) != 14 {
-		t.Errorf("expected 14 passes, got %d", len(pipeline))
+	if len(pipeline) != 16 {
+		t.Errorf("expected 16 passes, got %d", len(pipeline))
 	}
 
 	names := make(map[string]bool)

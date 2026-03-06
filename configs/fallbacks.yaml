@@ -20,9 +20,9 @@ device_classes:
       - msix
       - pcie
     bar0_defaults:
-      # common NIC register defaults
       0x00000000: 0x00000000  # CTRL
-      0x00000008: 0x00000000  # STATUS
+      0x00000008: 0x00000082  # STATUS — link up + 1000Mb
+      0x00000010: 0x00000300  # EECD — Auto-Read Done + EEPROM Present
       0x00000018: 0x00000000  # CTRL_EXT
 
   # NVMe controllers (01:08)
@@ -75,3 +75,62 @@ device_classes:
       - power_management
       - msi
       - pcie
+
+  # GPU / VGA controllers (03:00)
+  "0300":
+    description: "GPU / VGA controller"
+    bar0_size: 16777216      # 16MB typical MMIO window
+    link_speed: 3            # Gen3
+    link_width: 16
+    capabilities:
+      - power_management
+      - msix
+      - pcie
+    bar0_defaults:
+      0x00000000: 0x00000000  # PMC_BOOT
+      0x00000200: 0xFFFFFFFF  # PMC_ENABLE
+
+  # SATA / AHCI controllers (01:06)
+  "0106":
+    description: "SATA AHCI controller"
+    bar0_size: 8192          # 8KB typical ABAR
+    link_speed: 2            # Gen2
+    link_width: 1
+    capabilities:
+      - power_management
+      - msi
+      - pcie
+      - sata_data_index
+    bar0_defaults:
+      0x00000000: 0x40341F05  # CAP
+      0x00000004: 0x80000000  # GHC (AE=1)
+      0x00000010: 0x00010301  # VS (1.3.1)
+      0x00000128: 0x00000113  # PxSSTS (device detected)
+
+  # Wi-Fi controllers (02:80)
+  "0280":
+    description: "Wi-Fi controller"
+    bar0_size: 8192          # 8KB typical
+    link_speed: 2            # Gen2
+    link_width: 1
+    capabilities:
+      - power_management
+      - msix
+      - pcie
+    bar0_defaults:
+      0x00000024: 0x00000080  # GP_CTL (INIT_DONE)
+      0x00000054: 0x00000001  # UCODE_DRV_GP1 (firmware loaded)
+
+  # Thunderbolt controllers (0C:80)
+  "0C80":
+    description: "Thunderbolt controller"
+    bar0_size: 65536         # 64KB typical
+    link_speed: 3            # Gen3
+    link_width: 4
+    capabilities:
+      - power_management
+      - msix
+      - pcie
+    bar0_defaults:
+      0x00000008: 0x00000001  # LC_STS (READY)
+      0x00000010: 0x00000000  # SECURITY_LEVEL (none)

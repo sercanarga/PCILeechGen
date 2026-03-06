@@ -113,6 +113,9 @@ module pcileech_tlps128_bar_controller(
     wire [31:0] bar0_emu_data;
     wire        bar0_emu_valid;
     wire        bar0_emu_ready = 1'b1;
+
+    // write acknowledge from latency emulator
+    wire        bar0_wr_ack;
 {{ end }}
 {{ if .MSIXConfig }}
     // MSI-X intermediate wires
@@ -234,7 +237,10 @@ module pcileech_tlps128_bar_controller(
         .rsp_ctx        ( bar0_emu_ctx                  ),
         .rsp_data       ( bar0_emu_data                 ),
 {{ end }}
-        .rsp_ready      ( bar0_emu_ready                )
+        .rsp_ready      ( bar0_emu_ready                ),
+        .wr_valid       ( wr_valid && wr_bar[0]         ),
+        .wr_addr        ( wr_addr                       ),
+        .wr_ack         ( bar0_wr_ack                   )
     );
 {{ end }}
 
