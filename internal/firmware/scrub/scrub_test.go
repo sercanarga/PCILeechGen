@@ -754,6 +754,113 @@ func TestZeroVendorRegisters_ClearsUncovered(t *testing.T) {
 	}
 }
 
+func TestSecondaryPCIeNotFiltered(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+
+	// AER → SecondaryPCIe → LTR
+	cs.WriteU32(0x100, makeExtCapHeader(pci.ExtCapIDAER, 1, 0x150))
+	cs.WriteU32(0x150, makeExtCapHeader(pci.ExtCapIDSecondaryPCIe, 1, 0x200))
+	cs.WriteU32(0x200, makeExtCapHeader(pci.ExtCapIDLTR, 1, 0))
+
+	removed := FilterExtCapabilities(cs)
+	if len(removed) != 0 {
+		t.Errorf("SecondaryPCIe should NOT be filtered, but removed: %v", removed)
+	}
+
+	// verify SecondaryPCIe still in chain
+	caps := pci.ParseExtCapabilities(cs)
+	found := false
+	for _, c := range caps {
+		if c.ID == pci.ExtCapIDSecondaryPCIe {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("SecondaryPCIe should remain in the ext cap chain")
+	}
+}
+
+func TestSamsungVendorWhitelist(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+
+	cs.WriteU16(0x00, 0x144D) // Samsung
+	cs.WriteU16(0x06, 0x0010) // caps present
+	cs.WriteU8(0x34, 0x40)    // cap ptr
+	cs.WriteU8(0x40, pci.CapIDPowerManagement)
+	cs.WriteU8(0x41, 0x00)
+	cs.WriteU16(0x42, 0xC9C3)
+	cs.WriteU16(0x44, 0x0008)
+
+	// write vendor data in Samsung whitelist range (0x40-0x50)
+	cs.WriteU32(0x48, 0xDEADBEEF)
+	cs.WriteU32(0x4C, 0xCAFEBABE)
+	// write vendor data outside whitelist
+	cs.WriteU32(0xB0, 0x12345678)
+
+	scrubbed := ScrubConfigSpace(cs, nil)
+
+	// Samsung whitelist range should be preserved
+	if scrubbed.ReadU32(0x48) != 0xDEADBEEF {
+		t.Errorf("Samsung vendor region at 0x48 should be preserved, got 0x%08x", scrubbed.ReadU32(0x48))
+	}
+	if scrubbed.ReadU32(0x4C) != 0xCAFEBABE {
+		t.Errorf("Samsung vendor region at 0x4C should be preserved, got 0x%08x", scrubbed.ReadU32(0x4C))
+	}
+	// outside whitelist should be zeroed
+	if scrubbed.ReadU32(0xB0) != 0 {
+		t.Errorf("non-whitelisted register at 0xB0 should be zeroed, got 0x%08x", scrubbed.ReadU32(0xB0))
+	}
+}
+
+func TestL1PMSubstatesNotFiltered(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+
+	// AER → L1PM → LTR
+	cs.WriteU32(0x100, makeExtCapHeader(pci.ExtCapIDAER, 1, 0x150))
+	cs.WriteU32(0x150, makeExtCapHeader(pci.ExtCapIDL1PMSubstates, 1, 0x200))
+	cs.WriteU32(0x200, makeExtCapHeader(pci.ExtCapIDLTR, 1, 0))
+
+	removed := FilterExtCapabilities(cs)
+	if len(removed) != 0 {
+		t.Errorf("L1PM Substates should NOT be filtered (handled by scrubASPMPass), but removed: %v", removed)
+	}
+
+	caps := pci.ParseExtCapabilities(cs)
+	found := false
+	for _, c := range caps {
+		if c.ID == pci.ExtCapIDL1PMSubstates {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("L1PM Substates should remain in the ext cap chain")
+	}
+}
+
+func TestExtCapFilterReasons(t *testing.T) {
+	// every entry in unsafeExtCaps must have both Name and Reason
+	for id, f := range unsafeExtCaps {
+		if f.Name == "" {
+			t.Errorf("ext cap 0x%04x has empty Name", id)
+		}
+		if f.Reason == "" {
+			t.Errorf("ext cap 0x%04x (%s) has empty Reason", id, f.Name)
+		}
+	}
+	// verify convenience accessors
+	if UnsafeExtCapReason(pci.ExtCapIDSRIOV) == "" {
+		t.Error("SR-IOV should have a non-empty reason")
+	}
+	if UnsafeExtCapReason(0xFFFF) != "" {
+		t.Error("unknown cap should return empty reason")
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsSubstring(s, substr))
 }

@@ -2,9 +2,56 @@ package scrub
 
 import (
 	"fmt"
+	"log/slog"
 
 	"github.com/sercanarga/pcileechgen/internal/pci"
 )
+
+// extCapFilter describes a dangerous ext cap and why it must be removed.
+type extCapFilter struct {
+	Name   string
+	Reason string
+}
+
+// unsafeExtCaps lists extended capabilities requiring active FPGA hardware
+// emulation that the device cannot provide. Read-only / informational caps
+// (AER, DSN, LTR, SecondaryPCIe, …) are safe to keep.
+//
+// Caps whose control registers are neutralised by other scrub passes
+// (e.g. L1PM Substates → scrubASPMPass) must NOT appear here.
+var unsafeExtCaps = map[uint16]extCapFilter{
+	pci.ExtCapIDSRIOV:        {"SR-IOV", "VF creation requires FPGA hardware support"},
+	pci.ExtCapIDMRIOV:        {"MR-IOV", "multi-root IOV management unsupported"},
+	pci.ExtCapIDResizableBAR: {"Resizable BAR", "dynamic BAR resizing unsupported"},
+	pci.ExtCapIDATS:          {"ATS", "IOMMU address translation unsupported"},
+	pci.ExtCapIDPageRequest:  {"Page Request", "IOMMU page fault handling unsupported"},
+	pci.ExtCapIDPASID:        {"PASID", "process address space management unsupported"},
+	pci.ExtCapIDDPC:          {"DPC", "downstream port containment signaling unsupported"},
+	pci.ExtCapIDPTM:          {"PTM", "hardware precision timestamping unsupported"},
+	pci.ExtCapIDMulticast:    {"Multicast", "TLP multicast routing unsupported"},
+}
+
+// IsUnsafeExtCap returns true if the given ext cap ID will be filtered out.
+func IsUnsafeExtCap(id uint16) bool {
+	_, ok := unsafeExtCaps[id]
+	return ok
+}
+
+// UnsafeExtCapName returns the human name for a filtered cap, or empty string.
+func UnsafeExtCapName(id uint16) string {
+	if f, ok := unsafeExtCaps[id]; ok {
+		return f.Name
+	}
+	return ""
+}
+
+// UnsafeExtCapReason returns why the cap is filtered, or empty string.
+func UnsafeExtCapReason(id uint16) string {
+	if f, ok := unsafeExtCaps[id]; ok {
+		return f.Reason
+	}
+	return ""
+}
 
 // extCapEntry represents one entry in the extended capability linked list.
 type extCapEntry struct {
@@ -144,7 +191,11 @@ func FilterExtCapabilities(cs *pci.ConfigSpace) []string {
 		if IsUnsafeExtCap(e.id) {
 			removeSet[i] = true
 			name := UnsafeExtCapName(e.id)
+			reason := UnsafeExtCapReason(e.id)
 			removed = append(removed, fmt.Sprintf("%s (0x%04x) at offset 0x%03x", name, e.id, e.offset))
+			slog.Info("filtering ext cap",
+				"name", name, "id", fmt.Sprintf("0x%04x", e.id),
+				"offset", fmt.Sprintf("0x%03x", e.offset), "reason", reason)
 		}
 	}
 

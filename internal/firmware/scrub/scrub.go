@@ -15,36 +15,9 @@ const (
 	statusMask = 0x06F0 // keep 66MHz, FastB2B, CapList, DevSel bits
 )
 
-// ext caps the FPGA can't emulate
-var unsafeExtCaps = map[uint16]string{
-	pci.ExtCapIDSRIOV:         "SR-IOV",
-	pci.ExtCapIDMRIOV:         "MR-IOV",
-	pci.ExtCapIDResizableBAR:  "Resizable BAR",
-	pci.ExtCapIDATS:           "ATS",
-	pci.ExtCapIDPageRequest:   "Page Request",
-	pci.ExtCapIDPASID:         "PASID",
-	pci.ExtCapIDL1PMSubstates: "L1 PM Substates",
-	pci.ExtCapIDDPC:           "DPC",
-	pci.ExtCapIDPTM:           "PTM",
-	pci.ExtCapIDSecondaryPCIe: "Secondary PCIe",
-	pci.ExtCapIDMulticast:     "Multicast",
-}
-
 const BRAMSize = 4096
 
 const bar0SizeMask = 0xFFFFF000 // 4 KB aligned
-
-func IsUnsafeExtCap(id uint16) bool {
-	_, ok := unsafeExtCaps[id]
-	return ok
-}
-
-func UnsafeExtCapName(id uint16) string {
-	if name, ok := unsafeExtCaps[id]; ok {
-		return name
-	}
-	return ""
-}
 
 // min sizes (bytes) for standard PCI caps
 var capMinSize = map[uint8]int{
@@ -100,6 +73,7 @@ var knownVendorCaps = []vendorCapRange{
 	{0x10EC, 0x40, 0x60, "Realtek PHY control"},
 	{0x10EC, 0x80, 0xA0, "Realtek LED/WOL config"},
 	{0x14E4, 0x48, 0x60, "Broadcom device control"},
+	{0x144D, 0x40, 0x50, "Samsung NVMe PM region"},
 	{0x168C, 0x40, 0x70, "Qualcomm Atheros radio config"},
 	{0x1912, 0xF0, 0x100, "Renesas firmware status"},
 	{0x1B21, 0x40, 0x60, "ASMedia link training"},
