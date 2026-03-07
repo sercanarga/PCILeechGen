@@ -56,7 +56,7 @@ body:
     attributes:
       label: Device Manager Error Details
       description: |
-        Right-click the device in Device Manager > Properties > Details tab. Copy the error code and any additional info shown.
+        Right-click the device in Device Manager > Properties > General tab > "Device status" section. Copy the error message shown there.
     validations:
       required: false
 
