@@ -88,11 +88,32 @@ func (c *Collector) validateBARContents(ctx *DeviceContext) error {
 	}
 
 	hasContent := false
+	allFF := false
 	for _, bar := range eligible {
-		if data, ok := ctx.BARContents[bar.Index]; ok && len(data) > 0 {
-			hasContent = true
-			break
+		data, ok := ctx.BARContents[bar.Index]
+		if !ok || len(data) == 0 {
+			continue
 		}
+		hasContent = true
+		if isAllFF(data) {
+			allFF = true
+			slog.Warn("BAR content is all 0xFF — device may be inaccessible or in D3 power state",
+				"bar", bar.Index, "bytes", len(data),
+				"class", fmt.Sprintf("0x%06X", ctx.Device.ClassCode),
+			)
+		}
+	}
+
+	if allFF && barCriticalClass(ctx.Device.ClassCode) {
+		return fmt.Errorf(
+			"BAR content for class 0x%06X is all 0xFF (driver %q). "+
+				"The device is not responding — possible causes:\n"+
+				"  • device is in D3 (sleep) power state\n"+
+				"  • IOMMU/VT-d not enabled or misconfigured\n"+
+				"  • VFIO cannot access the device memory region\n"+
+				"Without valid BAR data, Windows will produce Code 10 and DMA will not work",
+			ctx.Device.ClassCode, ctx.Device.Driver,
+		)
 	}
 
 	if !hasContent {
@@ -113,6 +134,19 @@ func (c *Collector) validateBARContents(ctx *DeviceContext) error {
 	}
 
 	return nil
+}
+
+// isAllFF returns true when every byte in the slice is 0xFF.
+func isAllFF(data []byte) bool {
+	if len(data) == 0 {
+		return false
+	}
+	for _, b := range data {
+		if b != 0xFF {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *Collector) collectConfigSpace(bdf pci.BDF) (*pci.ConfigSpace, error) {
