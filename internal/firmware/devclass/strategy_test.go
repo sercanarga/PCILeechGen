@@ -272,8 +272,8 @@ func TestEthernetStrategy_ScrubBAR(t *testing.T) {
 		t.Errorf("ERIAR should have completed bit set, got 0x%08X", eriar)
 	}
 
-	// PHYAR at 0xDA — ready flag
-	phyar := uint32(data[0xDA]) | uint32(data[0xDB])<<8 | uint32(data[0xDC])<<16 | uint32(data[0xDD])<<24
+	// PHYAR at 0xDC — ready flag
+	phyar := uint32(data[0xDC]) | uint32(data[0xDD])<<8 | uint32(data[0xDE])<<16 | uint32(data[0xDF])<<24
 	if phyar&0x80000000 == 0 {
 		t.Errorf("PHYAR should have ready bit set, got 0x%08X", phyar)
 	}
