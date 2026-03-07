@@ -15,12 +15,12 @@ func (s *ethernetStrategy) ScrubBAR(data []byte) {
 	if len(data) >= 0x08 {
 		util.WriteLE32(data, 0x04, 0x000000EF) // MAC4-5
 	}
-	data[0x37] = 0x0C // ChipCmd: RxEn | TxEn
+	data[0x37] = 0x0C // RxEn | TxEn
 	if len(data) >= 0x40 {
 		util.WriteLE32(data, 0x3C, 0x00000000) // IntrMask off
 	}
 	if len(data) >= 0x44 {
-		util.WriteLE32(data, 0x40, 0x2F000000) // TxConfig (8125B rev)
+		util.WriteLE32(data, 0x40, 0x2F000000) // TxConfig
 	}
 	if len(data) >= 0x48 {
 		util.WriteLE32(data, 0x44, 0x00000E00) // RxConfig
@@ -33,16 +33,13 @@ func (s *ethernetStrategy) ScrubBAR(data []byte) {
 		util.WriteLE32(data, 0x58, 0x00002060) // CPlusCmd
 	}
 	if len(data) >= 0x70 {
-		util.WriteLE32(data, 0x6C, 0x00003010) // PHYStatus: link+2.5G+FDX
+		util.WriteLE32(data, 0x6C, 0x00003010) // PHYStatus
 	}
-	if len(data) >= 0xDE {
-		util.WriteLE32(data, 0xDA, 0x80000000) // PHYAR ready
-	}
-	if len(data) >= 0xE6 {
-		util.WriteLE32(data, 0xE2, 0x00000000) // IntrMitigate (write first, overlaps ERIAR)
+	if len(data) >= 0xE0 {
+		util.WriteLE32(data, 0xDC, 0x80000000) // PHYAR
 	}
 	if len(data) >= 0xE4 {
-		util.WriteLE32(data, 0xE0, 0x80000000) // ERIAR done
+		util.WriteLE32(data, 0xE0, 0x80000000) // ERIAR
 	}
 	if len(data) >= 0x100 {
 		util.WriteLE32(data, 0xFC, 0x00000000) // RxMissed
@@ -94,9 +91,8 @@ func ethernetProfile() *DeviceProfile {
 			{Offset: 0x50, Width: 4, Name: "RXMAXSIZE", Reset: 0x00003FFF, RWMask: 0x00003FFF},
 			{Offset: 0x58, Width: 4, Name: "CPLUSCMD", Reset: 0x00002060, RWMask: 0x0000FFFF},
 			{Offset: 0x6C, Width: 4, Name: "PHYSTATUS", Reset: 0x00003010, RWMask: 0x00000000},
-			{Offset: 0xDA, Width: 4, Name: "PHYAR", Reset: 0x80000000, RWMask: 0xFFFFFFFF},
+			{Offset: 0xDC, Width: 4, Name: "PHYAR", Reset: 0x80000000, RWMask: 0xFFFFFFFF},
 			{Offset: 0xE0, Width: 4, Name: "ERIAR", Reset: 0x80000000, RWMask: 0xFFFFFFFF},
-			{Offset: 0xE2, Width: 4, Name: "INTRMITIGATE", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
 			{Offset: 0xFC, Width: 4, Name: "RXMISSED", Reset: 0x00000000, RWMask: 0x00000000},
 		},
 

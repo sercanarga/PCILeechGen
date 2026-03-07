@@ -224,6 +224,9 @@ func TestBuildBARModel_Ethernet_PHYAR(t *testing.T) {
 	model := buildEthernetBARModel(nil)
 	for _, reg := range model.Registers {
 		if reg.Name == "PHYAR" {
+			if reg.Offset != 0xDC {
+				t.Errorf("PHYAR offset: got 0x%X, want 0xDC", reg.Offset)
+			}
 			if reg.Reset&0x80000000 == 0 {
 				t.Error("PHYAR should have ready bit set")
 			}
@@ -231,6 +234,27 @@ func TestBuildBARModel_Ethernet_PHYAR(t *testing.T) {
 		}
 	}
 	t.Error("PHYAR register not found")
+}
+
+func TestBuildBARModel_Ethernet_DWORDAligned(t *testing.T) {
+	model := buildEthernetBARModel(nil)
+	for _, reg := range model.Registers {
+		if reg.Offset%4 != 0 {
+			t.Errorf("register %s at offset 0x%X is not DWORD-aligned (must be multiple of 4)", reg.Name, reg.Offset)
+		}
+	}
+}
+
+func TestBuildBARModel_Ethernet_NoDuplicateAlignedOffsets(t *testing.T) {
+	model := buildEthernetBARModel(nil)
+	seen := make(map[uint32]string)
+	for _, reg := range model.Registers {
+		aligned := (reg.Offset / 4) * 4
+		if prev, ok := seen[aligned]; ok {
+			t.Errorf("registers %s and %s both map to aligned offset 0x%X — SV case conflict", prev, reg.Name, aligned)
+		}
+		seen[aligned] = reg.Name
+	}
 }
 
 func TestBuildBARModel_Audio(t *testing.T) {
