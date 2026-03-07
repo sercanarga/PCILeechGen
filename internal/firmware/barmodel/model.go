@@ -183,52 +183,59 @@ func populateResetValues(regs []BARRegister, barData []byte) {
 	}
 }
 
-// buildEthernetBARModel creates a register map for Intel-style Ethernet controllers.
-// Based on Intel I210/I350 datasheet register layout.
+// RTL8125 register map (r8169 driver layout).
 func buildEthernetBARModel(barData []byte) *BARModel {
 	regs := []BARRegister{
-		{Offset: 0x00, Width: 4, Name: "CTRL", RWMask: 0xFFFFFFFF},
-		{Offset: 0x08, Width: 4, Name: "STATUS", RWMask: 0x00000000},
-		{Offset: 0x10, Width: 4, Name: "EECD", RWMask: 0x000000FF},
-		{Offset: 0x14, Width: 4, Name: "EERD", RWMask: 0x0000FFFF},
-		{Offset: 0x18, Width: 4, Name: "CTRL_EXT", RWMask: 0xFFFFFFFF},
-		{Offset: 0x20, Width: 4, Name: "MDIC", RWMask: 0x0FFFFFFF},
-		{Offset: 0x28, Width: 4, Name: "FCAL", RWMask: 0xFFFFFFFF},
-		{Offset: 0x2C, Width: 4, Name: "FCAH", RWMask: 0x0000FFFF},
-		{Offset: 0xC0, Width: 4, Name: "ICR", RWMask: 0x00000000},
-		{Offset: 0xC8, Width: 4, Name: "ICS", RWMask: 0xFFFFFFFF},
-		{Offset: 0xD0, Width: 4, Name: "IMS", RWMask: 0xFFFFFFFF},
-		{Offset: 0xD8, Width: 4, Name: "IMC", RWMask: 0xFFFFFFFF},
-		{Offset: 0x100, Width: 4, Name: "RCTL", RWMask: 0xFFFFFFFF},
-		{Offset: 0x400, Width: 4, Name: "TCTL", RWMask: 0xFFFFFFFF},
-		// MAC address — needs 32KB BAR to be reachable
-		{Offset: 0x5400, Width: 4, Name: "RAL0", RWMask: 0xFFFFFFFF},
-		{Offset: 0x5404, Width: 4, Name: "RAH0", RWMask: 0xFFFFFFFF},
+		{Offset: 0x00, Width: 4, Name: "MAC0_3", RWMask: 0xFFFFFFFF},
+		{Offset: 0x04, Width: 4, Name: "MAC4_5", RWMask: 0xFFFFFFFF},
+		{Offset: 0x34, Width: 4, Name: "CHIPCMD_DW", RWMask: 0x00000000}, // byte 0x37 = ChipCmd
+		{Offset: 0x3C, Width: 4, Name: "INTRMASK", RWMask: 0xFFFFFFFF},
+		{Offset: 0x3E, Width: 4, Name: "INTRSTATUS", RWMask: 0x00000000}, // read-clear
+		{Offset: 0x40, Width: 4, Name: "TXCONFIG", RWMask: 0x00FF0000},
+		{Offset: 0x44, Width: 4, Name: "RXCONFIG", RWMask: 0xFFFF7FFF},
+		{Offset: 0x48, Width: 4, Name: "TIMER", RWMask: 0xFFFFFFFF},
+		{Offset: 0x50, Width: 4, Name: "RXMAXSIZE", RWMask: 0x00003FFF},
+		{Offset: 0x58, Width: 4, Name: "CPLUSCMD", RWMask: 0x0000FFFF},
+		{Offset: 0x6C, Width: 4, Name: "PHYSTATUS", RWMask: 0x00000000}, // RO
+		{Offset: 0xDA, Width: 4, Name: "PHYAR", RWMask: 0xFFFFFFFF},     // bit31 = ready
+		{Offset: 0xE0, Width: 4, Name: "ERIAR", RWMask: 0xFFFFFFFF},     // bit31 = done
+		{Offset: 0xE2, Width: 4, Name: "INTRMITIGATE", RWMask: 0xFFFFFFFF},
+		{Offset: 0xFC, Width: 4, Name: "RXMISSED", RWMask: 0x00000000}, // RO
 	}
 
 	populateResetValues(regs, barData)
 
 	for i := range regs {
 		switch regs[i].Offset {
-		case 0x08:
-			regs[i].Reset |= 0x00000082 // STATUS: link up + 1000Mb
-		case 0x10:
-			regs[i].Reset |= 0x00000300 // EECD: Auto-Read Done + EEPROM Present
-		case 0x20:
-			regs[i].Reset |= 0x10000000 // MDIC: Ready bit
-		case 0x5400:
+		case 0x00:
 			if regs[i].Reset == 0 {
-				regs[i].Reset = 0xADDE0200 // locally-administered MAC low
+				regs[i].Reset = 0xBEADDE02
 			}
-		case 0x5404:
+		case 0x04:
 			if regs[i].Reset == 0 {
-				regs[i].Reset = 0x8000EFBE // MAC high + AV (address valid)
+				regs[i].Reset = 0x000000EF
 			}
+		case 0x34:
+			regs[i].Reset |= 0x0C000000 // RxEn | TxEn
+		case 0x40:
+			regs[i].Reset |= 0x2F000000 // 8125B revision
+		case 0x44:
+			regs[i].Reset |= 0x00000E00
+		case 0x50:
+			regs[i].Reset |= 0x00003FFF
+		case 0x58:
+			regs[i].Reset |= 0x00002060
+		case 0x6C:
+			regs[i].Reset |= 0x00003010 // link + 2.5G + FDX
+		case 0xDA:
+			regs[i].Reset |= 0x80000000
+		case 0xE0:
+			regs[i].Reset |= 0x80000000
 		}
 	}
 
 	return &BARModel{
-		Size:      32768, // 32KB to reach RAL0/RAH0 at 0x5400
+		Size:      4096,
 		Registers: regs,
 	}
 }

@@ -196,11 +196,11 @@ func audioConfig() *SVGeneratorConfig {
 func ethernetConfig() *SVGeneratorConfig {
 	return &SVGeneratorConfig{
 		DeviceIDs: firmware.DeviceIDs{
-			VendorID:       0x8086,
-			DeviceID:       0x15B7,
-			SubsysVendorID: 0x8086,
-			SubsysDeviceID: 0x0000,
-			RevisionID:     0x02,
+			VendorID:       0x10EC,
+			DeviceID:       0x8125,
+			SubsysVendorID: 0x10EC,
+			SubsysDeviceID: 0x8125,
+			RevisionID:     0x04,
 			ClassCode:      0x020000,
 			HasPCIeCap:     true,
 			LinkSpeed:      3,
@@ -209,12 +209,12 @@ func ethernetConfig() *SVGeneratorConfig {
 		ClassCode:    0x020000,
 		DeviceClass:  "ethernet",
 		BuildEntropy: 0xFEEDFACE,
-		PRNGSeeds:    BuildPRNGSeeds(0x8086, 0x15B7, 0xFEEDFACE),
+		PRNGSeeds:    BuildPRNGSeeds(0x10EC, 0x8125, 0xFEEDFACE),
 		BARModel: &barmodel.BARModel{
-			Size: 32768,
+			Size: 4096,
 			Registers: []barmodel.BARRegister{
-				{Offset: 0x00, Width: 4, Name: "CTRL", RWMask: 0xFFFFFFFF, Reset: 0x00000000},
-				{Offset: 0x08, Width: 4, Name: "STATUS", RWMask: 0x00000000, Reset: 0x00000082},
+				{Offset: 0x00, Width: 4, Name: "MAC0_3", RWMask: 0xFFFFFFFF, Reset: 0xBEADDE02},
+				{Offset: 0x6C, Width: 4, Name: "PHYSTATUS", RWMask: 0x00000000, Reset: 0x00003010},
 			},
 		},
 	}
@@ -256,7 +256,7 @@ func TestGenerateBarImplDeviceSV_Ethernet(t *testing.T) {
 	}
 	// Ethernet has no FSM, but should have registers
 	if !strings.Contains(result, "reg_0x00000000") {
-		t.Error("Ethernet output should contain CTRL register")
+		t.Error("Ethernet output should contain MAC0_3 register")
 	}
 	// Ethernet should NOT have NVMe FSM
 	if strings.Contains(result, "cc_en_prev") {

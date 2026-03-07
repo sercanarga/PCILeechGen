@@ -15,3 +15,15 @@ func LowestBar[V any](m map[int]V) V {
 	}
 	return m[bestIdx]
 }
+
+// LargestBar returns the longest byte slice in the map.
+// Needed when the main MMIO BAR isn't at index 0.
+func LargestBar(m map[int][]byte) []byte {
+	var best []byte
+	for _, v := range m {
+		if len(v) > len(best) {
+			best = v
+		}
+	}
+	return best
+}

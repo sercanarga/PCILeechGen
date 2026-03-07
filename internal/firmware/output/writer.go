@@ -249,7 +249,7 @@ func (ow *OutputWriter) writeSVModules(ctx *donor.DeviceContext, scrubbedCS *pci
 
 // buildSVConfig assembles the SVGeneratorConfig from donor context.
 func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, ids firmware.DeviceIDs, entropy uint32) *svgen.SVGeneratorConfig {
-	barData := firmware.LowestBar(ctx.BARContents)
+	barData := firmware.LargestBar(ctx.BARContents)
 	var barProfile *donor.BARProfile
 	if ctx.BARProfiles != nil {
 		barProfile = firmware.LowestBar(ctx.BARProfiles)

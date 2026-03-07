@@ -227,7 +227,7 @@ func TestXHCIStrategy_ScrubBAR_TooShort(t *testing.T) {
 
 func TestEthernetStrategy_ScrubBAR(t *testing.T) {
 	s := &ethernetStrategy{}
-	data := make([]byte, 0xDE)
+	data := make([]byte, 0x100)
 
 	s.ScrubBAR(data)
 
@@ -252,6 +252,30 @@ func TestEthernetStrategy_ScrubBAR(t *testing.T) {
 	txCfg := uint32(data[0x40]) | uint32(data[0x41])<<8 | uint32(data[0x42])<<16 | uint32(data[0x43])<<24
 	if txCfg != 0x2F000000 {
 		t.Errorf("TxConfig should be 0x2F000000, got 0x%08X", txCfg)
+	}
+
+	// RxMaxSize at 0x50
+	rxMax := uint32(data[0x50]) | uint32(data[0x51])<<8 | uint32(data[0x52])<<16 | uint32(data[0x53])<<24
+	if rxMax != 0x00003FFF {
+		t.Errorf("RxMaxSize should be 0x3FFF, got 0x%08X", rxMax)
+	}
+
+	// CPlusCmd at 0x58
+	cpCmd := uint32(data[0x58]) | uint32(data[0x59])<<8 | uint32(data[0x5A])<<16 | uint32(data[0x5B])<<24
+	if cpCmd != 0x00002060 {
+		t.Errorf("CPlusCmd should be 0x2060, got 0x%08X", cpCmd)
+	}
+
+	// ERIAR at 0xE0 — completed flag
+	eriar := uint32(data[0xE0]) | uint32(data[0xE1])<<8 | uint32(data[0xE2])<<16 | uint32(data[0xE3])<<24
+	if eriar&0x80000000 == 0 {
+		t.Errorf("ERIAR should have completed bit set, got 0x%08X", eriar)
+	}
+
+	// PHYAR at 0xDA — ready flag
+	phyar := uint32(data[0xDA]) | uint32(data[0xDB])<<8 | uint32(data[0xDC])<<16 | uint32(data[0xDD])<<24
+	if phyar&0x80000000 == 0 {
+		t.Errorf("PHYAR should have ready bit set, got 0x%08X", phyar)
 	}
 }
 

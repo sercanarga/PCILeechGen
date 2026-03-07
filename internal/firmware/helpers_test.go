@@ -63,6 +63,35 @@ func TestLowestBar_Profile_PicksLowest(t *testing.T) {
 	}
 }
 
+func TestLargestBar_EmptyMap(t *testing.T) {
+	if LargestBar(nil) != nil {
+		t.Error("nil map should return nil")
+	}
+	if LargestBar(map[int][]byte{}) != nil {
+		t.Error("empty map should return nil")
+	}
+}
+
+func TestLargestBar_SingleEntry(t *testing.T) {
+	data := []byte{0x01, 0x02, 0x03}
+	result := LargestBar(map[int][]byte{2: data})
+	if len(result) != 3 {
+		t.Errorf("should return single entry, got len=%d", len(result))
+	}
+}
+
+func TestLargestBar_PicksLargest(t *testing.T) {
+	bar0 := make([]byte, 256)   // IO BAR (small)
+	bar2 := make([]byte, 65536) // MMIO BAR (large)
+	bar0[0] = 0xAA
+	bar2[0] = 0xBB
+
+	result := LargestBar(map[int][]byte{0: bar0, 2: bar2})
+	if len(result) != 65536 || result[0] != 0xBB {
+		t.Errorf("should pick BAR2 (largest), got len=%d first=0x%02X", len(result), result[0])
+	}
+}
+
 func TestExtractDeviceIDs_ClassCode(t *testing.T) {
 	cs := pci.NewConfigSpace()
 	cs.Size = pci.ConfigSpaceSize

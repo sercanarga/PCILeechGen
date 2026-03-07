@@ -85,7 +85,7 @@ func GenerateWritemaskCOE(cs *pci.ConfigSpace) string {
 func GenerateBarContentCOE(barContents map[int][]byte) string {
 	words := make([]uint32, shadowCfgSpaceWords)
 
-	data := firmware.LowestBar(barContents)
+	data := firmware.LargestBar(barContents)
 	if data != nil {
 		for i := 0; i+4 <= len(data) && i/4 < len(words); i += 4 {
 			words[i/4] = util.ReadLE32(data, i)
