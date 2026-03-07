@@ -1,15 +1,16 @@
-// Package barmodel provides BAR register modeling for FPGA firmware generation.
+// Package barmodel builds BAR register maps for SV codegen.
 package barmodel
 
 import (
 	"fmt"
+	"log/slog"
 
 	"github.com/sercanarga/pcileechgen/internal/donor"
 	"github.com/sercanarga/pcileechgen/internal/firmware/devclass"
 	"github.com/sercanarga/pcileechgen/internal/util"
 )
 
-// BARRegister is one register in the BAR map.
+// BARRegister describes a single register inside a BAR.
 type BARRegister struct {
 	Offset uint32 // byte offset in BAR
 	Width  int    // 1, 2, or 4 bytes
@@ -18,22 +19,27 @@ type BARRegister struct {
 	Name   string // human-readable register name
 }
 
-// BARModel is the full BAR register map wired into the SV output.
+// BARModel is the complete register map that ends up in the SV template.
 type BARModel struct {
 	Size      int           // BAR size in bytes (typically 4096)
 	Registers []BARRegister // ordered by Offset
 }
 
-// BuildBARModel returns a register map for the given device class.
-// If a donor profile is available it takes priority over the spec tables.
-// Falls back to spec-based register maps for known device classes.
-// Returns nil for unknown classes without a profile.
+// BuildBARModel picks the best register map: probe data if reliable,
+// otherwise the hardcoded spec tables. Returns nil for unknown classes.
 func BuildBARModel(barData []byte, classCode uint32, profile *donor.BARProfile) *BARModel {
-	// If we have profiling data, use the learned model
+	// Prefer learned model from probing, but only if the data looks sane.
+	// VFIO sometimes reports every register as fully writable which would
+	// break things like the NVMe CC→CSTS handshake.
 	if profile != nil && len(profile.Probes) > 0 {
-		model := SynthesizeBARModel(profile, classCode)
-		if model != nil {
-			return model
+		if !isProbeDataReliable(profile) {
+			slog.Warn("BAR probe data unreliable (all registers report fully writable), falling back to spec-based model",
+				"probes", len(profile.Probes))
+		} else {
+			model := SynthesizeBARModel(profile, classCode)
+			if model != nil {
+				return model
+			}
 		}
 	}
 
@@ -56,38 +62,37 @@ func BuildBARModel(barData []byte, classCode uint32, profile *donor.BARProfile) 
 	}
 }
 
-// buildNVMeBARModel creates the NVMe controller BAR0 register map.
-// Based on NVMe 1.4 spec: controller registers at BAR0 offset 0x00-0x4F.
+// NVMe BAR0 layout (NVMe 1.4 spec, offsets 0x00–0x34).
 func buildNVMeBARModel(barData []byte) *BARModel {
 	regs := []BARRegister{
-		// Controller Capabilities (CAP) — 64-bit, read-only
+		// CAP — 64-bit, read-only
 		{Offset: 0x00, Width: 4, Name: "CAP_LO", RWMask: 0x00000000},
 		{Offset: 0x04, Width: 4, Name: "CAP_HI", RWMask: 0x00000000},
-		// Version (VS) — read-only
+		// VS
 		{Offset: 0x08, Width: 4, Name: "VS", RWMask: 0x00000000},
-		// Interrupt Mask Set (INTMS)
+		// INTMS / INTMC
 		{Offset: 0x0C, Width: 4, Name: "INTMS", RWMask: 0xFFFFFFFF},
-		// Interrupt Mask Clear (INTMC)
+
 		{Offset: 0x10, Width: 4, Name: "INTMC", RWMask: 0xFFFFFFFF},
-		// Controller Configuration (CC) — host writes EN, CSS, MPS, etc.
+		// CC — the driver toggles EN here, FSM watches it
 		{Offset: 0x14, Width: 4, Name: "CC", RWMask: 0x00FFFFF1},
-		// Controller Status (CSTS) — read-only for host, FPGA sets RDY
+		// CSTS — must stay RO so the FSM can drive RDY transitions
 		{Offset: 0x1C, Width: 4, Name: "CSTS", RWMask: 0x00000000},
-		// NVM Subsystem Reset (NSSR) — write-only
+		// NSSR
 		{Offset: 0x20, Width: 4, Name: "NSSR", RWMask: 0xFFFFFFFF},
-		// Admin Queue Attributes (AQA)
+		// AQA
 		{Offset: 0x24, Width: 4, Name: "AQA", RWMask: 0x0FFF0FFF},
-		// Admin Submission Queue Base Address (ASQ) — 64-bit
+		// ASQ — 64-bit
 		{Offset: 0x28, Width: 4, Name: "ASQ_LO", RWMask: 0xFFFFF000},
 		{Offset: 0x2C, Width: 4, Name: "ASQ_HI", RWMask: 0xFFFFFFFF},
-		// Admin Completion Queue Base Address (ACQ) — 64-bit
+		// ACQ — 64-bit
 		{Offset: 0x30, Width: 4, Name: "ACQ_LO", RWMask: 0xFFFFF000},
 		{Offset: 0x34, Width: 4, Name: "ACQ_HI", RWMask: 0xFFFFFFFF},
 	}
 
 	populateResetValues(regs, barData)
 
-	// Force CSTS.RDY=1 so stornvme.sys sees a ready controller
+	// stornvme expects RDY=1 on first read
 	for i := range regs {
 		if regs[i].Offset == 0x1C {
 			regs[i].Reset |= 0x00000001  // RDY bit
@@ -102,12 +107,10 @@ func buildNVMeBARModel(barData []byte) *BARModel {
 	}
 }
 
-// buildXHCIBARModel creates the xHCI USB controller BAR0 register map.
-// Based on xHCI 1.2 spec: capability + operational registers.
+// xHCI BAR0 layout (xHCI 1.2 spec).
 func buildXHCIBARModel(barData []byte) *BARModel {
 	regs := []BARRegister{
-		// -- Capability Registers (read-only) --
-		// CAPLENGTH (byte) + HCIVERSION (word) packed in DWORD
+		// capability regs — all read-only
 		{Offset: 0x00, Width: 4, Name: "CAPLENGTH_HCIVERSION", RWMask: 0x00000000},
 		// Structural Parameters 1
 		{Offset: 0x04, Width: 4, Name: "HCSPARAMS1", RWMask: 0x00000000},
@@ -124,8 +127,7 @@ func buildXHCIBARModel(barData []byte) *BARModel {
 		// Capability Parameters 2
 		{Offset: 0x1C, Width: 4, Name: "HCCPARAMS2", RWMask: 0x00000000},
 
-		// -- Operational Registers (at CAPLENGTH offset, typically 0x20) --
-		// USBCMD
+		// operational regs
 		{Offset: 0x20, Width: 4, Name: "USBCMD", RWMask: 0x00002F0E},
 		// USBSTS (mostly RW1C)
 		{Offset: 0x24, Width: 4, Name: "USBSTS", RWMask: 0x00000000},
@@ -145,7 +147,7 @@ func buildXHCIBARModel(barData []byte) *BARModel {
 
 	populateResetValues(regs, barData)
 
-	// Set USBCMD.R/S=1 and ensure USBSTS.HCH=0 so driver sees a running controller
+	// driver expects a running controller on first probe
 	for i := range regs {
 		switch regs[i].Offset {
 		case 0x20: // USBCMD
@@ -161,7 +163,7 @@ func buildXHCIBARModel(barData []byte) *BARModel {
 	}
 }
 
-// populateResetValues fills Reset fields from donor BAR bytes.
+// populateResetValues overwrites Reset fields with actual donor BAR content.
 func populateResetValues(regs []BARRegister, barData []byte) {
 	if len(barData) == 0 {
 		return
@@ -183,7 +185,7 @@ func populateResetValues(regs []BARRegister, barData []byte) {
 	}
 }
 
-// RTL8125 register map (r8169 driver layout).
+// RTL8125 BAR0 layout (r8169 driver).
 func buildEthernetBARModel(barData []byte) *BARModel {
 	regs := []BARRegister{
 		{Offset: 0x00, Width: 4, Name: "MAC0_3", RWMask: 0xFFFFFFFF},
@@ -240,9 +242,8 @@ func buildEthernetBARModel(barData []byte) *BARModel {
 	}
 }
 
-// buildAudioBARModel creates the HD Audio controller BAR0 register map.
-// All registers are DWORD-aligned — sub-word HDA registers are packed into
-// DWORD slots so the template's 32-bit write logic works correctly.
+// HD Audio BAR0 layout. Sub-word HDA regs are packed into DWORDs
+// because the SV template only does 32-bit writes.
 func buildAudioBARModel(barData []byte) *BARModel {
 	regs := []BARRegister{
 		// GCAP(16) + VMIN(8) + VMAJ(8) packed into one DWORD
@@ -275,7 +276,7 @@ func buildAudioBARModel(barData []byte) *BARModel {
 
 	populateResetValues(regs, barData)
 
-	// set up sensible defaults for codec discovery
+	// sane defaults so codec discovery works out of the box
 	for i := range regs {
 		switch regs[i].Offset {
 		case 0x00:
@@ -303,9 +304,9 @@ func buildAudioBARModel(barData []byte) *BARModel {
 	}
 }
 
-// SynthesizeBARModel turns probe data into a BARModel.
-// Dead registers (zero value + zero RW mask) are dropped.
-// RW1C bits are conservatively treated as read-only.
+// SynthesizeBARModel builds a model straight from probe data.
+// Dead regs (zero value + zero mask) are dropped; RW1C bits
+// are treated as RO to be safe.
 func SynthesizeBARModel(profile *donor.BARProfile, classCode uint32) *BARModel {
 	if profile == nil || len(profile.Probes) == 0 {
 		return nil
@@ -350,8 +351,26 @@ func SynthesizeBARModel(profile *donor.BARProfile, classCode uint32) *BARModel {
 	}
 }
 
-// classRegisterNames returns offset→name hints for known device classes.
-// Derives names from devclass.ProfileForClass to avoid duplication.
+// isProbeDataReliable catches the VFIO-all-RW scenario: if 90%+
+// of non-zero probes claim every bit is writable, something is off.
+func isProbeDataReliable(profile *donor.BARProfile) bool {
+	var nonZero, allRW int
+	for _, p := range profile.Probes {
+		if p.Original == 0 && p.RWMask == 0 {
+			continue
+		}
+		nonZero++
+		if p.RWMask == 0xFFFFFFFF {
+			allRW++
+		}
+	}
+	if nonZero < 4 {
+		return true // too few probes to judge
+	}
+	return allRW*10 < nonZero*9 // allRW < 90%
+}
+
+// classRegisterNames pulls offset→name hints from the device profile.
 func classRegisterNames(classCode uint32) map[uint32]string {
 	profile := devclass.ProfileForClass(classCode)
 	if profile == nil {
