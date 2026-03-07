@@ -1,0 +1,70 @@
+---
+name: Bug Report
+description: Report a bug or issue with PCILeechGen
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this issue. Please fill out the sections below so we can investigate.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear description of the bug.
+      placeholder: Describe what happened and what you expected to happen.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: error-type
+    attributes:
+      label: Error Type
+      description: What kind of error are you seeing?
+      options:
+        - Code 10 (device cannot start)
+        - Code 43 (device has been stopped)
+        - DMA not working
+        - Build/generation failure
+        - Collection failure
+        - Other
+    validations:
+      required: true
+
+
+  - type: textarea
+    id: context-file
+    attributes:
+      label: Device Context File
+      description: Attach your `device_context.json` file here. This is critical for debugging.
+    validations:
+      required: true
+
+  - type: textarea
+    id: event-log
+    attributes:
+      label: Windows Event Log
+      description: |
+        Open Event Viewer > Windows Logs > System, filter by source "Kernel-PnP" or the relevant driver name, and paste the error entries here.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: device-manager
+    attributes:
+      label: Device Manager Error Details
+      description: |
+        Right-click the device in Device Manager > Properties > Details tab. Copy the error code and any additional info shown.
+    validations:
+      required: false
+
+  - type: textarea
+    id: terminal-output
+    attributes:
+      label: Terminal Output
+      description: Any relevant terminal output.
+      render: shell
+    validations:
+      required: false
