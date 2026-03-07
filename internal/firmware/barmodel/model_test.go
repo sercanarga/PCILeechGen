@@ -547,3 +547,64 @@ func TestPopulateResetValues_Width1(t *testing.T) {
 		t.Errorf("Width=1 Reset = 0x%02x, want 0x42", regs[0].Reset)
 	}
 }
+
+func TestBuildBARModel_UnreliableProbe_FallsBackToSpec(t *testing.T) {
+	// Simulate VFIO returning all-RW for every register (Samsung NVMe scenario)
+	probes := make([]donor.BARProbeResult, 20)
+	for i := range probes {
+		probes[i] = donor.BARProbeResult{
+			Offset:   uint32(i * 4),
+			Original: uint32(0x28033FFF + i),
+			RWMask:   0xFFFFFFFF, // all writable — unreliable!
+		}
+	}
+	profile := &donor.BARProfile{Size: 4096, Probes: probes}
+
+	barData := make([]byte, 4096)
+	model := BuildBARModel(barData, 0x010802, profile) // NVMe class
+
+	if model == nil {
+		t.Fatal("should fall back to spec-based NVMe model, got nil")
+	}
+
+	// verify CSTS is read-only (CC→CSTS handshake FSM relies on this)
+	for _, reg := range model.Registers {
+		if reg.Name == "CSTS" {
+			if reg.RWMask != 0 {
+				t.Errorf("CSTS should be RO (RWMask=0) for CC→CSTS handshake, got 0x%08X", reg.RWMask)
+			}
+			return
+		}
+	}
+	t.Error("spec-based NVMe model should contain CSTS register")
+}
+
+func TestIsProbeDataReliable_Mixed(t *testing.T) {
+	profile := &donor.BARProfile{
+		Size: 4096,
+		Probes: []donor.BARProbeResult{
+			{Offset: 0x00, Original: 0x12345678, RWMask: 0x00000000},
+			{Offset: 0x04, Original: 0xDEADBEEF, RWMask: 0xFFFF0000},
+			{Offset: 0x08, Original: 0x00000001, RWMask: 0xFFFFFFFF},
+			{Offset: 0x0C, Original: 0x00000000, RWMask: 0x00000000}, // dead
+		},
+	}
+	if !isProbeDataReliable(profile) {
+		t.Error("mixed RW masks should be considered reliable")
+	}
+}
+
+func TestIsProbeDataReliable_AllRW(t *testing.T) {
+	probes := make([]donor.BARProbeResult, 10)
+	for i := range probes {
+		probes[i] = donor.BARProbeResult{
+			Offset:   uint32(i * 4),
+			Original: uint32(i + 1),
+			RWMask:   0xFFFFFFFF,
+		}
+	}
+	profile := &donor.BARProfile{Size: 4096, Probes: probes}
+	if isProbeDataReliable(profile) {
+		t.Error("all-RW probes should be considered unreliable")
+	}
+}
