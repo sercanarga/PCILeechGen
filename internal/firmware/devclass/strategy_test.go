@@ -227,24 +227,37 @@ func TestXHCIStrategy_ScrubBAR_TooShort(t *testing.T) {
 
 func TestEthernetStrategy_ScrubBAR(t *testing.T) {
 	s := &ethernetStrategy{}
-	data := make([]byte, 0x24)
+	data := make([]byte, 0xDE)
 
 	s.ScrubBAR(data)
 
-	status := uint32(data[0x08]) | uint32(data[0x09])<<8 | uint32(data[0x0A])<<16 | uint32(data[0x0B])<<24
-	if status != 0x00000082 {
-		t.Errorf("STATUS should be 0x82, got 0x%08X", status)
+	// MAC0-3
+	mac03 := uint32(data[0x00]) | uint32(data[0x01])<<8 | uint32(data[0x02])<<16 | uint32(data[0x03])<<24
+	if mac03 != 0xBEADDE02 {
+		t.Errorf("MAC0-3 should be 0xBEADDE02, got 0x%08X", mac03)
 	}
 
-	eecd := uint32(data[0x10]) | uint32(data[0x11])<<8 | uint32(data[0x12])<<16 | uint32(data[0x13])<<24
-	if eecd != 0x00000300 {
-		t.Errorf("EECD should be 0x300, got 0x%08X", eecd)
+	// ChipCmd at 0x37
+	if data[0x37] != 0x0C {
+		t.Errorf("ChipCmd should be 0x0C, got 0x%02X", data[0x37])
+	}
+
+	// PHYStatus at 0x6C
+	phySts := uint32(data[0x6C]) | uint32(data[0x6D])<<8 | uint32(data[0x6E])<<16 | uint32(data[0x6F])<<24
+	if phySts != 0x00003010 {
+		t.Errorf("PHYStatus should be 0x3010, got 0x%08X", phySts)
+	}
+
+	// TxConfig at 0x40
+	txCfg := uint32(data[0x40]) | uint32(data[0x41])<<8 | uint32(data[0x42])<<16 | uint32(data[0x43])<<24
+	if txCfg != 0x2F000000 {
+		t.Errorf("TxConfig should be 0x2F000000, got 0x%08X", txCfg)
 	}
 }
 
 func TestEthernetStrategy_ScrubBAR_TooShort(t *testing.T) {
 	s := &ethernetStrategy{}
-	data := make([]byte, 0x08)
+	data := make([]byte, 0x20)
 	s.ScrubBAR(data) // must not panic
 }
 
@@ -412,21 +425,15 @@ func TestXHCIStrategy_PostInitRegisters(t *testing.T) {
 
 func TestEthernetStrategy_PostInitRegisters(t *testing.T) {
 	s := &ethernetStrategy{}
-	var status uint32 = 0x00
-	var eecd uint32 = 0x00
-	regs := map[uint32]*uint32{0x08: &status, 0x10: &eecd}
+	var chipCmdDW uint32 = 0x00
+	var phySts uint32 = 0x00
+	regs := map[uint32]*uint32{0x34: &chipCmdDW, 0x6C: &phySts}
 	s.PostInitRegisters(regs)
-	if status&0x02 == 0 {
-		t.Error("STATUS.LU should be set")
+	if chipCmdDW&0x0C000000 == 0 {
+		t.Error("ChipCmd RxEn+TxEn should be set in DWORD MSB")
 	}
-	if status&0x80 == 0 {
-		t.Error("STATUS speed bits should be set")
-	}
-	if eecd&0x200 == 0 {
-		t.Error("EECD Auto-Read Done should be set")
-	}
-	if eecd&0x100 == 0 {
-		t.Error("EECD EEPROM Present should be set")
+	if phySts&0x3010 == 0 {
+		t.Error("PHYStatus link+speed+duplex should be set")
 	}
 }
 

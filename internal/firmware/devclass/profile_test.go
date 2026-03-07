@@ -42,8 +42,14 @@ func TestProfileForClass_Ethernet(t *testing.T) {
 	if p.MinMSIXVectors < 3 {
 		t.Error("Ethernet should need at least 3 MSI-X vectors")
 	}
-	if p.Uses64BitBAR {
-		t.Error("Ethernet profile should use 32-bit BAR")
+	if !p.Uses64BitBAR {
+		t.Error("Ethernet profile should use 64-bit BAR (RTL8125)")
+	}
+	if p.PreferredBAR != 2 {
+		t.Errorf("Ethernet PreferredBAR should be 2, got %d", p.PreferredBAR)
+	}
+	if p.MinBARSize != 65536 {
+		t.Errorf("Ethernet MinBARSize should be 65536, got %d", p.MinBARSize)
 	}
 }
 
@@ -248,23 +254,23 @@ func TestAudioProfile_STATESTS(t *testing.T) {
 
 func TestEthernetProfile_MAC(t *testing.T) {
 	p := ethernetProfile()
-	var ral0, rah0 bool
+	var mac03, mac45 bool
 	for _, d := range p.BARDefaults {
-		if d.Name == "RAL0" {
-			ral0 = true
+		if d.Name == "MAC0_3" {
+			mac03 = true
 			if d.Reset == 0 {
-				t.Error("RAL0 should have default MAC")
+				t.Error("MAC0_3 should have default MAC")
 			}
 		}
-		if d.Name == "RAH0" {
-			rah0 = true
-			if d.Reset&0x80000000 == 0 {
-				t.Error("RAH0 should have AV bit")
+		if d.Name == "MAC4_5" {
+			mac45 = true
+			if d.Reset == 0 {
+				t.Error("MAC4_5 should have default MAC")
 			}
 		}
 	}
-	if !ral0 || !rah0 {
-		t.Error("Ethernet profile should have RAL0 and RAH0")
+	if !mac03 || !mac45 {
+		t.Error("Ethernet profile should have MAC0_3 and MAC4_5")
 	}
 }
 
