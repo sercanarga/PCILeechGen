@@ -59,24 +59,55 @@ type bar0Config struct {
 	Is64bit bool
 }
 
-// buildBAR0Config computes BAR0 configuration clamped to FPGA BRAM size.
+// buildBAR0Config picks the largest MMIO BAR for the PCIe IP.
+// Falls back to BAR0 when there's no MMIO BAR.
 func buildBAR0Config(ctx *donor.DeviceContext, b *board.Board) bar0Config {
 	cfg := bar0Config{Scale: "Kilobytes", Size: "4"}
 	if len(ctx.BARs) == 0 {
 		return cfg
 	}
-	bar0 := ctx.BARs[0]
-	if bar0.Size == 0 {
+
+	// Find the largest MMIO BAR — this is the primary BAR the driver will use
+	var bestSize uint64
+	var bestBAR *pci.BAR
+	for i := range ctx.BARs {
+		bar := &ctx.BARs[i]
+		if bar.Size == 0 {
+			continue
+		}
+		if bar.Type == pci.BARTypeMem32 || bar.Type == pci.BARTypeMem64 {
+			if bar.Size > bestSize {
+				bestSize = bar.Size
+				bestBAR = bar
+			}
+		}
+	}
+
+	// Fall back to BAR0 if no MMIO BAR found
+	if bestBAR == nil {
+		bar0 := &ctx.BARs[0]
+		if bar0.Size == 0 {
+			return cfg
+		}
+		cfg.Enabled = true
+		barSize := bar0.Size
+		bramSize := uint64(b.BRAMSizeOrDefault())
+		if barSize > bramSize {
+			barSize = bramSize
+		}
+		cfg.Scale, cfg.Size = barSizeToTCL(barSize)
+		cfg.Is64bit = bar0.Type == pci.BARTypeMem64
 		return cfg
 	}
+
 	cfg.Enabled = true
-	bar0Size := bar0.Size
+	barSize := bestBAR.Size
 	bramSize := uint64(b.BRAMSizeOrDefault())
-	if bar0Size > bramSize {
-		bar0Size = bramSize
+	if barSize > bramSize {
+		barSize = bramSize
 	}
-	cfg.Scale, cfg.Size = barSizeToTCL(bar0Size)
-	cfg.Is64bit = bar0.Type == pci.BARTypeMem64
+	cfg.Scale, cfg.Size = barSizeToTCL(barSize)
+	cfg.Is64bit = bestBAR.Type == pci.BARTypeMem64
 	return cfg
 }
 

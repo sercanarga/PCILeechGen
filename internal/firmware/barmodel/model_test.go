@@ -133,78 +133,104 @@ func TestBuildBARModel_Ethernet(t *testing.T) {
 	}
 }
 
-func TestBuildBARModel_Ethernet_32KB(t *testing.T) {
+func TestBuildBARModel_Ethernet_4KB(t *testing.T) {
 	model := buildEthernetBARModel(nil)
-	if model.Size != 32768 {
-		t.Errorf("Ethernet BAR size: got %d, want 32768", model.Size)
+	if model.Size != 4096 {
+		t.Errorf("Ethernet BAR size: got %d, want 4096", model.Size)
 	}
 }
 
 func TestBuildBARModel_Ethernet_MACAddress(t *testing.T) {
 	model := buildEthernetBARModel(nil)
-	var ral0Found, rah0Found bool
+	var mac03Found, mac45Found bool
 	for _, reg := range model.Registers {
 		switch reg.Name {
-		case "RAL0":
-			ral0Found = true
-			if reg.Offset != 0x5400 {
-				t.Errorf("RAL0 offset: got 0x%X, want 0x5400", reg.Offset)
+		case "MAC0_3":
+			mac03Found = true
+			if reg.Offset != 0x00 {
+				t.Errorf("MAC0_3 offset: got 0x%X, want 0x00", reg.Offset)
 			}
 			if reg.Reset == 0 {
-				t.Error("RAL0 should have a non-zero default MAC")
+				t.Error("MAC0_3 should have a non-zero default MAC")
 			}
-		case "RAH0":
-			rah0Found = true
+		case "MAC4_5":
+			mac45Found = true
+			if reg.Offset != 0x04 {
+				t.Errorf("MAC4_5 offset: got 0x%X, want 0x04", reg.Offset)
+			}
+			if reg.Reset == 0 {
+				t.Error("MAC4_5 should have a non-zero default")
+			}
+		}
+	}
+	if !mac03Found || !mac45Found {
+		t.Error("Ethernet model should include MAC0_3 and MAC4_5 registers")
+	}
+}
+
+func TestBuildBARModel_Ethernet_ChipCmd(t *testing.T) {
+	model := buildEthernetBARModel(nil)
+	for _, reg := range model.Registers {
+		if reg.Name == "CHIPCMD_DW" {
+			if reg.Reset&0x0C000000 == 0 {
+				t.Error("ChipCmd should have RxEnable + TxEnable set")
+			}
+			return
+		}
+	}
+	t.Error("CHIPCMD_DW register not found")
+}
+
+func TestBuildBARModel_Ethernet_PHYStatus(t *testing.T) {
+	model := buildEthernetBARModel(nil)
+	for _, reg := range model.Registers {
+		if reg.Name == "PHYSTATUS" {
+			if reg.Reset&0x00003010 == 0 {
+				t.Error("PHYStatus should have link up + 2500Mbps + full-duplex")
+			}
+			return
+		}
+	}
+	t.Error("PHYSTATUS register not found")
+}
+
+func TestBuildBARModel_Ethernet_TxConfig(t *testing.T) {
+	model := buildEthernetBARModel(nil)
+	for _, reg := range model.Registers {
+		if reg.Name == "TXCONFIG" {
+			if reg.Reset&0x2F000000 == 0 {
+				t.Error("TxConfig should have RTL8125B chip version")
+			}
+			return
+		}
+	}
+	t.Error("TXCONFIG register not found")
+}
+
+func TestBuildBARModel_Ethernet_ERIAR(t *testing.T) {
+	model := buildEthernetBARModel(nil)
+	for _, reg := range model.Registers {
+		if reg.Name == "ERIAR" {
 			if reg.Reset&0x80000000 == 0 {
-				t.Error("RAH0 should have AV (address valid) bit set")
-			}
-		}
-	}
-	if !ral0Found || !rah0Found {
-		t.Error("Ethernet model should include RAL0 and RAH0 registers")
-	}
-}
-
-func TestBuildBARModel_Ethernet_EECD(t *testing.T) {
-	model := buildEthernetBARModel(nil)
-	for _, reg := range model.Registers {
-		if reg.Name == "EECD" {
-			if reg.Reset&0x200 == 0 {
-				t.Error("EECD should have Auto-Read Done (bit 9) set")
-			}
-			if reg.Reset&0x100 == 0 {
-				t.Error("EECD should have EEPROM Present (bit 8) set")
+				t.Error("ERIAR should have completed bit set")
 			}
 			return
 		}
 	}
-	t.Error("EECD register not found")
+	t.Error("ERIAR register not found")
 }
 
-func TestBuildBARModel_Ethernet_STATUS(t *testing.T) {
+func TestBuildBARModel_Ethernet_PHYAR(t *testing.T) {
 	model := buildEthernetBARModel(nil)
 	for _, reg := range model.Registers {
-		if reg.Name == "STATUS" {
-			if reg.Reset&0x02 == 0 {
-				t.Error("STATUS.LU (link up) should be set")
+		if reg.Name == "PHYAR" {
+			if reg.Reset&0x80000000 == 0 {
+				t.Error("PHYAR should have ready bit set")
 			}
 			return
 		}
 	}
-	t.Error("STATUS register not found")
-}
-
-func TestBuildBARModel_Ethernet_MDIC(t *testing.T) {
-	model := buildEthernetBARModel(nil)
-	for _, reg := range model.Registers {
-		if reg.Name == "MDIC" {
-			if reg.Reset&0x10000000 == 0 {
-				t.Error("MDIC Ready bit should be set")
-			}
-			return
-		}
-	}
-	t.Error("MDIC register not found")
+	t.Error("PHYAR register not found")
 }
 
 func TestBuildBARModel_Audio(t *testing.T) {
