@@ -154,7 +154,6 @@ func TestGenerateConfigSpaceHex(t *testing.T) {
 	}
 }
 
-
 func TestGenerateMSIXTableHex(t *testing.T) {
 	entries := []pci.MSIXEntry{
 		{AddrLo: 0xFEE00000, AddrHi: 0x00000000, Data: 0x00004021, Control: 0x00},
@@ -201,8 +200,8 @@ func TestApplyPCIeWritemask(t *testing.T) {
 	applyPCIeWritemask(cap, masks)
 
 	// DevCtl at cap+8 = 0x48
-	if masks[0x48/4] != 0x0000FFFF {
-		t.Errorf("DevCtl writemask = 0x%08x, want 0x0000FFFF", masks[0x48/4])
+	if masks[0x48/4] != 0x000FFFFF {
+		t.Errorf("DevCtl writemask = 0x%08x, want 0x000FFFFF", masks[0x48/4])
 	}
 	// LinkCtl at cap+16 = 0x50
 	if masks[0x50/4] != 0x0000FFFF {

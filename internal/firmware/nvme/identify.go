@@ -52,10 +52,36 @@ func buildIdentifyController(ids firmware.DeviceIDs, barData []byte) [4096]byte 
 	data[0x04A] = oui[1]
 	data[0x04B] = oui[2]
 
-	data[0x04C] = 0x00                                      // CMIC
-	data[0x04D] = 5                                         // MDTS (128KB)
-	binary.LittleEndian.PutUint16(data[0x04E:], 0x0001)     // CNTLID
-	binary.LittleEndian.PutUint32(data[0x050:], 0x00010400) // VER — NVMe 1.4
+	data[0x04C] = 0x00 // CMIC
+	// MDTS — derive from donor CAP.MPSMIN when available.
+	// Most NVMe drives use MDTS=5 (2^5 * MPSMIN pages = 128KB at 4KB pages).
+	// Some use higher values; we stay conservative to avoid host-side overruns
+	// that our fake controller can't actually service.
+	mdts := uint8(5)
+	if len(barData) >= 0x08 {
+		capHi := binary.LittleEndian.Uint32(barData[0x04:0x08])
+		mpsmin := (capHi >> 16) & 0x0F // CAP.MPSMIN: bits 51:48
+		// MPSMIN=0 → 4KB pages → MDTS=5 is fine (128KB)
+		// MPSMIN=1 → 8KB pages → MDTS=4 keeps total ≤128KB
+		if mpsmin > 0 && mpsmin < 5 && mdts > uint8(5-mpsmin) {
+			mdts = uint8(5 - mpsmin)
+			if mdts == 0 {
+				mdts = 1
+			}
+		}
+	}
+	data[0x04D] = mdts                                  // MDTS
+	binary.LittleEndian.PutUint16(data[0x04E:], 0x0001) // CNTLID
+	// VER must match BAR VS register — stornvme.sys compares the two and
+	// triggers Code 10 on mismatch (e.g. BAR says 1.3, identify says 1.4).
+	nvmeVer := uint32(0x00010400) // default: NVMe 1.4
+	if len(barData) >= 0x0C {
+		nvmeVer = binary.LittleEndian.Uint32(barData[0x08:0x0C])
+		if nvmeVer == 0 {
+			nvmeVer = 0x00010400
+		}
+	}
+	binary.LittleEndian.PutUint32(data[0x050:], nvmeVer)    // VER
 	binary.LittleEndian.PutUint32(data[0x054:], 0x00000064) // RTD3 Resume Latency (100µs)
 	binary.LittleEndian.PutUint32(data[0x058:], 0x00000064) // RTD3 Entry Latency (100µs)
 	binary.LittleEndian.PutUint32(data[0x05C:], 0x00000000) // OAES

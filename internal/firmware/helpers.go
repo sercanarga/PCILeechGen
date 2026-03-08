@@ -27,3 +27,17 @@ func LargestBar(m map[int][]byte) []byte {
 	}
 	return best
 }
+
+// LargestBarIndex returns the index of the longest byte slice in the map.
+// Used when both BAR content and probe profile must reference the same BAR.
+func LargestBarIndex(m map[int][]byte) int {
+	bestIdx := 0
+	bestLen := 0
+	for idx, v := range m {
+		if len(v) > bestLen {
+			bestLen = len(v)
+			bestIdx = idx
+		}
+	}
+	return bestIdx
+}
