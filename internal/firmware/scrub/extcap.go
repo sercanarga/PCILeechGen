@@ -133,7 +133,7 @@ func relinkExtCapChain(cs *pci.ConfigSpace, entries []extCapEntry, removeSet map
 	if removeSet[0] {
 		surv := entries[firstSurvivor]
 
-		for b := 0; b < surv.size && b < surv.offset && surv.offset+b < pci.ConfigSpaceSize; b++ {
+		for b := 0; b < surv.size && surv.offset+b < pci.ConfigSpaceSize; b++ {
 			cs.WriteU8(0x100+b, cs.ReadU8(surv.offset+b))
 		}
 		for b := 0; b < surv.size && surv.offset+b < pci.ConfigSpaceSize; b++ {

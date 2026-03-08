@@ -85,10 +85,11 @@ func xhciReadStructParams(data []byte) (maxSlots, maxIntrs, maxPorts int) {
 	return
 }
 
-// xhciClampScratchpads zeroes scratchpad counts in HCSPARAMS2 — BRAM can't handle them.
+// xhciClampScratchpads zeroes both scratchpad count fields in HCSPARAMS2.
+// hi=[31:27], lo=[25:21]; bit 26 (SPR) is preserved.
 func xhciClampScratchpads(data []byte) {
 	hcsparams2 := util.ReadLE32(data, 0x08)
-	hcsparams2 &= ^uint32(0xFFE00000)
+	hcsparams2 &= ^uint32(0xFBE00000)
 	util.WriteLE32(data, 0x08, hcsparams2)
 }
 

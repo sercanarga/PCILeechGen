@@ -129,11 +129,17 @@ func TestXhciReadStructParams_ZeroSlots(t *testing.T) {
 
 func TestXhciClampScratchpads(t *testing.T) {
 	data := make([]byte, 256)
-	util.WriteLE32(data, 0x08, 0xFFE12345) // scratchpad count set
+	// 0xFFE12345: hi[31:27]=0x1F, bit26=1 (SPR), lo[25:21]=0x0F, rest=0x12345
+	util.WriteLE32(data, 0x08, 0xFFE12345)
 	xhciClampScratchpads(data)
 	hcsparams2 := util.ReadLE32(data, 0x08)
-	if hcsparams2&0xFFE00000 != 0 {
-		t.Errorf("Scratchpad bits should be zeroed, got 0x%08x", hcsparams2)
+	// hi[31:27] and lo[25:21] should be zeroed, bit 26 (SPR) preserved
+	if hcsparams2&0xFBE00000 != 0 {
+		t.Errorf("Scratchpad count bits should be zeroed, got 0x%08x", hcsparams2)
+	}
+	// bit 26 and lower bits should be preserved
+	if hcsparams2 != 0x04012345 {
+		t.Errorf("Non-scratchpad bits should be preserved, got 0x%08x, want 0x04012345", hcsparams2)
 	}
 }
 
