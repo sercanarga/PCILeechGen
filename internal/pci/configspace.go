@@ -96,13 +96,13 @@ func (cs *ConfigSpace) WriteU8(offset int, val uint8) {
 }
 
 func (cs *ConfigSpace) WriteU16(offset int, val uint16) {
-	if offset >= 0 && offset+1 < ConfigSpaceSize {
+	if offset >= 0 && offset+2 <= ConfigSpaceSize {
 		binary.LittleEndian.PutUint16(cs.Data[offset:offset+2], val)
 	}
 }
 
 func (cs *ConfigSpace) WriteU32(offset int, val uint32) {
-	if offset >= 0 && offset+3 < ConfigSpaceSize {
+	if offset >= 0 && offset+4 <= ConfigSpaceSize {
 		binary.LittleEndian.PutUint32(cs.Data[offset:offset+4], val)
 	}
 }
