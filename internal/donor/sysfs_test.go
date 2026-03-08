@@ -355,7 +355,6 @@ func TestFromJSONInvalid(t *testing.T) {
 	}
 }
 
-
 func TestProfileBARFromBuffer(t *testing.T) {
 	buf := make([]byte, 64) // 16 DWORDs
 
@@ -418,8 +417,8 @@ func TestBarCriticalClass(t *testing.T) {
 	if !barCriticalClass(0x0C0330) {
 		t.Error("xHCI should be BAR-critical")
 	}
-	if barCriticalClass(0x020000) {
-		t.Error("Ethernet should not be BAR-critical")
+	if !barCriticalClass(0x020000) {
+		t.Error("Ethernet should be BAR-critical")
 	}
 	if barCriticalClass(0xFF0000) {
 		t.Error("Unknown class should not be BAR-critical")

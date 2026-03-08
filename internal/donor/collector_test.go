@@ -62,7 +62,7 @@ func TestValidateBARContents_AllFF_NonCriticalClass(t *testing.T) {
 	c := &Collector{}
 	ctx := &DeviceContext{
 		Device: pci.PCIDevice{
-			ClassCode: 0x020000, // Ethernet
+			ClassCode: 0x030000, // Display/VGA — not BAR-critical
 			Driver:    "vfio-pci",
 		},
 		BARs: []pci.BAR{
