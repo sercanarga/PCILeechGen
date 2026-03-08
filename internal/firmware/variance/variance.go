@@ -222,29 +222,29 @@ func embedVSECEntropy(cs *pci.ConfigSpace, seed uint32) {
 	}
 }
 
-// applyPMTimingVariance adds per-build jitter to PM D-state transition times.
+// applyPMTimingVariance jitters the PMC Data Scale field.
 func applyPMTimingVariance(cs *pci.ConfigSpace, rng *splitMix64) {
 	caps := pci.ParseCapabilities(cs)
 	for _, cap := range caps {
 		if cap.ID != pci.CapIDPowerManagement {
 			continue
 		}
-		// PMC register (cap+0x02): D1/D2 support flags + recovery time
+		// PMC at cap+0x02, Data Scale = bits [14:13]
 		if cap.Offset+4 >= pci.ConfigSpaceLegacySize {
 			continue
 		}
 		pmc := cs.ReadU16(cap.Offset + 2)
-		// bits [12:9] = D3hot→D0 recovery scale, vary within valid range
-		scale := (pmc >> 9) & 0x0F
+
+		scale := (pmc >> 13) & 0x03
 		noise := int16(rng.next()%3) - 1 // -1, 0, +1
 		newScale := int16(scale) + noise
 		if newScale < 0 {
 			newScale = 0
 		}
-		if newScale > 15 {
-			newScale = 15
+		if newScale > 3 {
+			newScale = 3
 		}
-		pmc = (pmc & 0xE1FF) | (uint16(newScale) << 9)
+		pmc = (pmc & 0x9FFF) | (uint16(newScale) << 13)
 		cs.WriteU16(cap.Offset+2, pmc)
 		break
 	}

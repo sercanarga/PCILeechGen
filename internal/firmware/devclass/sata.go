@@ -45,7 +45,6 @@ func sataProfile() *DeviceProfile {
 			pci.CapIDPowerManagement,
 			pci.CapIDMSI,
 			pci.CapIDPCIExpress,
-			pci.CapIDSATADataIndex,
 		},
 		ExpectedExtCaps: []uint16{
 			pci.ExtCapIDAER,
