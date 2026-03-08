@@ -8,7 +8,7 @@ import (
 	"github.com/sercanarga/pcileechgen/internal/firmware"
 )
 
-func TestPatchAll_WarningOnMissingPatches(t *testing.T) {
+func TestPatchAll_ErrorOnMissingPatches(t *testing.T) {
 	// Create temp dir with empty SV files — patches won't match
 	dir := t.TempDir()
 
@@ -35,21 +35,12 @@ func TestPatchAll_WarningOnMissingPatches(t *testing.T) {
 	}
 
 	patcher := NewSVPatcher(ids, dir)
-	if err := patcher.PatchAll(); err != nil {
-		t.Fatalf("PatchAll error: %v", err)
+	err := patcher.PatchAll()
+	if err == nil {
+		t.Fatal("PatchAll should return error when critical patches are missing")
 	}
-
-	// Should have warnings since patterns didn't match
-	results := patcher.Results()
-	hasWarning := false
-	for _, r := range results {
-		if len(r.Warnings) > 0 {
-			hasWarning = true
-			break
-		}
-	}
-	if !hasWarning {
-		t.Error("expected warnings when patches don't match, got none")
+	if !contains(err.Error(), "minimum patches applied") {
+		t.Errorf("error should mention missing patches, got: %v", err)
 	}
 }
 
