@@ -83,7 +83,7 @@ func ethernetProfile() *DeviceProfile {
 		BARDefaults: []BARDefault{
 			{Offset: 0x00, Width: 4, Name: "MAC0_3", Reset: 0xBEADDE02, RWMask: 0xFFFFFFFF},
 			{Offset: 0x04, Width: 4, Name: "MAC4_5", Reset: 0x000000EF, RWMask: 0xFFFFFFFF},
-			{Offset: 0x34, Width: 4, Name: "CHIPCMD_DW", Reset: 0x0C000000, RWMask: 0x00000000},
+			{Offset: 0x34, Width: 4, Name: "CHIPCMD_DW", Reset: 0x0C000000, RWMask: 0xFF000000},
 			{Offset: 0x3C, Width: 4, Name: "INTRMASK", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
 			{Offset: 0x40, Width: 4, Name: "TXCONFIG", Reset: 0x2F000000, RWMask: 0x00FF0000},
 			{Offset: 0x44, Width: 4, Name: "RXCONFIG", Reset: 0x00000E00, RWMask: 0xFFFF7FFF},

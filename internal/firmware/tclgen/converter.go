@@ -7,14 +7,21 @@ import (
 )
 
 // linkSpeedToTCL converts a numeric link speed to Vivado TCL format.
+// Xilinx 7-series PCIe IP supports up to Gen3; Gen4+ is clamped to Gen3.
 func linkSpeedToTCL(speed uint8) string {
 	switch speed {
 	case firmware.LinkSpeedGen1:
 		return "2.5_GT/s"
+	case firmware.LinkSpeedGen2:
+		return "5.0_GT/s"
 	case firmware.LinkSpeedGen3:
 		return "8.0_GT/s"
 	default:
-		return "5.0_GT/s" // Gen2 default
+		// Gen4+ not supported by 7-series — clamp to Gen3
+		if speed >= firmware.LinkSpeedGen4 {
+			return "8.0_GT/s"
+		}
+		return "5.0_GT/s" // unknown → safe Gen2 default
 	}
 }
 
@@ -23,9 +30,14 @@ func linkSpeedToTrgt(speed uint8) string {
 	switch speed {
 	case firmware.LinkSpeedGen1:
 		return "4'h1"
+	case firmware.LinkSpeedGen2:
+		return "4'h2"
 	case firmware.LinkSpeedGen3:
 		return "4'h3"
 	default:
+		if speed >= firmware.LinkSpeedGen4 {
+			return "4'h3" // clamp to Gen3
+		}
 		return "4'h2"
 	}
 }
