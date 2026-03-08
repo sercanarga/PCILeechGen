@@ -53,6 +53,7 @@ type ApplyResult struct {
 }
 
 // Apply fills zeroed BAR registers with class-specific defaults.
+// Tries the device class's preferred BAR first, then falls back to the largest available BAR.
 func Apply(cfg *Config, classCode uint32, barContents map[int][]byte) []ApplyResult {
 	if cfg == nil {
 		return nil
@@ -71,29 +72,42 @@ func Apply(cfg *Config, classCode uint32, barContents map[int][]byte) []ApplyRes
 	var results []ApplyResult
 	slog.Info("applying fallback defaults", "description", dc.Description, "class", key)
 
-	bar0, hasBAR0 := barContents[0]
-	if hasBAR0 && len(bar0) >= 4 && dc.BAR0Defaults != nil {
-		for offsetStr, defaultVal := range dc.BAR0Defaults {
-			var offset uint32
-			if _, err := fmt.Sscanf(offsetStr, "0x%x", &offset); err != nil {
-				continue
-			}
-			if int(offset)+4 > len(bar0) {
-				continue
-			}
-			current := uint32(bar0[offset]) | uint32(bar0[offset+1])<<8 |
-				uint32(bar0[offset+2])<<16 | uint32(bar0[offset+3])<<24
-			if current == 0 && defaultVal != 0 {
-				bar0[offset] = byte(defaultVal)
-				bar0[offset+1] = byte(defaultVal >> 8)
-				bar0[offset+2] = byte(defaultVal >> 16)
-				bar0[offset+3] = byte(defaultVal >> 24)
-				results = append(results, ApplyResult{
-					Field:    fmt.Sprintf("BAR0[0x%04X]", offset),
-					OldValue: "0x00000000",
-					NewValue: fmt.Sprintf("0x%08X", defaultVal),
-				})
-			}
+	// Find the target BAR: try each available BAR, preferring larger ones
+	var targetBAR []byte
+	var targetIdx int
+	for idx, data := range barContents {
+		if len(data) >= 4 && len(data) > len(targetBAR) {
+			targetBAR = data
+			targetIdx = idx
+		}
+	}
+
+	if targetBAR == nil || dc.BAR0Defaults == nil {
+		return results
+	}
+
+	slog.Info("fallback target BAR", "bar_index", targetIdx, "size", len(targetBAR))
+
+	for offsetStr, defaultVal := range dc.BAR0Defaults {
+		var offset uint32
+		if _, err := fmt.Sscanf(offsetStr, "0x%x", &offset); err != nil {
+			continue
+		}
+		if int(offset)+4 > len(targetBAR) {
+			continue
+		}
+		current := uint32(targetBAR[offset]) | uint32(targetBAR[offset+1])<<8 |
+			uint32(targetBAR[offset+2])<<16 | uint32(targetBAR[offset+3])<<24
+		if current == 0 && defaultVal != 0 {
+			targetBAR[offset] = byte(defaultVal)
+			targetBAR[offset+1] = byte(defaultVal >> 8)
+			targetBAR[offset+2] = byte(defaultVal >> 16)
+			targetBAR[offset+3] = byte(defaultVal >> 24)
+			results = append(results, ApplyResult{
+				Field:    fmt.Sprintf("BAR%d[0x%04X]", targetIdx, offset),
+				OldValue: "0x00000000",
+				NewValue: fmt.Sprintf("0x%08X", defaultVal),
+			})
 		}
 	}
 

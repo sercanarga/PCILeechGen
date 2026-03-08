@@ -72,10 +72,14 @@ func (c *Collector) Collect(bdf pci.BDF) (*DeviceContext, error) {
 // barCriticalClass returns true for device classes where empty BAR contents
 // will cause the Windows driver to fail with Code 10.
 func barCriticalClass(classCode uint32) bool {
-	switch classCode {
-	case 0x010802: // NVMe
+	baseClass := (classCode >> 16) & 0xFF
+	subClass := (classCode >> 8) & 0xFF
+	switch {
+	case baseClass == 0x01 && subClass == 0x08: // NVMe
 		return true
-	case 0x0C0330: // xHCI USB 3.0
+	case baseClass == 0x0C && subClass == 0x03: // xHCI USB 3.0
+		return true
+	case baseClass == 0x02 && subClass == 0x00: // Ethernet
 		return true
 	}
 	return false

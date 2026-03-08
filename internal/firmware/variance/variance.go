@@ -106,9 +106,9 @@ func applySubsysOffset(cs *pci.ConfigSpace, rng *splitMix64) {
 // --- register noise ---
 
 // offsets where ±1 LSB noise is safe (informational fields).
-var safeNoiseOffsets = []int{
-	0x08, // Revision ID (lower 8 bits — but we only touch if already non-zero)
-}
+// NOTE: RevisionID (0x08) intentionally excluded — many Windows drivers
+// use it for hardware matching and changing it causes Code 10.
+var safeNoiseOffsets = []int{}
 
 func applyRegisterNoise(cs *pci.ConfigSpace, rng *splitMix64) {
 	for _, off := range safeNoiseOffsets {
