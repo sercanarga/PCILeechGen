@@ -6,9 +6,13 @@ import (
 	"github.com/sercanarga/pcileechgen/internal/util"
 )
 
-// ScrubBarContent patches BAR data for device-class-specific quirks.
-// Call before GenerateBarContentCOE.
+// ScrubBarContent patches BAR data with device-class quirks using default BRAM size.
 func ScrubBarContent(barContents map[int][]byte, classCode uint32) {
+	ScrubBarContentWithBRAM(barContents, classCode, BRAMSize)
+}
+
+// ScrubBarContentWithBRAM is like ScrubBarContent but takes a custom BRAM size.
+func ScrubBarContentWithBRAM(barContents map[int][]byte, classCode uint32, bramSize int) {
 	data := firmware.LargestBar(barContents)
 	if data == nil {
 		return
@@ -19,15 +23,14 @@ func ScrubBarContent(barContents map[int][]byte, classCode uint32) {
 		strategy.ScrubBAR(data)
 	}
 
-	// xHCI needs additional BRAM-size-aware clamping beyond what the strategy does
+	// xHCI also needs BRAM-aware register clamping
 	if strategy != nil && strategy.DeviceClass() == devclass.ClassXHCI {
-		scrubXHCIBar0(data)
+		scrubXHCIBar0(data, bramSize)
 	}
 }
 
-// scrubXHCIBar0 clamps xHCI BAR0 registers to 4KB BRAM
-// and sets R/S=1, HCH=0 so the driver sees a running controller.
-func scrubXHCIBar0(data []byte) {
+// scrubXHCIBar0 clamps xHCI BAR0 registers to fit BRAM and fakes a running controller.
+func scrubXHCIBar0(data []byte, bramSize int) {
 	if len(data) < 0x20 {
 		return
 	}
@@ -41,20 +44,19 @@ func scrubXHCIBar0(data []byte) {
 
 	maxSlots, maxIntrs, maxPorts := xhciReadStructParams(data)
 	xhciClampScratchpads(data)
-	xhciClampXECP(data)
+	xhciClampXECP(data, bramSize)
 
-	maxSlots = xhciClampDBOFF(data, capLen, maxSlots)
-	maxIntrs = xhciClampRTSOFF(data, capLen, maxIntrs)
-	maxPorts = xhciClampPorts(data, capLen, maxPorts)
+	maxSlots = xhciClampDBOFF(data, capLen, maxSlots, bramSize)
+	maxIntrs = xhciClampRTSOFF(data, capLen, maxIntrs, bramSize)
+	maxPorts = xhciClampPorts(data, capLen, maxPorts, bramSize)
 
-	// Write back clamped HCSPARAMS1
+	// write back clamped HCSPARAMS1
 	hcsparams1 := uint32(maxSlots) | (uint32(maxIntrs) << 8) | (uint32(maxPorts) << 24)
 	util.WriteLE32(data, 0x04, hcsparams1)
 
 	xhciSetOperationalState(data, capLen, maxSlots)
 }
 
-// xhciFixCapLength ensures a valid CAPLENGTH field.
 func xhciFixCapLength(data []byte) int {
 	capLen := int(data[0x00])
 	if capLen == 0 || capLen > 0x40 {
@@ -64,7 +66,6 @@ func xhciFixCapLength(data []byte) int {
 	return capLen
 }
 
-// xhciFixHCIVersion ensures HCIVERSION >= 0x0100 (xHCI 1.0).
 func xhciFixHCIVersion(data []byte) {
 	hciVer := uint16(data[0x02]) | uint16(data[0x03])<<8
 	if hciVer < 0x0100 {
@@ -73,7 +74,6 @@ func xhciFixHCIVersion(data []byte) {
 	}
 }
 
-// xhciReadStructParams extracts MaxSlots, MaxIntrs, MaxPorts from HCSPARAMS1.
 func xhciReadStructParams(data []byte) (maxSlots, maxIntrs, maxPorts int) {
 	hcsparams1 := util.ReadLE32(data, 0x04)
 	maxSlots = int(hcsparams1 & 0xFF)
@@ -85,48 +85,45 @@ func xhciReadStructParams(data []byte) (maxSlots, maxIntrs, maxPorts int) {
 	return
 }
 
-// xhciClampScratchpads zeroes both scratchpad count fields in HCSPARAMS2.
-// hi=[31:27], lo=[25:21]; bit 26 (SPR) is preserved.
+// xhciClampScratchpads zeroes scratchpad counts in HCSPARAMS2, preserving SPR (bit 26).
 func xhciClampScratchpads(data []byte) {
 	hcsparams2 := util.ReadLE32(data, 0x08)
 	hcsparams2 &= ^uint32(0xFBE00000)
 	util.WriteLE32(data, 0x08, hcsparams2)
 }
 
-// xhciClampXECP zeroes the xECP pointer in HCCPARAMS1 if it points outside BRAM.
-func xhciClampXECP(data []byte) {
+func xhciClampXECP(data []byte, bramSize int) {
 	hccparams1 := util.ReadLE32(data, 0x10)
 	xecp := int((hccparams1 >> 16) & 0xFFFF)
-	if xecp*4 >= BRAMSize {
+	if xecp*4 >= bramSize {
 		hccparams1 &= 0x0000FFFF
 		util.WriteLE32(data, 0x10, hccparams1)
 	}
 }
 
-// xhciClampDBOFF clamps doorbell offset so the array fits in BRAM.
-// Returns updated maxSlots if shrinking was needed.
-func xhciClampDBOFF(data []byte, capLen, maxSlots int) int {
+// xhciClampDBOFF clamps doorbell offset to fit BRAM, shrinking MaxSlots if needed.
+func xhciClampDBOFF(data []byte, capLen, maxSlots, bramSize int) int {
 	dboff := util.ReadLE32(data, 0x14) & ^uint32(0x03)
 	doorbellSize := (maxSlots + 1) * 4
 
-	if int(dboff)+doorbellSize > BRAMSize {
-		newDBOFF := BRAMSize - doorbellSize
+	if int(dboff)+doorbellSize > bramSize {
+		newDBOFF := bramSize - doorbellSize
 		if newDBOFF < 0 {
 			newDBOFF = capLen + 0x20
 		}
-		newDBOFF = newDBOFF & ^0x1F // align down 32B
+		newDBOFF = newDBOFF & ^0x1F
 		if newDBOFF < capLen+0x20 {
-			// not enough room, shrink MaxSlots
-			available := BRAMSize - (capLen + 0x20)
+			// can't fit, shrink MaxSlots
+			available := bramSize - (capLen + 0x20)
 			if available < 8 {
-				available = 8 // minimum 2 doorbell slots
+				available = 8
 			}
 			maxSlots = available/4 - 1
 			if maxSlots < 1 {
 				maxSlots = 1
 			}
 			doorbellSize = (maxSlots + 1) * 4
-			newDBOFF = BRAMSize - doorbellSize
+			newDBOFF = bramSize - doorbellSize
 			if newDBOFF < 0 {
 				newDBOFF = capLen + 0x20
 			}
@@ -137,15 +134,13 @@ func xhciClampDBOFF(data []byte, capLen, maxSlots int) int {
 	return maxSlots
 }
 
-// xhciClampRTSOFF clamps runtime register offset and MaxIntrs to fit BRAM.
-func xhciClampRTSOFF(data []byte, capLen, maxIntrs int) int {
+func xhciClampRTSOFF(data []byte, capLen, maxIntrs, bramSize int) int {
 	rtsoff := int(util.ReadLE32(data, 0x18) & ^uint32(0x1F))
 
-	// Clamp MaxIntrs to fit
 	if rtsoff > 0 && maxIntrs > 0 {
-		remaining := BRAMSize - rtsoff - 0x20
+		remaining := bramSize - rtsoff - 0x20
 		if remaining < 0x20 {
-			remaining = 0x20 // at least 1 interrupter
+			remaining = 0x20
 		}
 		maxFit := remaining / 0x20
 		if maxFit < 1 {
@@ -160,18 +155,17 @@ func xhciClampRTSOFF(data []byte, capLen, maxIntrs int) int {
 	}
 
 	runtimeSize := 0x20 + maxIntrs*0x20
-	if rtsoff+runtimeSize > BRAMSize {
+	if rtsoff+runtimeSize > bramSize {
 		newRTSOFF := capLen + 0x20
-		newRTSOFF = (newRTSOFF + 0x1F) & ^0x1F // align up 32B
-		if newRTSOFF+runtimeSize > BRAMSize {
-			newRTSOFF = BRAMSize - runtimeSize
+		newRTSOFF = (newRTSOFF + 0x1F) & ^0x1F
+		if newRTSOFF+runtimeSize > bramSize {
+			newRTSOFF = bramSize - runtimeSize
 			newRTSOFF = newRTSOFF & ^0x1F
 		}
 		rtsoff = newRTSOFF
 		util.WriteLE32(data, 0x18, uint32(rtsoff))
 
-		// re-check after moving
-		remaining := BRAMSize - rtsoff - 0x20
+		remaining := bramSize - rtsoff - 0x20
 		if remaining < 0x20 {
 			remaining = 0x20
 		}
@@ -186,11 +180,10 @@ func xhciClampRTSOFF(data []byte, capLen, maxIntrs int) int {
 	return maxIntrs
 }
 
-// xhciClampPorts clamps MaxPorts so port registers fit within BRAM.
-func xhciClampPorts(data []byte, capLen, maxPorts int) int {
+func xhciClampPorts(data []byte, capLen, maxPorts, bramSize int) int {
 	portBase := capLen + 0x400
-	if portBase < BRAMSize {
-		maxPortsFit := (BRAMSize - portBase) / 0x10
+	if portBase < bramSize {
+		maxPortsFit := (bramSize - portBase) / 0x10
 		if maxPorts > maxPortsFit {
 			maxPorts = maxPortsFit
 		}
@@ -201,29 +194,24 @@ func xhciClampPorts(data []byte, capLen, maxPorts int) int {
 	return maxPorts
 }
 
-// xhciSetOperationalState sets page size, clears stale state, and ensures
-// the controller appears running (R/S=1, HCH=0).
+// xhciSetOperationalState makes the controller look like it's running.
 func xhciSetOperationalState(data []byte, capLen, maxSlots int) {
-	// PAGESIZE: 4KB
+
 	util.WriteLE32(data, capLen+0x08, 0x01)
 
-	// DNCTRL + CRCR: clear, irrelevant for static BRAM
 	util.WriteLE32(data, capLen+0x14, 0x00)
 	util.WriteLE32(data, capLen+0x18, 0x00)
 	util.WriteLE32(data, capLen+0x1C, 0x00)
 
-	// CONFIG: MaxSlotsEn = clamped MaxSlots
 	config := util.ReadLE32(data, capLen+0x38)
 	config = (config & 0xFFFFFF00) | uint32(maxSlots)
 	util.WriteLE32(data, capLen+0x38, config)
 
-	// USBCMD: R/S=1, HCRST=0
 	usbcmd := util.ReadLE32(data, capLen)
 	usbcmd |= 0x01
 	usbcmd &= ^uint32(0x02)
 	util.WriteLE32(data, capLen, usbcmd)
 
-	// USBSTS: HCH=0, HSE=0
 	usbsts := util.ReadLE32(data, capLen+4)
 	usbsts &= ^uint32(0x01 | 0x04)
 	util.WriteLE32(data, capLen+4, usbsts)

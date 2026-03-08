@@ -53,7 +53,7 @@ func TestScrubBarContent_Unknown(t *testing.T) {
 
 func TestScrubXHCIBar0_TooSmall(t *testing.T) {
 	data := make([]byte, 10)
-	scrubXHCIBar0(data) // should not panic
+	scrubXHCIBar0(data, BRAMSize) // should not panic
 }
 
 func TestXhciFixCapLength(t *testing.T) {
@@ -147,7 +147,8 @@ func TestXhciClampXECP(t *testing.T) {
 	data := make([]byte, 256)
 	// xECP pointing outside BRAM
 	util.WriteLE32(data, 0x10, 0x04000005) // xECP = 0x400*4 = 0x1000 > BRAMSize
-	xhciClampXECP(data)
+	xhciClampXECP(data, BRAMSize)
+
 	hccparams1 := util.ReadLE32(data, 0x10)
 	if hccparams1&0xFFFF0000 != 0 {
 		t.Errorf("xECP should be zeroed, got 0x%08x", hccparams1)
@@ -156,7 +157,7 @@ func TestXhciClampXECP(t *testing.T) {
 
 func TestXhciClampPorts(t *testing.T) {
 	data := make([]byte, 256)
-	maxPorts := xhciClampPorts(data, 0x20, 100)
+	maxPorts := xhciClampPorts(data, 0x20, 100, BRAMSize)
 	if maxPorts > 100 {
 		t.Errorf("Clamped ports = %d, should be <= 100", maxPorts)
 	}
