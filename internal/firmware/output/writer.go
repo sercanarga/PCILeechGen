@@ -259,6 +259,10 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, ids firmware.Dev
 			barProfile = p
 		}
 	}
+	slog.Info("BAR selection for SV codegen",
+		"bar_index", barIdx,
+		"bar_size", len(barData),
+		"has_profile", barProfile != nil)
 	bm := barmodel.BuildBARModel(barData, ctx.Device.ClassCode, barProfile)
 
 	strategy := devclass.StrategyForClass(ctx.Device.ClassCode)
