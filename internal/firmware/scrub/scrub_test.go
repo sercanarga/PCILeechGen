@@ -363,8 +363,8 @@ func TestComputeMSISize(t *testing.T) {
 	}{
 		{"32bit_no_masking", 0x0000, 10},
 		{"64bit_no_masking", 0x0080, 14},
-		{"32bit_masking", 0x0100, 20},
-		{"64bit_masking", 0x0180, 24},
+		{"32bit_masking", 0x0100, 18},
+		{"64bit_masking", 0x0180, 22},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -41,7 +41,7 @@ func computeMSISize(cs *pci.ConfigSpace, capOffset int) int {
 		size += 4 // upper address dword
 	}
 	if hasMasking {
-		size += 2 + 8 // reserved + mask + pending
+		size += 8 // mask (4B) + pending (4B)
 	}
 	return size
 }
@@ -201,13 +201,14 @@ func relocateMSIXToBRAM(cs *pci.ConfigSpace, om *overlay.Map, caps []pci.Capabil
 		newPBAOffset := newTableOffset + uint32(tableSize)
 		newPBAOffset = (newPBAOffset + 7) &^ 7
 
-		tableReg := (newTableOffset & 0xFFFFFFF8) | uint32(info.TableBIR)
-		pbaReg := (newPBAOffset & 0xFFFFFFF8) | uint32(info.PBABIR)
+		// BIR must be 0 — FPGA only serves BAR0
+		tableReg := newTableOffset & 0xFFFFFFF8 // BIR = 0
+		pbaReg := newPBAOffset & 0xFFFFFFF8     // BIR = 0
 
 		om.WriteU32(cap.Offset+4, tableReg,
-			fmt.Sprintf("relocate MSI-X table to 0x%X (%d vectors)", newTableOffset, info.TableSize))
+			fmt.Sprintf("relocate MSI-X table to 0x%X (%d vectors, BIR=0)", newTableOffset, info.TableSize))
 		om.WriteU32(cap.Offset+8, pbaReg,
-			fmt.Sprintf("relocate MSI-X PBA to 0x%X (%d bytes)", newPBAOffset, pbaSize))
+			fmt.Sprintf("relocate MSI-X PBA to 0x%X (%d bytes, BIR=0)", newPBAOffset, pbaSize))
 
 		msgCtl := cs.ReadU16(cap.Offset + 2)
 		msgCtl |= 0x8000
