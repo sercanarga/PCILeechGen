@@ -210,7 +210,7 @@ func buildEthernetBARModel(barData []byte) *BARModel {
 	regs := []BARRegister{
 		{Offset: 0x00, Width: 4, Name: "MAC0_3", RWMask: 0xFFFFFFFF},
 		{Offset: 0x04, Width: 4, Name: "MAC4_5", RWMask: 0xFFFFFFFF},
-		{Offset: 0x34, Width: 4, Name: "CHIPCMD_DW", RWMask: 0x00000000}, // byte 0x37 = ChipCmd
+		{Offset: 0x34, Width: 4, Name: "CHIPCMD_DW", RWMask: 0xFF000000}, // byte 0x37 = ChipCmd (RxEn|TxEn writable)
 		{Offset: 0x3C, Width: 4, Name: "INTRMASK", RWMask: 0xFFFFFFFF},
 		{Offset: 0x40, Width: 4, Name: "TXCONFIG", RWMask: 0x00FF0000},
 		{Offset: 0x44, Width: 4, Name: "RXCONFIG", RWMask: 0xFFFF7FFF},
@@ -360,10 +360,12 @@ func SynthesizeBARModel(profile *donor.BARProfile, classCode uint32) *BARModel {
 		return nil
 	}
 
-	return &BARModel{
+	model := &BARModel{
 		Size:      profile.Size,
 		Registers: regs,
 	}
+	validateModel(model)
+	return model
 }
 
 // isProbeDataReliable rejects VFIO dumps where 90%+ of regs report
