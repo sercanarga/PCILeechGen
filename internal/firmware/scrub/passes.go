@@ -119,7 +119,7 @@ type zeroVendorPass struct{}
 
 func (p *zeroVendorPass) Name() string { return "zero vendor registers" }
 func (p *zeroVendorPass) Apply(cs *pci.ConfigSpace, b *board.Board, om *overlay.Map, ctx *ScrubContext) {
-	zeroVendorRegisters(cs, om)
+	zeroVendorRegisters(cs, om, ctx.Caps)
 }
 
 type applyVendorQuirksPass struct{}

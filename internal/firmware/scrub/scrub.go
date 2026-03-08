@@ -78,6 +78,16 @@ var knownVendorCaps = []vendorCapRange{
 	{0x1912, 0xF0, 0x100, "Renesas firmware status"},
 	{0x1B21, 0x40, 0x60, "ASMedia link training"},
 	{0x1B73, 0xA0, 0xC0, "Fresco Logic xHCI quirks"},
+	{0x11AB, 0x40, 0x60, "Marvell device control"},
+	{0x11AB, 0x70, 0x90, "Marvell PHY/LED config"},
+	{0x15B3, 0x60, 0x80, "Mellanox device-specific"},
+	{0x1D6A, 0x40, 0x60, "Aquantia PHY control"},
+	{0x14C3, 0x40, 0x60, "MediaTek Wi-Fi config"},
+	{0x1987, 0x40, 0x50, "Phison NVMe device config"},
+	{0x1C5C, 0x40, 0x50, "SK Hynix NVMe config"},
+	{0x1344, 0x40, 0x50, "Micron NVMe config"},
+	{0x15B7, 0x40, 0x50, "SanDisk/WD NVMe config"},
+	{0x1E0F, 0x40, 0x50, "KIOXIA NVMe config"},
 }
 
 // vendorWhitelist returns a coverage bitmap for vendor-specific register regions
@@ -95,14 +105,14 @@ func vendorWhitelist(vid uint16) []bool {
 }
 
 // zeroVendorRegisters clears 0x40-0xFF bytes not belonging to any cap
-// or known vendor-specific region.
-func zeroVendorRegisters(cs *pci.ConfigSpace, om *overlay.Map) {
+// or known vendor-specific region. Uses pre-parsed caps from ScrubContext
+// to avoid re-parsing the already-modified config space.
+func zeroVendorRegisters(cs *pci.ConfigSpace, om *overlay.Map, caps []pci.Capability) {
 	covered := make([]bool, pci.ConfigSpaceLegacySize)
 	for i := 0; i < 0x40; i++ {
 		covered[i] = true
 	}
 
-	caps := pci.ParseCapabilities(cs)
 	for _, cap := range caps {
 		size := capSizeAt(cs, cap.ID, cap.Offset)
 		for i := cap.Offset; i < cap.Offset+size && i < pci.ConfigSpaceLegacySize; i++ {
@@ -151,7 +161,7 @@ func ScrubConfigSpaceWithOverlay(cs *pci.ConfigSpace, b *board.Board) (*pci.Conf
 	return scrubbed, om
 }
 
-// clampBARsToFPGA shrinks all memory BARs to 4 KB.
+// clampBARsToFPGA shrinks all memory BARs to 4 KB and I/O BARs to 256 bytes.
 func clampBARsToFPGA(cs *pci.ConfigSpace, om *overlay.Map) {
 	for i := 0; i < 6; i++ {
 		barOffset := 0x10 + (i * 4)
@@ -161,6 +171,9 @@ func clampBARsToFPGA(cs *pci.ConfigSpace, om *overlay.Map) {
 		}
 
 		if barVal&0x01 != 0 {
+			// I/O BAR: clamp to 256 bytes (mask = 0xFFFFFF01)
+			newBar := uint32(0xFFFFFF00) | (barVal & 0x03)
+			om.WriteU32(barOffset, newBar, fmt.Sprintf("clamp I/O BAR%d to 256 bytes", i))
 			continue
 		}
 

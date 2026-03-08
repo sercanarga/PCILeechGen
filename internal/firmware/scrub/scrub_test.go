@@ -345,7 +345,7 @@ func TestZeroVendorRegisters_WhitelistPreserves(t *testing.T) {
 	cs.WriteU32(0xB0, 0xCAFEBABE) // outside any cap or whitelist
 
 	om := overlay.NewMap(cs)
-	zeroVendorRegisters(cs, om)
+	zeroVendorRegisters(cs, om, pci.ParseCapabilities(cs))
 
 	if cs.ReadU32(0xE4) != 0xDEADBEEF {
 		t.Errorf("Intel whitelisted register at 0xE4 should be preserved, got 0x%08x", cs.ReadU32(0xE4))
@@ -634,9 +634,10 @@ func TestClampBARsToFPGA(t *testing.T) {
 	if cs.ReadU32(0x14) != 0 {
 		t.Errorf("BAR1 upper bits should be zeroed, got 0x%08x", cs.ReadU32(0x14))
 	}
-	// BAR2 (IO) should be unchanged
-	if cs.ReadU32(0x18) != 0x0000FF01 {
-		t.Errorf("IO BAR should not change, got 0x%08x", cs.ReadU32(0x18))
+	// BAR2 (IO) should be clamped to 256 bytes
+	ioBar := cs.ReadU32(0x18)
+	if ioBar != 0xFFFFFF01 {
+		t.Errorf("IO BAR should be clamped to 256 bytes: got 0x%08x, want 0xFFFFFF01", ioBar)
 	}
 }
 
@@ -744,7 +745,7 @@ func TestZeroVendorRegisters_ClearsUncovered(t *testing.T) {
 	cs.WriteU8(0x91, 0xAA)
 
 	om := overlay.NewMap(cs)
-	zeroVendorRegisters(cs, om)
+	zeroVendorRegisters(cs, om, pci.ParseCapabilities(cs))
 
 	if cs.ReadU8(0x90) != 0 {
 		t.Error("Uncovered vendor register at 0x90 should be zeroed")
