@@ -67,6 +67,15 @@ func applyPCIeWritemask(cap pci.Capability, masks []uint32) {
 	if cap.Offset+16+4 <= pci.ConfigSpaceLegacySize {
 		masks[(cap.Offset+16)/4] = 0x0000FFFF // LinkCtl
 	}
+	if cap.Offset+0x18+4 <= pci.ConfigSpaceLegacySize {
+		masks[(cap.Offset+0x18)/4] = 0x0000FFFF // SlotCtl
+	}
+	if cap.Offset+0x28+4 <= pci.ConfigSpaceLegacySize {
+		masks[(cap.Offset+0x28)/4] = 0x0000FFFF // DevCtl2
+	}
+	if cap.Offset+0x30+4 <= pci.ConfigSpaceLegacySize {
+		masks[(cap.Offset+0x30)/4] = 0x0000FFFF // LinkCtl2
+	}
 }
 
 func applyExtCapabilityWritemasks(cs *pci.ConfigSpace, masks []uint32) {
