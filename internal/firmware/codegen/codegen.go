@@ -71,6 +71,13 @@ func GenerateWritemaskCOE(cs *pci.ConfigSpace) string {
 				sizeMask = 0xFFFFF000 // default 4KB
 			}
 			masks[barOffset/4] = sizeMask
+
+			// 64-bit BAR: upper 32 bits must also be writable for address mapping
+			is64bit := (barValue & 0x06) == 0x04
+			if is64bit && i < 5 {
+				masks[(barOffset+4)/4] = 0xFFFFFFFF
+				i++ // skip upper half
+			}
 		}
 	}
 
