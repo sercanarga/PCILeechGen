@@ -46,6 +46,26 @@ set coe_files [list \
 ]
 import_files -fileset sources_1 $coe_files
 
+# Generated SV modules
+set gen_sv_files [glob -nocomplain "${origin_dir}/*.sv"]
+if {[llength $gen_sv_files] > 0} {
+  set imported_gen [import_files -fileset sources_1 $gen_sv_files]
+  foreach f $imported_gen {
+    set file_obj [get_files -of_objects [get_filesets sources_1] [list "*[file tail $f]"]]
+    if { $file_obj != "" } {
+      set_property -name "file_type" -value "SystemVerilog" -objects $file_obj
+    }
+  }
+  puts "Imported [llength $gen_sv_files] generated SV module(s)"
+}
+
+# HEX init files
+set hex_files [glob -nocomplain "${origin_dir}/*.hex"]
+if {[llength $hex_files] > 0} {
+  import_files -fileset sources_1 $hex_files
+  puts "Imported [llength $hex_files] HEX init file(s)"
+}
+
 # Import IP cores from board library
 set ip_files [glob -nocomplain "{{.IPPath}}/*.xci"]
 if {[llength $ip_files] > 0} {

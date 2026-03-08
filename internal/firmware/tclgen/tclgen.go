@@ -61,6 +61,8 @@ type bar0Config struct {
 
 // buildBAR0Config picks the largest MMIO BAR for the PCIe IP.
 // Falls back to BAR0 when there's no MMIO BAR.
+// When MSI-X is present, ensures the BAR is large enough to contain the
+// relocated MSI-X table (0x1000+) and PBA.
 func buildBAR0Config(ctx *donor.DeviceContext, b *board.Board) bar0Config {
 	cfg := bar0Config{Scale: "Kilobytes", Size: "4"}
 	if len(ctx.BARs) == 0 {
@@ -95,6 +97,7 @@ func buildBAR0Config(ctx *donor.DeviceContext, b *board.Board) bar0Config {
 		if barSize > bramSize {
 			barSize = bramSize
 		}
+		barSize = enforceMinMSIXSize(barSize, ctx)
 		cfg.Scale, cfg.Size = barSizeToTCL(barSize)
 		cfg.Is64bit = bar0.Type == pci.BARTypeMem64
 		return cfg
@@ -106,9 +109,36 @@ func buildBAR0Config(ctx *donor.DeviceContext, b *board.Board) bar0Config {
 	if barSize > bramSize {
 		barSize = bramSize
 	}
+	barSize = enforceMinMSIXSize(barSize, ctx)
 	cfg.Scale, cfg.Size = barSizeToTCL(barSize)
 	cfg.Is64bit = bestBAR.Type == pci.BARTypeMem64
 	return cfg
+}
+
+// enforceMinMSIXSize bumps the BAR size to fit the relocated MSI-X table
+// (starting at offset 0x1000) plus its PBA. Returns the next power-of-two
+// that covers everything.
+func enforceMinMSIXSize(barSize uint64, ctx *donor.DeviceContext) uint64 {
+	if ctx.MSIXData == nil || ctx.MSIXData.TableSize == 0 {
+		return barSize
+	}
+	tableBytes := uint64(ctx.MSIXData.TableSize) * 16
+	pbaBytes := ((uint64(ctx.MSIXData.TableSize) + 63) / 64) * 8
+	if pbaBytes < 8 {
+		pbaBytes = 8
+	}
+	// table starts at 0x1000, PBA right after (8-byte aligned)
+	pbaStart := (0x1000 + tableBytes + 7) &^ 7
+	minSize := pbaStart + pbaBytes
+
+	// round up to next power of two
+	if minSize > barSize {
+		barSize = 1
+		for barSize < minSize {
+			barSize <<= 1
+		}
+	}
+	return barSize
 }
 
 // GenerateProjectTCL generates the Vivado project creation TCL script.
