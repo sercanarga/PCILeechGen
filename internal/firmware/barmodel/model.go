@@ -65,16 +65,19 @@ func BuildBARModel(barData []byte, classCode uint32, profile *donor.BARProfile) 
 	return model
 }
 
-// validateModel catches misaligned or duplicate offsets at build time.
-// Non-aligned offsets produce broken Verilog case labels → silent Code 10.
+// validateModel checks for misaligned or duplicate offsets.
 func validateModel(m *BARModel) {
 	seen := make(map[uint32]string, len(m.Registers))
 	for _, r := range m.Registers {
+		if int(r.Offset) >= m.Size {
+			slog.Warn("barmodel: register offset beyond BAR size",
+				"reg", r.Name, "offset", fmt.Sprintf("0x%X", r.Offset), "bar_size", m.Size)
+		}
 		if r.Offset%4 != 0 {
 			panic(fmt.Sprintf("barmodel: register %s at offset 0x%X is not DWORD-aligned", r.Name, r.Offset))
 		}
 		if prev, ok := seen[r.Offset]; ok {
-			panic(fmt.Sprintf("barmodel: registers %s and %s share offset 0x%X — SV case conflict", prev, r.Name, r.Offset))
+			panic(fmt.Sprintf("barmodel: %s and %s share offset 0x%X", prev, r.Name, r.Offset))
 		}
 		seen[r.Offset] = r.Name
 	}
@@ -88,10 +91,9 @@ func buildNVMeBARModel(barData []byte) *BARModel {
 		{Offset: 0x04, Width: 4, Name: "CAP_HI", RWMask: 0x00000000},
 		// VS
 		{Offset: 0x08, Width: 4, Name: "VS", RWMask: 0x00000000},
-		// INTMS / INTMC
-		{Offset: 0x0C, Width: 4, Name: "INTMS", RWMask: 0xFFFFFFFF},
-
-		{Offset: 0x10, Width: 4, Name: "INTMC", RWMask: 0xFFFFFFFF},
+		// INTMS/INTMC: RO when MSI-X is active
+		{Offset: 0x0C, Width: 4, Name: "INTMS", RWMask: 0x00000000},
+		{Offset: 0x10, Width: 4, Name: "INTMC", RWMask: 0x00000000},
 		// CC — driver writes EN, FSM watches
 		{Offset: 0x14, Width: 4, Name: "CC", RWMask: 0x00FFFFF1},
 		// CSTS — RO, FSM drives RDY
