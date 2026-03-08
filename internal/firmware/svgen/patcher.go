@@ -44,14 +44,16 @@ func (p *SVPatcher) PatchAll() error {
 	}
 
 	// Validate that critical patches were applied
-	p.validatePatchResults()
+	if err := p.validatePatchResults(); err != nil {
+		return err
+	}
 
 	return nil
 }
 
-// validatePatchResults warns if fewer patches landed than expected.
+// validatePatchResults returns an error if fewer patches landed than expected.
 // Catches silent breakage when upstream SV format changes.
-func (p *SVPatcher) validatePatchResults() {
+func (p *SVPatcher) validatePatchResults() error {
 	fifoPatched := 0
 	cfgPatched := 0
 	for _, r := range p.results {
@@ -66,12 +68,8 @@ func (p *SVPatcher) validatePatchResults() {
 	// pcileech_fifo.sv should have at least VendorID + DeviceID patches
 	const minFifoPatches = 2
 	if fifoPatched < minFifoPatches {
-		w := fmt.Sprintf("pcileech_fifo.sv: only %d/%d minimum patches applied — "+
-			"upstream SV format may have changed", fifoPatched, minFifoPatches)
-		p.results = append(p.results, PatchResult{
-			File:     "pcileech_fifo.sv",
-			Warnings: []string{w},
-		})
+		return fmt.Errorf("pcileech_fifo.sv: only %d/%d minimum patches applied — "+
+			"upstream SV format may have changed (VendorID/DeviceID patches are critical)", fifoPatched, minFifoPatches)
 	}
 
 	// cfg SV: if device has DSN, at least 1 patch expected
@@ -83,6 +81,7 @@ func (p *SVPatcher) validatePatchResults() {
 			Warnings: []string{w},
 		})
 	}
+	return nil
 }
 
 // svRegexPatch defines a single regex-based patch operation.
