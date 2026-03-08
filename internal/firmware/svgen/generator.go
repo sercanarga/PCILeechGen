@@ -13,16 +13,29 @@ import (
 
 // SVGeneratorConfig is the input data for all SV template renders.
 type SVGeneratorConfig struct {
-	DeviceIDs     firmware.DeviceIDs
-	BARModel      *barmodel.BARModel // nil = generic fallback (uses BRAM-based zerowrite4k)
-	ClassCode     uint32
-	LatencyConfig *LatencyConfig     // TLP response timing (nil = no latency emulator)
-	HasMSIX       bool               // generate MSI-X interrupt controller logic
-	BuildEntropy  uint32             // seed for PRNG uniqueness per build
-	PRNGSeeds     [4]uint32          // computed PRNG seeds for latency emulator
-	DeviceClass   string             // "nvme", "xhci", "audio", "ethernet", or ""
-	MSIXConfig    *MSIXConfig        // MSI-X table replication (nil = no MSI-X table)
-	NVMeIdentify  *nvme.IdentifyData // NVMe Identify Controller/Namespace data (nil = no responder)
+	DeviceIDs          firmware.DeviceIDs
+	BARModel           *barmodel.BARModel // nil = generic fallback (uses BRAM-based zerowrite4k)
+	ClassCode          uint32
+	LatencyConfig      *LatencyConfig     // TLP response timing (nil = no latency emulator)
+	HasMSIX            bool               // generate MSI-X interrupt controller logic
+	BuildEntropy       uint32             // seed for PRNG uniqueness per build
+	PRNGSeeds          [4]uint32          // computed PRNG seeds for latency emulator
+	DeviceClass        string             // "nvme", "xhci", "audio", "ethernet", or ""
+	MSIXConfig         *MSIXConfig        // MSI-X table replication (nil = no MSI-X table)
+	NVMeIdentify       *nvme.IdentifyData // NVMe Identify Controller/Namespace data (nil = no responder)
+	NVMeDoorbellStride uint32             // CAP.DSTRD — doorbell stride (0 = 4B, default)
+}
+
+// NVMeSQ0DoorbellOffset returns the byte offset of the SQ0 tail doorbell.
+func (c *SVGeneratorConfig) NVMeSQ0DoorbellOffset() uint32 {
+	stride := uint32(4) << c.NVMeDoorbellStride
+	return 0x1000 + 0*stride // SQ0 tail
+}
+
+// NVMeCQ0DoorbellOffset returns the byte offset of the CQ0 head doorbell.
+func (c *SVGeneratorConfig) NVMeCQ0DoorbellOffset() uint32 {
+	stride := uint32(4) << c.NVMeDoorbellStride
+	return 0x1000 + 1*stride // CQ0 head
 }
 
 func renderTemplate(name string, data any) (string, error) {

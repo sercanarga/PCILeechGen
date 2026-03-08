@@ -61,7 +61,8 @@ func applyMSIWritemask(cs *pci.ConfigSpace, cap pci.Capability, masks []uint32) 
 // applyPCIeWritemask sets writemask bits for PCIe capability fields.
 func applyPCIeWritemask(cap pci.Capability, masks []uint32) {
 	if cap.Offset+8+4 <= pci.ConfigSpaceLegacySize {
-		masks[(cap.Offset+8)/4] = 0x0000FFFF // DevCtl
+		// DevCtl (bits 15:0) + DevStatus RW1C (bits 19:16)
+		masks[(cap.Offset+8)/4] = 0x000FFFFF
 	}
 	if cap.Offset+16+4 <= pci.ConfigSpaceLegacySize {
 		masks[(cap.Offset+16)/4] = 0x0000FFFF // LinkCtl

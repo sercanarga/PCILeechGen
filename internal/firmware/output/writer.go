@@ -249,10 +249,15 @@ func (ow *OutputWriter) writeSVModules(ctx *donor.DeviceContext, scrubbedCS *pci
 
 // buildSVConfig assembles the SVGeneratorConfig from donor context.
 func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, ids firmware.DeviceIDs, entropy uint32) *svgen.SVGeneratorConfig {
-	barData := firmware.LargestBar(ctx.BARContents)
+	// Use the same BAR index for content data and probe profile to avoid
+	// mismatched register maps (e.g. IO BAR0 profile + MMIO BAR2 data).
+	barIdx := firmware.LargestBarIndex(ctx.BARContents)
+	barData := ctx.BARContents[barIdx]
 	var barProfile *donor.BARProfile
 	if ctx.BARProfiles != nil {
-		barProfile = firmware.LowestBar(ctx.BARProfiles)
+		if p, ok := ctx.BARProfiles[barIdx]; ok {
+			barProfile = p
+		}
 	}
 	bm := barmodel.BuildBARModel(barData, ctx.Device.ClassCode, barProfile)
 
@@ -275,6 +280,11 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, ids firmware.Dev
 
 	if devClass == devclass.ClassNVMe {
 		cfg.NVMeIdentify = nvme.BuildIdentifyData(ids, barData)
+		// CAP_HI at BAR offset 0x04, DSTRD = bits [3:0]
+		if len(barData) >= 0x08 {
+			capHI := util.ReadLE32(barData, 0x04)
+			cfg.NVMeDoorbellStride = capHI & 0x0F
+		}
 	}
 
 	if ctx.MSIXData != nil && ctx.MSIXData.TableSize > 0 {
