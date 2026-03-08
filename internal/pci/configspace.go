@@ -76,14 +76,14 @@ func (cs *ConfigSpace) ReadU8(offset int) uint8 {
 }
 
 func (cs *ConfigSpace) ReadU16(offset int) uint16 {
-	if offset < 0 || offset+1 >= ConfigSpaceSize {
+	if offset < 0 || offset+2 > ConfigSpaceSize {
 		return 0
 	}
 	return binary.LittleEndian.Uint16(cs.Data[offset : offset+2])
 }
 
 func (cs *ConfigSpace) ReadU32(offset int) uint32 {
-	if offset < 0 || offset+3 >= ConfigSpaceSize {
+	if offset < 0 || offset+4 > ConfigSpaceSize {
 		return 0
 	}
 	return binary.LittleEndian.Uint32(cs.Data[offset : offset+4])
