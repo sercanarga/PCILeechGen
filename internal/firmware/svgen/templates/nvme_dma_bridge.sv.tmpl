@@ -7,9 +7,9 @@
 // wrapping those into proper PCIe TLPs so the root complex actually
 // sees them.
 //
-// Writes are simple: one MWr with a 3DW header, payload is a single DWORD.
-// Reads are trickier: we send an MRd and then snoop inbound traffic for
-// the CplD that comes back, matching on our tag.
+// Writes: MWr with 3DW (32-bit) or 4DW (64-bit) header + 1 DWORD payload.
+// Reads:  MRd then snoop inbound CplD, de-serialize 128-bit bus into
+//         sequential DWORDs for the admin responder.
 //
 
 `timescale 1ns / 1ps
@@ -49,21 +49,29 @@ module pcileech_nvme_dma_bridge(
     input [8:0]         tlp_rx_tuser
 );
 
-    localparam [2:0] B_IDLE      = 3'h0;
-    localparam [2:0] B_WR_TLP    = 3'h1;
-    localparam [2:0] B_WR_DONE   = 3'h2;
-    localparam [2:0] B_RD_TLP    = 3'h3;
-    localparam [2:0] B_RD_WAIT   = 3'h4;
-    localparam [2:0] B_RD_DRAIN  = 3'h5;
+    localparam [3:0] B_IDLE        = 4'h0;
+    localparam [3:0] B_WR_TLP      = 4'h1;
+    localparam [3:0] B_WR_DONE     = 4'h2;
+    localparam [3:0] B_RD_TLP      = 4'h3;
+    localparam [3:0] B_RD_WAIT     = 4'h4;
+    localparam [3:0] B_RD_HDR      = 4'h5;  // first CplD beat: extract 1 payload DW
+    localparam [3:0] B_RD_DRAIN    = 4'h6;  // subsequent beats: extract up to 4 DW each
+    localparam [3:0] B_RD_EMIT     = 4'h7;  // emit buffered DWORDs one at a time
+    localparam [3:0] B_WR_TLP2     = 4'h8;  // 64-bit MWr second beat
 
-    reg [2:0]  bstate;
+    reg [3:0]  bstate;
 
     reg [9:0]  rd_remaining;        // how many DWORDs we're still expecting
-    reg [7:0]  rd_tag;              // tags start at 0x80 to stay out of the host's way
+    reg [7:0]  rd_tag;              // tags start at 0x80 to stay off host tags
 
-    // we only use 3DW headers (32-bit addr) since admin queue buffers
-    // are virtually always in low memory, but this flag exists just in case
-    wire addr_is_64bit = |dma_wr_addr[63:32];
+    // 64-bit address detection
+    wire wr_is_64bit = |dma_wr_addr[63:32];
+    wire rd_is_64bit = |dma_rd_addr[63:32];
+
+    // CplD receive buffer: hold up to 4 DWORDs from one 128-bit beat
+    reg [31:0] rx_buf [0:3];
+    reg [2:0]  rx_buf_cnt;          // how many DWORDs in buffer (0-4)
+    reg [2:0]  rx_buf_idx;          // current emit index
 
     always @(posedge clk) begin
         if (rst) begin
@@ -76,54 +84,99 @@ module pcileech_nvme_dma_bridge(
             tlp_tx_tlast    <= 1'b0;
             rd_remaining    <= 10'h0;
             rd_tag          <= 8'h80;
+            rx_buf_cnt      <= 3'h0;
+            rx_buf_idx      <= 3'h0;
         end else begin
             dma_wr_done   <= 1'b0;
             dma_rd_valid  <= 1'b0;
             dma_rd_done   <= 1'b0;
             tlp_tx_tvalid <= 1'b0;
+            tlp_tx_tlast  <= 1'b0;
 
             case (bstate)
 
-                // writes go first because the responder is always waiting on them
+                // ---- idle: writes take priority --------------------------------
                 B_IDLE: begin
                     if (dma_wr_valid) begin
-                        // MWr TLP: 3DW header + 1DW payload, all in one beat
-                        tlp_tx_tdata[31:0]   <= {
-                            3'b010,             // Fmt = 3DW w/ data
-                            5'b00000,           // Type = MWr
-                            1'b0, 3'b000,       // R, TC
-                            4'b0000,            // R, Attr, R, TH
-                            1'b0, 1'b0,         // TD, EP
-                            2'b00, 2'b00,       // Attr, AT
-                            10'h001             // 1 DWORD
-                        };
-                        tlp_tx_tdata[63:32]  <= {pcie_id, 8'h00, 4'hF, dma_wr_be};
-                        tlp_tx_tdata[95:64]  <= {dma_wr_addr[31:2], 2'b00};
-                        tlp_tx_tdata[127:96] <= dma_wr_data;
+                        if (wr_is_64bit) begin
+                            // 4DW header MWr: first beat = header only
+                            tlp_tx_tdata[31:0]   <= {
+                                3'b011,             // Fmt = 4DW w/ data
+                                5'b00000,           // Type = MWr
+                                1'b0, 3'b000,
+                                4'b0000,
+                                1'b0, 1'b0,
+                                2'b00, 2'b00,
+                                10'h001
+                            };
+                            tlp_tx_tdata[63:32]  <= {pcie_id, 8'h00, 4'hF, dma_wr_be};
+                            tlp_tx_tdata[95:64]  <= dma_wr_addr[63:32];
+                            tlp_tx_tdata[127:96] <= {dma_wr_addr[31:2], 2'b00};
 
-                        tlp_tx_tkeepdw <= 4'b1111;
-                        tlp_tx_tlast   <= 1'b1;
-                        tlp_tx_tuser   <= {8'h00, 1'b1};
-                        tlp_tx_tvalid  <= 1'b1;
+                            tlp_tx_tkeepdw <= 4'b1111;
+                            tlp_tx_tlast   <= 1'b0;
+                            tlp_tx_tuser   <= {8'h00, 1'b1};
+                            tlp_tx_tvalid  <= 1'b1;
 
-                        bstate <= B_WR_DONE;
+                            bstate <= B_WR_TLP2;
+                        end else begin
+                            // 3DW header MWr: header + payload in one beat
+                            tlp_tx_tdata[31:0]   <= {
+                                3'b010,             // Fmt = 3DW w/ data
+                                5'b00000,           // Type = MWr
+                                1'b0, 3'b000,
+                                4'b0000,
+                                1'b0, 1'b0,
+                                2'b00, 2'b00,
+                                10'h001
+                            };
+                            tlp_tx_tdata[63:32]  <= {pcie_id, 8'h00, 4'hF, dma_wr_be};
+                            tlp_tx_tdata[95:64]  <= {dma_wr_addr[31:2], 2'b00};
+                            tlp_tx_tdata[127:96] <= dma_wr_data;
+
+                            tlp_tx_tkeepdw <= 4'b1111;
+                            tlp_tx_tlast   <= 1'b1;
+                            tlp_tx_tuser   <= {8'h00, 1'b1};
+                            tlp_tx_tvalid  <= 1'b1;
+
+                            bstate <= B_WR_DONE;
+                        end
                     end
                     else if (dma_rd_req) begin
-                        // MRd TLP: 3DW header, no payload
-                        tlp_tx_tdata[31:0]   <= {
-                            3'b000,             // Fmt = 3DW no data
-                            5'b00000,           // Type = MRd
-                            1'b0, 3'b000,
-                            4'b0000,
-                            1'b0, 1'b0,
-                            2'b00, 2'b00,
-                            dma_rd_len
-                        };
-                        tlp_tx_tdata[63:32]  <= {pcie_id, rd_tag, 4'hF, 4'hF};
-                        tlp_tx_tdata[95:64]  <= {dma_rd_addr[31:2], 2'b00};
-                        tlp_tx_tdata[127:96] <= 32'h0;
+                        if (rd_is_64bit) begin
+                            // 4DW header MRd
+                            tlp_tx_tdata[31:0]   <= {
+                                3'b001,             // Fmt = 4DW no data
+                                5'b00000,           // Type = MRd
+                                1'b0, 3'b000,
+                                4'b0000,
+                                1'b0, 1'b0,
+                                2'b00, 2'b00,
+                                dma_rd_len
+                            };
+                            tlp_tx_tdata[63:32]  <= {pcie_id, rd_tag, 4'hF, 4'hF};
+                            tlp_tx_tdata[95:64]  <= dma_rd_addr[63:32];
+                            tlp_tx_tdata[127:96] <= {dma_rd_addr[31:2], 2'b00};
 
-                        tlp_tx_tkeepdw <= 4'b0111;
+                            tlp_tx_tkeepdw <= 4'b1111;
+                        end else begin
+                            // 3DW header MRd
+                            tlp_tx_tdata[31:0]   <= {
+                                3'b000,             // Fmt = 3DW no data
+                                5'b00000,           // Type = MRd
+                                1'b0, 3'b000,
+                                4'b0000,
+                                1'b0, 1'b0,
+                                2'b00, 2'b00,
+                                dma_rd_len
+                            };
+                            tlp_tx_tdata[63:32]  <= {pcie_id, rd_tag, 4'hF, 4'hF};
+                            tlp_tx_tdata[95:64]  <= {dma_rd_addr[31:2], 2'b00};
+                            tlp_tx_tdata[127:96] <= 32'h0;
+
+                            tlp_tx_tkeepdw <= 4'b0111;
+                        end
+
                         tlp_tx_tlast   <= 1'b1;
                         tlp_tx_tuser   <= {8'h00, 1'b1};
                         tlp_tx_tvalid  <= 1'b1;
@@ -134,36 +187,73 @@ module pcileech_nvme_dma_bridge(
                     end
                 end
 
-                // write TLP went out, tell the admin responder it's done
+                // ---- 64-bit MWr second beat: payload DWORD --------------------
+                B_WR_TLP2: begin
+                    tlp_tx_tdata[31:0]   <= dma_wr_data;
+                    tlp_tx_tdata[127:32] <= 96'h0;
+                    tlp_tx_tkeepdw <= 4'b0001;
+                    tlp_tx_tlast   <= 1'b1;
+                    tlp_tx_tuser   <= 9'h0;
+                    tlp_tx_tvalid  <= 1'b1;
+                    bstate <= B_WR_DONE;
+                end
+
+                // ---- write done, signal admin responder -----------------------
                 B_WR_DONE: begin
                     dma_wr_done <= 1'b1;
                     bstate      <= B_IDLE;
                 end
 
-                // sit here watching the RX bus for our CplD to come back
+                // ---- snoop RX bus for CplD matching our tag -------------------
                 B_RD_WAIT: begin
                     if (tlp_rx_tvalid && tlp_rx_tuser[0]) begin
-                        wire [7:0] rx_fmt_type = tlp_rx_tdata[31:24];
-                        if (rx_fmt_type == 8'b01001010) begin   // CplD
-                            wire [7:0] cpl_tag = tlp_rx_tdata[79:72];
-                            if (cpl_tag == (rd_tag - 1'b1)) begin
-                                bstate <= B_RD_DRAIN;
+                        // CplD fmt+type = 0100_1010 = 0x4A
+                        if (tlp_rx_tdata[31:24] == 8'h4A) begin
+                            if (tlp_rx_tdata[79:72] == (rd_tag - 8'h01)) begin
+                                // first CplD beat: 3DW header occupies [95:0],
+                                // payload starts at [127:96] = 1 DWORD
+                                rx_buf[0]  <= tlp_rx_tdata[127:96];
+                                rx_buf_cnt <= 3'd1;
+                                rx_buf_idx <= 3'd0;
+                                bstate     <= B_RD_EMIT;
                             end
                         end
                     end
                 end
 
-                // CplD is flowing in, grab the payload DWORDs one at a time
+                // ---- emit buffered DWORDs one per cycle to admin responder ----
+                B_RD_EMIT: begin
+                    dma_rd_data  <= rx_buf[rx_buf_idx];
+                    dma_rd_valid <= 1'b1;
+                    rd_remaining <= rd_remaining - 10'd1;
+
+                    if (rd_remaining <= 10'd1) begin
+                        dma_rd_done <= 1'b1;
+                        bstate      <= B_IDLE;
+                    end else if (rx_buf_cnt == 3'd0 || rx_buf_idx >= (rx_buf_cnt - 3'd1)) begin
+                        // buffer emptied (or was never filled), need more data from bus
+                        bstate <= B_RD_DRAIN;
+                    end else begin
+                        rx_buf_idx <= rx_buf_idx + 3'd1;
+                    end
+                end
+
+                // ---- subsequent CplD beats: 4 payload DWORDs per beat ---------
                 B_RD_DRAIN: begin
                     if (tlp_rx_tvalid) begin
-                        dma_rd_data  <= tlp_rx_tdata[127:96];
-                        dma_rd_valid <= 1'b1;
-                        rd_remaining <= rd_remaining - 1'b1;
+                        rx_buf[0]  <= tlp_rx_tdata[31:0];
+                        rx_buf[1]  <= tlp_rx_tdata[63:32];
+                        rx_buf[2]  <= tlp_rx_tdata[95:64];
+                        rx_buf[3]  <= tlp_rx_tdata[127:96];
 
-                        if (rd_remaining <= 10'd1) begin
-                            dma_rd_done <= 1'b1;
-                            bstate      <= B_IDLE;
-                        end
+                        // figure out how many valid DWORDs in this beat
+                        if (rd_remaining >= 10'd4)
+                            rx_buf_cnt <= 3'd4;
+                        else
+                            rx_buf_cnt <= rd_remaining[2:0];
+
+                        rx_buf_idx <= 3'd0;
+                        bstate     <= B_RD_EMIT;
                     end
                 end
 

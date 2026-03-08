@@ -119,6 +119,10 @@ module pcileech_nvme_admin_responder(
     // and nothing ever happens on our fake controller, so we count and ignore
     reg [3:0]   aer_pending;
 
+    // Set/Get Features Number of Queues must be consistent — stornvme sets
+    // the desired count then reads it back.  We clamp to what CAP.MQES allows.
+    reg [31:0]  num_queues_granted;
+
     always @(posedge clk) begin
         if (rst) begin
             state           <= S_IDLE;
@@ -137,6 +141,7 @@ module pcileech_nvme_admin_responder(
             id_rom_addr     <= 13'h0;
             cc_en_prev      <= 1'b0;
             aer_pending     <= 4'h0;
+            num_queues_granted <= 32'h00010001;  // default: 1 SQ + 1 CQ
         end else begin
             // pulse signals – cleared every cycle, only set when needed
             dma_rd_req      <= 1'b0;
@@ -243,7 +248,10 @@ module pcileech_nvme_admin_responder(
                                     8'h04:   cqe[0] <= 32'h0;            // temp threshold
                                     8'h05:   cqe[0] <= 32'h0;            // error recovery
                                     8'h06:   cqe[0] <= cmd_cdw11;        // volatile write cache
-                                    8'h07:   cqe[0] <= cmd_cdw11;        // number of queues
+                                    8'h07: begin                           // number of queues
+                                        num_queues_granted <= cmd_cdw11;
+                                        cqe[0] <= cmd_cdw11;
+                                    end
                                     8'h08:   cqe[0] <= 32'h0;            // interrupt vector config
                                     8'h09:   cqe[0] <= 32'h0;            // write atomicity
                                     8'h0B:   cqe[0] <= 32'h0;            // interrupt coalescing
@@ -260,7 +268,7 @@ module pcileech_nvme_admin_responder(
                             // Get Features
                             8'h0A: begin
                                 case (cmd_cdw10[7:0])
-                                    8'h07:   cqe[0] <= 32'h00010001;  // 1 SQ + 1 CQ
+                                    8'h07:   cqe[0] <= num_queues_granted;  // echo last Set Features value
                                     8'h0B:   cqe[0] <= 32'h00000000;  // coalescing off
                                     default: cqe[0] <= 32'h0;
                                 endcase
