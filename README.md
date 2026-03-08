@@ -1,3 +1,6 @@
+> [!CAUTION]
+> This tool is provided for **educational and research purposes only**. The authors do not condone or encourage the use of this software for cheating, circumventing anti-cheat systems, or any other activity that violates terms of service of any software or platform. Users are solely responsible for ensuring their use of this tool complies with all applicable laws and agreements.
+
 <p align="center">
   <img src="https://raw.githubusercontent.com/sercanarga/PCILeechGen/main/docs/logo.png" alt="PCILeechGen" width="200">
 </p>
@@ -52,14 +55,19 @@
 - BAR Content Emulation (donor memory snapshot)
 - NVMe CC->CSTS State Machine
 - NVMe Admin Queue Responder (Identify, Set/Get Features, Create IO CQ/SQ)
+- NVMe DMA Bridge (admin queue doorbell + completion)
 - xHCI USBCMD/USBSTS State Machine
+- Auto-bind VFIO on BAR read failure
+- Unreliable probe data detection (0xFF rejection)
+- BAR size power-of-2 rounding
+- Build-time offset validation
 
 </td></tr>
 <tr><td valign="top">
 
 **Config Space**
 - Full 4KB shadow + scrubbing pipeline
-- Per-register write masks
+- Per-register write masks (SlotCtl, DevCtl2, LinkCtl2, upper 32-bit BAR)
 - Power Management (D-state + NoSoftReset)
 - Vendor Quirks (Renesas firmware status)
 - Vendor-Specific Capability Preservation (Intel, Realtek, Broadcom, Qualcomm, ASMedia)
@@ -78,6 +86,10 @@
 **Stealth & Timing**
 - TLP Latency Emulation (PRNG jitter, thermal drift, burst correlation)
 - Donor-Profiled TLP Timing (per-device response histogram CDF reproduction)
+- Write Completion Emulation (TLP completion timing)
+- ASPM Clamping (L0s/L1 stealth pass)
+- AER Mask Normalization (error reporting stealth)
+- Power State Variance (config space randomization)
 - Link Speed / Width (clamped to board)
 - P&R Randomization (per-build Vivado placement seed)
 - VSEC Entropy Embed (build-unique fingerprint in ext config space)
@@ -86,7 +98,7 @@
 
 **Diagnostics & Validation**
 - VFIO Diagnostics (power state, BAR accessibility, IOMMU isolation)
-- Fallback Config (class-based defaults for NVMe, xHCI, Ethernet, Audio)
+- Fallback Config (class-based defaults for NVMe, xHCI, Ethernet, Audio, GPU, SATA, Wi-Fi, Thunderbolt)
 - Post-Build Validation (output files, SV IDs, HEX/COE format)
 - Vivado Build Report (error categorization, benign warning filter)
 - Build Manifest (JSON with SHA256 checksums)
@@ -354,6 +366,7 @@ pcileech_datastore/
 ├── pcileech_tlps128_bar_controller.sv  # TLP BAR controller
 ├── pcileech_msix_table.sv              # MSI-X table + PBA emulation
 ├── pcileech_nvme_admin_responder.sv    # NVMe admin queue FSM (if NVMe)
+├── pcileech_nvme_dma_bridge.sv        # NVMe DMA bridge (if NVMe)
 ├── tlp_latency_emulator.sv            # Response latency emulation
 ├── device_config.sv                    # Device identity + feature flags
 ├── config_space_init.hex               # Config space init ($readmemh)
@@ -380,12 +393,12 @@ internal/
 ├── donor/                    VFIO device reader + BAR profiling
 ├── pci/                      Config space parser, capabilities, MSI-X
 ├── firmware/
-│   ├── scrub/                Config space scrubbing (14-pass pipeline)
+│   ├── scrub/                Config space scrubbing (16-pass pipeline)
 │   ├── barmodel/             BAR register model (spec + profiled)
 │   ├── svgen/                SV code generation (embedded .sv.tmpl templates)
 │   ├── nvme/                 NVMe Identify data generation
 │   ├── tclgen/               Vivado TCL script generation
-│   ├── devclass/             Device class strategy (NVMe, xHCI, Ethernet, Audio)
+│   ├── devclass/             Device class strategy (NVMe, xHCI, Ethernet, Audio, GPU, SATA, Wi-Fi, Thunderbolt)
 │   ├── output/               Artifact writer (SV pipeline + COE + HEX)
 │   ├── overlay/              Byte-level diff tracking
 │   ├── variance/             Config space randomization
@@ -410,6 +423,3 @@ make check            # Run vet + lint + test (all checks)
 ## License
 
 [Creative Commons Zero v1.0 Universal](https://github.com/sercanarga/PCILeechGen/blob/main/LICENSE)
-
-> [!CAUTION]
-> This tool is provided for **educational and research purposes only**. The authors do not condone or encourage the use of this software for cheating, circumventing anti-cheat systems, or any other activity that violates terms of service of any software or platform. Users are solely responsible for ensuring their use of this tool complies with all applicable laws and agreements.
