@@ -59,10 +59,10 @@ func Collect(bdf string) (*DeviceDump, error) {
 	}
 	defer unix.Close(containerFD)
 
-	// sanity check API
-	ver, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(containerFD),
+	// sanity check API (VFIO_API_VERSION is 0 in the kernel)
+	_, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(containerFD),
 		vfioGetAPIVersion, 0)
-	if errno != 0 || ver == 0 {
+	if errno != 0 {
 		return nil, fmt.Errorf("VFIO API version check failed: %v", errno)
 	}
 
