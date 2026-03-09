@@ -197,23 +197,32 @@ func (c *Collector) collectBARMemory(bdf pci.BDF, bars []pci.BAR) map[int][]byte
 			sysfsBarFailed = true
 			continue
 		}
+		if isAllFF(data) {
+			slog.Warn("sysfs BAR read returned all 0xFF, will retry via VFIO", "bar", bar.Index)
+			sysfsBarFailed = true
+		}
 		contents[bar.Index] = data
 		slog.Info("BAR read complete", "bar", bar.Index, "bytes", len(data))
 	}
 
 	if sysfsBarFailed {
 		if !vfio.IsBoundToVFIO(bdf.String()) {
-			slog.Info("no driver bound, attempting auto-bind to vfio-pci for BAR access")
+			slog.Info("attempting auto-bind to vfio-pci for BAR access")
 			if err := vfio.BindToVFIO(bdf.String()); err != nil {
 				slog.Warn("auto-bind to vfio-pci failed", "error", err)
 			}
 		}
 
 		if vfio.IsBoundToVFIO(bdf.String()) {
-			slog.Info("trying VFIO for failed BAR reads")
+			if err := vfio.EnableMemorySpace(bdf.String()); err != nil {
+				slog.Warn("could not enable PCI memory space after rebind",
+					"bdf", bdf, "error", err)
+			}
+
+			slog.Info("retrying BAR reads via VFIO")
 			if dump, err := vfio.Collect(bdf.String()); err == nil {
 				for idx, data := range dump.BARContents {
-					if _, already := contents[idx]; !already && len(data) > 0 {
+					if len(data) > 0 && !isAllFF(data) {
 						contents[idx] = data
 						slog.Info("BAR read via VFIO", "bar", idx, "bytes", len(data))
 					}
