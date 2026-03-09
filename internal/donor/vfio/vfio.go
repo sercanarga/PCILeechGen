@@ -157,6 +157,41 @@ func BindToVFIO(bdf string) error {
 	return nil
 }
 
+// EnableMemorySpace sets Memory Space (bit 1) and Bus Master (bit 2) in the
+// PCI Command Register via sysfs config. Needed after vfio-pci bind.
+func EnableMemorySpace(bdf string) error {
+	configPath := filepath.Join(sysfsBase, bdf, "config")
+
+	f, err := os.OpenFile(configPath, os.O_RDWR, 0)
+	if err != nil {
+		return fmt.Errorf("cannot open config space for %s: %w", bdf, err)
+	}
+	defer f.Close()
+
+	// PCI Command Register is at offset 0x04, 2 bytes wide
+	var cmd [2]byte
+	if _, err := f.ReadAt(cmd[:], 0x04); err != nil {
+		return fmt.Errorf("cannot read PCI Command Register for %s: %w", bdf, err)
+	}
+
+	const (
+		memorySpaceEnable = 0x02 // bit 1
+		busMasterEnable   = 0x04 // bit 2
+	)
+
+	needed := byte(memorySpaceEnable | busMasterEnable)
+	if cmd[0]&needed == needed {
+		return nil // already enabled
+	}
+
+	cmd[0] |= needed
+	if _, err := f.WriteAt(cmd[:], 0x04); err != nil {
+		return fmt.Errorf("cannot write PCI Command Register for %s: %w", bdf, err)
+	}
+
+	return nil
+}
+
 // UnbindFromVFIO detaches from vfio-pci and re-probes for the original driver.
 func UnbindFromVFIO(bdf string) error {
 	devPath := filepath.Join(sysfsBase, bdf)

@@ -132,3 +132,34 @@ func makeAllFF(size int) []byte {
 	}
 	return data
 }
+
+func TestValidateBARContents_AllFF_WiFi(t *testing.T) {
+	c := &Collector{}
+	ctx := &DeviceContext{
+		Device: pci.PCIDevice{
+			BDF:       pci.BDF{Domain: 0, Bus: 0, Device: 0x14, Function: 3},
+			ClassCode: 0x028000, // Network controller (other) — WiFi/CNVi
+			Driver:    "vfio-pci",
+		},
+		BARs: []pci.BAR{
+			{Index: 0, Type: pci.BARTypeMem64, Size: 16384},
+		},
+		BARContents: map[int][]byte{
+			0: makeAllFF(4096),
+		},
+	}
+
+	err := c.validateBARContents(ctx)
+	if err == nil {
+		t.Fatal("expected error for all-0xFF BAR on WiFi, got nil")
+	}
+	if !strings.Contains(err.Error(), "all 0xFF") {
+		t.Errorf("error should mention all 0xFF, got: %s", err.Error())
+	}
+	if !strings.Contains(err.Error(), "CNVi") {
+		t.Errorf("error should mention CNVi workaround, got: %s", err.Error())
+	}
+	if !strings.Contains(err.Error(), "--from-json") {
+		t.Errorf("error should mention --from-json workaround, got: %s", err.Error())
+	}
+}
