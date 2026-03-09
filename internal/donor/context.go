@@ -162,6 +162,11 @@ func FromJSON(data []byte) (*DeviceContext, error) {
 	if err := json.Unmarshal(data, dc); err != nil {
 		return nil, err
 	}
+
+	if dc.ConfigSpace == nil {
+		return nil, fmt.Errorf("config_space_hex not found in JSON, file may be from an unsupported tool")
+	}
+
 	return dc, nil
 }
 

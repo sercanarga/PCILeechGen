@@ -108,8 +108,13 @@ func printBuildSummary(ctx *donor.DeviceContext, b *board.Board) {
 		"class", ctx.Device.ClassDescription(),
 		"revision", fmt.Sprintf("%02x", ctx.Device.RevisionID),
 	)
+
+	csSize := 0
+	if ctx.ConfigSpace != nil {
+		csSize = ctx.ConfigSpace.Size
+	}
 	slog.Info("config space",
-		"bytes", ctx.ConfigSpace.Size,
+		"bytes", csSize,
 		"std_caps", len(ctx.Capabilities),
 		"ext_caps", len(ctx.ExtCapabilities),
 		"bars", len(ctx.BARs),
