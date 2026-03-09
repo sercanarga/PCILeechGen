@@ -93,6 +93,25 @@ if {[llength $all_ips] > 0} {
   upgrade_ip $all_ips
 }
 
+# Point BRAM IPs to the generated COE files (library defaults are all-zero)
+set bar_bram [get_ips -quiet bram_bar_zero4k]
+if { $bar_bram != "" } {
+  set coe_path [file normalize "${origin_dir}/pcileech_bar_zero4k.coe"]
+  if {[file exists $coe_path]} {
+    set_property -dict [list CONFIG.Coe_File $coe_path] $bar_bram
+    puts "BAR BRAM COE updated: $coe_path"
+  }
+}
+
+set cfg_bram [get_ips -quiet bram_pcie_cfgspace]
+if { $cfg_bram != "" } {
+  set coe_path [file normalize "${origin_dir}/pcileech_cfgspace.coe"]
+  if {[file exists $coe_path]} {
+    set_property -dict [list CONFIG.Coe_File $coe_path] $cfg_bram
+    puts "Config space BRAM COE updated: $coe_path"
+  }
+}
+
 # Patch PCIe IP core with donor identity
 set pcie_ip [get_ips -quiet pcie_7x_0]
 if { $pcie_ip != "" } {
