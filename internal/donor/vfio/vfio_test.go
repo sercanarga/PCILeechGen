@@ -178,6 +178,74 @@ func TestCheckBARAccessibility_WithFakeSysfs(t *testing.T) {
 	}
 }
 
+func TestEnableMemorySpace_WithFakeSysfs(t *testing.T) {
+	tmpDir := t.TempDir()
+	SetSysfsBase(tmpDir)
+	defer ResetSysfsBase()
+
+	bdf := "0000:03:00.0"
+	devDir := filepath.Join(tmpDir, bdf)
+	os.MkdirAll(devDir, 0755)
+
+	// Create a fake config file (4096 bytes, Command Register at 0x04 = 0x0000)
+	config := make([]byte, 4096)
+	configPath := filepath.Join(devDir, "config")
+	os.WriteFile(configPath, config, 0644)
+
+	// Enable memory space
+	err := EnableMemorySpace(bdf)
+	if err != nil {
+		t.Fatalf("EnableMemorySpace failed: %v", err)
+	}
+
+	// Read back and verify bits are set
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("failed to read config: %v", err)
+	}
+
+	cmd := data[0x04]
+	if cmd&0x02 == 0 {
+		t.Error("Memory Space Enable bit (bit 1) should be set")
+	}
+	if cmd&0x04 == 0 {
+		t.Error("Bus Master Enable bit (bit 2) should be set")
+	}
+}
+
+func TestEnableMemorySpace_AlreadyEnabled(t *testing.T) {
+	tmpDir := t.TempDir()
+	SetSysfsBase(tmpDir)
+	defer ResetSysfsBase()
+
+	bdf := "0000:03:00.0"
+	devDir := filepath.Join(tmpDir, bdf)
+	os.MkdirAll(devDir, 0755)
+
+	// Config with command register already set to 0x06
+	config := make([]byte, 4096)
+	config[0x04] = 0x06
+	configPath := filepath.Join(devDir, "config")
+	os.WriteFile(configPath, config, 0644)
+
+	// Should be a no-op
+	err := EnableMemorySpace(bdf)
+	if err != nil {
+		t.Fatalf("EnableMemorySpace failed when already enabled: %v", err)
+	}
+}
+
+func TestEnableMemorySpace_NoConfigFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	SetSysfsBase(tmpDir)
+	defer ResetSysfsBase()
+
+	err := EnableMemorySpace("0000:99:99.9")
+	if err == nil {
+		t.Error("EnableMemorySpace should fail for non-existent device")
+	}
+}
+
 func TestSetSysfsBase(t *testing.T) {
 	original := sysfsBase
 	defer func() { sysfsBase = original }()

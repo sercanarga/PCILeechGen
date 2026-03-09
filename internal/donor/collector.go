@@ -81,6 +81,8 @@ func barCriticalClass(classCode uint32) bool {
 		return true
 	case baseClass == 0x02 && subClass == 0x00: // Ethernet
 		return true
+	case baseClass == 0x02 && subClass == 0x80: // WiFi / CNVi
+		return true
 	}
 	return false
 }
@@ -114,9 +116,13 @@ func (c *Collector) validateBARContents(ctx *DeviceContext) error {
 				"The device is not responding — possible causes:\n"+
 				"  • device is in D3 (sleep) power state\n"+
 				"  • IOMMU/VT-d not enabled or misconfigured\n"+
-				"  • VFIO cannot access the device memory region\n"+
-				"Without valid BAR data, Windows will produce Code 10 and DMA will not work",
-			ctx.Device.ClassCode, ctx.Device.Driver,
+				"  • PCI Command Register memory space not enabled\n"+
+				"  • device requires native driver initialization (e.g. CNVi WiFi, firmware-dependent devices)\n"+
+				"Without valid BAR data, Windows will produce Code 10 and DMA will not work\n\n"+
+				"Workarounds:\n"+
+				"  1. Try: sudo setpci -s %s COMMAND=0x06\n"+
+				"  2. For CNVi/WiFi: boot with native driver, dump BAR with a tool, then use --from-json",
+			ctx.Device.ClassCode, ctx.Device.Driver, ctx.Device.BDF,
 		)
 	}
 
@@ -172,6 +178,17 @@ func (c *Collector) collectBARMemory(bdf pci.BDF, bars []pci.BAR) map[int][]byte
 	const maxBARReadSize = 4096
 	contents := make(map[int][]byte)
 	sysfsBarFailed := false
+
+	// vfio-pci doesn't set Memory Space / Bus Master bits, so BAR reads
+	// will return 0xFF unless we enable them first.
+	if vfio.IsBoundToVFIO(bdf.String()) {
+		if err := vfio.EnableMemorySpace(bdf.String()); err != nil {
+			slog.Warn("could not enable PCI memory space",
+				"bdf", bdf, "error", err)
+		} else {
+			slog.Info("PCI memory space enabled", "bdf", bdf)
+		}
+	}
 
 	for _, bar := range eligibleBARs(bars) {
 		data, err := c.sysfs.ReadBARContent(bdf, bar.Index, maxBARReadSize)
