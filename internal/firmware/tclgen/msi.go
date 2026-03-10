@@ -1,12 +1,14 @@
 package tclgen
 
 import (
+	"fmt"
+
 	"github.com/sercanarga/pcileechgen/internal/donor"
 	"github.com/sercanarga/pcileechgen/internal/pci"
 )
 
-// extractMSIVectors returns the max MSI vector count from the donor's
-// MSI capability (1, 2, 4, 8, 16 or 32). Defaults to 1 if absent.
+// extractMSIVectors reads the MSI capability from the donor and returns
+// how many vectors it supports. Falls back to 1 if no MSI cap is found.
 func extractMSIVectors(ctx *donor.DeviceContext) int {
 	for _, cap := range ctx.Capabilities {
 		if cap.ID != pci.CapIDMSI {
@@ -15,7 +17,7 @@ func extractMSIVectors(ctx *donor.DeviceContext) int {
 		if len(cap.Data) < 4 {
 			return 1
 		}
-		// Message Control register: bits [3:1] = Multiple Message Capable
+		// Multiple Message Capable sits at bits [3:1] of Message Control
 		msgCtrl := uint16(cap.Data[2]) | uint16(cap.Data[3])<<8
 		mmc := (msgCtrl >> 1) & 0x07
 		vectors := 1 << mmc
@@ -27,20 +29,29 @@ func extractMSIVectors(ctx *donor.DeviceContext) int {
 	return 1
 }
 
-// msiVectorsToTCL formats the vector count for the Xilinx PCIe IP property.
+// msiVectorsToTCL maps a vector count to the Vivado PCIe IP dropdown value.
 func msiVectorsToTCL(vectors int) string {
 	switch {
 	case vectors >= 32:
-		return "5_vectors"
+		return "32_vectors"
 	case vectors >= 16:
-		return "4_vectors"
+		return "16_vectors"
 	case vectors >= 8:
-		return "3_vectors"
+		return "8_vectors"
 	case vectors >= 4:
-		return "2_vectors"
+		return "4_vectors"
 	case vectors >= 2:
-		return "1_vector"
+		return "2_vectors"
 	default:
 		return "1_vector"
 	}
+}
+
+// barBIRToTCL formats a BAR index for Vivado. A 64-bit BAR at index 0
+// is represented as "BAR_1:0"; higher indices use "BAR_N".
+func barBIRToTCL(bir int) string {
+	if bir == 0 {
+		return "BAR_1:0"
+	}
+	return fmt.Sprintf("BAR_%d", bir)
 }
