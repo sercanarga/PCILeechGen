@@ -64,15 +64,9 @@ jobs:
             -o dist/${OUTPUT_NAME} \
             ./cmd/pcileechgen/
 
-      - name: Generate checksum
-        run: |
-          cd dist
-          sha256sum pcileechgen-${{ matrix.suffix }} > pcileechgen-${{ matrix.suffix }}.sha256
-
-      - name: Upload release artifacts
-        uses: softprops/action-gh-release@v2
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
         with:
-          files: |
-            dist/pcileechgen-${{ matrix.suffix }}
-            dist/pcileechgen-${{ matrix.suffix }}.sha256
-          generate_release_notes: true
+          name: pcileechgen-${{ matrix.suffix }}
+          path: dist/pcileechgen-${{ matrix.suffix }}
+          retention-days: 90
