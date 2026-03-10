@@ -138,8 +138,10 @@ func (p *SVPatcher) patchFile(filename string, patches []svRegexPatch) error {
 	return nil
 }
 
-// patchCfgSV patches pcileech_pcie_cfg_a7.sv:
-//   - DSN (Device Serial Number) from donor's extended capabilities
+// patchCfgSV patches the DSN (Device Serial Number) value in pcileech_pcie_cfg_a7.sv.
+// When the donor device has a DSN, we write that value.
+// When it doesn't, we zero out the hardcoded default to avoid
+// exposing a capability the real device never had.
 func (p *SVPatcher) patchCfgSV() error {
 	var patches []svRegexPatch
 
@@ -149,6 +151,14 @@ func (p *SVPatcher) patchCfgSV() error {
 			pattern:     `(rw\[127:64\]\s*<=\s*64'h)[0-9a-fA-F]+(\s*;\s*//.*cfg_dsn)`,
 			replacement: fmt.Sprintf("${1}%s${2}", dsnHex),
 			label:       fmt.Sprintf("DSN: 0x%s", dsnHex),
+		})
+	} else {
+		// No DSN on the donor — clear the default value so the FPGA
+		// won't show a serial number that doesn't exist on the real device.
+		patches = append(patches, svRegexPatch{
+			pattern:     `(rw\[127:64\]\s*<=\s*64'h)[0-9a-fA-F]+(\s*;\s*//.*cfg_dsn)`,
+			replacement: "${1}0000000000000000${2}",
+			label:       "DSN: cleared (donor has no DSN)",
 		})
 	}
 

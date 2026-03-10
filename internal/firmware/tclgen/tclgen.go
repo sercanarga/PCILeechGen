@@ -37,6 +37,8 @@ type projectTCLData struct {
 	Bar0Size    string
 	Bar0Scale   string
 	Bar064bit   bool
+
+	DSNEnabled bool
 }
 
 // buildTCLData holds template data for Vivado build script.
@@ -179,6 +181,7 @@ func GenerateProjectTCL(ctx *donor.DeviceContext, b *board.Board, libDir string)
 		Bar0Size:       bar0.Size,
 		Bar0Scale:      bar0.Scale,
 		Bar064bit:      bar0.Is64bit,
+		DSNEnabled:     ids.HasDSN,
 	}
 
 	var buf bytes.Buffer
