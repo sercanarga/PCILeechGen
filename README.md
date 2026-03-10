@@ -34,7 +34,6 @@
 - [Development](#development)
 - [Special Thanks](#special-thanks)
 - [License](#license)
-- [Legal Notice](#legal-notice)
 
 
 ## Features
@@ -46,7 +45,7 @@
 - Vendor / Device / Revision ID
 - Subsystem Vendor / Device ID
 - Class Code (base, sub-class, interface)
-- Device Serial Number (64-bit DSN)
+- Device Serial Number (stripped when absent from donor)
 
 </td><td valign="top">
 
@@ -77,6 +76,8 @@
 **Capability Management**
 - Capability Filtering (SR-IOV, Resizable BAR, ATS, L1PM, etc.)
 - Capability Pruning (VPD, AGP, HyperTransport, PCI-X)
+- MSI Vector Count Matching (donor Multiple Message Capable)
+- MSI-X Capability Mirroring (table size, BIR, offsets from donor)
 - MSI-X Table Replication (separate BRAM, donor table + PBA)
 - MSI-X Interrupt Controller (4-state FSM with LFSR jitter)
 
@@ -399,6 +400,7 @@ internal/
 │   ├── nvme/                 NVMe Identify data generation
 │   ├── tclgen/               Vivado TCL script generation
 │   ├── devclass/             Device class strategy (NVMe, xHCI, Ethernet, Audio, GPU, SATA, Wi-Fi, Thunderbolt)
+│   ├── fallback/             Class-based fallback config (when probe data is unavailable)
 │   ├── output/               Artifact writer (SV pipeline + COE + HEX)
 │   ├── overlay/              Byte-level diff tracking
 │   ├── variance/             Config space randomization
