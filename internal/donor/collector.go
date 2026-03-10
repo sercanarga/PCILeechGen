@@ -68,6 +68,8 @@ func (c *Collector) Collect(bdf pci.BDF) (*DeviceContext, error) {
 		return nil, err
 	}
 
+	warnDeviceCompatibility(ctx)
+
 	return ctx, nil
 }
 
@@ -146,6 +148,41 @@ func (c *Collector) validateBARContents(ctx *DeviceContext) error {
 	}
 
 	return nil
+}
+
+// warnDeviceCompatibility checks for device traits that may cause
+// DMA issues and logs warnings so the user knows before synthesis.
+func warnDeviceCompatibility(ctx *DeviceContext) {
+	hasMSI := false
+	hasPCIe := false
+	for _, cap := range ctx.Capabilities {
+		switch cap.ID {
+		case pci.CapIDMSI, pci.CapIDMSIX:
+			hasMSI = true
+		case pci.CapIDPCIExpress:
+			hasPCIe = true
+		}
+	}
+
+	hasMemBAR := false
+	for _, bar := range ctx.BARs {
+		if !bar.IsDisabled() && !bar.IsIO() && bar.Size > 0 {
+			hasMemBAR = true
+			break
+		}
+	}
+
+	if !hasMemBAR {
+		slog.Warn("device has no memory BARs (IO-only) - FPGA firmware cannot emulate IO space, DMA will likely not work")
+	}
+
+	if !hasMSI {
+		slog.Warn("device has no MSI/MSI-X capability - legacy INTx interrupts may not work over PCIe DMA")
+	}
+
+	if !hasPCIe {
+		slog.Warn("device has no PCIe capability - this is a legacy PCI device behind a bridge, compatibility may be limited")
+	}
 }
 
 // isAllFF returns true when every byte in the slice is 0xFF.
