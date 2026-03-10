@@ -171,20 +171,73 @@ func TestXhciSetOperationalState(t *testing.T) {
 	capLen := 0x20
 	xhciSetOperationalState(data, capLen, 16)
 
-	// PAGESIZE should be 1 (4KB)
 	pageSize := util.ReadLE32(data, capLen+0x08)
 	if pageSize != 1 {
 		t.Errorf("PAGESIZE = %d, want 1", pageSize)
 	}
-
-	// USBCMD R/S should be set
 	usbcmd := util.ReadLE32(data, capLen)
 	if usbcmd&0x01 == 0 {
 		t.Error("USBCMD R/S should be set")
 	}
-
-	// USBCMD HCRST should be clear
 	if usbcmd&0x02 != 0 {
 		t.Error("USBCMD HCRST should be cleared")
+	}
+}
+
+func TestXhciClampDBOFF_FitsInBRAM(t *testing.T) {
+	data := make([]byte, 4096)
+	util.WriteLE32(data, 0x14, 0x00000400) // DBOFF = 0x400
+	slots := xhciClampDBOFF(data, 0x20, 32, 4096)
+	if slots != 32 {
+		t.Errorf("slots should stay 32 when it fits, got %d", slots)
+	}
+}
+
+func TestXhciClampDBOFF_TooLarge(t *testing.T) {
+	data := make([]byte, 4096)
+	util.WriteLE32(data, 0x14, 0x00000F00) // DBOFF = 0xF00
+	slots := xhciClampDBOFF(data, 0x20, 64, 1024)
+	if slots < 1 {
+		t.Errorf("slots should be >= 1, got %d", slots)
+	}
+	dboff := util.ReadLE32(data, 0x14)
+	if int(dboff)+(slots+1)*4 > 1024 {
+		t.Errorf("DBOFF + doorbell area exceeds BRAM: dboff=0x%X slots=%d bram=1024", dboff, slots)
+	}
+}
+
+func TestXhciClampDBOFF_VerySmallBRAM(t *testing.T) {
+	data := make([]byte, 4096)
+	util.WriteLE32(data, 0x14, 0x00000100)
+	slots := xhciClampDBOFF(data, 0x20, 128, 128)
+	if slots < 1 {
+		t.Errorf("slots should be >= 1 even with tiny BRAM, got %d", slots)
+	}
+}
+
+func TestXhciClampRTSOFF_FitsInBRAM(t *testing.T) {
+	data := make([]byte, 4096)
+	util.WriteLE32(data, 0x18, 0x00000200) // RTSOFF = 0x200
+	intrs := xhciClampRTSOFF(data, 0x20, 8, 4096)
+	if intrs != 8 {
+		t.Errorf("intrs should stay 8 when it fits, got %d", intrs)
+	}
+}
+
+func TestXhciClampRTSOFF_TooLarge(t *testing.T) {
+	data := make([]byte, 4096)
+	util.WriteLE32(data, 0x18, 0x00000F00) // RTSOFF = 0xF00
+	intrs := xhciClampRTSOFF(data, 0x20, 64, 1024)
+	if intrs < 1 {
+		t.Errorf("intrs should be >= 1, got %d", intrs)
+	}
+}
+
+func TestXhciClampRTSOFF_ZeroIntrs(t *testing.T) {
+	data := make([]byte, 4096)
+	util.WriteLE32(data, 0x18, 0x00000200)
+	intrs := xhciClampRTSOFF(data, 0x20, 0, 4096)
+	if intrs < 1 {
+		t.Errorf("zero intrs should clamp to >= 1, got %d", intrs)
 	}
 }
