@@ -11,6 +11,8 @@ import (
 	"github.com/sercanarga/pcileechgen/internal/version"
 )
 
+const nativeDriverInitDelay = 3 * time.Second
+
 // Collector gathers donor PCI data from sysfs.
 type Collector struct {
 	sysfs *SysfsReader
@@ -159,6 +161,68 @@ func isAllFF(data []byte) bool {
 	return true
 }
 
+// allBARsFF checks whether all collected BAR contents are 0xFF.
+func allBARsFF(contents map[int][]byte) bool {
+	if len(contents) == 0 {
+		return false
+	}
+	for _, data := range contents {
+		if !isAllFF(data) {
+			return false
+		}
+	}
+	return true
+}
+
+// tryNativeDriverRebind temporarily switches to the native driver so the
+// device can initialize its BARs, then switches back to vfio-pci.
+func (c *Collector) tryNativeDriverRebind(bdf pci.BDF, bars []pci.BAR, current map[int][]byte) map[int][]byte {
+	if err := vfio.UnbindFromVFIO(bdf.String()); err != nil {
+		slog.Warn("native driver rebind: unbind failed", "error", err)
+		return current
+	}
+
+	slog.Info("waiting for native driver to initialize device...",
+		"delay", nativeDriverInitDelay)
+	time.Sleep(nativeDriverInitDelay)
+
+	// read BARs while native driver holds the device
+	const maxBARReadSize = 4096
+	recovered := make(map[int][]byte)
+	for _, bar := range eligibleBARs(bars) {
+		data, err := c.sysfs.ReadBARContent(bdf, bar.Index, maxBARReadSize)
+		if err != nil {
+			slog.Warn("native driver rebind: BAR read failed",
+				"bar", bar.Index, "error", err)
+			continue
+		}
+		if !isAllFF(data) && len(data) > 0 {
+			recovered[bar.Index] = data
+			slog.Info("native driver rebind: BAR read success",
+				"bar", bar.Index, "bytes", len(data))
+		}
+	}
+
+	// switch back; if it fails, drop recovered data to avoid profiler conflicts
+	if err := vfio.BindToVFIO(bdf.String()); err != nil {
+		slog.Warn("native driver rebind: re-bind to vfio-pci failed, discarding recovered BARs",
+			"error", err)
+		return current
+	}
+
+	if len(recovered) > 0 {
+		for idx, data := range recovered {
+			current[idx] = data
+		}
+		slog.Info("native driver rebind cycle succeeded",
+			"bars_recovered", len(recovered))
+	} else {
+		slog.Warn("native driver rebind cycle did not recover any BAR data")
+	}
+
+	return current
+}
+
 func (c *Collector) collectConfigSpace(bdf pci.BDF) (*pci.ConfigSpace, error) {
 	cs, err := c.sysfs.ReadConfigSpace(bdf)
 	if err != nil {
@@ -231,6 +295,12 @@ func (c *Collector) collectBARMemory(bdf pci.BDF, bars []pci.BAR) map[int][]byte
 				slog.Warn("VFIO BAR fallback failed", "error", err)
 			}
 		}
+	}
+
+	// last resort: try a native driver rebind cycle
+	if allBARsFF(contents) && vfio.IsBoundToVFIO(bdf.String()) {
+		slog.Info("all BAR contents are 0xFF, attempting native driver rebind cycle")
+		contents = c.tryNativeDriverRebind(bdf, bars, contents)
 	}
 
 	return contents
