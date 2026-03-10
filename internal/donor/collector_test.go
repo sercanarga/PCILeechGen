@@ -163,3 +163,33 @@ func TestValidateBARContents_AllFF_WiFi(t *testing.T) {
 		t.Errorf("error should mention --from-json workaround, got: %s", err.Error())
 	}
 }
+
+func TestAllBARsFF(t *testing.T) {
+	tests := []struct {
+		name     string
+		contents map[int][]byte
+		want     bool
+	}{
+		{"empty_map", map[int][]byte{}, false},
+		{"nil_map", nil, false},
+		{"single_all_ff", map[int][]byte{0: makeAllFF(256)}, true},
+		{"multiple_all_ff", map[int][]byte{
+			2: makeAllFF(4096),
+			4: makeAllFF(4096),
+		}, true},
+		{"one_valid", map[int][]byte{
+			0: {0x17, 0x00, 0x00, 0x00},
+		}, false},
+		{"mixed_ff_and_valid", map[int][]byte{
+			2: makeAllFF(4096),
+			4: {0x00, 0x01, 0x02, 0x03},
+		}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := allBARsFF(tt.contents); got != tt.want {
+				t.Errorf("allBARsFF() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
