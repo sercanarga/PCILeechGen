@@ -42,8 +42,8 @@ module pcileech_bar_impl_device #(
 {{ end }}
 {{ if eq .DeviceClass "nvme" }}
     // ========================================================================
-    // NVMe CC → CSTS State Machine
-    // stornvme.sys polls CSTS.RDY after writing CC.EN — this is the #1 cause
+    // NVMe CC -> CSTS State Machine
+    // stornvme.sys polls CSTS.RDY after writing CC.EN - this is the #1 cause
     // of Code 10. Static CSTS values do NOT work; real transition is required.
     // ========================================================================
     reg        cc_en_prev;
@@ -58,12 +58,12 @@ module pcileech_bar_impl_device #(
         end else begin
             cc_en_prev <= reg_0x00000014[0]; // CC.EN
 
-            // CC.EN rising edge → start RDY transition (2-8 cycle delay)
+            // CC.EN rising edge -> start RDY transition (2-8 cycle delay)
             if (reg_0x00000014[0] && !cc_en_prev) begin
                 csts_rdy_pending    <= 1'b1;
                 csts_transition_cnt <= 4'h0;
             end
-            // CC.EN falling edge → immediate shutdown
+            // CC.EN falling edge -> immediate shutdown
             else if (!reg_0x00000014[0] && cc_en_prev) begin
                 reg_0x0000001C[0]    <= 1'b0;        // CSTS.RDY = 0
                 reg_0x0000001C[3:2]  <= 2'b10;       // CSTS.SHST = shutdown complete
@@ -98,7 +98,7 @@ module pcileech_bar_impl_device #(
     reg [3:0] hcrst_cnt;
     reg       hcrst_pending;
 
-    // R/S → HCH tracking: when driver sets R/S=1, HCH must clear.
+    // R/S -> HCH tracking: when driver sets R/S=1, HCH must clear.
     reg       rs_prev;
 
     always @(posedge clk) begin
@@ -123,12 +123,12 @@ module pcileech_bar_impl_device #(
                 end
             end
 
-            // R/S rising edge → clear HCH (controller running)
+            // R/S rising edge -> clear HCH (controller running)
             if (reg_0x00000020[0] && !rs_prev && !hcrst_pending) begin
                 reg_0x00000024[0] <= 1'b0;  // USBSTS.HCH = 0
             end
 
-            // R/S falling edge → set HCH (controller halted)
+            // R/S falling edge -> set HCH (controller halted)
             if (!reg_0x00000020[0] && rs_prev && !hcrst_pending) begin
                 reg_0x00000024[0] <= 1'b1;  // USBSTS.HCH = 1
             end
@@ -148,7 +148,7 @@ module pcileech_bar_impl_device #(
         end else begin
             crst_prev <= reg_0x00000008[0];
 
-            // rising edge on CRST — controller coming out of reset
+            // rising edge on CRST - controller coming out of reset
             if (reg_0x00000008[0] && !crst_prev) begin
                 reg_0x0000000C[16] <= 1'b1;  // STATESTS bit 0 = codec 0 present
             end
@@ -200,8 +200,8 @@ module pcileech_bar_impl_device #(
 {{ end }}
 {{ if .HasMSIX }}
     // ========================================================================
-    // MSI-X Interrupt Controller — 4-state FSM
-    //   IDLE → PENDING → ASSERT → COOLDOWN
+    // MSI-X Interrupt Controller - 4-state FSM
+    //   IDLE -> PENDING -> ASSERT -> COOLDOWN
     // Triggered when a writable register is modified.
     // LFSR-based jitter prevents timing fingerprinting.
     // ========================================================================
@@ -226,7 +226,7 @@ module pcileech_bar_impl_device #(
             int_lfsr <= {int_lfsr[14:0], int_lfsr_fb};
     end
 
-    // Write activity detection — any write to a writable register triggers
+    // Write activity detection - any write to a writable register triggers
     always @(posedge clk) begin
         if (rst)
             int_trigger <= 1'b0;
@@ -290,7 +290,7 @@ module pcileech_bar_impl_device #(
                     if (wr_be[3]) reg_0x{{ hex08 .Offset }}[31:24] <= (reg_0x{{ hex08 .Offset }}[31:24] & ~8'h{{ hex02 (index (rwMaskBytes .RWMask) 3) }}) | (wr_data[31:24] & 8'h{{ hex02 (index (rwMaskBytes .RWMask) 3) }});
                 end
 {{ end }}{{ end }}                default: begin
-                    // unregistered offset — ignore write
+                    // unregistered offset - ignore write
                 end
             endcase
         end
@@ -326,7 +326,7 @@ module pcileech_bar_impl_device #(
     end
 
 {{ else }}
-// No learned register map — fallback to BRAM-based storage.
+// No learned register map - fallback to BRAM-based storage.
 module pcileech_bar_impl_device #(
     parameter BAR_SIZE = 4096
 )(

@@ -66,8 +66,8 @@ func TestScrubPCIeCapPass(t *testing.T) {
 	cs.WriteU8(0x34, 0x40)
 	cs.WriteU8(0x40, pci.CapIDPCIExpress)
 	cs.WriteU8(0x41, 0x00)
-	cs.WriteU16(0x4A, 0xFFFF) // Device Status — dirty
-	cs.WriteU16(0x52, 0xFFFF) // Link Status — dirty
+	cs.WriteU16(0x4A, 0xFFFF) // Device Status - dirty
+	cs.WriteU16(0x52, 0xFFFF) // Link Status - dirty
 
 	om := overlay.NewMap(cs)
 	p := &scrubPCIeCapPass{}
@@ -164,7 +164,7 @@ func TestRelocateMSIXPass(t *testing.T) {
 	cs.Size = pci.ConfigSpaceSize
 	om := overlay.NewMap(cs)
 	p := &relocateMSIXPass{}
-	p.Apply(cs, nil, om, ctxFor(cs)) // no MSI-X — should be no-op
+	p.Apply(cs, nil, om, ctxFor(cs)) // no MSI-X - should be no-op
 }
 
 func TestClampLinkPass(t *testing.T) {

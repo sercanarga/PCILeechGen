@@ -46,7 +46,7 @@ func TestAnalyze_HotRegisters(t *testing.T) {
 	if len(p.HotRegisters) == 0 {
 		t.Fatal("no hot registers found")
 	}
-	// CSTS (0x1C) should be the hottest — 4 reads
+	// CSTS (0x1C) should be the hottest - 4 reads
 	if p.HotRegisters[0].Offset != 0x1C {
 		t.Errorf("hottest register: got 0x%X, want 0x1C", p.HotRegisters[0].Offset)
 	}

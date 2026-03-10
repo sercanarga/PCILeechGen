@@ -63,7 +63,7 @@ func (c *checker) run() error {
 	if c.issues == 0 {
 		fmt.Fprintln(c.w, color.OK("Device is ready for firmware generation"))
 	} else {
-		fmt.Fprintln(c.w, color.Failf("%d issue(s) found — see above for details", c.issues))
+		fmt.Fprintln(c.w, color.Failf("%d issue(s) found - see above for details", c.issues))
 	}
 	return nil
 }
@@ -143,7 +143,7 @@ func (c *checker) checkPowerState() {
 	if ps == "D0" {
 		fmt.Fprintln(c.w, color.Okf("Power state: %s (active)", ps))
 	} else {
-		fmt.Fprintln(c.w, color.Failf("Power state: %s — device should be in D0 for reliable reads", ps))
+		fmt.Fprintln(c.w, color.Failf("Power state: %s - device should be in D0 for reliable reads", ps))
 		fmt.Fprintln(c.w, color.Dim(fmt.Sprintf("  Fix: echo 0 | sudo tee /sys/bus/pci/devices/%s/d3cold_allowed", c.bdf.String())))
 		c.issues++
 	}

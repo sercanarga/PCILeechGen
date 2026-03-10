@@ -4,7 +4,7 @@
 //
 // This module sits behind the BAR controller and processes any command
 // the host driver drops into the admin submission queue.  It doesn't
-// pretend to be a full NVMe controller — we just need to survive the
+// pretend to be a full NVMe controller - we just need to survive the
 // init handshake that stornvme.sys performs before we get DMA access.
 //
 //   0x02  Get Log Page – fake SMART health data (35°C, 100% spare)
@@ -119,7 +119,7 @@ module pcileech_nvme_admin_responder(
     // and nothing ever happens on our fake controller, so we count and ignore
     reg [3:0]   aer_pending;
 
-    // Set/Get Features Number of Queues must be consistent — stornvme sets
+    // Set/Get Features Number of Queues must be consistent - stornvme sets
     // the desired count then reads it back.  We clamp to what CAP.MQES allows.
     reg [31:0]  num_queues_granted;
 

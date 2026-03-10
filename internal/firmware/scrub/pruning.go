@@ -8,7 +8,7 @@ import (
 	"github.com/sercanarga/pcileechgen/internal/pci"
 )
 
-// standard caps the FPGA can't emulate — pruned from the linked list
+// standard caps the FPGA can't emulate - pruned from the linked list
 var unsafeStandardCaps = map[uint8]string{
 	pci.CapIDVPD:               "VPD",
 	pci.CapIDAGP:               "AGP",

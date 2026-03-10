@@ -47,15 +47,15 @@ func thunderboltProfile() *DeviceProfile {
 		MaxPowerState: 3,
 
 		BARDefaults: []BARDefault{
-			// LC_MAILBOX_IN — host-to-controller mailbox
+			// LC_MAILBOX_IN - host-to-controller mailbox
 			{Offset: 0x00, Width: 4, Name: "LC_MAILBOX_IN", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
-			// LC_MAILBOX_OUT — controller reply
+			// LC_MAILBOX_OUT - controller reply
 			{Offset: 0x04, Width: 4, Name: "LC_MAILBOX_OUT", Reset: 0x00000000, RWMask: 0x00000000},
-			// LC_STS — link controller status (ready + no error)
+			// LC_STS - link controller status (ready + no error)
 			{Offset: 0x08, Width: 4, Name: "LC_STS", Reset: 0x00000001, RWMask: 0x00000000},
-			// SECURITY_LEVEL — none (no DMA protection active)
+			// SECURITY_LEVEL - none (no DMA protection active)
 			{Offset: 0x10, Width: 4, Name: "SECURITY_LEVEL", Reset: 0x00000000, RWMask: 0x00000000},
-			// THUNDERBOLT_CAP — capability flags
+			// THUNDERBOLT_CAP - capability flags
 			{Offset: 0x14, Width: 4, Name: "THUNDERBOLT_CAP", Reset: 0x00000001, RWMask: 0x00000000},
 		},
 

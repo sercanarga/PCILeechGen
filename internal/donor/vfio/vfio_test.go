@@ -47,7 +47,7 @@ func TestGetIOMMUGroup_InvalidDevice(t *testing.T) {
 func TestCheckIOMMU_NonLinux(t *testing.T) {
 	err := CheckIOMMU()
 	if err == nil {
-		t.Log("CheckIOMMU succeeded — IOMMU is available (expected on Linux with IOMMU)")
+		t.Log("CheckIOMMU succeeded - IOMMU is available (expected on Linux with IOMMU)")
 	} else {
 		t.Logf("CheckIOMMU: %v (expected on non-Linux or no IOMMU)", err)
 	}
@@ -56,7 +56,7 @@ func TestCheckIOMMU_NonLinux(t *testing.T) {
 func TestCheckVFIOModules_NonLinux(t *testing.T) {
 	err := CheckVFIOModules()
 	if err == nil {
-		t.Log("CheckVFIOModules succeeded — VFIO modules loaded")
+		t.Log("CheckVFIOModules succeeded - VFIO modules loaded")
 	} else {
 		t.Logf("CheckVFIOModules: %v (expected on non-Linux)", err)
 	}
@@ -85,7 +85,7 @@ func TestIsBoundToVFIO_WithFakeSysfs(t *testing.T) {
 	devDir := filepath.Join(tmpDir, bdf)
 	os.MkdirAll(devDir, 0755)
 
-	// No driver symlink → not bound
+	// No driver symlink -> not bound
 	if IsBoundToVFIO(bdf) {
 		t.Error("should not be bound when no driver symlink exists")
 	}
@@ -109,13 +109,13 @@ func TestQuickStatus_WithFakeSysfs(t *testing.T) {
 	devDir := filepath.Join(tmpDir, bdf)
 	os.MkdirAll(devDir, 0755)
 
-	// No iommu group → "no-iommu"
+	// No iommu group -> "no-iommu"
 	status := QuickStatus(bdf)
 	if status != "no-iommu" {
 		t.Errorf("QuickStatus = %q, want %q", status, "no-iommu")
 	}
 
-	// Add vfio-pci driver → "ready"
+	// Add vfio-pci driver -> "ready"
 	fakeDriver := filepath.Join(tmpDir, "drivers", "vfio-pci")
 	os.MkdirAll(fakeDriver, 0755)
 	os.Symlink(fakeDriver, filepath.Join(devDir, "driver"))
@@ -135,7 +135,7 @@ func TestCheckPowerState_WithFakeSysfs(t *testing.T) {
 	devDir := filepath.Join(tmpDir, bdf)
 	os.MkdirAll(devDir, 0755)
 
-	// No power_state file → error
+	// No power_state file -> error
 	_, err := CheckPowerState(bdf)
 	if err == nil {
 		t.Error("should fail when power_state file doesn't exist")
@@ -161,7 +161,7 @@ func TestCheckBARAccessibility_WithFakeSysfs(t *testing.T) {
 	devDir := filepath.Join(tmpDir, bdf)
 	os.MkdirAll(devDir, 0755)
 
-	// No resource files → empty
+	// No resource files -> empty
 	results := CheckBARAccessibility(bdf)
 	if len(results) != 0 {
 		t.Errorf("expected 0 results with no resource files, got %d", len(results))

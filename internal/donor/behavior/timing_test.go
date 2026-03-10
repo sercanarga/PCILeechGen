@@ -14,7 +14,7 @@ func timingTrace() *mmio.TraceResult {
 		BARSize:  4096,
 		Duration: 100 * time.Millisecond,
 		Records: []mmio.AccessRecord{
-			// Fast reads (100-200ns apart → ~12-25 cycles at 125MHz)
+			// Fast reads (100-200ns apart -> ~12-25 cycles at 125MHz)
 			{Offset: 0x00, Type: mmio.AccessRead, Value: 0x0040FF17, Timestamp: 100 * time.Nanosecond},
 			{Offset: 0x08, Type: mmio.AccessRead, Value: 0x00010400, Timestamp: 220 * time.Nanosecond},
 			{Offset: 0x00, Type: mmio.AccessRead, Value: 0x0040FF17, Timestamp: 350 * time.Nanosecond},
@@ -118,7 +118,7 @@ func TestBuildCDF_Uniform(t *testing.T) {
 func TestBuildCDF_Empty(t *testing.T) {
 	var buckets [16]uint8
 	cdf := buildCDF(buckets)
-	// Empty → uniform fallback
+	// Empty -> uniform fallback
 	if cdf[15] != 255 {
 		t.Errorf("empty CDF[15] should be 255, got %d", cdf[15])
 	}

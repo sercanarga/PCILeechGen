@@ -108,7 +108,7 @@ func TestBuildBARModel_XHCI_PORTSC(t *testing.T) {
 			portFound++
 		}
 	}
-	// barmodel builder may not have PORTSC — that's in the profile only.
+	// barmodel builder may not have PORTSC - that's in the profile only.
 	// but the profile builder (xhci.go) does include them.
 }
 
@@ -251,7 +251,7 @@ func TestBuildBARModel_Ethernet_NoDuplicateAlignedOffsets(t *testing.T) {
 	for _, reg := range model.Registers {
 		aligned := (reg.Offset / 4) * 4
 		if prev, ok := seen[aligned]; ok {
-			t.Errorf("registers %s and %s both map to aligned offset 0x%X — SV case conflict", prev, reg.Name, aligned)
+			t.Errorf("registers %s and %s both map to aligned offset 0x%X - SV case conflict", prev, reg.Name, aligned)
 		}
 		seen[aligned] = reg.Name
 	}
@@ -579,7 +579,7 @@ func TestBuildBARModel_UnreliableProbe_FallsBackToSpec(t *testing.T) {
 		probes[i] = donor.BARProbeResult{
 			Offset:   uint32(i * 4),
 			Original: uint32(0x28033FFF + i),
-			RWMask:   0xFFFFFFFF, // all writable — unreliable!
+			RWMask:   0xFFFFFFFF, // all writable - unreliable!
 		}
 	}
 	profile := &donor.BARProfile{Size: 4096, Probes: probes}
@@ -591,11 +591,11 @@ func TestBuildBARModel_UnreliableProbe_FallsBackToSpec(t *testing.T) {
 		t.Fatal("should fall back to spec-based NVMe model, got nil")
 	}
 
-	// verify CSTS is read-only (CC→CSTS handshake FSM relies on this)
+	// verify CSTS is read-only (CC->CSTS handshake FSM relies on this)
 	for _, reg := range model.Registers {
 		if reg.Name == "CSTS" {
 			if reg.RWMask != 0 {
-				t.Errorf("CSTS should be RO (RWMask=0) for CC→CSTS handshake, got 0x%08X", reg.RWMask)
+				t.Errorf("CSTS should be RO (RWMask=0) for CC->CSTS handshake, got 0x%08X", reg.RWMask)
 			}
 			return
 		}

@@ -266,13 +266,13 @@ func TestEthernetStrategy_ScrubBAR(t *testing.T) {
 		t.Errorf("CPlusCmd should be 0x2060, got 0x%08X", cpCmd)
 	}
 
-	// ERIAR at 0xE0 — completed flag
+	// ERIAR at 0xE0 - completed flag
 	eriar := uint32(data[0xE0]) | uint32(data[0xE1])<<8 | uint32(data[0xE2])<<16 | uint32(data[0xE3])<<24
 	if eriar&0x80000000 == 0 {
 		t.Errorf("ERIAR should have completed bit set, got 0x%08X", eriar)
 	}
 
-	// PHYAR at 0xDC — ready flag
+	// PHYAR at 0xDC - ready flag
 	phyar := uint32(data[0xDC]) | uint32(data[0xDD])<<8 | uint32(data[0xDE])<<16 | uint32(data[0xDF])<<24
 	if phyar&0x80000000 == 0 {
 		t.Errorf("PHYAR should have ready bit set, got 0x%08X", phyar)
@@ -294,7 +294,7 @@ func TestAudioStrategy_ScrubBAR(t *testing.T) {
 	if data[0x08]&0x01 != 0x01 {
 		t.Error("GCTL.CRST should be set")
 	}
-	// STATESTS codec 0 present — bit 16 of DWORD at 0x0C
+	// STATESTS codec 0 present - bit 16 of DWORD at 0x0C
 	if data[0x0E]&0x01 != 0x01 {
 		t.Error("STATESTS codec 0 present should be set")
 	}

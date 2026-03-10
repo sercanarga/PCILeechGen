@@ -129,7 +129,7 @@ module pcileech_tlps128_bar_controller(
     wire        bar_rsp_valid[7];
 
 {{ if and .LatencyConfig .MSIXConfig }}
-    // latency → MSI-X mux → bar_rsp[0]
+    // latency -> MSI-X mux -> bar_rsp[0]
     assign bar_rsp_ctx[0]   = msix_rsp_valid ? msix_rsp_ctx   : bar0_base_ctx;
     assign bar_rsp_data[0]  = msix_rsp_valid ? msix_rsp_data  : bar0_base_data;
     assign bar_rsp_valid[0] = msix_rsp_valid || bar0_base_valid;
@@ -138,7 +138,7 @@ module pcileech_tlps128_bar_controller(
     assign bar_rsp_data[0]  = bar0_emu_data;
     assign bar_rsp_valid[0] = bar0_emu_valid;
 {{ else if .MSIXConfig }}
-    // MSI-X mux → bar_rsp[0]
+    // MSI-X mux -> bar_rsp[0]
     assign bar_rsp_ctx[0]   = msix_rsp_valid ? msix_rsp_ctx   : bar0_base_ctx;
     assign bar_rsp_data[0]  = msix_rsp_valid ? msix_rsp_data  : bar0_base_data;
     assign bar_rsp_valid[0] = msix_rsp_valid || bar0_base_valid;

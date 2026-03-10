@@ -18,7 +18,7 @@ type extCapFilter struct {
 // (AER, DSN, LTR, SecondaryPCIe, …) are safe to keep.
 //
 // Caps whose control registers are neutralised by other scrub passes
-// (e.g. L1PM Substates → scrubASPMPass) must NOT appear here.
+// (e.g. L1PM Substates -> scrubASPMPass) must NOT appear here.
 var unsafeExtCaps = map[uint16]extCapFilter{
 	pci.ExtCapIDSRIOV:        {"SR-IOV", "VF creation requires FPGA hardware support"},
 	pci.ExtCapIDMRIOV:        {"MR-IOV", "multi-root IOV management unsupported"},

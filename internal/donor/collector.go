@@ -103,7 +103,7 @@ func (c *Collector) validateBARContents(ctx *DeviceContext) error {
 		hasContent = true
 		if isAllFF(data) {
 			allFF = true
-			slog.Warn("BAR content is all 0xFF — device may be inaccessible or in D3 power state",
+			slog.Warn("BAR content is all 0xFF - device may be inaccessible or in D3 power state",
 				"bar", bar.Index, "bytes", len(data),
 				"class", fmt.Sprintf("0x%06X", ctx.Device.ClassCode),
 			)
@@ -113,7 +113,7 @@ func (c *Collector) validateBARContents(ctx *DeviceContext) error {
 	if allFF && barCriticalClass(ctx.Device.ClassCode) {
 		return fmt.Errorf(
 			"BAR content for class 0x%06X is all 0xFF (driver %q). "+
-				"The device is not responding — possible causes:\n"+
+				"The device is not responding - possible causes:\n"+
 				"  • device is in D3 (sleep) power state\n"+
 				"  • IOMMU/VT-d not enabled or misconfigured\n"+
 				"  • PCI Command Register memory space not enabled\n"+
@@ -133,11 +133,11 @@ func (c *Collector) validateBARContents(ctx *DeviceContext) error {
 		)
 		if barCriticalClass(ctx.Device.ClassCode) {
 			return fmt.Errorf(
-				"%s. This device class requires BAR data — without it Windows will produce Code 10. "+
+				"%s. This device class requires BAR data - without it Windows will produce Code 10. "+
 					"Make sure the device is bound to vfio-pci and retry", msg,
 			)
 		}
-		slog.Warn("proceeding without BAR content — firmware will use zeroed BAR registers",
+		slog.Warn("proceeding without BAR content - firmware will use zeroed BAR registers",
 			"eligible_bars", len(eligible),
 			"class", fmt.Sprintf("0x%06X", ctx.Device.ClassCode),
 		)

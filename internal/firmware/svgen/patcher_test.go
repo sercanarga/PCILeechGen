@@ -9,7 +9,7 @@ import (
 )
 
 func TestPatchAll_ErrorOnMissingPatches(t *testing.T) {
-	// Create temp dir with empty SV files — patches won't match
+	// Create temp dir with empty SV files - patches won't match
 	dir := t.TempDir()
 
 	// Write dummy fifo file with no matching patterns

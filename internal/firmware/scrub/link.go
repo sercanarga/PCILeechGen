@@ -55,7 +55,7 @@ func clampLinkCapability(cs *pci.ConfigSpace, b *board.Board, om *overlay.Map, c
 			om.WriteU16(cap.Offset+0x12, newLS, "clamp Link Status")
 		}
 
-		// LinkCtl2 (cap+0x30) — target speed
+		// LinkCtl2 (cap+0x30) - target speed
 		if cap.Offset+0x30+2 <= pci.ConfigSpaceLegacySize {
 			lc2 := cs.ReadU16(cap.Offset + 0x30)
 			newLC2 := lc2
@@ -66,7 +66,7 @@ func clampLinkCapability(cs *pci.ConfigSpace, b *board.Board, om *overlay.Map, c
 			om.WriteU16(cap.Offset+0x30, newLC2, "clamp Link Control 2 target speed")
 		}
 
-		// LinkCap2 (cap+0x2C) — strip unsupported speeds from the donor vector
+		// LinkCap2 (cap+0x2C) - strip unsupported speeds from the donor vector
 		if cap.Offset+0x2C+4 <= pci.ConfigSpaceLegacySize {
 			lc2 := cs.ReadU32(cap.Offset + 0x2C)
 			if lc2 != 0 {
@@ -98,7 +98,7 @@ func clampDeviceCapability(cs *pci.ConfigSpace, om *overlay.Map, caps []pci.Capa
 		if cap.Offset+0x04+4 <= pci.ConfigSpaceLegacySize {
 			devCap := cs.ReadU32(cap.Offset + 0x04)
 			newDevCap := devCap
-			newDevCap &= ^uint32(0x07) // MPS → 128B
+			newDevCap &= ^uint32(0x07) // MPS -> 128B
 			newDevCap &= ^uint32(0x18) // phantom functions off
 			newDevCap &= ^uint32(0x20) // extended tag off
 			om.WriteU32(cap.Offset+0x04, newDevCap, "clamp Device Capabilities (MPS/phantom/exttag)")
@@ -108,7 +108,7 @@ func clampDeviceCapability(cs *pci.ConfigSpace, om *overlay.Map, caps []pci.Capa
 		if cap.Offset+0x08+2 <= pci.ConfigSpaceLegacySize {
 			devCtl := cs.ReadU16(cap.Offset + 0x08)
 			newDevCtl := devCtl
-			newDevCtl &= ^uint16(0x00E0) // MPS → 128B
+			newDevCtl &= ^uint16(0x00E0) // MPS -> 128B
 			newDevCtl &= ^uint16(0x0100) // ext tag off
 			newDevCtl &= ^uint16(0x0200) // phantom off
 			newDevCtl |= 0x0010          // Relaxed Ordering Enable

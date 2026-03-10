@@ -11,7 +11,7 @@ import (
 
 const (
 	cmdMask    = 0x0547 // keep BusMaster, IO, Memory, SERR, ParityErr
-	cmdForce   = 0x0006 // always set BME(2) + MSE(1) — donor may lack these
+	cmdForce   = 0x0006 // always set BME(2) + MSE(1) - donor may lack these
 	statusMask = 0x06F0 // keep 66MHz, FastB2B, CapList, DevSel bits
 )
 
@@ -136,7 +136,7 @@ func zeroVendorRegisters(cs *pci.ConfigSpace, om *overlay.Map, caps []pci.Capabi
 	}
 }
 
-// ScrubConfigSpace shorthand — returns scrubbed copy, discards diff.
+// ScrubConfigSpace shorthand - returns scrubbed copy, discards diff.
 func ScrubConfigSpace(cs *pci.ConfigSpace, b *board.Board) *pci.ConfigSpace {
 	scrubbed, _ := ScrubConfigSpaceWithOverlay(cs, b)
 	return scrubbed
@@ -214,7 +214,7 @@ func relocateMSIXToBRAM(cs *pci.ConfigSpace, om *overlay.Map, caps []pci.Capabil
 		newPBAOffset := newTableOffset + uint32(tableSize)
 		newPBAOffset = (newPBAOffset + 7) &^ 7
 
-		// BIR must be 0 — FPGA only serves BAR0
+		// BIR must be 0 - FPGA only serves BAR0
 		tableReg := newTableOffset & 0xFFFFFFF8 // BIR = 0
 		pbaReg := newPBAOffset & 0xFFFFFFF8     // BIR = 0
 

@@ -41,7 +41,7 @@ type TraceResult struct {
 	StartTime time.Time
 }
 
-// AccessPattern is the analyzed summary — hot regs, polls, init writes.
+// AccessPattern is the analyzed summary - hot regs, polls, init writes.
 type AccessPattern struct {
 	TotalAccesses int
 	TotalReads    int

@@ -96,7 +96,7 @@ func TestIdentifyController_NN(t *testing.T) {
 }
 
 func TestIdentifyController_Version(t *testing.T) {
-	// nil BAR data → default NVMe 1.4
+	// nil BAR data -> default NVMe 1.4
 	id := BuildIdentifyData(sampleIDs(), nil)
 	ver := binary.LittleEndian.Uint32(id.Controller[0x050:])
 	if ver != 0x00010400 {
@@ -117,7 +117,7 @@ func TestIdentifyController_Version_FromBAR(t *testing.T) {
 }
 
 func TestIdentifyController_Version_ShortBAR(t *testing.T) {
-	// BAR data shorter than 0x0C → falls back to default
+	// BAR data shorter than 0x0C -> falls back to default
 	barData := make([]byte, 8)
 	id := BuildIdentifyData(sampleIDs(), barData)
 	ver := binary.LittleEndian.Uint32(id.Controller[0x050:])
@@ -127,7 +127,7 @@ func TestIdentifyController_Version_ShortBAR(t *testing.T) {
 }
 
 func TestIdentifyController_Version_ZeroVS(t *testing.T) {
-	// BAR data with VS=0 → falls back to default
+	// BAR data with VS=0 -> falls back to default
 	barData := make([]byte, 64)
 	id := BuildIdentifyData(sampleIDs(), barData)
 	ver := binary.LittleEndian.Uint32(id.Controller[0x050:])
@@ -145,7 +145,7 @@ func TestIdentifyController_MDTS_Default(t *testing.T) {
 }
 
 func TestIdentifyController_MDTS_WithBAR(t *testing.T) {
-	// MPSMIN=0 (4KB pages) → MDTS stays 5
+	// MPSMIN=0 (4KB pages) -> MDTS stays 5
 	barData := make([]byte, 64)
 	binary.LittleEndian.PutUint32(barData[0x04:], 0x00000030) // CAP_HI with MPSMIN=0
 	id := BuildIdentifyData(sampleIDs(), barData)

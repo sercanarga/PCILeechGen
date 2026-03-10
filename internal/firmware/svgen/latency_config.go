@@ -17,13 +17,13 @@ type LatencyConfig struct {
 	CDF              [16]uint8 // cumulative distribution for SV lookup
 	HasHistogram     bool      // true = donor profiled
 
-	// Write TLP timing — determines how long write acknowledges are delayed.
+	// Write TLP timing - determines how long write acknowledges are delayed.
 	// Posted writes (MWr) don't need completions per PCIe spec, but the
 	// internal pipeline still has a write-accept latency visible in timing analysis.
 	WrMinCycles int
 	WrMaxCycles int
 
-	// Completion timeout — cycles before an unserviced read returns UR.
+	// Completion timeout - cycles before an unserviced read returns UR.
 	// 0 = disabled (no timeout). Reasonable default: 65536 (~0.5ms @125MHz).
 	CplTimeoutCycles int
 }

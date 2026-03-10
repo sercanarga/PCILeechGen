@@ -31,7 +31,7 @@ func TestApply_Deterministic(t *testing.T) {
 	Apply(cs1, lat1, cfg)
 	Apply(cs2, lat2, cfg)
 
-	// Same seed → same result
+	// Same seed -> same result
 	if lat1.MinCycles != lat2.MinCycles || lat1.MaxCycles != lat2.MaxCycles {
 		t.Error("same seed should produce same latency mutations")
 	}
@@ -129,7 +129,6 @@ func TestJitterInt_MinBound(t *testing.T) {
 	}
 }
 
-
 func TestApplyDSNVariance(t *testing.T) {
 	cs := pci.NewConfigSpace()
 	cs.Size = pci.ConfigSpaceSize
@@ -158,7 +157,7 @@ func TestApplyDSNVariance(t *testing.T) {
 func TestApplyDSNVariance_NoDSN(t *testing.T) {
 	cs := pci.NewConfigSpace()
 	cs.Size = pci.ConfigSpaceSize
-	// No DSN cap — should not panic
+	// No DSN cap - should not panic
 	rng := newSplitMix64(42)
 	applyDSNVariance(cs, rng)
 }
@@ -181,7 +180,7 @@ func TestApplySubsysOffset(t *testing.T) {
 func TestApplySubsysOffset_Zero(t *testing.T) {
 	cs := pci.NewConfigSpace()
 	cs.Size = pci.ConfigSpaceSize
-	cs.WriteU16(0x2E, 0x0000) // zero subsys → should not change
+	cs.WriteU16(0x2E, 0x0000) // zero subsys -> should not change
 
 	rng := newSplitMix64(42)
 	applySubsysOffset(cs, rng)
@@ -202,14 +201,14 @@ func TestApplyRegisterNoise(t *testing.T) {
 	newRev := cs.ReadU8(0x08)
 	diff := int(newRev) - 5
 	if diff < -1 || diff > 1 {
-		t.Errorf("register noise too large: revision %d → %d", 5, newRev)
+		t.Errorf("register noise too large: revision %d -> %d", 5, newRev)
 	}
 }
 
 func TestApplyRegisterNoise_ZeroValue(t *testing.T) {
 	cs := pci.NewConfigSpace()
 	cs.Size = pci.ConfigSpaceSize
-	cs.WriteU8(0x08, 0x00) // zero revision → should not noise
+	cs.WriteU8(0x08, 0x00) // zero revision -> should not noise
 
 	rng := newSplitMix64(42)
 	applyRegisterNoise(cs, rng)
@@ -276,9 +275,9 @@ func TestEmbedVSECEntropy_WithExistingExtCaps(t *testing.T) {
 
 func TestEmbedVSECEntropy_SmallConfigSpace(t *testing.T) {
 	cs := pci.NewConfigSpace()
-	cs.Size = pci.ConfigSpaceLegacySize // 256 bytes — no ext config
+	cs.Size = pci.ConfigSpaceLegacySize // 256 bytes - no ext config
 	embedVSECEntropy(cs, 42)
-	// Should be a no-op — no room for ext caps
+	// Should be a no-op - no room for ext caps
 }
 
 func TestApplyTimingJitter(t *testing.T) {

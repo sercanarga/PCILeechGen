@@ -23,7 +23,7 @@ type SVGeneratorConfig struct {
 	DeviceClass        string             // "nvme", "xhci", "audio", "ethernet", or ""
 	MSIXConfig         *MSIXConfig        // MSI-X table replication (nil = no MSI-X table)
 	NVMeIdentify       *nvme.IdentifyData // NVMe Identify Controller/Namespace data (nil = no responder)
-	NVMeDoorbellStride uint32             // CAP.DSTRD — doorbell stride (0 = 4B, default)
+	NVMeDoorbellStride uint32             // CAP.DSTRD - doorbell stride (0 = 4B, default)
 }
 
 // NVMeSQ0DoorbellOffset returns the byte offset of the SQ0 tail doorbell.

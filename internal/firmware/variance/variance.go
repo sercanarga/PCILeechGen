@@ -12,7 +12,7 @@ import (
 
 // Config controls which variations are applied.
 type Config struct {
-	Seed            uint32  // entropy seed — different seed ⇒ different build
+	Seed            uint32  // entropy seed - different seed ⇒ different build
 	TimingJitter    float64 // fraction of latency range to jitter (0.0–0.15)
 	RegisterNoise   bool    // ±1-2 LSB noise on non-critical reset values
 	MutateDSN       bool    // generate a realistic DSN from OUI + seed
@@ -27,13 +27,13 @@ func DefaultConfig(seed uint32) Config {
 		TimingJitter:  0.08, // ±8 %
 		RegisterNoise: true,
 		MutateDSN:     true,
-		SubsysOffset:  false, // disabled by default — changing subsys ID can confuse drivers
+		SubsysOffset:  false, // disabled by default - changing subsys ID can confuse drivers
 	}
 }
 
 // --- core ---
 
-// Apply mutates config space + latency in-place. Same seed → same result.
+// Apply mutates config space + latency in-place. Same seed -> same result.
 func Apply(cs *pci.ConfigSpace, latCfg *svgen.LatencyConfig, cfg Config) {
 	rng := newSplitMix64(uint64(cfg.Seed))
 
@@ -72,7 +72,7 @@ func applyDSNVariance(cs *pci.ConfigSpace, rng *splitMix64) {
 		if dsnOff+8 > cs.Size {
 			continue
 		}
-		// Keep OUI (bytes 5-7 of the DSN — upper 3 bytes of the second DWORD)
+		// Keep OUI (bytes 5-7 of the DSN - upper 3 bytes of the second DWORD)
 		// and randomize the serial portion (lower 5 bytes)
 		origHi := cs.ReadU32(dsnOff + 4)
 		oui := origHi & 0xFFFFFF00 // preserve vendor OUI in upper 24 bits
@@ -94,7 +94,7 @@ func applySubsysOffset(cs *pci.ConfigSpace, rng *splitMix64) {
 	if subsysID == 0 {
 		return
 	}
-	// ±1 offset — tiny enough to not break driver matching on most devices
+	// ±1 offset - tiny enough to not break driver matching on most devices
 	offset := int16(rng.next()%3) - 1 // -1, 0, or +1
 	newID := uint16(int16(subsysID) + offset)
 	if newID == 0 {
@@ -106,7 +106,7 @@ func applySubsysOffset(cs *pci.ConfigSpace, rng *splitMix64) {
 // --- register noise ---
 
 // offsets where ±1 LSB noise is safe (informational fields).
-// NOTE: RevisionID (0x08) intentionally excluded — many Windows drivers
+// NOTE: RevisionID (0x08) intentionally excluded - many Windows drivers
 // use it for hardware matching and changing it causes Code 10.
 var safeNoiseOffsets = []int{}
 
@@ -217,7 +217,7 @@ func embedVSECEntropy(cs *pci.ConfigSpace, seed uint32) {
 		newHeader := (oldHeader & 0x000FFFFF) | (uint32(vsecOff) << 20)
 		cs.WriteU32(lastCapOff, newHeader)
 	} else if len(extCaps) == 0 {
-		// no ext caps at all — write at 0x100
+		// no ext caps at all - write at 0x100
 		cs.WriteU32(0x100, vsecHeader)
 	}
 }

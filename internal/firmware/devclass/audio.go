@@ -56,9 +56,9 @@ func audioProfile() *DeviceProfile {
 		BARDefaults: []BARDefault{
 			// GCAP + VMIN + VMAJ packed in one DWORD
 			{Offset: 0x00, Width: 4, Name: "GCAP_VMIN_VMAJ", Reset: 0x01004401, RWMask: 0x00000000},
-			// GCTL — CRST (bit 0) is the key for reset handshake
+			// GCTL - CRST (bit 0) is the key for reset handshake
 			{Offset: 0x08, Width: 4, Name: "GCTL", Reset: 0x00000001, RWMask: 0x00000103},
-			// WAKEEN (lower 16) + STATESTS (upper 16) — codec 0 present
+			// WAKEEN (lower 16) + STATESTS (upper 16) - codec 0 present
 			{Offset: 0x0C, Width: 4, Name: "WAKEEN_STATESTS", Reset: 0x00010000, RWMask: 0x7FFFFFFF},
 			// INTCTL
 			{Offset: 0x20, Width: 4, Name: "INTCTL", Reset: 0x00000000, RWMask: 0xC00000FF},

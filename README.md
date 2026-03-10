@@ -102,7 +102,7 @@
 - Post-Build Validation (output files, SV IDs, HEX/COE format)
 - Vivado Build Report (error categorization, benign warning filter)
 - Build Manifest (JSON with SHA256 checksums)
-- Manifest Verification (`verify-manifest` — integrity check)
+- Manifest Verification (`verify-manifest` - integrity check)
 - Config Space Diff Report (per-byte change log with reasons)
 
 </td></tr>
@@ -123,7 +123,7 @@ flowchart LR
 
     A -.- A1["Enumerate PCI devices<br>Detect VFIO status"]
     B -.- B1["Validate donor device<br>Read config space & BARs"]
-    C -.- C1["Clone identity → Generate SV/COE/TCL<br>→ Vivado synthesis → .bin"]
+    C -.- C1["Clone identity -> Generate SV/COE/TCL<br>-> Vivado synthesis -> .bin"]
     D -.- D1["Flash bitstream<br>to FPGA board"]
 ```
 
@@ -191,7 +191,7 @@ sudo ./bin/pcileechgen build --bdf 0000:03:00.0 --board CaptainDMA_100T
 
 ## Commands
 
-### `scan` — List PCI Devices
+### `scan` - List PCI Devices
 
 Shows all PCI devices with VFIO compatibility status.
 
@@ -213,7 +213,7 @@ Total: 16 devices
 
 </details>
 
-### `check` — Verify Donor Device
+### `check` - Verify Donor Device
 
 Runs a full diagnostic on a device to verify donor suitability.
 
@@ -267,7 +267,7 @@ Total: 17 boards
 
 </details>
 
-### `build` — Generate Firmware
+### `build` - Generate Firmware
 
 Generates firmware artifacts and optionally runs Vivado synthesis.
 
@@ -290,9 +290,9 @@ sudo ./bin/pcileechgen build --from-json device_context.json --board CaptainDMA_
 
 | Flag | Default | Description |
 |:-----|:--------|:------------|
-| `--bdf` | — | Donor device BDF address |
-| `--board` | — | Target FPGA board **(required)** |
-| `--from-json` | — | Load donor data from JSON (offline build) |
+| `--bdf` | - | Donor device BDF address |
+| `--board` | - | Target FPGA board **(required)** |
+| `--from-json` | - | Load donor data from JSON (offline build) |
 | `--output` | `pcileech_datastore` | Output directory |
 | `--lib-dir` | `lib/pcileech-fpga` | Path to pcileech-fpga library |
 | `--skip-vivado` | `false` | Only generate artifacts, skip synthesis |
@@ -302,7 +302,7 @@ sudo ./bin/pcileechgen build --from-json device_context.json --board CaptainDMA_
 
 </details>
 
-### `validate` — Verify Artifacts
+### `validate` - Verify Artifacts
 
 Verifies generated artifacts match the donor device context.
 
@@ -313,7 +313,7 @@ Verifies generated artifacts match the donor device context.
 
 > Checks include: output file existence, vendor/device ID presence in SV, HEX line format, COE structure.
 
-### `verify-manifest` — Verify Build Integrity
+### `verify-manifest` - Verify Build Integrity
 
 Checks that all build artifacts match their SHA256 checksums in the manifest.
 
@@ -321,13 +321,13 @@ Checks that all build artifacts match their SHA256 checksums in the manifest.
 ./bin/pcileechgen verify-manifest --manifest pcileech_datastore/build_manifest.json --output-dir pcileech_datastore/
 ```
 
-### `version` — Print Version
+### `version` - Print Version
 
 ```bash
 ./bin/pcileechgen version
 ```
 
-### `boards` — List Supported Boards
+### `boards` - List Supported Boards
 
 ```bash
 ./bin/pcileechgen boards
@@ -417,8 +417,8 @@ make check            # Run vet + lint + test (all checks)
 
 ## Special Thanks
 
-- **[pcileech-fpga](https://github.com/ufrisk/pcileech-fpga)** by Ulf Frisk — the FPGA framework this project builds upon
-- **[CaptainDMA](https://captaindma.com)** — for best FPGA DMA hardware
+- **[pcileech-fpga](https://github.com/ufrisk/pcileech-fpga)** by Ulf Frisk - the FPGA framework this project builds upon
+- **[CaptainDMA](https://captaindma.com)** - for best FPGA DMA hardware
 
 ## License
 

@@ -71,7 +71,7 @@ func buildBAR0Config(ctx *donor.DeviceContext, b *board.Board) bar0Config {
 		return cfg
 	}
 
-	// Find the largest MMIO BAR — this is the primary BAR the driver will use
+	// Find the largest MMIO BAR - this is the primary BAR the driver will use
 	var bestSize uint64
 	var bestBAR *pci.BAR
 	for i := range ctx.BARs {

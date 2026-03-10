@@ -46,21 +46,21 @@ func gpuProfile() *DeviceProfile {
 		MaxPowerState: 3,
 
 		BARDefaults: []BARDefault{
-			// NV_PMC — boot status, master control
+			// NV_PMC - boot status, master control
 			{Offset: 0x00, Width: 4, Name: "PMC_BOOT", Reset: 0x00000000, RWMask: 0x00000000},
-			// NV_PMC_ENABLE — engine enable bitmask
+			// NV_PMC_ENABLE - engine enable bitmask
 			{Offset: 0x200, Width: 4, Name: "PMC_ENABLE", Reset: 0xFFFFFFFF, RWMask: 0xFFFFFFFF},
-			// NV_PBUS_PCI_NV_0 — mirrors VID/DID inside BAR
+			// NV_PBUS_PCI_NV_0 - mirrors VID/DID inside BAR
 			{Offset: 0x1800, Width: 4, Name: "PBUS_PCI_NV_0", Reset: 0x00000000, RWMask: 0x00000000},
-			// NV_PBUS_PCI_NV_1 — mirrors config command/status
+			// NV_PBUS_PCI_NV_1 - mirrors config command/status
 			{Offset: 0x1804, Width: 4, Name: "PBUS_PCI_NV_1", Reset: 0x00100006, RWMask: 0x00000000},
-			// NV_PTIMER_TIME_0 — low 32 bits of GPU timer
+			// NV_PTIMER_TIME_0 - low 32 bits of GPU timer
 			{Offset: 0x9400, Width: 4, Name: "PTIMER_TIME_0", Reset: 0x00000000, RWMask: 0x00000000},
-			// NV_PTIMER_TIME_1 — high 32 bits
+			// NV_PTIMER_TIME_1 - high 32 bits
 			{Offset: 0x9410, Width: 4, Name: "PTIMER_TIME_1", Reset: 0x00000000, RWMask: 0x00000000},
 		},
 
-		Notes: "NVIDIA/AMD GPU profile. Only 4K BRAM window visible — " +
+		Notes: "NVIDIA/AMD GPU profile. Only 4K BRAM window visible - " +
 			"driver sees PMC_ENABLE and PTIMER but can't touch VRAM.",
 	}
 }
