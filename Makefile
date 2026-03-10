@@ -43,5 +43,9 @@ fmt:
 vet:
 	$(GO) vet ./...
 
+# Release build
+release-build:
+	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(OUTPUT) ./cmd/pcileechgen/
+
 # Run all checks (vet + lint + test)
 check: vet lint test
