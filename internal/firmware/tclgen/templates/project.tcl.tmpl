@@ -145,7 +145,12 @@ if { $pcie_ip != "" } {
     CONFIG.Bar0_64bit           {{if .Bar064bit}}true{{else}}false{{end}} \
   ] $pcie_ip
 {{end}}
-  puts "PCIe IP core configured: {{.VendorID}}:{{.DeviceID}} Link={{.LinkWidth}} {{.LinkSpeed}}"
+  # Enable or disable DSN based on donor device
+  set_property -dict [list \
+    CONFIG.DSN_Enabled {{if .DSNEnabled}}true{{else}}false{{end}} \
+  ] $pcie_ip
+
+  puts "PCIe IP configured: {{.VendorID}}:{{.DeviceID}} Link={{.LinkWidth}} {{.LinkSpeed}} DSN={{if .DSNEnabled}}enabled{{else}}disabled{{end}}"
 } else {
   puts "WARNING: PCIe IP core pcie_7x_0 not found, skipping donor identity configuration"
 }
