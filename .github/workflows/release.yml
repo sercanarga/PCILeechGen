@@ -64,9 +64,37 @@ jobs:
             -o dist/${OUTPUT_NAME} \
             ./cmd/pcileechgen/
 
-      - name: Upload artifact
+      - name: Upload build output
         uses: actions/upload-artifact@v4
         with:
           name: pcileechgen-${{ matrix.suffix }}
           path: dist/pcileechgen-${{ matrix.suffix }}
-          retention-days: 90
+
+  publish:
+    name: Publish Release
+    needs: release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum pcileechgen-* > checksums-sha256.txt
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.sha }}
+          name: Build ${{ github.sha }}
+          body: |
+            Auto build — `main` branch, commit `${{ github.sha }}`
+          files: |
+            dist/pcileechgen-*
+            dist/checksums-sha256.txt
+          make_latest: true
