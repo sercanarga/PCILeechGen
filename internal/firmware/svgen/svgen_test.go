@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sercanarga/pcileechgen/internal/donor/behavior"
 	"github.com/sercanarga/pcileechgen/internal/firmware"
 	"github.com/sercanarga/pcileechgen/internal/firmware/barmodel"
 )
@@ -359,5 +360,142 @@ func TestDeviceClassEmptyString(t *testing.T) {
 	}
 	if strings.Contains(result, "crst_prev") {
 		t.Error("empty DeviceClass should not have Audio FSM")
+	}
+}
+
+func TestGenerateMSIXTableSV(t *testing.T) {
+	cfg := testConfig()
+	cfg.HasMSIX = true
+	cfg.MSIXConfig = &MSIXConfig{
+		NumVectors:  8,
+		TableOffset: 0x3000,
+		PBAOffset:   0x3100,
+	}
+	result, err := GenerateMSIXTableSV(cfg)
+	if err != nil {
+		t.Fatalf("GenerateMSIXTableSV failed: %v", err)
+	}
+	if !strings.Contains(result, "msix") && !strings.Contains(result, "MSIX") {
+		t.Error("output should contain MSI-X references")
+	}
+}
+
+func TestNVMeDoorbellOffsets(t *testing.T) {
+	cfg := &SVGeneratorConfig{NVMeDoorbellStride: 0}
+	sq0 := cfg.NVMeSQ0DoorbellOffset()
+	cq0 := cfg.NVMeCQ0DoorbellOffset()
+
+	if sq0 != 0x1000 {
+		t.Errorf("SQ0 doorbell = 0x%X, want 0x1000", sq0)
+	}
+	if cq0 != 0x1004 {
+		t.Errorf("CQ0 doorbell = 0x%X, want 0x1004", cq0)
+	}
+
+	// with stride=1 doorbells are 8 bytes apart
+	cfg.NVMeDoorbellStride = 1
+	sq0 = cfg.NVMeSQ0DoorbellOffset()
+	cq0 = cfg.NVMeCQ0DoorbellOffset()
+	if sq0 != 0x1000 {
+		t.Errorf("SQ0 doorbell (stride=1) = 0x%X, want 0x1000", sq0)
+	}
+	if cq0 != 0x1008 {
+		t.Errorf("CQ0 doorbell (stride=1) = 0x%X, want 0x1008", cq0)
+	}
+}
+
+func TestGenerateNVMeResponderSV(t *testing.T) {
+	cfg := testConfig()
+	cfg.NVMeDoorbellStride = 0
+	result, err := GenerateNVMeResponderSV(cfg)
+	if err != nil {
+		t.Fatalf("GenerateNVMeResponderSV failed: %v", err)
+	}
+	if len(result) == 0 {
+		t.Error("NVMe responder SV should not be empty")
+	}
+}
+
+func TestGenerateNVMeDMABridgeSV(t *testing.T) {
+	cfg := testConfig()
+	cfg.NVMeDoorbellStride = 0
+	result, err := GenerateNVMeDMABridgeSV(cfg)
+	if err != nil {
+		t.Fatalf("GenerateNVMeDMABridgeSV failed: %v", err)
+	}
+	if len(result) == 0 {
+		t.Error("NVMe DMA bridge SV should not be empty")
+	}
+}
+
+func TestLatencyConfigFromHistogram(t *testing.T) {
+	h := &behavior.TimingHistogram{
+		SampleCount:  1000,
+		MinCycles:    2,
+		MaxCycles:    25,
+		MedianCycles: 8,
+		Buckets:      [16]uint8{10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160},
+		CDF:          [16]uint8{16, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176, 192, 208, 224, 240, 255},
+	}
+	cfg := LatencyConfigFromHistogram(h, 0x010802)
+
+	if cfg.MinCycles != 2 {
+		t.Errorf("MinCycles = %d, want 2", cfg.MinCycles)
+	}
+	if cfg.MaxCycles != 25 {
+		t.Errorf("MaxCycles = %d, want 25", cfg.MaxCycles)
+	}
+	if !cfg.HasHistogram {
+		t.Error("HasHistogram should be true")
+	}
+}
+
+func TestLatencyConfigFromHistogram_Nil(t *testing.T) {
+	cfg := LatencyConfigFromHistogram(nil, 0x010802)
+	if cfg.MinCycles != 3 {
+		t.Errorf("nil histogram should use NVMe defaults, got MinCycles=%d", cfg.MinCycles)
+	}
+}
+
+func TestLatencyConfigFromHistogram_ZeroSamples(t *testing.T) {
+	h := &behavior.TimingHistogram{SampleCount: 0}
+	cfg := LatencyConfigFromHistogram(h, 0x020000)
+	if cfg.MinCycles != 2 {
+		t.Errorf("zero samples should use Ethernet defaults, got MinCycles=%d", cfg.MinCycles)
+	}
+}
+
+func TestDefaultLatencyConfig_AllClasses(t *testing.T) {
+	classes := []struct {
+		code uint32
+		min  int
+	}{
+		{0x010802, 3}, // NVMe
+		{0x0C0330, 4}, // xHCI
+		{0x020000, 2}, // Ethernet
+		{0x030000, 5}, // GPU
+		{0x010600, 3}, // SATA
+		{0x040300, 2}, // HD Audio
+		{0x028000, 3}, // Wi-Fi
+		{0x0C8000, 4}, // Thunderbolt
+		{0xFF0000, 3}, // Unknown
+	}
+	for _, tc := range classes {
+		cfg := DefaultLatencyConfig(tc.code)
+		if cfg.MinCycles != tc.min {
+			t.Errorf("class 0x%06X: MinCycles=%d, want %d", tc.code, cfg.MinCycles, tc.min)
+		}
+		if cfg.CDF[15] != 255 {
+			t.Errorf("class 0x%06X: CDF[15]=%d, want 255", tc.code, cfg.CDF[15])
+		}
+	}
+}
+
+func TestBuildEntropyFromTime(t *testing.T) {
+	e1 := BuildEntropyFromTime()
+	e2 := BuildEntropyFromTime()
+
+	if e1 == 0 && e2 == 0 {
+		t.Error("BuildEntropyFromTime should produce non-zero values")
 	}
 }

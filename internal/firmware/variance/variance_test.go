@@ -31,12 +31,11 @@ func TestApply_Deterministic(t *testing.T) {
 	Apply(cs1, lat1, cfg)
 	Apply(cs2, lat2, cfg)
 
-	// Same seed -> same result
+	// same seed => same output
 	if lat1.MinCycles != lat2.MinCycles || lat1.MaxCycles != lat2.MaxCycles {
 		t.Error("same seed should produce same latency mutations")
 	}
 
-	// Revision should be identical
 	if cs1.ReadU8(0x08) != cs2.ReadU8(0x08) {
 		t.Error("same seed should produce same revision noise")
 	}
@@ -51,7 +50,6 @@ func TestApply_DifferentSeed(t *testing.T) {
 	Apply(cs1, lat1, DefaultConfig(100))
 	Apply(cs2, lat2, DefaultConfig(999))
 
-	// Different seeds should produce at least some difference
 	differ := lat1.MinCycles != lat2.MinCycles ||
 		lat1.MaxCycles != lat2.MaxCycles ||
 		lat1.ThermalPeriod != lat2.ThermalPeriod ||
@@ -68,7 +66,6 @@ func TestApply_PreservesIdentity(t *testing.T) {
 	cfg := DefaultConfig(42)
 	Apply(cs, lat, cfg)
 
-	// Vendor/Device ID must never change
 	if cs.ReadU16(0x00) != 0x8086 {
 		t.Error("vendor ID must not change")
 	}
@@ -80,7 +77,7 @@ func TestApply_PreservesIdentity(t *testing.T) {
 func TestApply_NilLatency(t *testing.T) {
 	cs := makeTestCS()
 	cfg := DefaultConfig(42)
-	// Should not panic
+
 	Apply(cs, nil, cfg)
 }
 
@@ -133,22 +130,20 @@ func TestApplyDSNVariance(t *testing.T) {
 	cs := pci.NewConfigSpace()
 	cs.Size = pci.ConfigSpaceSize
 
-	// Write DSN ext cap at 0x100
 	dsnHeader := uint32(pci.ExtCapIDDeviceSerialNumber) | (1 << 16)
 	cs.WriteU32(0x100, dsnHeader)
-	// Original DSN: 8 bytes at 0x104
+
 	cs.WriteU32(0x104, 0x11223344)
 	cs.WriteU32(0x108, 0xAABBCC00) // OUI in upper 24 bits
 
 	rng := newSplitMix64(42)
 	applyDSNVariance(cs, rng)
 
-	// OUI (upper 24 bits of second DWORD) should be preserved
 	newHi := cs.ReadU32(0x108)
 	if newHi&0xFFFFFF00 != 0xAABBCC00 {
 		t.Errorf("OUI should be preserved, got 0x%08x", newHi)
 	}
-	// Lower DWORD should be randomized (unlikely to stay same)
+
 	if cs.ReadU32(0x104) == 0x11223344 {
 		t.Error("DSN lower DWORD should be randomized")
 	}
@@ -157,7 +152,7 @@ func TestApplyDSNVariance(t *testing.T) {
 func TestApplyDSNVariance_NoDSN(t *testing.T) {
 	cs := pci.NewConfigSpace()
 	cs.Size = pci.ConfigSpaceSize
-	// No DSN cap - should not panic
+
 	rng := newSplitMix64(42)
 	applyDSNVariance(cs, rng)
 }
@@ -180,7 +175,7 @@ func TestApplySubsysOffset(t *testing.T) {
 func TestApplySubsysOffset_Zero(t *testing.T) {
 	cs := pci.NewConfigSpace()
 	cs.Size = pci.ConfigSpaceSize
-	cs.WriteU16(0x2E, 0x0000) // zero subsys -> should not change
+	cs.WriteU16(0x2E, 0x0000)
 
 	rng := newSplitMix64(42)
 	applySubsysOffset(cs, rng)
@@ -193,7 +188,7 @@ func TestApplySubsysOffset_Zero(t *testing.T) {
 func TestApplyRegisterNoise(t *testing.T) {
 	cs := pci.NewConfigSpace()
 	cs.Size = pci.ConfigSpaceSize
-	cs.WriteU8(0x08, 0x05) // revision = 5
+	cs.WriteU8(0x08, 0x05)
 
 	rng := newSplitMix64(42)
 	applyRegisterNoise(cs, rng)
@@ -208,7 +203,7 @@ func TestApplyRegisterNoise(t *testing.T) {
 func TestApplyRegisterNoise_ZeroValue(t *testing.T) {
 	cs := pci.NewConfigSpace()
 	cs.Size = pci.ConfigSpaceSize
-	cs.WriteU8(0x08, 0x00) // zero revision -> should not noise
+	cs.WriteU8(0x08, 0x00)
 
 	rng := newSplitMix64(42)
 	applyRegisterNoise(cs, rng)
@@ -224,14 +219,12 @@ func TestEmbedVSECEntropy(t *testing.T) {
 
 	embedVSECEntropy(cs, 42)
 
-	// VSEC should be at 0x100 (first ext cap)
 	header := cs.ReadU32(0x100)
 	capID := header & 0xFFFF
 	if uint16(capID) != pci.ExtCapIDVendorSpecific {
 		t.Errorf("VSEC cap ID = 0x%04x, want 0x%04x", capID, pci.ExtCapIDVendorSpecific)
 	}
 
-	// Payload should be non-zero
 	payload1 := cs.ReadU32(0x108)
 	payload2 := cs.ReadU32(0x10C)
 	if payload1 == 0 && payload2 == 0 {
@@ -243,8 +236,7 @@ func TestEmbedVSECEntropy_WithExistingExtCaps(t *testing.T) {
 	cs := pci.NewConfigSpace()
 	cs.Size = pci.ConfigSpaceSize
 
-	// Put AER at 0x100, next=0x140 (pretend AER occupies 0x100-0x13F = 64 bytes)
-	// Then LTR at 0x140, next=0 (LTR is smaller, ~8 bytes)
+	// AER at 0x100->0x140, LTR at 0x140
 	aerHeader := uint32(pci.ExtCapIDAER) | (1 << 16) | (0x140 << 20)
 	cs.WriteU32(0x100, aerHeader)
 	for i := 4; i < 0x40; i += 4 {
@@ -257,14 +249,12 @@ func TestEmbedVSECEntropy_WithExistingExtCaps(t *testing.T) {
 
 	embedVSECEntropy(cs, 99)
 
-	// LTR should now have a next pointer to the VSEC
 	updatedLTR := cs.ReadU32(0x140)
 	nextOff := int((updatedLTR >> 20) & 0xFFC)
 	if nextOff == 0 {
 		t.Skip("embedVSECEntropy didn't chain VSEC after LTR")
 	}
 
-	// VSEC should be at the new offset
 	if nextOff > 0 && nextOff < pci.ConfigSpaceSize {
 		vsecHeader := cs.ReadU32(nextOff)
 		if uint16(vsecHeader&0xFFFF) != pci.ExtCapIDVendorSpecific {
@@ -275,9 +265,9 @@ func TestEmbedVSECEntropy_WithExistingExtCaps(t *testing.T) {
 
 func TestEmbedVSECEntropy_SmallConfigSpace(t *testing.T) {
 	cs := pci.NewConfigSpace()
-	cs.Size = pci.ConfigSpaceLegacySize // 256 bytes - no ext config
+	cs.Size = pci.ConfigSpaceLegacySize
 	embedVSECEntropy(cs, 42)
-	// Should be a no-op - no room for ext caps
+
 }
 
 func TestApplyTimingJitter(t *testing.T) {
@@ -291,7 +281,6 @@ func TestApplyTimingJitter(t *testing.T) {
 	rng := newSplitMix64(42)
 	applyTimingJitter(lat, rng, 0.10)
 
-	// Values should be jittered but within bounds
 	if lat.MinCycles < 1 {
 		t.Errorf("MinCycles = %d, should be >= 1", lat.MinCycles)
 	}
@@ -344,5 +333,183 @@ func TestApply_SubsysOffset(t *testing.T) {
 	diff := int(newID) - 0x5678
 	if diff < -1 || diff > 1 {
 		t.Errorf("subsys offset = %d, expected ±1", diff)
+	}
+}
+
+func TestApplyPMTimingVariance(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+
+	// PM cap at 0x40
+	cs.WriteU8(0x40, pci.CapIDPowerManagement)
+	cs.WriteU8(0x41, 0x00)
+	cs.WriteU16(0x42, 0x4003) // scale=2
+	cs.WriteU8(0x34, 0x40)
+	cs.WriteU16(0x06, 0x0010)
+
+	rng := newSplitMix64(42)
+	applyPMTimingVariance(cs, rng)
+
+	pmc := cs.ReadU16(0x42)
+	scale := (pmc >> 13) & 0x03
+	if scale > 3 {
+		t.Errorf("PM scale out of range: %d", scale)
+	}
+}
+
+func TestApplyRegisterNoise_WithOffsets(t *testing.T) {
+	saved := safeNoiseOffsets
+	safeNoiseOffsets = []int{0x3C, 0x3D}
+	defer func() { safeNoiseOffsets = saved }()
+
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceLegacySize
+	cs.WriteU8(0x3C, 100)
+	cs.WriteU8(0x3D, 200)
+
+	rng := newSplitMix64(42)
+	applyRegisterNoise(cs, rng)
+
+	v1 := cs.ReadU8(0x3C)
+	v2 := cs.ReadU8(0x3D)
+	if int(v1) < 99 || int(v1) > 101 {
+		t.Errorf("noise at 0x3C: %d, want ~100", v1)
+	}
+	if int(v2) < 199 || int(v2) > 201 {
+		t.Errorf("noise at 0x3D: %d, want ~200", v2)
+	}
+}
+
+func TestApplyRegisterNoise_BoundaryValues(t *testing.T) {
+	saved := safeNoiseOffsets
+	safeNoiseOffsets = []int{0x10, 0x11}
+	defer func() { safeNoiseOffsets = saved }()
+
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceLegacySize
+	cs.WriteU8(0x10, 1)
+	cs.WriteU8(0x11, 255)
+
+	rng := newSplitMix64(42)
+	applyRegisterNoise(cs, rng)
+
+	v1 := cs.ReadU8(0x10)
+	v2 := cs.ReadU8(0x11)
+	if v1 < 1 {
+		t.Errorf("noise at 0x10: %d, should stay >= 1", v1)
+	}
+	if v2 < 254 {
+		t.Errorf("noise at 0x11: %d, should stay >= 254", v2)
+	}
+}
+
+func TestApplyRegisterNoise_OffsetBeyondSize(t *testing.T) {
+	saved := safeNoiseOffsets
+	safeNoiseOffsets = []int{0x300}
+	defer func() { safeNoiseOffsets = saved }()
+
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceLegacySize
+	rng := newSplitMix64(42)
+	applyRegisterNoise(cs, rng)
+}
+
+func TestStripDSNExtCap_MidChain(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+
+	aerHeader := uint32(pci.ExtCapIDAER) | (1 << 16) | (0x150 << 20)
+	cs.WriteU32(0x100, aerHeader)
+
+	dsnHeader := uint32(pci.ExtCapIDDeviceSerialNumber) | (1 << 16) | (0x170 << 20)
+	cs.WriteU32(0x150, dsnHeader)
+	cs.WriteU32(0x154, 0x11223344)
+	cs.WriteU32(0x158, 0x55667788)
+
+	ltrHeader := uint32(pci.ExtCapIDLTR) | (1 << 16)
+	cs.WriteU32(0x170, ltrHeader)
+
+	stripDSNExtCap(cs)
+
+	updatedAER := cs.ReadU32(0x100)
+	nextOff := int((updatedAER >> 20) & 0xFFC)
+	if nextOff != 0x170 {
+		t.Errorf("AER next = 0x%03x, want 0x170", nextOff)
+	}
+
+	if cs.ReadU32(0x150) != 0 {
+		t.Error("DSN header should be zeroed")
+	}
+}
+
+func TestStripDSNExtCap_AtChainHead(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+
+	dsnHeader := uint32(pci.ExtCapIDDeviceSerialNumber) | (1 << 16) | (0x150 << 20)
+	cs.WriteU32(0x100, dsnHeader)
+	cs.WriteU32(0x104, 0xAABBCCDD)
+	cs.WriteU32(0x108, 0x11223344)
+
+	aerHeader := uint32(pci.ExtCapIDAER) | (1 << 16)
+	cs.WriteU32(0x150, aerHeader)
+
+	stripDSNExtCap(cs)
+
+	if cs.ReadU32(0x100) != 0 {
+		t.Error("DSN at chain head should be zeroed")
+	}
+
+	if cs.ReadU32(0x150)&0xFFFF != uint32(pci.ExtCapIDAER) {
+		t.Error("AER should remain intact")
+	}
+}
+
+func TestStripDSNExtCap_NoDSN(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+
+	aerHeader := uint32(pci.ExtCapIDAER) | (1 << 16)
+	cs.WriteU32(0x100, aerHeader)
+
+	stripDSNExtCap(cs)
+
+	if cs.ReadU32(0x100)&0xFFFF != uint32(pci.ExtCapIDAER) {
+		t.Error("AER should remain unchanged")
+	}
+}
+
+func TestStripDSNExtCap_SmallConfigSpace(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceLegacySize
+	stripDSNExtCap(cs)
+}
+
+func TestApply_DonorHasDSN(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	cs.WriteU16(0x00, 0x8086)
+	cs.WriteU16(0x02, 0x1533)
+
+	dsnHeader := uint32(pci.ExtCapIDDeviceSerialNumber) | (1 << 16)
+	cs.WriteU32(0x100, dsnHeader)
+	cs.WriteU32(0x104, 0x11223344)
+	cs.WriteU32(0x108, 0xAABBCC00)
+
+	cfg := DefaultConfig(42)
+	cfg.DonorHasDSN = true
+	Apply(cs, nil, cfg)
+
+	header := cs.ReadU32(0x100)
+	if header == 0 {
+		t.Error("DSN should not be stripped when DonorHasDSN=true")
+	}
+}
+
+func TestSplitMix64_ZeroSeed(t *testing.T) {
+	rng := newSplitMix64(0)
+	v := rng.next()
+	if v == 0 {
+		t.Error("zero seed should still produce non-zero output")
 	}
 }
