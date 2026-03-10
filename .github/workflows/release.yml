@@ -76,6 +76,18 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set short SHA
+        id: vars
+        run: echo "short_sha=${GITHUB_SHA::8}" >> $GITHUB_OUTPUT
+
+      - name: Create tag
+        run: |
+          git tag "build-${{ steps.vars.outputs.short_sha }}"
+          git push origin "build-${{ steps.vars.outputs.short_sha }}"
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -90,11 +102,12 @@ jobs:
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.sha }}
-          name: Build ${{ github.sha }}
+          tag_name: build-${{ steps.vars.outputs.short_sha }}
+          name: Build ${{ steps.vars.outputs.short_sha }}
           body: |
             Auto build — `main` branch, commit `${{ github.sha }}`
           files: |
             dist/pcileechgen-*
             dist/checksums-sha256.txt
           make_latest: true
+
