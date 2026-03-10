@@ -38,7 +38,7 @@ type DeviceContext struct {
 	MSIXData        *MSIXData           `json:"msix_data,omitempty"`
 }
 
-// JSON wire format — config space as hex words, BARs as base64.
+// JSON wire format - config space as hex words, BARs as base64.
 type deviceContextJSON struct {
 	CollectedAt     time.Time              `json:"collected_at"`
 	ToolVersion     string                 `json:"tool_version"`

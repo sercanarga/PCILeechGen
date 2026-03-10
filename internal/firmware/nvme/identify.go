@@ -24,7 +24,7 @@ func BuildIdentifyData(ids firmware.DeviceIDs, barData []byte) *IdentifyData {
 	return d
 }
 
-// buildIdentifyController — CNS=1, NVMe 1.4 spec Figure 247.
+// buildIdentifyController - CNS=1, NVMe 1.4 spec Figure 247.
 func buildIdentifyController(ids firmware.DeviceIDs, barData []byte) [4096]byte {
 	var data [4096]byte
 
@@ -40,7 +40,7 @@ func buildIdentifyController(ids firmware.DeviceIDs, barData []byte) [4096]byte 
 	mn := modelNumberForVendor(ids.VendorID)
 	copy(data[0x018:0x040], padASCII(mn, 40))
 
-	// FR (8B ASCII) — vendor-appropriate firmware revision
+	// FR (8B ASCII) - vendor-appropriate firmware revision
 	fr := firmwareRevisionForVendor(ids.VendorID)
 	copy(data[0x040:0x048], padASCII(fr, 8))
 
@@ -53,7 +53,7 @@ func buildIdentifyController(ids firmware.DeviceIDs, barData []byte) [4096]byte 
 	data[0x04B] = oui[2]
 
 	data[0x04C] = 0x00 // CMIC
-	// MDTS — derive from donor CAP.MPSMIN when available.
+	// MDTS - derive from donor CAP.MPSMIN when available.
 	// Most NVMe drives use MDTS=5 (2^5 * MPSMIN pages = 128KB at 4KB pages).
 	// Some use higher values; we stay conservative to avoid host-side overruns
 	// that our fake controller can't actually service.
@@ -61,8 +61,8 @@ func buildIdentifyController(ids firmware.DeviceIDs, barData []byte) [4096]byte 
 	if len(barData) >= 0x08 {
 		capHi := binary.LittleEndian.Uint32(barData[0x04:0x08])
 		mpsmin := (capHi >> 16) & 0x0F // CAP.MPSMIN: bits 51:48
-		// MPSMIN=0 → 4KB pages → MDTS=5 is fine (128KB)
-		// MPSMIN=1 → 8KB pages → MDTS=4 keeps total ≤128KB
+		// MPSMIN=0 -> 4KB pages -> MDTS=5 is fine (128KB)
+		// MPSMIN=1 -> 8KB pages -> MDTS=4 keeps total ≤128KB
 		if mpsmin > 0 && mpsmin < 5 && mdts > uint8(5-mpsmin) {
 			mdts = uint8(5 - mpsmin)
 			if mdts == 0 {
@@ -72,7 +72,7 @@ func buildIdentifyController(ids firmware.DeviceIDs, barData []byte) [4096]byte 
 	}
 	data[0x04D] = mdts                                  // MDTS
 	binary.LittleEndian.PutUint16(data[0x04E:], 0x0001) // CNTLID
-	// VER must match BAR VS register — stornvme.sys compares the two and
+	// VER must match BAR VS register - stornvme.sys compares the two and
 	// triggers Code 10 on mismatch (e.g. BAR says 1.3, identify says 1.4).
 	nvmeVer := uint32(0x00010400) // default: NVMe 1.4
 	if len(barData) >= 0x0C {
@@ -88,7 +88,7 @@ func buildIdentifyController(ids firmware.DeviceIDs, barData []byte) [4096]byte 
 	binary.LittleEndian.PutUint32(data[0x060:], 0x00000000) // CTRATT
 
 	// Admin Command Set Attributes (0x100)
-	binary.LittleEndian.PutUint16(data[0x100:], 0x0006) // OACS — Format + FW Download
+	binary.LittleEndian.PutUint16(data[0x100:], 0x0006) // OACS - Format + FW Download
 	data[0x102] = 3                                     // ACL
 	data[0x103] = 7                                     // AERL
 	data[0x104] = 0x14                                  // FRMW
@@ -96,13 +96,13 @@ func buildIdentifyController(ids firmware.DeviceIDs, barData []byte) [4096]byte 
 	data[0x106] = 0x3F                                  // ELPE
 	data[0x107] = 0                                     // NPSS (1 power state)
 	data[0x108] = 0x01                                  // AVSCC
-	data[0x111] = 0x01                                  // CNTRLTYPE — I/O Controller
+	data[0x111] = 0x01                                  // CNTRLTYPE - I/O Controller
 
 	// NVM Command Set Attributes (0x200)
 	data[0x200] = 0x66                                  // SQES min=max=64B
 	data[0x201] = 0x44                                  // CQES min=max=16B
 	binary.LittleEndian.PutUint16(data[0x202:], 0x0000) // MAXCMD
-	binary.LittleEndian.PutUint32(data[0x204:], 1)      // NN — 1 namespace
+	binary.LittleEndian.PutUint32(data[0x204:], 1)      // NN - 1 namespace
 	binary.LittleEndian.PutUint16(data[0x208:], 0x001F) // ONCS
 	binary.LittleEndian.PutUint16(data[0x20A:], 0x0000) // FUSES
 	data[0x20C] = 0x00                                  // FNA
@@ -110,7 +110,7 @@ func buildIdentifyController(ids firmware.DeviceIDs, barData []byte) [4096]byte 
 	binary.LittleEndian.PutUint16(data[0x20E:], 0x0000) // AWUN
 	binary.LittleEndian.PutUint16(data[0x210:], 0x0000) // AWUPF
 
-	// NVMe Qualified Name — helps identify the controller to host software
+	// NVMe Qualified Name - helps identify the controller to host software
 	subnqn := fmt.Sprintf("nqn.2014.08.org.nvmexpress:%04x-%04x", ids.VendorID, ids.DeviceID)
 	if len(subnqn) > 256 {
 		subnqn = subnqn[:256]
@@ -130,7 +130,7 @@ func buildIdentifyController(ids firmware.DeviceIDs, barData []byte) [4096]byte 
 	return data
 }
 
-// buildIdentifyNamespace — CNS=0 NSID=1, NVMe 1.4 spec Figure 245.
+// buildIdentifyNamespace - CNS=0 NSID=1, NVMe 1.4 spec Figure 245.
 func buildIdentifyNamespace(barData []byte) [4096]byte {
 	var data [4096]byte
 
@@ -277,7 +277,7 @@ func generateNGUID(buf []byte) {
 // IdentifyDataToHex converts 8KB identify data to Xilinx HEX init format.
 func IdentifyDataToHex(id *IdentifyData) string {
 	var result string
-	result += "// NVMe Identify ROM — 8KB (4KB Controller + 4KB Namespace)\n"
+	result += "// NVMe Identify ROM - 8KB (4KB Controller + 4KB Namespace)\n"
 	result += "// Auto-generated by PCILeechGen\n"
 
 	for i := 0; i < 4096; i += 4 {

@@ -180,13 +180,13 @@ func (sr *SysfsReader) ReadBARContent(bdf pci.BDF, barIndex int, maxSize int) ([
 		readSize = maxSize
 	}
 
-	// Try mmap first — works with vfio-pci bound devices
+	// Try mmap first - works with vfio-pci bound devices
 	data, err := sr.readBARViaMmap(f, readSize)
 	if err == nil {
 		return data, nil
 	}
 
-	// Fallback to read() — works for regular files (e.g. in tests)
+	// Fallback to read() - works for regular files (e.g. in tests)
 	return sr.readBARViaRead(f, barIndex, readSize)
 }
 

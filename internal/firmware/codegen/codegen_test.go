@@ -21,7 +21,7 @@ func TestGenerateConfigSpaceCOE(t *testing.T) {
 	if !strings.Contains(coe, "memory_initialization_radix=16") {
 		t.Error("COE should contain radix declaration")
 	}
-	// word 0 = VendorID:DeviceID in LE → 0x15338086
+	// word 0 = VendorID:DeviceID in LE -> 0x15338086
 	if !strings.Contains(coe, "15338086") {
 		t.Errorf("COE should contain device identity word, got first lines:\n%s", coe[:200])
 	}

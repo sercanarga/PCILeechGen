@@ -29,7 +29,7 @@ type BARModel struct {
 // Returns nil for unknown device classes.
 func BuildBARModel(barData []byte, classCode uint32, profile *donor.BARProfile) *BARModel {
 	// Use probe data when available, but bail if VFIO reported
-	// everything as writable (breaks CC→CSTS handshake etc).
+	// everything as writable (breaks CC->CSTS handshake etc).
 	if profile != nil && len(profile.Probes) > 0 {
 		if !isProbeDataReliable(profile) {
 			slog.Warn("BAR probe data unreliable (all registers report fully writable), falling back to spec-based model",
@@ -86,7 +86,7 @@ func validateModel(m *BARModel) {
 // NVMe BAR0 (spec 1.4, offsets 0x00–0x34).
 func buildNVMeBARModel(barData []byte) *BARModel {
 	regs := []BARRegister{
-		// CAP — 64-bit RO
+		// CAP - 64-bit RO
 		{Offset: 0x00, Width: 4, Name: "CAP_LO", RWMask: 0x00000000},
 		{Offset: 0x04, Width: 4, Name: "CAP_HI", RWMask: 0x00000000},
 		// VS
@@ -94,18 +94,18 @@ func buildNVMeBARModel(barData []byte) *BARModel {
 		// INTMS/INTMC: RO when MSI-X is active
 		{Offset: 0x0C, Width: 4, Name: "INTMS", RWMask: 0x00000000},
 		{Offset: 0x10, Width: 4, Name: "INTMC", RWMask: 0x00000000},
-		// CC — driver writes EN, FSM watches
+		// CC - driver writes EN, FSM watches
 		{Offset: 0x14, Width: 4, Name: "CC", RWMask: 0x00FFFFF1},
-		// CSTS — RO, FSM drives RDY
+		// CSTS - RO, FSM drives RDY
 		{Offset: 0x1C, Width: 4, Name: "CSTS", RWMask: 0x00000000},
 		// NSSR
 		{Offset: 0x20, Width: 4, Name: "NSSR", RWMask: 0xFFFFFFFF},
 		// AQA
 		{Offset: 0x24, Width: 4, Name: "AQA", RWMask: 0x0FFF0FFF},
-		// ASQ — 64-bit
+		// ASQ - 64-bit
 		{Offset: 0x28, Width: 4, Name: "ASQ_LO", RWMask: 0xFFFFF000},
 		{Offset: 0x2C, Width: 4, Name: "ASQ_HI", RWMask: 0xFFFFFFFF},
-		// ACQ — 64-bit
+		// ACQ - 64-bit
 		{Offset: 0x30, Width: 4, Name: "ACQ_LO", RWMask: 0xFFFFF000},
 		{Offset: 0x34, Width: 4, Name: "ACQ_HI", RWMask: 0xFFFFFFFF},
 	}
@@ -155,10 +155,10 @@ func buildXHCIBARModel(barData []byte) *BARModel {
 		{Offset: 0x28, Width: 4, Name: "PAGESIZE", RWMask: 0x00000000},
 		// Device Notification Control
 		{Offset: 0x34, Width: 4, Name: "DNCTRL", RWMask: 0x0000FFFF},
-		// Command Ring Control — 64-bit
+		// Command Ring Control - 64-bit
 		{Offset: 0x38, Width: 4, Name: "CRCR_LO", RWMask: 0xFFFFFFF7},
 		{Offset: 0x3C, Width: 4, Name: "CRCR_HI", RWMask: 0xFFFFFFFF},
-		// Device Context Base Address Array Pointer — 64-bit
+		// Device Context Base Address Array Pointer - 64-bit
 		{Offset: 0x50, Width: 4, Name: "DCBAAP_LO", RWMask: 0xFFFFFFC0},
 		{Offset: 0x54, Width: 4, Name: "DCBAAP_HI", RWMask: 0xFFFFFFFF},
 		// Configure (CONFIG)
@@ -265,13 +265,13 @@ func buildAudioBARModel(barData []byte) *BARModel {
 	regs := []BARRegister{
 		// GCAP(16) + VMIN(8) + VMAJ(8) packed into one DWORD
 		{Offset: 0x00, Width: 4, Name: "GCAP_VMIN_VMAJ", RWMask: 0x00000000},
-		// GCTL — global control, CRST (bit 0) is the key writable bit
+		// GCTL - global control, CRST (bit 0) is the key writable bit
 		{Offset: 0x08, Width: 4, Name: "GCTL", RWMask: 0x00000103},
 		// WAKEEN(16) + STATESTS(16) packed into one DWORD
 		{Offset: 0x0C, Width: 4, Name: "WAKEEN_STATESTS", RWMask: 0x7FFFFFFF},
-		// INTCTL — interrupt control
+		// INTCTL - interrupt control
 		{Offset: 0x20, Width: 4, Name: "INTCTL", RWMask: 0xC00000FF},
-		// INTSTS — interrupt status
+		// INTSTS - interrupt status
 		{Offset: 0x24, Width: 4, Name: "INTSTS", RWMask: 0x00000000},
 		// CORB lower base address
 		{Offset: 0x40, Width: 4, Name: "CORBLBASE", RWMask: 0xFFFFFF80},
@@ -344,7 +344,7 @@ func SynthesizeBARModel(profile *donor.BARProfile, classCode uint32) *BARModel {
 
 		rwMask := probe.RWMask
 		if probe.MaybeRW1C {
-			rwMask = 0 // RW1C → force RO
+			rwMask = 0 // RW1C -> force RO
 		}
 
 		regs = append(regs, BARRegister{
@@ -369,7 +369,7 @@ func SynthesizeBARModel(profile *donor.BARProfile, classCode uint32) *BARModel {
 }
 
 // isProbeDataReliable rejects VFIO dumps where 90%+ of regs report
-// fully writable — usually means the probe couldn't actually write.
+// fully writable - usually means the probe couldn't actually write.
 func isProbeDataReliable(profile *donor.BARProfile) bool {
 	var nonZero, allRW int
 	for _, p := range profile.Probes {
@@ -387,7 +387,7 @@ func isProbeDataReliable(profile *donor.BARProfile) bool {
 	return allRW*10 < nonZero*9 // allRW < 90%
 }
 
-// classRegisterNames returns offset→name hints from the device profile.
+// classRegisterNames returns offset->name hints from the device profile.
 func classRegisterNames(classCode uint32) map[uint32]string {
 	profile := devclass.ProfileForClass(classCode)
 	if profile == nil {

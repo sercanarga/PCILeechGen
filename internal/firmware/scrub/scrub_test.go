@@ -220,7 +220,7 @@ func TestScrubConfigSpace_LinkCap2VectorClamp(t *testing.T) {
 
 	lc2 := scrubbed.ReadU32(0x9C)
 	vec := lc2 & 0xFE
-	// donor only had Gen1, board supports Gen2 — vector should remain Gen1 only
+	// donor only had Gen1, board supports Gen2 - vector should remain Gen1 only
 	if vec != 0x02 {
 		t.Errorf("LinkCap2 vector should be 0x02 (Gen1 only), got 0x%02x", vec)
 	}
@@ -301,7 +301,7 @@ func TestZeroVendorRegisters(t *testing.T) {
 	cs := pci.NewConfigSpace()
 	cs.Size = pci.ConfigSpaceSize
 
-	cs.WriteU16(0x00, 0x1234) // unknown vendor — no whitelist
+	cs.WriteU16(0x00, 0x1234) // unknown vendor - no whitelist
 	cs.WriteU16(0x06, 0x0010)
 	cs.WriteU8(0x34, 0x40)
 
@@ -335,7 +335,7 @@ func TestZeroVendorRegisters_WhitelistPreserves(t *testing.T) {
 	cs := pci.NewConfigSpace()
 	cs.Size = pci.ConfigSpaceSize
 
-	cs.WriteU16(0x00, 0x8086) // Intel — 0xE0-0xFF whitelisted
+	cs.WriteU16(0x00, 0x8086) // Intel - 0xE0-0xFF whitelisted
 	cs.WriteU16(0x06, 0x0010)
 	cs.WriteU8(0x34, 0x40)
 	cs.WriteU8(0x40, pci.CapIDPCIExpress)
@@ -645,7 +645,7 @@ func TestFilterExtCapabilities(t *testing.T) {
 	cs := pci.NewConfigSpace()
 	cs.Size = pci.ConfigSpaceSize
 
-	// Write 3 ext caps: DSN (safe) → SR-IOV (unsafe) → AER (safe)
+	// Write 3 ext caps: DSN (safe) -> SR-IOV (unsafe) -> AER (safe)
 	// DSN at 0x100
 	cs.WriteU32(0x100, uint32(pci.ExtCapIDDeviceSerialNumber)|(1<<16)|(0x110<<20))
 	cs.WriteU32(0x104, 0x11223344)
@@ -759,7 +759,7 @@ func TestSecondaryPCIeNotFiltered(t *testing.T) {
 	cs := pci.NewConfigSpace()
 	cs.Size = pci.ConfigSpaceSize
 
-	// AER → SecondaryPCIe → LTR
+	// AER -> SecondaryPCIe -> LTR
 	cs.WriteU32(0x100, makeExtCapHeader(pci.ExtCapIDAER, 1, 0x150))
 	cs.WriteU32(0x150, makeExtCapHeader(pci.ExtCapIDSecondaryPCIe, 1, 0x200))
 	cs.WriteU32(0x200, makeExtCapHeader(pci.ExtCapIDLTR, 1, 0))
@@ -820,7 +820,7 @@ func TestL1PMSubstatesNotFiltered(t *testing.T) {
 	cs := pci.NewConfigSpace()
 	cs.Size = pci.ConfigSpaceSize
 
-	// AER → L1PM → LTR
+	// AER -> L1PM -> LTR
 	cs.WriteU32(0x100, makeExtCapHeader(pci.ExtCapIDAER, 1, 0x150))
 	cs.WriteU32(0x150, makeExtCapHeader(pci.ExtCapIDL1PMSubstates, 1, 0x200))
 	cs.WriteU32(0x200, makeExtCapHeader(pci.ExtCapIDLTR, 1, 0))

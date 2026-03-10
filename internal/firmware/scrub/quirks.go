@@ -39,7 +39,7 @@ func applyVendorQuirks(cs *pci.ConfigSpace, om *overlay.Map) {
 }
 
 // Renesas uPD720201/202: mark FW as loaded.
-// Without this the driver starts a FW download handshake → Code 10.
+// Without this the driver starts a FW download handshake -> Code 10.
 func fixRenesasFirmwareStatus(cs *pci.ConfigSpace, om *overlay.Map) {
 	const (
 		fwStatusOff   = 0xF4

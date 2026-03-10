@@ -49,17 +49,17 @@ func wifiProfile() *DeviceProfile {
 		MaxPowerState: 3,
 
 		BARDefaults: []BARDefault{
-			// CSR — control/status (HW revision, device ready etc.)
+			// CSR - control/status (HW revision, device ready etc.)
 			{Offset: 0x00, Width: 4, Name: "CSR", Reset: 0x00000000, RWMask: 0x00000000},
-			// FH_RSCSR_CHNL0 — RX status
+			// FH_RSCSR_CHNL0 - RX status
 			{Offset: 0x20, Width: 4, Name: "FH_RSCSR_CHNL0", Reset: 0x00000000, RWMask: 0x00000000},
-			// GP_CTL — firmware ready handshake
+			// GP_CTL - firmware ready handshake
 			{Offset: 0x24, Width: 4, Name: "GP_CTL", Reset: 0x00000080, RWMask: 0xFFFFFFFF},
-			// UCODE_DRV_GP1 — uCode ready flag (set = f/w loaded)
+			// UCODE_DRV_GP1 - uCode ready flag (set = f/w loaded)
 			{Offset: 0x54, Width: 4, Name: "UCODE_DRV_GP1", Reset: 0x00000001, RWMask: 0xFFFFFFFF},
-			// HW_REV — hardware revision
+			// HW_REV - hardware revision
 			{Offset: 0x28, Width: 4, Name: "HW_REV", Reset: 0x00000000, RWMask: 0x00000000},
-			// RF_ID — radio identification
+			// RF_ID - radio identification
 			{Offset: 0x9C, Width: 4, Name: "RF_ID", Reset: 0x00000000, RWMask: 0x00000000},
 		},
 

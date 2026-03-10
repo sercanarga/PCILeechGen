@@ -68,13 +68,13 @@ func (p *SVPatcher) validatePatchResults() error {
 	// pcileech_fifo.sv should have at least VendorID + DeviceID patches
 	const minFifoPatches = 2
 	if fifoPatched < minFifoPatches {
-		return fmt.Errorf("pcileech_fifo.sv: only %d/%d minimum patches applied — "+
+		return fmt.Errorf("pcileech_fifo.sv: only %d/%d minimum patches applied - "+
 			"upstream SV format may have changed (VendorID/DeviceID patches are critical)", fifoPatched, minFifoPatches)
 	}
 
 	// cfg SV: if device has DSN, at least 1 patch expected
 	if p.ids.HasDSN && cfgPatched == 0 {
-		w := "pcileech_pcie_cfg_a7.sv: DSN patch expected but not applied — " +
+		w := "pcileech_pcie_cfg_a7.sv: DSN patch expected but not applied - " +
 			"upstream SV format may have changed"
 		p.results = append(p.results, PatchResult{
 			File:     "pcileech_pcie_cfg_a7.sv",
@@ -153,7 +153,7 @@ func (p *SVPatcher) patchCfgSV() error {
 			label:       fmt.Sprintf("DSN: 0x%s", dsnHex),
 		})
 	} else {
-		// No DSN on the donor — clear the default value so the FPGA
+		// No DSN on the donor - clear the default value so the FPGA
 		// won't show a serial number that doesn't exist on the real device.
 		patches = append(patches, svRegexPatch{
 			pattern:     `(rw\[127:64\]\s*<=\s*64'h)[0-9a-fA-F]+(\s*;\s*//.*cfg_dsn)`,

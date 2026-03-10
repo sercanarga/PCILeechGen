@@ -41,7 +41,7 @@ func LoadConfig(path string) (*Config, error) {
 	return &cfg, nil
 }
 
-// ClassKey turns base+sub class into a lookup key, e.g. 0x02,0x00 → "0200".
+// ClassKey turns base+sub class into a lookup key, e.g. 0x02,0x00 -> "0200".
 func ClassKey(baseClass, subClass uint8) string {
 	return fmt.Sprintf("%02X%02X", baseClass, subClass)
 }

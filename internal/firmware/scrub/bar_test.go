@@ -48,7 +48,7 @@ func TestScrubBarContent_NoData(t *testing.T) {
 func TestScrubBarContent_Unknown(t *testing.T) {
 	barData := make([]byte, 256)
 	barContents := map[int][]byte{0: barData}
-	ScrubBarContent(barContents, 0xFF0000) // unknown — should be no-op
+	ScrubBarContent(barContents, 0xFF0000) // unknown - should be no-op
 }
 
 func TestScrubXHCIBar0_TooSmall(t *testing.T) {
@@ -59,14 +59,14 @@ func TestScrubXHCIBar0_TooSmall(t *testing.T) {
 func TestXhciFixCapLength(t *testing.T) {
 	data := make([]byte, 256)
 
-	// Zero caplen → should be fixed to 0x20
+	// Zero caplen -> should be fixed to 0x20
 	data[0x00] = 0x00
 	cl := xhciFixCapLength(data)
 	if cl != 0x20 {
 		t.Errorf("caplen = %d, want 0x20", cl)
 	}
 
-	// > 0x40 → should be fixed to 0x20
+	// > 0x40 -> should be fixed to 0x20
 	data[0x00] = 0x50
 	cl = xhciFixCapLength(data)
 	if cl != 0x20 {
@@ -120,7 +120,7 @@ func TestXhciReadStructParams(t *testing.T) {
 
 func TestXhciReadStructParams_ZeroSlots(t *testing.T) {
 	data := make([]byte, 256)
-	util.WriteLE32(data, 0x04, 0x04000800) // 0 slots → default 32
+	util.WriteLE32(data, 0x04, 0x04000800) // 0 slots -> default 32
 	slots, _, _ := xhciReadStructParams(data)
 	if slots != 32 {
 		t.Errorf("Zero slots should default to 32, got %d", slots)

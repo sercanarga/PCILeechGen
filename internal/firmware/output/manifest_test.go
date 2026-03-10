@@ -119,7 +119,7 @@ func TestFileHash(t *testing.T) {
 		t.Errorf("SHA256 hash length = %d, want 64", len(hash))
 	}
 
-	// Same content → same hash
+	// Same content -> same hash
 	path2 := filepath.Join(tmpDir, "test2.txt")
 	os.WriteFile(path2, []byte("hello"), 0644)
 	hash2, _ := fileHash(path2)
@@ -127,7 +127,7 @@ func TestFileHash(t *testing.T) {
 		t.Error("Same content should produce same hash")
 	}
 
-	// Non-existent file → error
+	// Non-existent file -> error
 	_, err = fileHash("/nonexistent")
 	if err == nil {
 		t.Error("fileHash should fail for non-existent file")

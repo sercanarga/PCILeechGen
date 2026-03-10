@@ -47,7 +47,7 @@ func NewOutputWriter(outputDir, libDir string, jobs, timeout int) *OutputWriter 
 	}
 }
 
-// WriteAll is the main entry point — generates everything.
+// WriteAll is the main entry point - generates everything.
 func (ow *OutputWriter) WriteAll(ctx *donor.DeviceContext, b *board.Board) error {
 	if err := os.MkdirAll(ow.OutputDir, 0755); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)

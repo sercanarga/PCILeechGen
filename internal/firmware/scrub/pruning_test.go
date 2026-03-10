@@ -11,16 +11,16 @@ func TestPruneStandardCaps_RemovesVPD(t *testing.T) {
 	cs := pci.NewConfigSpace()
 	cs.Data[0x06] = 0x10 // Status: capabilities list present
 
-	// Build a chain: PM(0x40) → VPD(0x50) → PCIe(0x60) → 0
+	// Build a chain: PM(0x40) -> VPD(0x50) -> PCIe(0x60) -> 0
 	cs.WriteU8(0x34, 0x40) // cap pointer
 
 	// PM at 0x40
 	cs.WriteU8(0x40, pci.CapIDPowerManagement)
-	cs.WriteU8(0x41, 0x50) // next → VPD
+	cs.WriteU8(0x41, 0x50) // next -> VPD
 
 	// VPD at 0x50
 	cs.WriteU8(0x50, pci.CapIDVPD)
-	cs.WriteU8(0x51, 0x60) // next → PCIe
+	cs.WriteU8(0x51, 0x60) // next -> PCIe
 
 	// PCIe at 0x60
 	cs.WriteU8(0x60, pci.CapIDPCIExpress)

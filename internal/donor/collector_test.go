@@ -62,7 +62,7 @@ func TestValidateBARContents_AllFF_NonCriticalClass(t *testing.T) {
 	c := &Collector{}
 	ctx := &DeviceContext{
 		Device: pci.PCIDevice{
-			ClassCode: 0x030000, // Display/VGA — not BAR-critical
+			ClassCode: 0x030000, // Display/VGA - not BAR-critical
 			Driver:    "vfio-pci",
 		},
 		BARs: []pci.BAR{
@@ -138,7 +138,7 @@ func TestValidateBARContents_AllFF_WiFi(t *testing.T) {
 	ctx := &DeviceContext{
 		Device: pci.PCIDevice{
 			BDF:       pci.BDF{Domain: 0, Bus: 0, Device: 0x14, Function: 3},
-			ClassCode: 0x028000, // Network controller (other) — WiFi/CNVi
+			ClassCode: 0x028000, // Network controller (other) - WiFi/CNVi
 			Driver:    "vfio-pci",
 		},
 		BARs: []pci.BAR{

@@ -17,11 +17,11 @@ func linkSpeedToTCL(speed uint8) string {
 	case firmware.LinkSpeedGen3:
 		return "8.0_GT/s"
 	default:
-		// Gen4+ not supported by 7-series — clamp to Gen3
+		// Gen4+ not supported by 7-series - clamp to Gen3
 		if speed >= firmware.LinkSpeedGen4 {
 			return "8.0_GT/s"
 		}
-		return "5.0_GT/s" // unknown → safe Gen2 default
+		return "5.0_GT/s" // unknown -> safe Gen2 default
 	}
 }
 

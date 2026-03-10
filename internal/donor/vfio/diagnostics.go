@@ -106,7 +106,7 @@ func RunDiagnostics(bdf string) []DiagnosticResult {
 		if len(others) > 0 {
 			results = append(results, DiagnosticResult{
 				"Group Isolation", false,
-				fmt.Sprintf("shared IOMMU group with %d other device(s): %s — all must be unbound or on vfio-pci",
+				fmt.Sprintf("shared IOMMU group with %d other device(s): %s - all must be unbound or on vfio-pci",
 					len(others), strings.Join(others, ", ")),
 			})
 		}
@@ -121,7 +121,7 @@ func RunDiagnostics(bdf string) []DiagnosticResult {
 		} else {
 			results = append(results, DiagnosticResult{
 				"Power State", false,
-				fmt.Sprintf("%s — device must be in D0 for reliable reads. Try: echo 0 | sudo tee /sys/bus/pci/devices/%s/d3cold_allowed", ps, bdf),
+				fmt.Sprintf("%s - device must be in D0 for reliable reads. Try: echo 0 | sudo tee /sys/bus/pci/devices/%s/d3cold_allowed", ps, bdf),
 			})
 		}
 	}
@@ -134,7 +134,7 @@ func RunDiagnostics(bdf string) []DiagnosticResult {
 			drv := filepath.Base(driverLink)
 			results = append(results, DiagnosticResult{
 				"Driver", false,
-				fmt.Sprintf("currently bound to %q — run: pcileechgen build --bdf %s (auto-binds)", drv, bdf),
+				fmt.Sprintf("currently bound to %q - run: pcileechgen build --bdf %s (auto-binds)", drv, bdf),
 			})
 		} else {
 			results = append(results, DiagnosticResult{"Driver", true, "no driver bound (ready for vfio-pci)"})

@@ -30,7 +30,7 @@ func TestLinkWidthToTCL_AllWidths(t *testing.T) {
 		{4, "X4"},
 		{8, "X8"},
 		{0, "X1"},  // default
-		{16, "X1"}, // unknown → default
+		{16, "X1"}, // unknown -> default
 	}
 	for _, tt := range tests {
 		got := linkWidthToTCL(tt.width)

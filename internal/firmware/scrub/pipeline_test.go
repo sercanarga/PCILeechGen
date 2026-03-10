@@ -97,7 +97,7 @@ func TestFilterExtCapsPass_SmallCS(t *testing.T) {
 
 func TestClampBARsPass(t *testing.T) {
 	data := make([]byte, 256)
-	// BAR0 = memory BAR with large size (mask=0xFFF00000 → 1MB)
+	// BAR0 = memory BAR with large size (mask=0xFFF00000 -> 1MB)
 	data[0x10] = 0x00
 	data[0x11] = 0x00
 	data[0x12] = 0x10 // some address

@@ -75,7 +75,7 @@ func TestGenerateBarImplDeviceSV_WithBARModel(t *testing.T) {
 		t.Error("output should contain CC register")
 	}
 	if !strings.Contains(result, "cc_en_prev") {
-		t.Error("NVMe output should contain CC→CSTS state machine")
+		t.Error("NVMe output should contain CC->CSTS state machine")
 	}
 }
 

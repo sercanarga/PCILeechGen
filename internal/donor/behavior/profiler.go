@@ -129,11 +129,11 @@ func inferPurpose(offset uint32, accessType mmio.AccessType, classCode uint32) s
 			return "NVMe VS (Version)"
 		case 0x14:
 			if accessType == mmio.AccessWrite {
-				return "NVMe CC (Controller Configuration — enable)"
+				return "NVMe CC (Controller Configuration - enable)"
 			}
 			return "NVMe CC (read current config)"
 		case 0x1C:
-			return "NVMe CSTS (Controller Status — poll RDY)"
+			return "NVMe CSTS (Controller Status - poll RDY)"
 		case 0x24:
 			return "NVMe AQA (Admin Queue Attributes)"
 		}

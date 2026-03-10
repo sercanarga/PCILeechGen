@@ -53,7 +53,7 @@ func GenerateWritemaskCOE(cs *pci.ConfigSpace) string {
 	masks[0x0C/4] = 0x0000FF00 // Latency Timer
 	masks[0x3C/4] = 0x000000FF // Interrupt Line
 
-	// BARs — derive size mask from scrubbed BAR value (already clamped by scrub pipeline)
+	// BARs - derive size mask from scrubbed BAR value (already clamped by scrub pipeline)
 	for i := 0; i < 6; i++ {
 		barOffset := 0x10 + (i * 4)
 		barValue := cs.BAR(i)

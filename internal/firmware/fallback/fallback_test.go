@@ -69,7 +69,7 @@ func TestApply_FillsZeroedBAR(t *testing.T) {
 		0: make([]byte, 4096),
 	}
 
-	// class 01:08:02 → NVMe
+	// class 01:08:02 -> NVMe
 	results := Apply(cfg, 0x010802, barContents)
 	if len(results) != 1 {
 		t.Fatalf("expected 1 result, got %d", len(results))

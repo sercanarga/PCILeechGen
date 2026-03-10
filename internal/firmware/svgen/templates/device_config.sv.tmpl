@@ -16,7 +16,7 @@
 {{ if .DeviceIDs.HasPCIeCap }}// PCIe Link:       Speed={{ .DeviceIDs.LinkSpeed }} Width=x{{ .DeviceIDs.LinkWidth }}{{ end }}
 //
 // Features:
-{{ if eq .DeviceClass "nvme" }}//   - NVMe CC→CSTS state machine (dynamic handshake)
+{{ if eq .DeviceClass "nvme" }}//   - NVMe CC->CSTS state machine (dynamic handshake)
 {{ end }}{{ if eq .DeviceClass "xhci" }}//   - xHCI USBCMD/USBSTS state machine
 {{ end }}{{ if eq .DeviceClass "audio" }}//   - HD Audio GCTL.CRST handshake
 {{ end }}{{ if .HasMSIX }}//   - MSI-X interrupt controller
