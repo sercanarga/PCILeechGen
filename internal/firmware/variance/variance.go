@@ -12,26 +12,25 @@ import (
 
 // Config controls which variations are applied.
 type Config struct {
-	Seed            uint32  // entropy seed - different seed ⇒ different build
-	TimingJitter    float64 // fraction of latency range to jitter (0.0–0.15)
-	RegisterNoise   bool    // ±1-2 LSB noise on non-critical reset values
-	MutateDSN       bool    // generate a realistic DSN from OUI + seed
-	SubsysOffset    bool    // apply tiny offset to subsystem ID
-	TimingJitterPct float64 // (alias kept for readability)
+	Seed            uint32
+	TimingJitter    float64
+	RegisterNoise   bool
+	MutateDSN       bool
+	SubsysOffset    bool
+	TimingJitterPct float64
+	DonorHasDSN     bool
 }
 
 // DefaultConfig returns sensible defaults.
 func DefaultConfig(seed uint32) Config {
 	return Config{
 		Seed:          seed,
-		TimingJitter:  0.08, // ±8 %
+		TimingJitter:  0.08,
 		RegisterNoise: true,
 		MutateDSN:     true,
-		SubsysOffset:  false, // disabled by default - changing subsys ID can confuse drivers
+		SubsysOffset:  false,
 	}
 }
-
-// --- core ---
 
 // Apply mutates config space + latency in-place. Same seed -> same result.
 func Apply(cs *pci.ConfigSpace, latCfg *svgen.LatencyConfig, cfg Config) {
@@ -56,9 +55,11 @@ func Apply(cs *pci.ConfigSpace, latCfg *svgen.LatencyConfig, cfg Config) {
 	applyPMTimingVariance(cs, rng)
 
 	embedVSECEntropy(cs, cfg.Seed)
-}
 
-// --- DSN variance ---
+	if !cfg.DonorHasDSN {
+		stripDSNExtCap(cs)
+	}
+}
 
 func applyDSNVariance(cs *pci.ConfigSpace, rng *splitMix64) {
 	// Find DSN extended capability (ID = 0x0003)
@@ -87,7 +88,45 @@ func applyDSNVariance(cs *pci.ConfigSpace, rng *splitMix64) {
 	}
 }
 
-// --- subsystem ID offset ---
+// stripDSNExtCap removes DSN from the ext cap chain if present.
+func stripDSNExtCap(cs *pci.ConfigSpace) {
+	if cs.Size < pci.ConfigSpaceSize {
+		return
+	}
+
+	prevOff := 0
+	offset := 0x100
+	visited := make(map[int]bool)
+
+	for offset >= 0x100 && offset < pci.ConfigSpaceSize && !visited[offset] {
+		visited[offset] = true
+		header := cs.ReadU32(offset)
+		if header == 0 || header == 0xFFFFFFFF {
+			break
+		}
+
+		capID := uint16(header & 0xFFFF)
+		nextOffset := int((header >> 20) & 0xFFC)
+
+		if capID == pci.ExtCapIDDeviceSerialNumber {
+			if prevOff >= 0x100 {
+				prevHeader := cs.ReadU32(prevOff)
+				prevHeader = (prevHeader & 0x000FFFFF) | (uint32(nextOffset) << 20)
+				cs.WriteU32(prevOff, prevHeader)
+			}
+			cs.WriteU32(offset, 0)
+			cs.WriteU32(offset+4, 0)
+			cs.WriteU32(offset+8, 0)
+			return
+		}
+
+		prevOff = offset
+		if nextOffset == 0 {
+			break
+		}
+		offset = nextOffset
+	}
+}
 
 func applySubsysOffset(cs *pci.ConfigSpace, rng *splitMix64) {
 	subsysID := cs.ReadU16(0x2E)
@@ -103,11 +142,7 @@ func applySubsysOffset(cs *pci.ConfigSpace, rng *splitMix64) {
 	cs.WriteU16(0x2E, newID)
 }
 
-// --- register noise ---
-
-// offsets where ±1 LSB noise is safe (informational fields).
-// NOTE: RevisionID (0x08) intentionally excluded - many Windows drivers
-// use it for hardware matching and changing it causes Code 10.
+// Offsets where small noise is safe.
 var safeNoiseOffsets = []int{}
 
 func applyRegisterNoise(cs *pci.ConfigSpace, rng *splitMix64) {
@@ -130,8 +165,6 @@ func applyRegisterNoise(cs *pci.ConfigSpace, rng *splitMix64) {
 		cs.WriteU8(off, uint8(newVal))
 	}
 }
-
-// --- timing jitter ---
 
 func applyTimingJitter(latCfg *svgen.LatencyConfig, rng *splitMix64, jitterFrac float64) {
 	// Jitter min/max cycles within ±jitterFrac
@@ -164,8 +197,6 @@ func jitterInt(val int, frac float64, rng *splitMix64, minVal int) int {
 	}
 	return result
 }
-
-// --- VSEC entropy embed ---
 
 // embedVSECEntropy writes a VSEC ext cap with build-unique payload.
 func embedVSECEntropy(cs *pci.ConfigSpace, seed uint32) {
@@ -250,8 +281,6 @@ func applyPMTimingVariance(cs *pci.ConfigSpace, rng *splitMix64) {
 	}
 }
 
-// --- splitmix64 PRNG ---
-
 type splitMix64 struct {
 	state uint64
 }
@@ -270,8 +299,6 @@ func (s *splitMix64) next() uint64 {
 	z = (z ^ (z >> 27)) * 0x94D049BB133111EB
 	return z ^ (z >> 31)
 }
-
-// --- seed helper ---
 
 // BuildVarianceSeed derives a deterministic seed from device IDs + entropy.
 func BuildVarianceSeed(vendorID, deviceID uint16, buildEntropy uint32) uint32 {

@@ -150,7 +150,21 @@ if { $pcie_ip != "" } {
     CONFIG.DSN_Enabled {{if .DSNEnabled}}true{{else}}false{{end}} \
   ] $pcie_ip
 
-  puts "PCIe IP configured: {{.VendorID}}:{{.DeviceID}} Link={{.LinkWidth}} {{.LinkSpeed}} DSN={{if .DSNEnabled}}enabled{{else}}disabled{{end}}"
+  # MSI vector capability from donor device
+  set_property -dict [list \
+    CONFIG.Multiple_Message_Capable {{.MSICapVectorsStr}} \
+  ] $pcie_ip
+{{if .MSIXEnabled}}
+  # MSI-X capability from donor device ({{.MSIXTableSize}} vectors)
+  set_property -dict [list \
+    CONFIG.MSIx_Cap_Table_Size      {{printf "%03X" .MSIXTableSize}} \
+    CONFIG.MSIx_Table_BIR           BAR_{{.MSIXTableBIR}} \
+    CONFIG.MSIx_Table_Offset        {{.MSIXTableOffset}} \
+    CONFIG.MSIx_PBA_BIR             BAR_{{.MSIXPBABIR}} \
+    CONFIG.MSIx_PBA_Offset          {{.MSIXPBAOffset}} \
+  ] $pcie_ip
+{{end}}
+  puts "PCIe IP configured: {{.VendorID}}:{{.DeviceID}} Link={{.LinkWidth}} {{.LinkSpeed}} DSN={{if .DSNEnabled}}enabled{{else}}disabled{{end}} MSI={{.MSICapVectorsStr}}{{if .MSIXEnabled}} MSI-X={{.MSIXTableSize}}vec{{end}}"
 } else {
   puts "WARNING: PCIe IP core pcie_7x_0 not found, skipping donor identity configuration"
 }

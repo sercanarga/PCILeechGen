@@ -109,7 +109,9 @@ func (ow *OutputWriter) scrubAndVary(ctx *donor.DeviceContext, b *board.Board, i
 
 	entropy := svgen.BuildEntropyFromTime()
 	varSeed := variance.BuildVarianceSeed(ids.VendorID, ids.DeviceID, entropy)
-	variance.Apply(scrubbedCS, nil, variance.DefaultConfig(varSeed))
+	varCfg := variance.DefaultConfig(varSeed)
+	varCfg.DonorHasDSN = ids.HasDSN
+	variance.Apply(scrubbedCS, nil, varCfg)
 
 	return scrubbedCS, entropy, overlayMap
 }

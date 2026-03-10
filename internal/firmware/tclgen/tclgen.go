@@ -38,7 +38,16 @@ type projectTCLData struct {
 	Bar0Scale   string
 	Bar064bit   bool
 
-	DSNEnabled bool
+	DSNEnabled       bool
+	MSICapVectorsStr string
+
+	// MSI-X
+	MSIXEnabled     bool
+	MSIXTableSize   int
+	MSIXTableBIR    int
+	MSIXTableOffset string
+	MSIXPBABIR      int
+	MSIXPBAOffset   string
 }
 
 // buildTCLData holds template data for Vivado build script.
@@ -62,9 +71,8 @@ type bar0Config struct {
 }
 
 // buildBAR0Config picks the largest MMIO BAR for the PCIe IP.
-// Falls back to BAR0 when there's no MMIO BAR.
-// When MSI-X is present, ensures the BAR is large enough to contain the
-// relocated MSI-X table (0x1000+) and PBA.
+// Falls back to BAR0 when there's no MMIO BAR. Ensures the BAR is large
+// enough for MSI-X when present.
 func buildBAR0Config(ctx *donor.DeviceContext, b *board.Board) bar0Config {
 	cfg := bar0Config{Scale: "Kilobytes", Size: "4"}
 	if len(ctx.BARs) == 0 {
@@ -95,11 +103,10 @@ func buildBAR0Config(ctx *donor.DeviceContext, b *board.Board) bar0Config {
 		}
 		cfg.Enabled = true
 		barSize := bar0.Size
-		bramSize := uint64(b.BRAMSizeOrDefault())
-		if barSize > bramSize {
-			barSize = bramSize
-		}
 		barSize = enforceMinMSIXSize(barSize, ctx)
+		if barSize < bar0.Size {
+			barSize = bar0.Size
+		}
 		cfg.Scale, cfg.Size = barSizeToTCL(barSize)
 		cfg.Is64bit = bar0.Type == pci.BARTypeMem64
 		return cfg
@@ -107,30 +114,38 @@ func buildBAR0Config(ctx *donor.DeviceContext, b *board.Board) bar0Config {
 
 	cfg.Enabled = true
 	barSize := bestBAR.Size
-	bramSize := uint64(b.BRAMSizeOrDefault())
-	if barSize > bramSize {
-		barSize = bramSize
-	}
 	barSize = enforceMinMSIXSize(barSize, ctx)
+	if barSize < bestBAR.Size {
+		barSize = bestBAR.Size
+	}
 	cfg.Scale, cfg.Size = barSizeToTCL(barSize)
 	cfg.Is64bit = bestBAR.Type == pci.BARTypeMem64
 	return cfg
 }
 
-// enforceMinMSIXSize bumps the BAR size to fit the relocated MSI-X table
-// (starting at offset 0x1000) plus its PBA. Returns the next power-of-two
-// that covers everything.
+// enforceMinMSIXSize ensures the BAR fits the MSI-X table + PBA at the
+// donor's offsets. Returns the next power-of-two that covers everything.
 func enforceMinMSIXSize(barSize uint64, ctx *donor.DeviceContext) uint64 {
 	if ctx.MSIXData == nil || ctx.MSIXData.TableSize == 0 {
 		return barSize
 	}
+
+	tableOff := uint64(ctx.MSIXData.TableOffset)
+	if tableOff == 0 {
+		tableOff = 0x1000
+	}
+
 	tableBytes := uint64(ctx.MSIXData.TableSize) * 16
 	pbaBytes := ((uint64(ctx.MSIXData.TableSize) + 63) / 64) * 8
 	if pbaBytes < 8 {
 		pbaBytes = 8
 	}
-	// table starts at 0x1000, PBA right after (8-byte aligned)
-	pbaStart := (0x1000 + tableBytes + 7) &^ 7
+
+	pbaStart := (tableOff + tableBytes + 7) &^ 7
+	if ctx.MSIXData.PBAOffset > 0 && uint64(ctx.MSIXData.PBAOffset) > tableOff {
+		pbaStart = uint64(ctx.MSIXData.PBAOffset)
+	}
+
 	minSize := pbaStart + pbaBytes
 
 	// round up to next power of two
@@ -156,32 +171,45 @@ func GenerateProjectTCL(ctx *donor.DeviceContext, b *board.Board, libDir string)
 
 	bar0 := buildBAR0Config(ctx, b)
 
+	// Extract MSI vector count from donor capabilities
+	msiVectors := extractMSIVectors(ctx)
+
 	// Resolve to absolute paths so TCL works from any working directory
 	srcAbs, _ := filepath.Abs(b.SrcPath(libDir))
 	ipAbs, _ := filepath.Abs(b.IPPath(libDir))
 
 	data := projectTCLData{
-		BoardName:      b.Name,
-		FPGAPart:       b.FPGAPart,
-		SrcPath:        srcAbs,
-		IPPath:         ipAbs,
-		TopModule:      b.TopModule,
-		DeviceID:       fmt.Sprintf("%04X", ctx.Device.DeviceID),
-		VendorID:       fmt.Sprintf("%04X", ctx.Device.VendorID),
-		RevisionID:     fmt.Sprintf("%02X", ctx.Device.RevisionID),
-		SubsysVendorID: fmt.Sprintf("%04X", ctx.Device.SubsysVendorID),
-		SubsysDeviceID: fmt.Sprintf("%04X", ctx.Device.SubsysDeviceID),
-		ClassCodeBase:  fmt.Sprintf("%02X", (ctx.Device.ClassCode>>16)&0xFF),
-		ClassCodeSub:   fmt.Sprintf("%02X", (ctx.Device.ClassCode>>8)&0xFF),
-		ClassCodeIntf:  fmt.Sprintf("%02X", ctx.Device.ClassCode&0xFF),
-		LinkSpeed:      linkSpeedToTCL(linkSpeed),
-		LinkWidth:      linkWidthToTCL(linkWidth),
-		TrgtLinkSpeed:  linkSpeedToTrgt(linkSpeed),
-		Bar0Enabled:    bar0.Enabled,
-		Bar0Size:       bar0.Size,
-		Bar0Scale:      bar0.Scale,
-		Bar064bit:      bar0.Is64bit,
-		DSNEnabled:     ids.HasDSN,
+		BoardName:        b.Name,
+		FPGAPart:         b.FPGAPart,
+		SrcPath:          srcAbs,
+		IPPath:           ipAbs,
+		TopModule:        b.TopModule,
+		DeviceID:         fmt.Sprintf("%04X", ctx.Device.DeviceID),
+		VendorID:         fmt.Sprintf("%04X", ctx.Device.VendorID),
+		RevisionID:       fmt.Sprintf("%02X", ctx.Device.RevisionID),
+		SubsysVendorID:   fmt.Sprintf("%04X", ctx.Device.SubsysVendorID),
+		SubsysDeviceID:   fmt.Sprintf("%04X", ctx.Device.SubsysDeviceID),
+		ClassCodeBase:    fmt.Sprintf("%02X", (ctx.Device.ClassCode>>16)&0xFF),
+		ClassCodeSub:     fmt.Sprintf("%02X", (ctx.Device.ClassCode>>8)&0xFF),
+		ClassCodeIntf:    fmt.Sprintf("%02X", ctx.Device.ClassCode&0xFF),
+		LinkSpeed:        linkSpeedToTCL(linkSpeed),
+		LinkWidth:        linkWidthToTCL(linkWidth),
+		TrgtLinkSpeed:    linkSpeedToTrgt(linkSpeed),
+		Bar0Enabled:      bar0.Enabled,
+		Bar0Size:         bar0.Size,
+		Bar0Scale:        bar0.Scale,
+		Bar064bit:        bar0.Is64bit,
+		DSNEnabled:       ids.HasDSN,
+		MSICapVectorsStr: msiVectorsToTCL(msiVectors),
+	}
+
+	if ctx.MSIXData != nil && ctx.MSIXData.TableSize > 0 {
+		data.MSIXEnabled = true
+		data.MSIXTableSize = ctx.MSIXData.TableSize
+		data.MSIXTableBIR = ctx.MSIXData.TableBIR
+		data.MSIXTableOffset = fmt.Sprintf("%08X", ctx.MSIXData.TableOffset)
+		data.MSIXPBABIR = ctx.MSIXData.PBABIR
+		data.MSIXPBAOffset = fmt.Sprintf("%08X", ctx.MSIXData.PBAOffset)
 	}
 
 	var buf bytes.Buffer
