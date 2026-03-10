@@ -72,11 +72,11 @@ func TestMSIVectorsToTCL(t *testing.T) {
 		want    string
 	}{
 		{1, "1_vector"},
-		{2, "1_vector"},
-		{4, "2_vectors"},
-		{8, "3_vectors"},
-		{16, "4_vectors"},
-		{32, "5_vectors"},
+		{2, "2_vectors"},
+		{4, "4_vectors"},
+		{8, "8_vectors"},
+		{16, "16_vectors"},
+		{32, "32_vectors"},
 	}
 	for _, tt := range tests {
 		if got := msiVectorsToTCL(tt.vectors); got != tt.want {
@@ -148,10 +148,12 @@ func TestGenerateProjectTCL_MSIXConfig(t *testing.T) {
 	tcl := GenerateProjectTCL(ctx, b, "/tmp/lib")
 
 	for _, want := range []string{
-		"MSIx_Cap_Table_Size",
+		"MSIx_Table_Size",
+		"MSIx_Enabled",
 		"MSIx_Table_BIR",
+		"BAR_1:0",
 		"MSIx_PBA_BIR",
-		"130vec",
+		"129vec",
 	} {
 		if !strings.Contains(tcl, want) {
 			t.Errorf("TCL output missing %q", want)
@@ -180,7 +182,7 @@ func TestGenerateProjectTCL_NoMSIX(t *testing.T) {
 	tcl := GenerateProjectTCL(ctx, b, "/tmp/lib")
 
 	// MSI-X should NOT be configured when donor has no MSI-X
-	if strings.Contains(tcl, "MSIx_Cap_Table_Size") {
-		t.Error("TCL should NOT contain MSIx_Cap_Table_Size when donor lacks MSI-X")
+	if strings.Contains(tcl, "MSIx_Table_Size") {
+		t.Error("TCL should NOT contain MSIx_Table_Size when donor lacks MSI-X")
 	}
 }

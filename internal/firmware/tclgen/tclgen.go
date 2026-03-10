@@ -44,9 +44,9 @@ type projectTCLData struct {
 	// MSI-X
 	MSIXEnabled     bool
 	MSIXTableSize   int
-	MSIXTableBIR    int
+	MSIXTableBIR    string
 	MSIXTableOffset string
-	MSIXPBABIR      int
+	MSIXPBABIR      string
 	MSIXPBAOffset   string
 }
 
@@ -205,10 +205,10 @@ func GenerateProjectTCL(ctx *donor.DeviceContext, b *board.Board, libDir string)
 
 	if ctx.MSIXData != nil && ctx.MSIXData.TableSize > 0 {
 		data.MSIXEnabled = true
-		data.MSIXTableSize = ctx.MSIXData.TableSize
-		data.MSIXTableBIR = ctx.MSIXData.TableBIR
+		data.MSIXTableSize = ctx.MSIXData.TableSize - 1 // Vivado expects N-1
+		data.MSIXTableBIR = barBIRToTCL(ctx.MSIXData.TableBIR)
 		data.MSIXTableOffset = fmt.Sprintf("%08X", ctx.MSIXData.TableOffset)
-		data.MSIXPBABIR = ctx.MSIXData.PBABIR
+		data.MSIXPBABIR = barBIRToTCL(ctx.MSIXData.PBABIR)
 		data.MSIXPBAOffset = fmt.Sprintf("%08X", ctx.MSIXData.PBAOffset)
 	}
 

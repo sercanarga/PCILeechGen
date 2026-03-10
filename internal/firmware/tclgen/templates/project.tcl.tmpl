@@ -56,6 +56,9 @@ if {[llength $gen_sv_files] > 0} {
 set hex_files [glob -nocomplain "${origin_dir}/*.hex"]
 if {[llength $hex_files] > 0} {
   import_files -fileset sources_1 $hex_files
+  foreach f [get_files -of_objects [get_filesets sources_1] -filter {NAME =~ "*.hex"}] {
+    set_property -name "file_type" -value "Memory Initialization Files" -objects $f
+  }
   puts "Imported [llength $hex_files] HEX init file(s)"
 }
 
@@ -153,12 +156,13 @@ if { $pcie_ip != "" } {
     CONFIG.Multiple_Message_Capable {{.MSICapVectorsStr}} \
   ] $pcie_ip
 {{if .MSIXEnabled}}
-  # MSI-X capability from donor device ({{.MSIXTableSize}} vectors)
+  # MSI-X: enable first, then configure table/PBA ({{.MSIXTableSize}} entries)
+  set_property CONFIG.MSIx_Enabled {true} $pcie_ip
   set_property -dict [list \
-    CONFIG.MSIx_Cap_Table_Size      {{printf "%03X" .MSIXTableSize}} \
-    CONFIG.MSIx_Table_BIR           BAR_{{.MSIXTableBIR}} \
+    CONFIG.MSIx_Table_Size          {{printf "%03X" .MSIXTableSize}} \
+    CONFIG.MSIx_Table_BIR           {{.MSIXTableBIR}} \
     CONFIG.MSIx_Table_Offset        {{.MSIXTableOffset}} \
-    CONFIG.MSIx_PBA_BIR             BAR_{{.MSIXPBABIR}} \
+    CONFIG.MSIx_PBA_BIR             {{.MSIXPBABIR}} \
     CONFIG.MSIx_PBA_Offset          {{.MSIXPBAOffset}} \
   ] $pcie_ip
 {{end}}
