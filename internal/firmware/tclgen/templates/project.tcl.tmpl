@@ -38,13 +38,6 @@ foreach f [get_files -of_objects [get_filesets sources_1] -filter {NAME =~ "*.sv
   set_property -name "file_type" -value "Verilog Header" -objects $f
 }
 
-# Generated COE files
-set coe_files [list \
-  [file normalize "${origin_dir}/pcileech_cfgspace.coe"] \
-  [file normalize "${origin_dir}/pcileech_cfgspace_writemask.coe"] \
-  [file normalize "${origin_dir}/pcileech_bar_zero4k.coe"] \
-]
-import_files -fileset sources_1 $coe_files
 
 # Generated SV modules
 set gen_sv_files [glob -nocomplain "${origin_dir}/*.sv"]
@@ -82,10 +75,6 @@ if {[llength $ip_files] > 0} {
   }
 }
 
-set ip_coe_files [glob -nocomplain "{{.IPPath}}/*.coe"]
-if {[llength $ip_coe_files] > 0} {
-  import_files -fileset sources_1 $ip_coe_files
-}
 
 # Upgrade IPs to current Vivado version (must happen before configuring properties)
 set all_ips [get_ips -quiet *]
@@ -109,6 +98,15 @@ if { $cfg_bram != "" } {
   if {[file exists $coe_path]} {
     set_property -dict [list CONFIG.Coe_File $coe_path] $cfg_bram
     puts "Config space BRAM COE updated: $coe_path"
+  }
+}
+
+set writemask_bram [get_ips -quiet drom_pcie_cfgspace_writemask]
+if { $writemask_bram != "" } {
+  set coe_path [file normalize "${origin_dir}/pcileech_cfgspace_writemask.coe"]
+  if {[file exists $coe_path]} {
+    set_property -dict [list CONFIG.Coe_File $coe_path] $writemask_bram
+    puts "Writemask BRAM COE updated: $coe_path"
   }
 }
 
