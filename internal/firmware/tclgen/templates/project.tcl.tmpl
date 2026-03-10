@@ -104,12 +104,12 @@ if { $cfg_bram != "" } {
   }
 }
 
-set writemask_bram [get_ips -quiet drom_pcie_cfgspace_writemask]
-if { $writemask_bram != "" } {
+set writemask_drom [get_ips -quiet drom_pcie_cfgspace_writemask]
+if { $writemask_drom != "" } {
   set coe_path [file normalize "${origin_dir}/pcileech_cfgspace_writemask.coe"]
   if {[file exists $coe_path]} {
-    set_property -dict [list CONFIG.Coe_File $coe_path] $writemask_bram
-    puts "Writemask BRAM COE updated: $coe_path"
+    set_property -dict [list CONFIG.coefficient_file $coe_path] $writemask_drom
+    puts "Writemask DROM COE updated: $coe_path"
   }
 }
 
