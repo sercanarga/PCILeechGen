@@ -92,6 +92,43 @@ func TestLargestBar_PicksLargest(t *testing.T) {
 	}
 }
 
+func TestLargestBar_EqualSize_PicksNonZero(t *testing.T) {
+	bar0 := make([]byte, 4096) // all zeros
+	bar2 := make([]byte, 4096)
+	bar2[0] = 0x22
+	bar2[1] = 0x79
+	bar2[4] = 0x01
+
+	result := LargestBar(map[int][]byte{0: bar0, 2: bar2})
+	if result[0] != 0x22 || result[1] != 0x79 {
+		t.Error("equal size BARs should pick the one with more non-zero bytes")
+	}
+}
+
+func TestLargestBarIndex_EqualSize_PicksNonZero(t *testing.T) {
+	bar0 := make([]byte, 4096) // all zeros
+	bar2 := make([]byte, 4096)
+	bar2[0] = 0x22
+	bar2[1] = 0x79
+
+	idx := LargestBarIndex(map[int][]byte{0: bar0, 2: bar2})
+	if idx != 2 {
+		t.Errorf("equal size BARs should pick index 2 (non-zero), got %d", idx)
+	}
+}
+
+func TestCountNonZero(t *testing.T) {
+	if countNonZero(nil) != 0 {
+		t.Error("nil should return 0")
+	}
+	if countNonZero([]byte{0, 0, 0}) != 0 {
+		t.Error("all zeros should return 0")
+	}
+	if countNonZero([]byte{1, 0, 2, 0, 3}) != 3 {
+		t.Errorf("expected 3 non-zero, got %d", countNonZero([]byte{1, 0, 2, 0, 3}))
+	}
+}
+
 func TestExtractDeviceIDs_ClassCode(t *testing.T) {
 	cs := pci.NewConfigSpace()
 	cs.Size = pci.ConfigSpaceSize
