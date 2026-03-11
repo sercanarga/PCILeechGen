@@ -198,17 +198,21 @@ func isAllFF(data []byte) bool {
 	return true
 }
 
-// allBARsFF checks whether all collected BAR contents are 0xFF.
-func allBARsFF(contents map[int][]byte) bool {
-	if len(contents) == 0 {
-		return false
-	}
-	for _, data := range contents {
+// memBARsAllFF checks whether all eligible memory BAR contents are 0xFF.
+// it ignores IO BARs so a valid IO BAR doesn't mask broken memory BARs.
+func memBARsAllFF(contents map[int][]byte, bars []pci.BAR) bool {
+	checked := 0
+	for _, bar := range eligibleBARs(bars) {
+		data, ok := contents[bar.Index]
+		if !ok || len(data) == 0 {
+			continue
+		}
+		checked++
 		if !isAllFF(data) {
 			return false
 		}
 	}
-	return true
+	return checked > 0
 }
 
 // tryNativeDriverRebind temporarily switches to the native driver so the
@@ -277,8 +281,18 @@ func (c *Collector) collectConfigSpace(bdf pci.BDF) (*pci.ConfigSpace, error) {
 
 func (c *Collector) collectBARMemory(bdf pci.BDF, bars []pci.BAR) map[int][]byte {
 	const maxBARReadSize = 4096
+
+	eligible := eligibleBARs(bars)
+	if len(eligible) == 0 {
+		return nil
+	}
+
+	eligibleSet := make(map[int]bool, len(eligible))
+	for _, bar := range eligible {
+		eligibleSet[bar.Index] = true
+	}
+
 	contents := make(map[int][]byte)
-	sysfsBarFailed := false
 
 	// vfio-pci doesn't set Memory Space / Bus Master bits, so BAR reads
 	// will return 0xFF unless we enable them first.
@@ -291,7 +305,9 @@ func (c *Collector) collectBARMemory(bdf pci.BDF, bars []pci.BAR) map[int][]byte
 		}
 	}
 
-	for _, bar := range eligibleBARs(bars) {
+	// phase 1: sysfs reads for eligible memory BARs
+	sysfsBarFailed := false
+	for _, bar := range eligible {
 		data, err := c.sysfs.ReadBARContent(bdf, bar.Index, maxBARReadSize)
 		if err != nil {
 			slog.Warn("could not read BAR via sysfs", "bar", bar.Index, "error", err)
@@ -306,41 +322,53 @@ func (c *Collector) collectBARMemory(bdf pci.BDF, bars []pci.BAR) map[int][]byte
 		slog.Info("BAR read complete", "bar", bar.Index, "bytes", len(data))
 	}
 
+	// phase 2: retry via VFIO (only eligible BARs)
 	if sysfsBarFailed {
-		if !vfio.IsBoundToVFIO(bdf.String()) {
-			slog.Info("attempting auto-bind to vfio-pci for BAR access")
-			if err := vfio.BindToVFIO(bdf.String()); err != nil {
-				slog.Warn("auto-bind to vfio-pci failed", "error", err)
-			}
-		}
-
-		if vfio.IsBoundToVFIO(bdf.String()) {
-			if err := vfio.EnableMemorySpace(bdf.String()); err != nil {
-				slog.Warn("could not enable PCI memory space after rebind",
-					"bdf", bdf, "error", err)
-			}
-
-			slog.Info("retrying BAR reads via VFIO")
-			if dump, err := vfio.Collect(bdf.String()); err == nil {
-				for idx, data := range dump.BARContents {
-					if len(data) > 0 && !isAllFF(data) {
-						contents[idx] = data
-						slog.Info("BAR read via VFIO", "bar", idx, "bytes", len(data))
-					}
-				}
-			} else {
-				slog.Warn("VFIO BAR fallback failed", "error", err)
-			}
-		}
+		c.retryBARsViaVFIO(bdf, eligibleSet, contents)
 	}
 
-	// last resort: try a native driver rebind cycle
-	if allBARsFF(contents) && vfio.IsBoundToVFIO(bdf.String()) {
-		slog.Info("all BAR contents are 0xFF, attempting native driver rebind cycle")
+	// phase 3: native driver rebind as last resort
+	if memBARsAllFF(contents, bars) && vfio.IsBoundToVFIO(bdf.String()) {
+		slog.Info("all memory BAR contents are 0xFF, attempting native driver rebind cycle")
 		contents = c.tryNativeDriverRebind(bdf, bars, contents)
 	}
 
 	return contents
+}
+
+// retryBARsViaVFIO retries failed BAR reads through VFIO ioctls.
+// eligibleSet restricts which BARs are accepted from vfio.Collect to
+// prevent IO BAR data from masking broken memory BARs.
+func (c *Collector) retryBARsViaVFIO(bdf pci.BDF, eligibleSet map[int]bool, contents map[int][]byte) {
+	if !vfio.IsBoundToVFIO(bdf.String()) {
+		slog.Info("attempting auto-bind to vfio-pci for BAR access")
+		if err := vfio.BindToVFIO(bdf.String()); err != nil {
+			slog.Warn("auto-bind to vfio-pci failed", "error", err)
+			return
+		}
+	}
+
+	if err := vfio.EnableMemorySpace(bdf.String()); err != nil {
+		slog.Warn("could not enable PCI memory space after rebind",
+			"bdf", bdf, "error", err)
+	}
+
+	slog.Info("retrying BAR reads via VFIO")
+	dump, err := vfio.Collect(bdf.String())
+	if err != nil {
+		slog.Warn("VFIO BAR fallback failed", "error", err)
+		return
+	}
+
+	for idx, data := range dump.BARContents {
+		if !eligibleSet[idx] {
+			continue
+		}
+		if len(data) > 0 && !isAllFF(data) {
+			contents[idx] = data
+			slog.Info("BAR read via VFIO", "bar", idx, "bytes", len(data))
+		}
+	}
 }
 
 func (c *Collector) collectBARProfiles(bdf pci.BDF, bars []pci.BAR) map[int]*BARProfile {

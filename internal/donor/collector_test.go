@@ -164,31 +164,62 @@ func TestValidateBARContents_AllFF_WiFi(t *testing.T) {
 	}
 }
 
-func TestAllBARsFF(t *testing.T) {
+func TestMemBARsAllFF(t *testing.T) {
 	tests := []struct {
 		name     string
 		contents map[int][]byte
+		bars     []pci.BAR
 		want     bool
 	}{
-		{"empty_map", map[int][]byte{}, false},
-		{"nil_map", nil, false},
-		{"single_all_ff", map[int][]byte{0: makeAllFF(256)}, true},
-		{"multiple_all_ff", map[int][]byte{
+		{"empty_map", map[int][]byte{}, []pci.BAR{
+			{Index: 0, Type: pci.BARTypeMem64, Size: 4096},
+		}, false},
+		{"nil_map", nil, []pci.BAR{
+			{Index: 0, Type: pci.BARTypeMem64, Size: 4096},
+		}, false},
+		{"single_mem_all_ff", map[int][]byte{0: makeAllFF(256)}, []pci.BAR{
+			{Index: 0, Type: pci.BARTypeMem64, Size: 4096},
+		}, true},
+		{"multiple_mem_all_ff", map[int][]byte{
 			2: makeAllFF(4096),
 			4: makeAllFF(4096),
+		}, []pci.BAR{
+			{Index: 2, Type: pci.BARTypeMem64, Size: 4096},
+			{Index: 4, Type: pci.BARTypeMem64, Size: 16384},
 		}, true},
-		{"one_valid", map[int][]byte{
+		{"one_valid_mem", map[int][]byte{
 			0: {0x17, 0x00, 0x00, 0x00},
+		}, []pci.BAR{
+			{Index: 0, Type: pci.BARTypeMem64, Size: 4096},
 		}, false},
-		{"mixed_ff_and_valid", map[int][]byte{
+		{"mixed_ff_and_valid_mem", map[int][]byte{
 			2: makeAllFF(4096),
 			4: {0x00, 0x01, 0x02, 0x03},
+		}, []pci.BAR{
+			{Index: 2, Type: pci.BARTypeMem64, Size: 4096},
+			{Index: 4, Type: pci.BARTypeMem64, Size: 16384},
+		}, false},
+		// rtl8168 scenario: IO BAR valid, memory BARs all 0xFF
+		{"io_bar_valid_mem_bars_ff", map[int][]byte{
+			0: {0x01, 0x02, 0x03, 0x04},
+			2: makeAllFF(4096),
+			4: makeAllFF(4096),
+		}, []pci.BAR{
+			{Index: 0, Type: pci.BARTypeIO, Size: 256},
+			{Index: 2, Type: pci.BARTypeMem64, Size: 4096},
+			{Index: 4, Type: pci.BARTypeMem64, Size: 16384},
+		}, true},
+		// no eligible memory BARs at all
+		{"only_io_bars", map[int][]byte{
+			0: {0xFF, 0xFF},
+		}, []pci.BAR{
+			{Index: 0, Type: pci.BARTypeIO, Size: 256},
 		}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := allBARsFF(tt.contents); got != tt.want {
-				t.Errorf("allBARsFF() = %v, want %v", got, tt.want)
+			if got := memBARsAllFF(tt.contents, tt.bars); got != tt.want {
+				t.Errorf("memBARsAllFF() = %v, want %v", got, tt.want)
 			}
 		})
 	}
