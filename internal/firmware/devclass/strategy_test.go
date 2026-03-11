@@ -98,6 +98,47 @@ func TestStrategyForClass_WiFi(t *testing.T) {
 	}
 }
 
+func TestStrategyForClassAndVendor_MediatekWiFi(t *testing.T) {
+	s := StrategyForClassAndVendor(0x028000, 0x14C3)
+	if s == nil {
+		t.Fatal("expected MediaTek Wi-Fi strategy, got nil")
+	}
+	if s.ClassName() != "Wi-Fi (MediaTek)" {
+		t.Errorf("expected Wi-Fi (MediaTek), got %s", s.ClassName())
+	}
+	if s.DeviceClass() != ClassWiFi {
+		t.Errorf("expected %s, got %s", ClassWiFi, s.DeviceClass())
+	}
+}
+
+func TestStrategyForClassAndVendor_IntelWiFi(t *testing.T) {
+	s := StrategyForClassAndVendor(0x028000, 0x8086)
+	if s == nil {
+		t.Fatal("expected Intel Wi-Fi strategy, got nil")
+	}
+	if s.ClassName() != "Wi-Fi" {
+		t.Errorf("expected Wi-Fi (Intel fallback), got %s", s.ClassName())
+	}
+}
+
+func TestStrategyForClassAndVendor_NoVendor(t *testing.T) {
+	s := StrategyForClassAndVendor(0x028000, 0)
+	if s == nil {
+		t.Fatal("expected Wi-Fi strategy, got nil")
+	}
+	if s.ClassName() != "Wi-Fi" {
+		t.Errorf("expected Wi-Fi fallback, got %s", s.ClassName())
+	}
+}
+
+func TestStrategyForClassAndVendor_NonWiFi(t *testing.T) {
+	// vendor ID should be ignored for non-WiFi classes
+	s := StrategyForClassAndVendor(0x010802, 0x14C3)
+	if s.ClassName() != "NVMe" {
+		t.Errorf("expected NVMe, got %s", s.ClassName())
+	}
+}
+
 func TestStrategyForClass_Thunderbolt(t *testing.T) {
 	s := StrategyForClass(0x0C8000)
 	if s == nil {
@@ -376,6 +417,51 @@ func TestWiFiStrategy_ScrubBAR_TooShort(t *testing.T) {
 	s := &wifiStrategy{}
 	data := make([]byte, 0x10)
 	s.ScrubBAR(data)
+}
+
+func TestMediatekWiFiStrategy_ScrubBAR(t *testing.T) {
+	s := &mediatekWifiStrategy{}
+	data := make([]byte, 0x0C)
+
+	s.ScrubBAR(data)
+
+	chipID := uint32(data[0x00]) | uint32(data[0x01])<<8 |
+		uint32(data[0x02])<<16 | uint32(data[0x03])<<24
+	if chipID != 0x00007922 {
+		t.Errorf("HW_CHIPID should be 0x7922, got 0x%08X", chipID)
+	}
+
+	hwRev := uint32(data[0x04]) | uint32(data[0x05])<<8 |
+		uint32(data[0x06])<<16 | uint32(data[0x07])<<24
+	if hwRev != 0x00000001 {
+		t.Errorf("HW_REV should be 0x01, got 0x%08X", hwRev)
+	}
+
+	hwVer := uint32(data[0x08]) | uint32(data[0x09])<<8 |
+		uint32(data[0x0A])<<16 | uint32(data[0x0B])<<24
+	if hwVer != 0x00000001 {
+		t.Errorf("HW_VER should be 0x01, got 0x%08X", hwVer)
+	}
+}
+
+func TestMediatekWiFiStrategy_ScrubBAR_TooShort(t *testing.T) {
+	s := &mediatekWifiStrategy{}
+	data := make([]byte, 0x08)
+	s.ScrubBAR(data) // must not panic
+}
+
+func TestMediatekWiFiStrategy_PostInitRegisters(t *testing.T) {
+	s := &mediatekWifiStrategy{}
+	var chipID uint32 = 0x00
+	var hwRev uint32 = 0x00
+	regs := map[uint32]*uint32{0x00: &chipID, 0x04: &hwRev}
+	s.PostInitRegisters(regs)
+	if chipID != 0x00007922 {
+		t.Errorf("HW_CHIPID should be 0x7922, got 0x%08X", chipID)
+	}
+	if hwRev != 0x00000001 {
+		t.Errorf("HW_REV should be 0x01, got 0x%08X", hwRev)
+	}
 }
 
 func TestThunderboltStrategy_ScrubBAR(t *testing.T) {

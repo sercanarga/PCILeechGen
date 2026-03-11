@@ -127,7 +127,7 @@ func (ow *OutputWriter) writeConfigSpaceArtifacts(ctx *donor.DeviceContext, scru
 		return fmt.Errorf("failed to write writemask COE: %w", err)
 	}
 
-	scrub.ScrubBarContent(ctx.BARContents, ctx.Device.ClassCode)
+	scrub.ScrubBarContent(ctx.BARContents, ctx.Device.ClassCode, ctx.Device.VendorID)
 	if err := ow.writeFile("pcileech_bar_zero4k.coe",
 		codegen.GenerateBarContentCOE(ctx.BARContents)); err != nil {
 		return fmt.Errorf("failed to write bar zero COE: %w", err)
@@ -282,7 +282,7 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, ids firmware.Dev
 		"has_profile", barProfile != nil)
 	bm := barmodel.BuildBARModel(barData, ctx.Device.ClassCode, barProfile)
 
-	strategy := devclass.StrategyForClass(ctx.Device.ClassCode)
+	strategy := devclass.StrategyForClassAndVendor(ctx.Device.ClassCode, ids.VendorID)
 	devClass := ""
 	if strategy != nil {
 		devClass = strategy.DeviceClass()

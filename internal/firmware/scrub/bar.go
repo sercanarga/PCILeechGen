@@ -7,24 +7,26 @@ import (
 )
 
 // ScrubBarContent patches BAR data with device-class quirks using default BRAM size.
-func ScrubBarContent(barContents map[int][]byte, classCode uint32) {
-	ScrubBarContentWithBRAM(barContents, classCode, BRAMSize)
+func ScrubBarContent(barContents map[int][]byte, classCode uint32, vendorID uint16) {
+	ScrubBarContentWithBRAM(barContents, classCode, vendorID, BRAMSize)
 }
 
 // ScrubBarContentWithBRAM is like ScrubBarContent but takes a custom BRAM size.
-func ScrubBarContentWithBRAM(barContents map[int][]byte, classCode uint32, bramSize int) {
+func ScrubBarContentWithBRAM(barContents map[int][]byte, classCode uint32, vendorID uint16, bramSize int) {
 	data := firmware.LargestBar(barContents)
 	if data == nil {
 		return
 	}
 
-	strategy := devclass.StrategyForClass(classCode)
-	if strategy != nil {
-		strategy.ScrubBAR(data)
+	strategy := devclass.StrategyForClassAndVendor(classCode, vendorID)
+	if strategy == nil {
+		return
 	}
 
+	strategy.ScrubBAR(data)
+
 	// xHCI also needs BRAM-aware register clamping
-	if strategy != nil && strategy.DeviceClass() == devclass.ClassXHCI {
+	if strategy.DeviceClass() == devclass.ClassXHCI {
 		scrubXHCIBar0(data, bramSize)
 	}
 }
@@ -48,7 +50,7 @@ func scrubXHCIBar0(data []byte, bramSize int) {
 
 	maxSlots = xhciClampDBOFF(data, capLen, maxSlots, bramSize)
 	maxIntrs = xhciClampRTSOFF(data, capLen, maxIntrs, bramSize)
-	maxPorts = xhciClampPorts(data, capLen, maxPorts, bramSize)
+	maxPorts = xhciClampPorts(capLen, maxPorts, bramSize)
 
 	// write back clamped HCSPARAMS1
 	hcsparams1 := uint32(maxSlots) | (uint32(maxIntrs) << 8) | (uint32(maxPorts) << 24)
@@ -180,7 +182,7 @@ func xhciClampRTSOFF(data []byte, capLen, maxIntrs, bramSize int) int {
 	return maxIntrs
 }
 
-func xhciClampPorts(data []byte, capLen, maxPorts, bramSize int) int {
+func xhciClampPorts(capLen, maxPorts, bramSize int) int {
 	portBase := capLen + 0x400
 	if portBase < bramSize {
 		maxPortsFit := (bramSize - portBase) / 0x10

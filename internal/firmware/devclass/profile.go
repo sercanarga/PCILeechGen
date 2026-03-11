@@ -48,6 +48,7 @@ func AllProfiles() []*DeviceProfile {
 		gpuProfile(),
 		sataProfile(),
 		wifiProfile(),
+		mediatekWifiProfile(),
 		thunderboltProfile(),
 		genericProfile(),
 	}

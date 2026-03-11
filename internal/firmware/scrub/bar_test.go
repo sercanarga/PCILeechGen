@@ -9,7 +9,7 @@ import (
 func TestScrubBarContent_NVMe(t *testing.T) {
 	barData := make([]byte, 4096)
 	barContents := map[int][]byte{0: barData}
-	ScrubBarContent(barContents, 0x010802) // NVMe
+	ScrubBarContent(barContents, 0x010802, 0) // NVMe
 
 	// CSTS.RDY should be 1
 	csts := util.ReadLE32(barData, 0x1C)
@@ -30,7 +30,7 @@ func TestScrubBarContent_XHCI(t *testing.T) {
 	util.WriteLE32(barData, 0x18, 0x00000600)
 
 	barContents := map[int][]byte{0: barData}
-	ScrubBarContent(barContents, 0x0C0330) // xHCI
+	ScrubBarContent(barContents, 0x0C0330, 0) // xHCI
 
 	// USBCMD R/S should be set
 	capLen := int(barData[0x00])
@@ -41,14 +41,14 @@ func TestScrubBarContent_XHCI(t *testing.T) {
 }
 
 func TestScrubBarContent_NoData(t *testing.T) {
-	ScrubBarContent(nil, 0x010802)
-	ScrubBarContent(map[int][]byte{}, 0x010802)
+	ScrubBarContent(nil, 0x010802, 0)
+	ScrubBarContent(map[int][]byte{}, 0x010802, 0)
 }
 
 func TestScrubBarContent_Unknown(t *testing.T) {
 	barData := make([]byte, 256)
 	barContents := map[int][]byte{0: barData}
-	ScrubBarContent(barContents, 0xFF0000) // unknown - should be no-op
+	ScrubBarContent(barContents, 0xFF0000, 0) // unknown - should be no-op
 }
 
 func TestScrubXHCIBar0_TooSmall(t *testing.T) {
@@ -156,8 +156,7 @@ func TestXhciClampXECP(t *testing.T) {
 }
 
 func TestXhciClampPorts(t *testing.T) {
-	data := make([]byte, 256)
-	maxPorts := xhciClampPorts(data, 0x20, 100, BRAMSize)
+	maxPorts := xhciClampPorts(0x20, 100, BRAMSize)
 	if maxPorts > 100 {
 		t.Errorf("Clamped ports = %d, should be <= 100", maxPorts)
 	}
