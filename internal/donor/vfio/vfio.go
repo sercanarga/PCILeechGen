@@ -130,7 +130,7 @@ func BindToVFIO(bdf string) error {
 	device := strings.TrimSpace(string(deviceData))
 
 	if driverLink != "" {
-		unbindPath := filepath.Join(filepath.Dir(driverLink), "unbind")
+		unbindPath := filepath.Join(devPath, "driver", "unbind")
 		if err := os.WriteFile(unbindPath, []byte(bdf), 0200); err != nil {
 			return fmt.Errorf("failed to unbind from current driver: %w", err)
 		}
