@@ -421,63 +421,73 @@ func TestWiFiStrategy_ScrubBAR_TooShort(t *testing.T) {
 
 func TestMediatekWiFiStrategy_ScrubBAR(t *testing.T) {
 	s := &mediatekWifiStrategy{}
-	data := make([]byte, 0x0C)
+	data := make([]byte, 0x10)
 
 	s.ScrubBAR(data)
 
 	chipID := uint32(data[0x00]) | uint32(data[0x01])<<8 |
 		uint32(data[0x02])<<16 | uint32(data[0x03])<<24
-	if chipID != 0x00007922 {
-		t.Errorf("HW_CHIPID should be 0x7922, got 0x%08X", chipID)
+	if chipID != 0x79220010 {
+		t.Errorf("TOP_HW_CHIPID should be 0x79220010, got 0x%08X", chipID)
 	}
 
-	hwRev := uint32(data[0x04]) | uint32(data[0x05])<<8 |
+	hwSwVer := uint32(data[0x04]) | uint32(data[0x05])<<8 |
 		uint32(data[0x06])<<16 | uint32(data[0x07])<<24
-	if hwRev != 0x00000001 {
-		t.Errorf("HW_REV should be 0x01, got 0x%08X", hwRev)
+	if hwSwVer != 0x8A108A10 {
+		t.Errorf("TOP_HW_SW_VER should be 0x8A108A10, got 0x%08X", hwSwVer)
 	}
 
-	hwVer := uint32(data[0x08]) | uint32(data[0x09])<<8 |
+	misc2 := uint32(data[0x08]) | uint32(data[0x09])<<8 |
 		uint32(data[0x0A])<<16 | uint32(data[0x0B])<<24
-	if hwVer != 0x00000001 {
-		t.Errorf("HW_VER should be 0x01, got 0x%08X", hwVer)
+	if misc2 != 0x00000002 {
+		t.Errorf("TOP_MISC2 should be 0x02, got 0x%08X", misc2)
+	}
+
+	fwdl := uint32(data[0x0C]) | uint32(data[0x0D])<<8 |
+		uint32(data[0x0E])<<16 | uint32(data[0x0F])<<24
+	if fwdl != 0x00000000 {
+		t.Errorf("FWDL_STATUS should be 0x00, got 0x%08X", fwdl)
 	}
 }
 
-func TestMediatekWiFiStrategy_ScrubBAR_ConnInfra(t *testing.T) {
+func TestMediatekWiFiStrategy_ScrubBAR_LargeBuffer(t *testing.T) {
 	s := &mediatekWifiStrategy{}
-	data := make([]byte, 0x2000) // large enough for conn_infra
+	data := make([]byte, 0x2000)
 
 	s.ScrubBAR(data)
 
-	cfgID := uint32(data[0x1000]) | uint32(data[0x1001])<<8 |
-		uint32(data[0x1002])<<16 | uint32(data[0x1003])<<24
-	if cfgID != 0x02060000 {
-		t.Errorf("CONN_INFRA_CFG_ID should be 0x02060000, got 0x%08X", cfgID)
+	chipID := uint32(data[0x00]) | uint32(data[0x01])<<8 |
+		uint32(data[0x02])<<16 | uint32(data[0x03])<<24
+	if chipID != 0x79220010 {
+		t.Errorf("TOP_HW_CHIPID should be 0x79220010, got 0x%08X", chipID)
 	}
 }
 
 func TestMediatekWiFiStrategy_ScrubBAR_TooShort(t *testing.T) {
 	s := &mediatekWifiStrategy{}
-	data := make([]byte, 0x08)
+	data := make([]byte, 0x0C)
 	s.ScrubBAR(data) // must not panic
 }
 
 func TestMediatekWiFiStrategy_PostInitRegisters(t *testing.T) {
 	s := &mediatekWifiStrategy{}
 	var chipID uint32 = 0x00
-	var hwRev uint32 = 0x00
-	var hwVer uint32 = 0x00
-	regs := map[uint32]*uint32{0x00: &chipID, 0x04: &hwRev, 0x08: &hwVer}
+	var hwSwVer uint32 = 0x00
+	var misc2 uint32 = 0x00
+	var fwdl uint32 = 0xFF
+	regs := map[uint32]*uint32{0x00: &chipID, 0x04: &hwSwVer, 0x08: &misc2, 0x0C: &fwdl}
 	s.PostInitRegisters(regs)
-	if chipID != 0x00007922 {
-		t.Errorf("HW_CHIPID should be 0x7922, got 0x%08X", chipID)
+	if chipID != 0x79220010 {
+		t.Errorf("TOP_HW_CHIPID should be 0x79220010, got 0x%08X", chipID)
 	}
-	if hwRev != 0x00000001 {
-		t.Errorf("HW_REV should be 0x01, got 0x%08X", hwRev)
+	if hwSwVer != 0x8A108A10 {
+		t.Errorf("TOP_HW_SW_VER should be 0x8A108A10, got 0x%08X", hwSwVer)
 	}
-	if hwVer != 0x00000001 {
-		t.Errorf("HW_VER should be 0x01, got 0x%08X", hwVer)
+	if misc2 != 0x00000002 {
+		t.Errorf("TOP_MISC2 should be 0x02, got 0x%08X", misc2)
+	}
+	if fwdl != 0x00000000 {
+		t.Errorf("FWDL_STATUS should be 0x00, got 0x%08X", fwdl)
 	}
 }
 
