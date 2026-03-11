@@ -163,7 +163,14 @@ func (ow *OutputWriter) writeManifest(ctx *donor.DeviceContext, ids firmware.Dev
 	}
 }
 
-// patchSVSources copies the board's SV tree and patches IDs in.
+// svFilesReplacedByGenerator: board source files we replace with
+// generated versions. Must be deleted from src/ to avoid duplicates.
+var svFilesReplacedByGenerator = []string{
+	"pcileech_tlps128_bar_controller.sv",
+}
+
+// patchSVSources copies the board's SV tree, removes files that will
+// be regenerated, and patches donor IDs into the remaining sources.
 func (ow *OutputWriter) patchSVSources(ctx *donor.DeviceContext, b *board.Board, ids firmware.DeviceIDs) error {
 	srcDir := b.SrcPath(ow.LibDir)
 	dstDir := filepath.Join(ow.OutputDir, "src")
@@ -176,6 +183,14 @@ func (ow *OutputWriter) patchSVSources(ctx *donor.DeviceContext, b *board.Board,
 
 	if err := util.CopyDir(srcDir, dstDir); err != nil {
 		return fmt.Errorf("failed to copy SV sources: %w", err)
+	}
+
+	// Delete stock copies so Vivado only sees our generated versions.
+	// Without this, Vivado uses the stock file and causes Code 10.
+	for _, name := range svFilesReplacedByGenerator {
+		if err := os.Remove(filepath.Join(dstDir, name)); err != nil && !os.IsNotExist(err) {
+			slog.Warn("could not remove stock SV file", "file", name, "error", err)
+		}
 	}
 
 	patcher := svgen.NewSVPatcher(ids, dstDir)
