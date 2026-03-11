@@ -137,8 +137,8 @@ func TestProfileForClass_ProgIFAgnostic(t *testing.T) {
 
 func TestAllProfiles(t *testing.T) {
 	profiles := AllProfiles()
-	if len(profiles) != 9 {
-		t.Errorf("expected 9 profiles, got %d", len(profiles))
+	if len(profiles) != 10 {
+		t.Errorf("expected 10 profiles, got %d", len(profiles))
 	}
 	names := make(map[string]bool)
 	for _, p := range profiles {
@@ -149,7 +149,7 @@ func TestAllProfiles(t *testing.T) {
 	}
 	for _, expected := range []string{
 		"NVMe", "xHCI USB", "Ethernet", "HD Audio",
-		"GPU", "SATA AHCI", "Wi-Fi", "Thunderbolt", "Generic",
+		"GPU", "SATA AHCI", "Wi-Fi", "Wi-Fi (MediaTek)", "Thunderbolt", "Generic",
 	} {
 		if !names[expected] {
 			t.Errorf("missing profile: %s", expected)
