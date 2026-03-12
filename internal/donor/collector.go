@@ -11,7 +11,13 @@ import (
 	"github.com/sercanarga/pcileechgen/internal/version"
 )
 
-const nativeDriverInitDelay = 3 * time.Second
+const (
+	nativeDriverInitDelay  = 5 * time.Second
+	nativeDriverRetryDelay = 1 * time.Second
+	nativeDriverMaxRetries = 3
+	memSpaceSettleDelay    = 100 * time.Millisecond
+	maxBARReadSize         = 4096
+)
 
 // Collector gathers donor PCI data from sysfs.
 type Collector struct {
@@ -227,20 +233,35 @@ func (c *Collector) tryNativeDriverRebind(bdf pci.BDF, bars []pci.BAR, current m
 		"delay", nativeDriverInitDelay)
 	time.Sleep(nativeDriverInitDelay)
 
-	// read BARs while native driver holds the device
-	const maxBARReadSize = 4096
 	recovered := make(map[int][]byte)
-	for _, bar := range eligibleBARs(bars) {
-		data, err := c.sysfs.ReadBARContent(bdf, bar.Index, maxBARReadSize)
-		if err != nil {
-			slog.Warn("native driver rebind: BAR read failed",
-				"bar", bar.Index, "error", err)
-			continue
+	eligible := eligibleBARs(bars)
+
+	for attempt := 0; attempt <= nativeDriverMaxRetries; attempt++ {
+		if attempt > 0 {
+			slog.Info("native driver rebind: retrying BAR reads",
+				"attempt", attempt, "max", nativeDriverMaxRetries)
+			time.Sleep(nativeDriverRetryDelay)
 		}
-		if !isAllFF(data) && len(data) > 0 {
-			recovered[bar.Index] = data
-			slog.Info("native driver rebind: BAR read success",
-				"bar", bar.Index, "bytes", len(data))
+
+		for _, bar := range eligible {
+			if _, ok := recovered[bar.Index]; ok {
+				continue // already recovered
+			}
+			data, err := c.sysfs.ReadBARContent(bdf, bar.Index, maxBARReadSize)
+			if err != nil {
+				slog.Warn("native driver rebind: BAR read failed",
+					"bar", bar.Index, "error", err)
+				continue
+			}
+			if !isAllFF(data) && len(data) > 0 {
+				recovered[bar.Index] = data
+				slog.Info("native driver rebind: BAR read success",
+					"bar", bar.Index, "bytes", len(data))
+			}
+		}
+
+		if len(recovered) == len(eligible) {
+			break // all BARs recovered
 		}
 	}
 
@@ -280,8 +301,6 @@ func (c *Collector) collectConfigSpace(bdf pci.BDF) (*pci.ConfigSpace, error) {
 }
 
 func (c *Collector) collectBARMemory(bdf pci.BDF, bars []pci.BAR) map[int][]byte {
-	const maxBARReadSize = 4096
-
 	eligible := eligibleBARs(bars)
 	if len(eligible) == 0 {
 		return nil
@@ -302,6 +321,7 @@ func (c *Collector) collectBARMemory(bdf pci.BDF, bars []pci.BAR) map[int][]byte
 				"bdf", bdf, "error", err)
 		} else {
 			slog.Info("PCI memory space enabled", "bdf", bdf)
+			time.Sleep(memSpaceSettleDelay)
 		}
 	}
 
@@ -351,6 +371,8 @@ func (c *Collector) retryBARsViaVFIO(bdf pci.BDF, eligibleSet map[int]bool, cont
 	if err := vfio.EnableMemorySpace(bdf.String()); err != nil {
 		slog.Warn("could not enable PCI memory space after rebind",
 			"bdf", bdf, "error", err)
+	} else {
+		time.Sleep(memSpaceSettleDelay)
 	}
 
 	slog.Info("retrying BAR reads via VFIO")
@@ -372,7 +394,6 @@ func (c *Collector) retryBARsViaVFIO(bdf pci.BDF, eligibleSet map[int]bool, cont
 }
 
 func (c *Collector) collectBARProfiles(bdf pci.BDF, bars []pci.BAR) map[int]*BARProfile {
-	const maxBARReadSize = 4096
 	profiler := NewBARProfiler()
 	profiles := make(map[int]*BARProfile)
 

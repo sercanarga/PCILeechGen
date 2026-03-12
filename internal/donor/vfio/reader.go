@@ -136,8 +136,8 @@ func Collect(bdf string) (*DeviceDump, error) {
 		BARContents: make(map[int][]byte),
 	}
 
-	// config space
-	cs, csSize, err := readRegion(session.deviceFD, vfioPCIConfig, configSpaceMaxSize)
+	// config space (pread only, mmap fallback not needed)
+	cs, csSize, err := readRegionPread(session.deviceFD, vfioPCIConfig, configSpaceMaxSize)
 	if err != nil {
 		return nil, fmt.Errorf("config space read failed: %w", err)
 	}
@@ -158,7 +158,7 @@ func Collect(bdf string) (*DeviceDump, error) {
 		})
 
 		if info.Size > 0 && info.Flags&vfioRegionFlagRead != 0 {
-			barData, _, err := readRegion(session.deviceFD, vfioPCIBAR0+i, barDumpMaxSize)
+			barData, _, err := readBARRegion(session.deviceFD, vfioPCIBAR0+i, barDumpMaxSize)
 			if err == nil && len(barData) > 0 {
 				dump.BARContents[i] = barData
 			}
@@ -182,8 +182,18 @@ func getRegionInfo(deviceFD, index int) (*vfioRegionInfo, error) {
 	return &info, nil
 }
 
-// readRegion does a pread on a VFIO region, capped at maxSize.
-func readRegion(deviceFD, index, maxSize int) ([]byte, int, error) {
+// regionSize returns the capped read size for a region.
+func regionSize(info *vfioRegionInfo, maxSize int) int {
+	s := int(info.Size)
+	if s > maxSize {
+		s = maxSize
+	}
+	return s
+}
+
+// readRegionPread reads a VFIO region via pread only.
+// used for config space where mmap fallback is unnecessary.
+func readRegionPread(deviceFD, index, maxSize int) ([]byte, int, error) {
 	info, err := getRegionInfo(deviceFD, index)
 	if err != nil {
 		return nil, 0, err
@@ -192,18 +202,68 @@ func readRegion(deviceFD, index, maxSize int) ([]byte, int, error) {
 		return nil, 0, nil
 	}
 
-	readSize := int(info.Size)
-	if readSize > maxSize {
-		readSize = maxSize
+	readSize := regionSize(info, maxSize)
+	buf := make([]byte, readSize)
+	n, err := unix.Pread(deviceFD, buf, int64(info.Offset))
+	if err != nil {
+		return nil, 0, fmt.Errorf("pread region %d: %w", index, err)
+	}
+	return buf[:n], n, nil
+}
+
+// readBARRegion reads a BAR region via pread, falling back to mmap
+// when pread returns all 0xFF (common with RTL8168 and similar devices).
+func readBARRegion(deviceFD, index, maxSize int) ([]byte, int, error) {
+	info, err := getRegionInfo(deviceFD, index)
+	if err != nil {
+		return nil, 0, err
+	}
+	if info.Size == 0 {
+		return nil, 0, nil
 	}
 
+	readSize := regionSize(info, maxSize)
 	buf := make([]byte, readSize)
 	n, err := unix.Pread(deviceFD, buf, int64(info.Offset))
 	if err != nil {
 		return nil, 0, fmt.Errorf("pread region %d: %w", index, err)
 	}
 
+	if isAllFF(buf[:n]) {
+		data, mmapErr := mmapRegion(deviceFD, info, readSize)
+		if mmapErr == nil && !isAllFF(data) {
+			return data, len(data), nil
+		}
+	}
+
 	return buf[:n], n, nil
+}
+
+// mmapRegion maps a VFIO region into memory and copies it out.
+func mmapRegion(deviceFD int, info *vfioRegionInfo, size int) ([]byte, error) {
+	pageSize := unix.Getpagesize()
+	mmapSize := ((size + pageSize - 1) / pageSize) * pageSize
+
+	mapped, err := unix.Mmap(deviceFD, int64(info.Offset), mmapSize,
+		unix.PROT_READ, unix.MAP_SHARED)
+	if err != nil {
+		return nil, fmt.Errorf("mmap region %d: %w", info.Index, err)
+	}
+
+	data := make([]byte, size)
+	copy(data, mapped)
+	_ = unix.Munmap(mapped)
+	return data, nil
+}
+
+// isAllFF returns true when every byte is 0xFF.
+func isAllFF(data []byte) bool {
+	for _, b := range data {
+		if b != 0xFF {
+			return false
+		}
+	}
+	return len(data) > 0
 }
 
 // CollectToFile dumps device data to a JSON file.
