@@ -182,7 +182,7 @@ func getRegionInfo(deviceFD, index int) (*vfioRegionInfo, error) {
 	return &info, nil
 }
 
-// regionSize returns the capped read size for a region.
+// regionSize caps the read size to maxSize.
 func regionSize(info *vfioRegionInfo, maxSize int) int {
 	s := int(info.Size)
 	if s > maxSize {
@@ -191,8 +191,7 @@ func regionSize(info *vfioRegionInfo, maxSize int) int {
 	return s
 }
 
-// readRegionPread reads a VFIO region via pread only.
-// used for config space where mmap fallback is unnecessary.
+// readRegionPread reads a VFIO region via pread (config space).
 func readRegionPread(deviceFD, index, maxSize int) ([]byte, int, error) {
 	info, err := getRegionInfo(deviceFD, index)
 	if err != nil {
@@ -211,8 +210,7 @@ func readRegionPread(deviceFD, index, maxSize int) ([]byte, int, error) {
 	return buf[:n], n, nil
 }
 
-// readBARRegion reads a BAR region via pread, falling back to mmap
-// when pread returns all 0xFF (common with RTL8168 and similar devices).
+// readBARRegion reads a BAR via pread, falls back to mmap on 0xFF.
 func readBARRegion(deviceFD, index, maxSize int) ([]byte, int, error) {
 	info, err := getRegionInfo(deviceFD, index)
 	if err != nil {
@@ -239,7 +237,7 @@ func readBARRegion(deviceFD, index, maxSize int) ([]byte, int, error) {
 	return buf[:n], n, nil
 }
 
-// mmapRegion maps a VFIO region into memory and copies it out.
+// mmapRegion reads a VFIO region via mmap.
 func mmapRegion(deviceFD int, info *vfioRegionInfo, size int) ([]byte, error) {
 	pageSize := unix.Getpagesize()
 	mmapSize := ((size + pageSize - 1) / pageSize) * pageSize
