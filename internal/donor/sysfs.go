@@ -193,12 +193,16 @@ func (sr *SysfsReader) ReadBARContent(bdf pci.BDF, barIndex int, maxSize int) ([
 // readBARViaMmap maps the BAR resource file into memory, copies the contents,
 // and unmaps it. This is the preferred method for vfio-pci bound devices.
 func (sr *SysfsReader) readBARViaMmap(f *os.File, size int) ([]byte, error) {
-	mapped, err := syscall.Mmap(int(f.Fd()), 0, size, syscall.PROT_READ, syscall.MAP_SHARED)
+	// mmap needs page-aligned size
+	pageSize := os.Getpagesize()
+	mmapSize := ((size + pageSize - 1) / pageSize) * pageSize
+
+	mapped, err := syscall.Mmap(int(f.Fd()), 0, mmapSize, syscall.PROT_READ, syscall.MAP_SHARED)
 	if err != nil {
 		return nil, fmt.Errorf("mmap failed: %w", err)
 	}
 
-	// Copy data out before unmapping
+	// copy only the requested size, not the padded mmap region
 	data := make([]byte, size)
 	copy(data, mapped)
 
