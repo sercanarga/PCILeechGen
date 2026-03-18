@@ -65,7 +65,7 @@ jobs:
             ./cmd/pcileechgen/
 
       - name: Upload build output
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pcileechgen-${{ matrix.suffix }}
           path: dist/pcileechgen-${{ matrix.suffix }}
