@@ -144,7 +144,15 @@ func (c *checker) checkPowerState() {
 		fmt.Fprintln(c.w, color.Okf("Power state: %s (active)", ps))
 	} else {
 		fmt.Fprintln(c.w, color.Failf("Power state: %s - device should be in D0 for reliable reads", ps))
-		fmt.Fprintln(c.w, color.Dim(fmt.Sprintf("  Fix: echo 0 | sudo tee /sys/bus/pci/devices/%s/d3cold_allowed", c.bdf.String())))
+		bdf := c.bdf.String()
+		fmt.Fprintln(c.w, color.Dim("  Fix:"))
+		fmt.Fprintln(c.w, color.Dim(fmt.Sprintf("    1. echo on | sudo tee /sys/bus/pci/devices/%s/power/control", bdf)))
+		if c.cs != nil {
+			pmOff := findPMCapOffset(c.cs)
+			if pmOff > 0 {
+				fmt.Fprintln(c.w, color.Dim(fmt.Sprintf("    2. sudo setpci -s %s 0x%02X.W=0x0000", bdf, pmOff+4)))
+			}
+		}
 		c.issues++
 	}
 }
@@ -240,6 +248,20 @@ func (c *checker) showBoardCompatibility() {
 		compatible++
 	}
 	fmt.Fprintf(c.w, "\nTotal: %d boards\n", compatible)
+}
+
+// findPMCapOffset walks the capability list and returns the offset of
+// the Power Management capability (ID 0x01), or 0 if not found.
+func findPMCapOffset(cs *pci.ConfigSpace) int {
+	if cs == nil || cs.Size < 64 {
+		return 0
+	}
+	for _, cap := range pci.ParseCapabilities(cs) {
+		if cap.ID == pci.CapIDPowerManagement {
+			return cap.Offset
+		}
+	}
+	return 0
 }
 
 func init() {

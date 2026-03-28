@@ -121,7 +121,7 @@ func RunDiagnostics(bdf string) []DiagnosticResult {
 		} else {
 			results = append(results, DiagnosticResult{
 				"Power State", false,
-				fmt.Sprintf("%s - device must be in D0 for reliable reads. Try: echo 0 | sudo tee /sys/bus/pci/devices/%s/d3cold_allowed", ps, bdf),
+				fmt.Sprintf("%s - device must be in D0 for reliable reads. Try: echo on | sudo tee /sys/bus/pci/devices/%s/power/control", ps, bdf),
 			})
 		}
 	}
