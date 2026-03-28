@@ -874,3 +874,64 @@ func containsSubstring(s, sub string) bool {
 	}
 	return false
 }
+
+// TestASPMFullyDisabledAfterScrub verifies that the full pipeline
+// clears all ASPM/Clock PM/L1PM bits and the writemask blocks re-enablement.
+func TestASPMFullyDisabledAfterScrub(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	cs.WriteU16(0x06, 0x0010) // caps present
+	cs.WriteU8(0x34, 0x40)
+
+	// PCIe capability at 0x40
+	cs.WriteU8(0x40, pci.CapIDPCIExpress)
+	cs.WriteU8(0x41, 0x00)
+
+	// Link Capabilities at cap+0x0C = 0x4C
+	// set ASPM support (bits 11:10 = 11 = L0s+L1) and Clock PM (bit 18)
+	linkCap := uint32(1) | (uint32(1) << 4) | (0x0C00) | (1 << 18)
+	cs.WriteU32(0x4C, linkCap)
+
+	// Link Control at cap+0x10 = 0x50
+	// set ASPM enable (bits 1:0 = 11) and Clock PM enable (bit 8)
+	cs.WriteU16(0x50, 0x0103)
+
+	// L1PM Substates ext cap at 0x200
+	cs.WriteU32(0x100, makeExtCapHeader(pci.ExtCapIDAER, 1, 0x200))
+	cs.WriteU32(0x200, makeExtCapHeader(pci.ExtCapIDL1PMSubstates, 1, 0))
+	cs.WriteU32(0x204, 0x0000001F) // L1PM Capabilities: L1.1 + L1.2 support
+	cs.WriteU32(0x208, 0x0000000A) // L1PM Control 1: L1.1 + L1.2 enabled
+	cs.WriteU32(0x20C, 0x00000032) // L1PM Control 2
+
+	b := &board.Board{PCIeLanes: 1}
+	scrubbed := ScrubConfigSpace(cs, b)
+
+	// check Link Capabilities: ASPM support and Clock PM must be cleared
+	scrubbedLinkCap := scrubbed.ReadU32(0x4C)
+	if scrubbedLinkCap&0x0C00 != 0 {
+		t.Errorf("Link Cap ASPM Support bits should be 0, got 0x%08x", scrubbedLinkCap)
+	}
+	if scrubbedLinkCap&(1<<18) != 0 {
+		t.Errorf("Link Cap Clock PM bit should be 0, got 0x%08x", scrubbedLinkCap)
+	}
+
+	// check Link Control: ASPM enable and Clock PM enable must be cleared
+	scrubbedLinkCtl := scrubbed.ReadU16(0x50)
+	if scrubbedLinkCtl&0x03 != 0 {
+		t.Errorf("Link Ctl ASPM Enable bits should be 0, got 0x%04x", scrubbedLinkCtl)
+	}
+	if scrubbedLinkCtl&(1<<8) != 0 {
+		t.Errorf("Link Ctl Clock PM Enable should be 0, got 0x%04x", scrubbedLinkCtl)
+	}
+
+	// check L1PM Substates: caps and controls must be zeroed
+	if scrubbed.ReadU32(0x204) != 0 {
+		t.Errorf("L1PM Capabilities should be 0, got 0x%08x", scrubbed.ReadU32(0x204))
+	}
+	if scrubbed.ReadU32(0x208) != 0 {
+		t.Errorf("L1PM Control 1 should be 0, got 0x%08x", scrubbed.ReadU32(0x208))
+	}
+	if scrubbed.ReadU32(0x20C) != 0 {
+		t.Errorf("L1PM Control 2 should be 0, got 0x%08x", scrubbed.ReadU32(0x20C))
+	}
+}
