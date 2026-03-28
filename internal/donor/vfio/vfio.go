@@ -192,6 +192,70 @@ func EnableMemorySpace(bdf string) error {
 	return nil
 }
 
+// WakeToD0 forces the device from D3hot/D3cold to D0 by clearing the
+// power state bits in the PM Control/Status register and disabling
+// kernel runtime power management.
+func WakeToD0(bdf string) error {
+	// disable kernel runtime PM so it won't put the device back to sleep
+	powerCtrl := filepath.Join(sysfsBase, bdf, "power", "control")
+	_ = os.WriteFile(powerCtrl, []byte("on"), 0200)
+
+	ps, err := CheckPowerState(bdf)
+	if err != nil || ps == "D0" {
+		return nil // already in D0 or can't check
+	}
+
+	// find PM capability offset by walking config space cap list
+	configPath := filepath.Join(sysfsBase, bdf, "config")
+	f, err := os.OpenFile(configPath, os.O_RDWR, 0)
+	if err != nil {
+		return fmt.Errorf("cannot open config space for %s: %w", bdf, err)
+	}
+	defer f.Close()
+
+	// read Status register (0x06) to check capabilities list
+	var status [2]byte
+	if _, err := f.ReadAt(status[:], 0x06); err != nil {
+		return fmt.Errorf("cannot read status register: %w", err)
+	}
+	if status[0]&0x10 == 0 {
+		return fmt.Errorf("device %s has no capabilities list", bdf)
+	}
+
+	// capabilities pointer at 0x34
+	var capPtr [1]byte
+	if _, err := f.ReadAt(capPtr[:], 0x34); err != nil {
+		return fmt.Errorf("cannot read cap pointer: %w", err)
+	}
+
+	offset := int(capPtr[0]) & 0xFC
+	for offset >= 0x40 && offset < 0x100 {
+		var capHdr [2]byte
+		if _, err := f.ReadAt(capHdr[:], int64(offset)); err != nil {
+			break
+		}
+		if capHdr[0] == 0x01 { // Power Management capability
+			// PMCSR at cap+4, clear bits 1:0 to force D0
+			pmcsrOff := int64(offset + 4)
+			var pmcsr [2]byte
+			if _, err := f.ReadAt(pmcsr[:], pmcsrOff); err != nil {
+				return fmt.Errorf("cannot read PMCSR: %w", err)
+			}
+			pmcsr[0] &= 0xFC // clear PowerState bits (D0 = 00)
+			if _, err := f.WriteAt(pmcsr[:], pmcsrOff); err != nil {
+				return fmt.Errorf("cannot write PMCSR: %w", err)
+			}
+			return nil
+		}
+		offset = int(capHdr[1]) & 0xFC
+		if offset == 0 {
+			break
+		}
+	}
+
+	return fmt.Errorf("PM capability not found for %s", bdf)
+}
+
 // UnbindFromVFIO detaches from vfio-pci and re-probes for the original driver.
 func UnbindFromVFIO(bdf string) error {
 	devPath := filepath.Join(sysfsBase, bdf)
