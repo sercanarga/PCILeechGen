@@ -157,18 +157,21 @@ func (p *scrubASPMPass) Apply(cs *pci.ConfigSpace, b *board.Board, om *overlay.M
 		if cap.ID != pci.CapIDPCIExpress {
 			continue
 		}
-		// clear ASPM Support in Link Capabilities (cap+0x0C, bits 11:10)
-		// so Windows won't re-enable ASPM after we clear Link Control
+		// clear ASPM Support + Clock PM in Link Capabilities (cap+0x0C)
+		// bits 11:10 = ASPM support, bit 18 = Clock Power Management
 		if cap.Offset+0x0C+4 <= pci.ConfigSpaceLegacySize {
 			linkCap := cs.ReadU32(cap.Offset + 0x0C)
-			linkCap &= ^uint32(0x0C00) // bits 11:10 = ASPM support
-			om.WriteU32(cap.Offset+0x0C, linkCap, "clear ASPM Support in Link Capabilities")
+			linkCap &= ^uint32(0x0C00)  // bits 11:10 = ASPM support
+			linkCap &= ^uint32(1 << 18) // bit 18 = Clock PM
+			om.WriteU32(cap.Offset+0x0C, linkCap, "clear ASPM Support + Clock PM in Link Capabilities")
 		}
-		// clear ASPM Enable in Link Control (cap+0x10, bits 1:0)
+		// clear ASPM Enable + Clock PM Enable in Link Control (cap+0x10)
+		// bits 1:0 = ASPM enable, bit 8 = Clock PM enable
 		if cap.Offset+0x10+2 <= pci.ConfigSpaceLegacySize {
 			linkCtl := cs.ReadU16(cap.Offset + 0x10)
-			linkCtl &= 0xFFFC
-			om.WriteU16(cap.Offset+0x10, linkCtl, "disable ASPM L0s/L1")
+			linkCtl &= 0xFFFC           // bits 1:0 = ASPM enable
+			linkCtl &= ^uint16(1 << 8)  // bit 8 = Enable Clock PM
+			om.WriteU16(cap.Offset+0x10, linkCtl, "disable ASPM L0s/L1 + Clock PM")
 		}
 		break
 	}
@@ -179,6 +182,10 @@ func (p *scrubASPMPass) Apply(cs *pci.ConfigSpace, b *board.Board, om *overlay.M
 	for _, cap := range ctx.ExtCaps {
 		if cap.ID != pci.ExtCapIDL1PMSubstates {
 			continue
+		}
+		// clear L1PM Capabilities (offset+0x04) so Windows sees no L1.x support
+		if cap.Offset+0x08 <= pci.ConfigSpaceSize {
+			om.WriteU32(cap.Offset+0x04, 0, "clear L1PM Substates Capabilities")
 		}
 		if cap.Offset+0x0C <= pci.ConfigSpaceSize {
 			om.WriteU32(cap.Offset+0x08, 0, "clear L1PM Substates Control 1")
