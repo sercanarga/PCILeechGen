@@ -113,10 +113,17 @@ func (c *Collector) validateBARContents(ctx *DeviceContext) error {
 		hasContent = true
 		if isAllFF(data) {
 			allFF = true
-			slog.Warn("BAR content is all 0xFF - device may be inaccessible or in D3 power state",
-				"bar", bar.Index, "bytes", len(data),
-				"class", fmt.Sprintf("0x%06X", ctx.Device.ClassCode),
-			)
+			if barCriticalClass(ctx.Device.ClassCode) {
+				slog.Warn("BAR content is all 0xFF - device may be inaccessible or in D3 power state",
+					"bar", bar.Index, "bytes", len(data),
+					"class", fmt.Sprintf("0x%06X", ctx.Device.ClassCode),
+				)
+			} else {
+				slog.Info("BAR content is all 0xFF (non-critical for this device class, DMA will work)",
+					"bar", bar.Index, "bytes", len(data),
+					"class", fmt.Sprintf("0x%06X", ctx.Device.ClassCode),
+				)
+			}
 		}
 	}
 
