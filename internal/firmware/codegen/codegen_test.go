@@ -203,9 +203,9 @@ func TestApplyPCIeWritemask(t *testing.T) {
 	if masks[0x48/4] != 0x000FFFFF {
 		t.Errorf("DevCtl writemask = 0x%08x, want 0x000FFFFF", masks[0x48/4])
 	}
-	// LinkCtl at cap+16 = 0x50
-	if masks[0x50/4] != 0x0000FFFF {
-		t.Errorf("LinkCtl writemask = 0x%08x, want 0x0000FFFF", masks[0x50/4])
+	// LinkCtl at cap+16 = 0x50 (ASPM bits 1:0 and Clock PM bit 8 masked off)
+	if masks[0x50/4] != 0x0000FEFC {
+		t.Errorf("LinkCtl writemask = 0x%08x, want 0x0000FEFC", masks[0x50/4])
 	}
 }
 

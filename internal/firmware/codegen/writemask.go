@@ -65,7 +65,9 @@ func applyPCIeWritemask(cap pci.Capability, masks []uint32) {
 		masks[(cap.Offset+8)/4] = 0x000FFFFF
 	}
 	if cap.Offset+16+4 <= pci.ConfigSpaceLegacySize {
-		masks[(cap.Offset+16)/4] = 0x0000FFFF // LinkCtl
+		// LinkCtl: 0xFFFF minus bits 1:0 (ASPM) and bit 8 (Clock PM)
+		// these must stay read-only to prevent Windows re-enabling power saving
+		masks[(cap.Offset+16)/4] = 0x0000FEFC
 	}
 	if cap.Offset+0x18+4 <= pci.ConfigSpaceLegacySize {
 		masks[(cap.Offset+0x18)/4] = 0x0000FFFF // SlotCtl
