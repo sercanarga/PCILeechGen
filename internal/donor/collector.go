@@ -315,6 +315,11 @@ func (c *Collector) collectBARMemory(bdf pci.BDF, bars []pci.BAR) map[int][]byte
 
 	contents := make(map[int][]byte)
 
+	// wake device from D3 if needed, otherwise BAR reads return 0xFF
+	if err := vfio.WakeToD0(bdf.String()); err != nil {
+		slog.Warn("could not wake device to D0", "bdf", bdf, "error", err)
+	}
+
 	// try reading without touching config space first.
 	// works on most devices since BIOS/previous driver left memory space on.
 	c.readBARs(bdf, eligible, contents)
