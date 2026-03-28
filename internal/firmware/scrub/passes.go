@@ -157,6 +157,14 @@ func (p *scrubASPMPass) Apply(cs *pci.ConfigSpace, b *board.Board, om *overlay.M
 		if cap.ID != pci.CapIDPCIExpress {
 			continue
 		}
+		// clear ASPM Support in Link Capabilities (cap+0x0C, bits 11:10)
+		// so Windows won't re-enable ASPM after we clear Link Control
+		if cap.Offset+0x0C+4 <= pci.ConfigSpaceLegacySize {
+			linkCap := cs.ReadU32(cap.Offset + 0x0C)
+			linkCap &= ^uint32(0x0C00) // bits 11:10 = ASPM support
+			om.WriteU32(cap.Offset+0x0C, linkCap, "clear ASPM Support in Link Capabilities")
+		}
+		// clear ASPM Enable in Link Control (cap+0x10, bits 1:0)
 		if cap.Offset+0x10+2 <= pci.ConfigSpaceLegacySize {
 			linkCtl := cs.ReadU16(cap.Offset + 0x10)
 			linkCtl &= 0xFFFC
