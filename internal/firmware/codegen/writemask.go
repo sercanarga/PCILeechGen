@@ -73,7 +73,9 @@ func applyPCIeWritemask(cap pci.Capability, masks []uint32) {
 		masks[(cap.Offset+0x18)/4] = 0x0000FFFF // SlotCtl
 	}
 	if cap.Offset+0x28+4 <= pci.ConfigSpaceLegacySize {
-		masks[(cap.Offset+0x28)/4] = 0x0000FFFF // DevCtl2
+		// DevCtl2: 0xFFFF minus bit 10 (LTR Mechanism Enable)
+		// keep LTR read-only to prevent Windows re-enabling it
+		masks[(cap.Offset+0x28)/4] = 0x0000FBFF
 	}
 	if cap.Offset+0x30+4 <= pci.ConfigSpaceLegacySize {
 		masks[(cap.Offset+0x30)/4] = 0x0000FFFF // LinkCtl2

@@ -896,6 +896,10 @@ func TestASPMFullyDisabledAfterScrub(t *testing.T) {
 	// set ASPM enable (bits 1:0 = 11) and Clock PM enable (bit 8)
 	cs.WriteU16(0x50, 0x0103)
 
+	// Device Control 2 at cap+0x28 = 0x68
+	// set LTR Mechanism Enable (bit 10)
+	cs.WriteU16(0x68, 0x0400)
+
 	// L1PM Substates ext cap at 0x200
 	cs.WriteU32(0x100, makeExtCapHeader(pci.ExtCapIDAER, 1, 0x200))
 	cs.WriteU32(0x200, makeExtCapHeader(pci.ExtCapIDL1PMSubstates, 1, 0))
@@ -922,6 +926,12 @@ func TestASPMFullyDisabledAfterScrub(t *testing.T) {
 	}
 	if scrubbedLinkCtl&(1<<8) != 0 {
 		t.Errorf("Link Ctl Clock PM Enable should be 0, got 0x%04x", scrubbedLinkCtl)
+	}
+
+	// check Device Control 2: LTR Mechanism Enable must be cleared
+	scrubbedDevCtl2 := scrubbed.ReadU16(0x68)
+	if scrubbedDevCtl2&(1<<10) != 0 {
+		t.Errorf("DevCtl2 LTR Mechanism Enable should be 0, got 0x%04x", scrubbedDevCtl2)
 	}
 
 	// check L1PM Substates: caps and controls must be zeroed

@@ -207,6 +207,10 @@ func TestApplyPCIeWritemask(t *testing.T) {
 	if masks[0x50/4] != 0x0000FEFC {
 		t.Errorf("LinkCtl writemask = 0x%08x, want 0x0000FEFC", masks[0x50/4])
 	}
+	// DevCtl2 at cap+0x28 = 0x68 (LTR bit 10 must be read-only)
+	if masks[0x68/4] != 0x0000FBFF {
+		t.Errorf("DevCtl2 writemask = 0x%08x, want 0x0000FBFF", masks[0x68/4])
+	}
 }
 
 func TestApplyExtCapabilityWritemasks_AER(t *testing.T) {
