@@ -173,6 +173,14 @@ func (p *scrubASPMPass) Apply(cs *pci.ConfigSpace, b *board.Board, om *overlay.M
 			linkCtl &= ^uint16(1 << 8)  // bit 8 = Enable Clock PM
 			om.WriteU16(cap.Offset+0x10, linkCtl, "disable ASPM L0s/L1 + Clock PM")
 		}
+		// clear LTR Mechanism Enable in Device Control 2 (cap+0x28)
+		// bit 10 = LTR Enable; FPGA cannot send real LTR messages,
+		// so leaving this set lets the platform throttle link throughput
+		if cap.Offset+0x28+2 <= pci.ConfigSpaceLegacySize {
+			devCtl2 := cs.ReadU16(cap.Offset + 0x28)
+			devCtl2 &= ^uint16(1 << 10) // bit 10 = LTR Mechanism Enable
+			om.WriteU16(cap.Offset+0x28, devCtl2, "disable LTR Mechanism Enable")
+		}
 		break
 	}
 
