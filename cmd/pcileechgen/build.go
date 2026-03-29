@@ -22,6 +22,7 @@ type buildFlags struct {
 	timeout    int
 	libDir     string
 	fromJSON   string
+	stockBar   bool
 }
 
 var buildOpts buildFlags
@@ -64,6 +65,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		Jobs:       buildOpts.jobs,
 		Timeout:    buildOpts.timeout,
 		SkipVivado: buildOpts.skipVivado,
+		StockBar:   buildOpts.stockBar,
 	})
 
 	return builder.Build(ctx)
@@ -132,6 +134,7 @@ func init() {
 	buildCmd.Flags().IntVar(&buildOpts.jobs, "jobs", 4, "number of parallel Vivado jobs")
 	buildCmd.Flags().IntVar(&buildOpts.timeout, "timeout", 3600, "Vivado synthesis timeout in seconds")
 	buildCmd.Flags().StringVar(&buildOpts.libDir, "lib-dir", "lib/pcileech-fpga", "path to pcileech-fpga library")
+	buildCmd.Flags().BoolVar(&buildOpts.stockBar, "stock-bar", false, "use stock bar controller (diagnostic: skip custom SV modules)")
 
 	_ = buildCmd.MarkFlagRequired("board")
 

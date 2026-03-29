@@ -30,6 +30,7 @@ type OutputWriter struct {
 	LibDir    string
 	Jobs      int
 	Timeout   int
+	StockBar  bool
 }
 
 func NewOutputWriter(outputDir, libDir string, jobs, timeout int) *OutputWriter {
@@ -73,8 +74,12 @@ func (ow *OutputWriter) WriteAll(ctx *donor.DeviceContext, b *board.Board) error
 		return fmt.Errorf("SV patching failed: %w", err)
 	}
 
-	if err := ow.writeSVModules(ctx, scrubbedCS, ids, entropy); err != nil {
-		return fmt.Errorf("SV module generation failed: %w", err)
+	if !ow.StockBar {
+		if err := ow.writeSVModules(ctx, scrubbedCS, ids, entropy); err != nil {
+			return fmt.Errorf("SV module generation failed: %w", err)
+		}
+	} else {
+		slog.Info("stock-bar mode: skipping custom SV modules")
 	}
 
 	// write diff report
@@ -187,10 +192,14 @@ func (ow *OutputWriter) patchSVSources(ctx *donor.DeviceContext, b *board.Board,
 
 	// Delete stock copies so Vivado only sees our generated versions.
 	// Without this, Vivado uses the stock file and causes Code 10.
-	for _, name := range svFilesReplacedByGenerator {
-		if err := os.Remove(filepath.Join(dstDir, name)); err != nil && !os.IsNotExist(err) {
-			slog.Warn("could not remove stock SV file", "file", name, "error", err)
+	if !ow.StockBar {
+		for _, name := range svFilesReplacedByGenerator {
+			if err := os.Remove(filepath.Join(dstDir, name)); err != nil && !os.IsNotExist(err) {
+				slog.Warn("could not remove stock SV file", "file", name, "error", err)
+			}
 		}
+	} else {
+		slog.Info("stock-bar mode: keeping stock bar controller")
 	}
 
 	patcher := svgen.NewSVPatcher(ids, dstDir)
