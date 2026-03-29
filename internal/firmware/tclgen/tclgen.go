@@ -162,11 +162,12 @@ func enforceMinMSIXSize(barSize uint64, ctx *donor.DeviceContext) uint64 {
 func GenerateProjectTCL(ctx *donor.DeviceContext, b *board.Board, libDir string) string {
 	ids := firmware.ExtractDeviceIDs(ctx.ConfigSpace, ctx.ExtCapabilities)
 
-	// Clamp link width/speed to board physical capability.
-	// Always use the board's max speed for the PCIe IP core -
-	// the donor speed only affects the shadow config space, not the FPGA link.
+	// Clamp link width/speed to board physical capability
 	linkWidth := clampLinkWidth(ids.LinkWidth, b.PCIeLanes)
-	linkSpeed := b.MaxLinkSpeedOrDefault()
+	linkSpeed := ids.LinkSpeed
+	if linkSpeed == 0 || linkSpeed > b.MaxLinkSpeedOrDefault() {
+		linkSpeed = b.MaxLinkSpeedOrDefault()
+	}
 
 	bar0 := buildBAR0Config(ctx, b)
 
