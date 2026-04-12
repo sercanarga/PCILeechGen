@@ -365,6 +365,48 @@ func TestBuildBARModel_Audio_DonorData(t *testing.T) {
 	}
 }
 
+func TestBuildBARModel_Audio_AllFFDonor(t *testing.T) {
+	// Simulate no codec connected - BAR reads as all 0xFF
+	barData := make([]byte, 4096)
+	for i := range barData {
+		barData[i] = 0xFF
+	}
+	model := buildAudioBARModel(barData)
+	if model == nil {
+		t.Fatal("model should not be nil")
+	}
+	for _, reg := range model.Registers {
+		if reg.Reset == 0xFFFFFFFF {
+			t.Errorf("register %s @ 0x%X still has 0xFFFFFFFF reset value", reg.Name, reg.Offset)
+		}
+	}
+	// Spot check key registers
+	for _, reg := range model.Registers {
+		switch reg.Offset {
+		case 0x00:
+			if reg.Reset != 0x01004401 {
+				t.Errorf("GCAP_VMIN_VMAJ: expected 0x01004401, got 0x%08X", reg.Reset)
+			}
+		case 0x08:
+			if reg.Reset != 0x00000001 {
+				t.Errorf("GCTL: expected 0x00000001, got 0x%08X", reg.Reset)
+			}
+		case 0x0C:
+			if reg.Reset != 0x00010000 {
+				t.Errorf("WAKEEN_STATESTS: expected 0x00010000, got 0x%08X", reg.Reset)
+			}
+		case 0x4C:
+			if reg.Reset != 0x00420000 {
+				t.Errorf("CORBCTL_STS_SIZE: expected 0x00420000, got 0x%08X", reg.Reset)
+			}
+		case 0x5C:
+			if reg.Reset != 0x00420000 {
+				t.Errorf("RIRBCTL_STS_SIZE: expected 0x00420000, got 0x%08X", reg.Reset)
+			}
+		}
+	}
+}
+
 func TestBuildBARModel_Unknown(t *testing.T) {
 	model := BuildBARModel(nil, 0xFF0000, nil)
 	if model != nil {
