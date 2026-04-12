@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/sercanarga/pcileechgen/internal/board"
 	"github.com/sercanarga/pcileechgen/internal/color"
@@ -142,17 +143,24 @@ func (c *checker) checkPowerState() {
 	}
 	if ps == "D0" {
 		fmt.Fprintln(c.w, color.Okf("Power state: %s (active)", ps))
+		return
+	}
+
+	// attempt auto-wake
+	fmt.Fprintf(c.w, color.Dim("Power state: %s - attempting D0 wake...\n"), ps)
+	if err := vfio.WakeToD0(c.bdf.String()); err != nil {
+		fmt.Fprintln(c.w, color.Failf("Power state: %s - failed to wake device: %v", ps, err))
+		c.issues++
+		return
+	}
+
+	// settle and re-check
+	time.Sleep(150 * time.Millisecond)
+	ps2, err := vfio.CheckPowerState(c.bdf.String())
+	if err == nil && ps2 == "D0" {
+		fmt.Fprintln(c.w, color.OK("Power state: D0 (auto-woken)"))
 	} else {
-		fmt.Fprintln(c.w, color.Failf("Power state: %s - device should be in D0 for reliable reads", ps))
-		bdf := c.bdf.String()
-		fmt.Fprintln(c.w, color.Dim("  Fix:"))
-		fmt.Fprintln(c.w, color.Dim(fmt.Sprintf("    1. echo on | sudo tee /sys/bus/pci/devices/%s/power/control", bdf)))
-		if c.cs != nil {
-			pmOff := findPMCapOffset(c.cs)
-			if pmOff > 0 {
-				fmt.Fprintln(c.w, color.Dim(fmt.Sprintf("    2. sudo setpci -s %s 0x%02X.W=0x0000", bdf, pmOff+4)))
-			}
-		}
+		fmt.Fprintln(c.w, color.Failf("Power state: %s (still not D0 after wake attempt)", ps2))
 		c.issues++
 	}
 }
@@ -248,20 +256,6 @@ func (c *checker) showBoardCompatibility() {
 		compatible++
 	}
 	fmt.Fprintf(c.w, "\nTotal: %d boards\n", compatible)
-}
-
-// findPMCapOffset walks the capability list and returns the offset of
-// the Power Management capability (ID 0x01), or 0 if not found.
-func findPMCapOffset(cs *pci.ConfigSpace) int {
-	if cs == nil || cs.Size < 64 {
-		return 0
-	}
-	for _, cap := range pci.ParseCapabilities(cs) {
-		if cap.ID == pci.CapIDPowerManagement {
-			return cap.Offset
-		}
-	}
-	return 0
 }
 
 func init() {
