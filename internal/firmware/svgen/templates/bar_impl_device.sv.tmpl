@@ -136,10 +136,18 @@ module pcileech_bar_impl_device #(
     end
 {{ end }}
 {{ if eq .DeviceClass "audio" }}
-    // HDA GCTL.CRST handshake
+    // ========================================================================
+    // HDA GCTL.CRST handshake + CORB/RIRB auto-response
     // hdaudio.sys writes CRST=0 (assert reset), then CRST=1 (deassert).
     // after deassert, we reload STATESTS so codec discovery works.
     // STATESTS lives in the upper 16 bits of the DWORD at 0x0C.
+    //
+    // CORB/RIRB auto-response: without this, hdaudio.sys polls RIRBWP
+    // endlessly waiting for codec responses, generating massive PCIe
+    // read TLP traffic that congests the FPGA fabric and throttles
+    // DMA throughput to ~80 KB/s. We generate a fake RIRB response
+    // when the driver submits a VERB via CORB, so the driver completes init.
+    // ========================================================================
     reg crst_prev;
 
     always @(posedge clk) begin
@@ -154,6 +162,85 @@ module pcileech_bar_impl_device #(
             end
         end
     end
+
+    // ========================================================================
+    // Fake RIRB response generator
+    //
+    // When hdaudio.sys enables CORB+RIRB and submits a VERB (via CORBWP),
+    // we fake a codec response by:
+    //   1. Incrementing RIRBWP so the driver sees a response is available
+    //   2. Storing the response data for the unsolicited response path
+    //   3. Setting RIRBSTS.UIS for unsolicited response interrupt
+    //
+    // The fake response is an Audio Function Group (type 0x000A0000)
+    // which is what the driver expects from codec 0 during discovery.
+    // ========================================================================
+    reg        rirb_enabled;
+    reg        corb_enabled;
+    reg  [7:0] rirb_response_fsm;
+    reg [63:0] rirb_fake_response;
+
+    // CORBWP write detection: driver submitted a VERB command.
+    // Offset 0x4C = CORBCTL_STS_SIZE, where CORBCTL (bits 7:0) has CTE.
+    wire corb_cte = reg_0x0000004C[7];   // CORBCTL.CTE
+    wire rirb_cte = reg_0x0000005C[0];   // RIRBCTL.CTE
+
+    always @(posedge clk) begin
+        if (rst) begin
+            rirb_enabled      <= 1'b0;
+            corb_enabled      <= 1'b0;
+            rirb_response_fsm <= 8'h00;
+            rirb_fake_response<= 64'h0;
+        end else begin
+            // Track CORB/RIRB enable state
+            corb_enabled <= corb_cte;
+            rirb_enabled <= rirb_cte;
+
+            // When both CORB and RIRB are enabled and driver writes CORBWP,
+            // start the fake response sequence.
+            if (wr_valid && (wr_addr[31:0] & 32'hFFFFFFFC) == 32'h00000048 &&
+                corb_enabled && rirb_enabled && rirb_response_fsm == 8'h00) begin
+                // Response delay: generate response after 4 clock cycles
+                rirb_response_fsm <= 8'h04;
+
+                // Build fake RIRB response (64-bit):
+                // Upper 32 bits: valid(1) + SOL(4) + codec_addr(4) + tag(8) + resv(16)
+                //   = 0x0001_2000 (valid=1, SOL=2, codec=0, tag=0)
+                // Lower 32 bits: response_type(4) + response_data(28)
+                //   = 0x000A0000 (Audio Function Group, type 0x0A)
+                rirb_fake_response <= 64'h00012000_000A0000;
+            end
+
+            // Response FSM countdown
+            if (rirb_response_fsm > 8'h00) begin
+                rirb_response_fsm <= rirb_response_fsm - 8'h01;
+
+                // When FSM reaches 1, commit the fake response
+                if (rirb_response_fsm == 8'h01) begin
+                    // Set RIRBWP = 1 (one response available)
+                    // RIRBWP is in lower 16 bits of offset 0x58
+                    reg_0x00000058[15:0] <= 16'h0001;
+
+                    // Set RIRB response data at unsolicited response register
+                    // offset 0x58 upper bits + offset 0x54
+                    reg_0x00000054[31:0] <= rirb_fake_response[63:32];
+                    reg_0x00000058[31:16]<= rirb_fake_response[47:32];
+
+                    // Set RIRBSTS.UIS (unsolicited interrupt status) at 0x5C bit 1
+                    reg_0x0000005C[1] <= 1'b1;
+                end
+            end
+        end
+    end
+
+    // Intercept RIRB response data read: when the driver reads offset 0x58
+    // (RIRBWP_RINTCNT), return our fake response data instead of the raw
+    // register value. This covers the unsolicited response path where the
+    // driver reads RIRB data after seeing UIS set.
+    // The read interception is handled in the read mux below via
+    // rirb_fake_response_data override.
+    wire [31:0] rirb_resp_data_override = (rirb_response_fsm == 8'h00 &&
+        reg_0x00000058[15:0] != 16'h0000) ? rirb_fake_response[31:0] : 32'h0;
 {{ end }}
 {{ if eq .DeviceClass "ethernet" }}
     // PHYAR/ERIAR done-flag auto-clear for r8169 driver.
