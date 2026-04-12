@@ -24,7 +24,6 @@ type ScrubPass interface {
 func defaultPipeline() []ScrubPass {
 	return []ScrubPass{
 		&clearMiscPass{},
-		&sanitizeClassCodePass{},
 		&sanitizeCmdStatusPass{},
 		&scrubPCIeCapPass{},
 		&scrubPMCapPass{},

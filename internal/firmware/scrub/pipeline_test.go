@@ -10,8 +10,8 @@ import (
 
 func TestDefaultPipeline_HasAllPasses(t *testing.T) {
 	pipeline := defaultPipeline()
-	if len(pipeline) != 17 {
-		t.Errorf("expected 17 passes, got %d", len(pipeline))
+	if len(pipeline) != 16 {
+		t.Errorf("expected 16 passes, got %d", len(pipeline))
 	}
 
 	names := make(map[string]bool)
@@ -125,57 +125,4 @@ func TestValidateCapChainPass_EmptyCS(t *testing.T) {
 	om := overlay.NewMap(cs)
 	pass := &validateCapChainPass{}
 	pass.Apply(cs, nil, om, ctxFor(cs)) // should not panic
-}
-
-func TestSanitizeClassCodePass_Audio(t *testing.T) {
-	data := make([]byte, 256)
-	// Class code: 0x040300 (HD Audio)
-	data[0x09] = 0x04 // base class
-	data[0x0A] = 0x03 // sub class
-	data[0x0B] = 0x00 // prog-if
-
-	cs := pci.NewConfigSpaceFromBytes(data)
-	om := overlay.NewMap(cs)
-	pass := &sanitizeClassCodePass{}
-	pass.Apply(cs, nil, om, &ScrubContext{
-		Caps:      pci.ParseCapabilities(cs),
-		ExtCaps:   pci.ParseExtCapabilities(cs),
-		ClassCode: 0x040300,
-	})
-
-	// Should be changed to 0x048000 (Multimedia controller)
-	if cs.Data[0x09] != 0x04 {
-		t.Errorf("class base should remain 0x04, got 0x%02X", cs.Data[0x09])
-	}
-	if cs.Data[0x0A] != 0x80 {
-		t.Errorf("class sub should be 0x80, got 0x%02X", cs.Data[0x0A])
-	}
-	if cs.Data[0x0B] != 0x00 {
-		t.Errorf("prog-if should be 0x00, got 0x%02X", cs.Data[0x0B])
-	}
-}
-
-func TestSanitizeClassCodePass_NonAudio(t *testing.T) {
-	data := make([]byte, 256)
-	// Class code: 0x010802 (NVMe)
-	data[0x09] = 0x01
-	data[0x0A] = 0x08
-	data[0x0B] = 0x02
-
-	cs := pci.NewConfigSpaceFromBytes(data)
-	om := overlay.NewMap(cs)
-	pass := &sanitizeClassCodePass{}
-	pass.Apply(cs, nil, om, &ScrubContext{
-		Caps:      pci.ParseCapabilities(cs),
-		ExtCaps:   pci.ParseExtCapabilities(cs),
-		ClassCode: 0x010802,
-	})
-
-	// Should NOT be changed
-	if cs.Data[0x09] != 0x01 {
-		t.Errorf("class base should remain 0x01, got 0x%02X", cs.Data[0x09])
-	}
-	if cs.Data[0x0A] != 0x08 {
-		t.Errorf("class sub should remain 0x08, got 0x%02X", cs.Data[0x0A])
-	}
 }
