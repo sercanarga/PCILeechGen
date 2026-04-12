@@ -261,6 +261,8 @@ func buildEthernetBARModel(barData []byte) *BARModel {
 }
 
 // HD Audio BAR0. Sub-word regs packed into DWORDs for SV template.
+// buildAudioBARModel builds the HD Audio BAR0 register map.
+// When donor BAR data is all 0xFF (no codec connected), spec defaults are used.
 func buildAudioBARModel(barData []byte) *BARModel {
 	regs := []BARRegister{
 		// GCAP(16) + VMIN(8) + VMAJ(8) packed into one DWORD
@@ -280,7 +282,8 @@ func buildAudioBARModel(barData []byte) *BARModel {
 		// CORBWP(16) + CORBRP(16) packed
 		{Offset: 0x48, Width: 4, Name: "CORBWP_CORBRP", RWMask: 0x80FF00FF},
 		// CORBCTL(8) + CORBSTS(8) + CORBSIZE(8) packed
-		{Offset: 0x4C, Width: 4, Name: "CORBCTL_STS_SIZE", RWMask: 0x00030300},
+		// CORBCTL: bit 7 (CTE), bit 1 (MEIE) writable; CORBSTS: bit 0 (RPWP) RW1C; CORBSIZE: RO
+		{Offset: 0x4C, Width: 4, Name: "CORBCTL_STS_SIZE", RWMask: 0x000001A2},
 		// RIRB lower base address
 		{Offset: 0x50, Width: 4, Name: "RIRBLBASE", RWMask: 0xFFFFFF80},
 		// RIRB upper base address
@@ -288,31 +291,53 @@ func buildAudioBARModel(barData []byte) *BARModel {
 		// RIRBWP(16) + RINTCNT(16)
 		{Offset: 0x58, Width: 4, Name: "RIRBWP_RINTCNT", RWMask: 0x800000FF},
 		// RIRBCTL(8) + RIRBSTS(8) + RIRBSIZE(8)
-		{Offset: 0x5C, Width: 4, Name: "RIRBCTL_STS_SIZE", RWMask: 0x00070700},
+		// RIRBCTL: bit 0 (CTE), bit 2 (OIE) writable; RIRBSTS: bits 0,1,2 RW1C; RIRBSIZE: RO
+		{Offset: 0x5C, Width: 4, Name: "RIRBCTL_STS_SIZE", RWMask: 0x00000705},
 	}
 
-	populateResetValues(regs, barData)
-
-	// defaults for codec discovery
-	for i := range regs {
-		switch regs[i].Offset {
-		case 0x00:
-			if regs[i].Reset == 0 {
-				regs[i].Reset = 0x01004401 // GCAP=4401h, VMIN=0, VMAJ=1
-			}
-		case 0x08:
-			regs[i].Reset |= 0x00000001 // GCTL.CRST=1 (out of reset)
-		case 0x0C:
-			regs[i].Reset |= 0x00010000 // STATESTS: codec 0 present (upper 16 bits)
-		case 0x4C:
-			if regs[i].Reset == 0 {
-				regs[i].Reset = 0x00420000 // CORBSIZE=0x42 (supports 256/16/2)
-			}
-		case 0x5C:
-			if regs[i].Reset == 0 {
-				regs[i].Reset = 0x00420000 // RIRBSIZE=0x42
+	// Check if donor BAR data is all 0xFF (no codec connected).
+	// When the HD Audio codec BAR has no responding codec, reads return 0xFF.
+	// In this case we skip populateResetValues and use spec defaults directly,
+	// because 0xFF | default = 0xFF (bitwise OR with all-ones is a no-op).
+	allFF := isBARDataAllFF(barData)
+	if !allFF {
+		populateResetValues(regs, barData)
+		// Apply spec defaults only where donor data didn't cover
+		for i := range regs {
+			switch regs[i].Offset {
+			case 0x00:
+				if regs[i].Reset == 0 {
+					regs[i].Reset = 0x01004401
+				}
+			case 0x08:
+				regs[i].Reset |= 0x00000001
+			case 0x0C:
+				regs[i].Reset |= 0x00010000
+			case 0x4C:
+				if regs[i].Reset == 0 {
+					regs[i].Reset = 0x00420000
+				}
+			case 0x5C:
+				if regs[i].Reset == 0 {
+					regs[i].Reset = 0x00420000
+				}
 			}
 		}
+	} else {
+		// No valid donor data - use HD Audio spec defaults.
+		regs[0].Reset = 0x01004401  // GCAP=4401h (2-in/2-out, 44.1kHz), VMIN=0, VMAJ=1
+		regs[1].Reset = 0x00000001  // GCTL.CRST=1 (out of reset)
+		regs[2].Reset = 0x00010000  // STATESTS: codec 0 present (upper 16 bits)
+		regs[3].Reset = 0x00000000  // INTCTL: no state interrupts enabled
+		regs[4].Reset = 0x00000000  // INTSTS: no interrupts pending
+		regs[5].Reset = 0xFFFFFF80  // CORBLBASE: 64B-aligned base (all bits writable except low 7)
+		regs[6].Reset = 0x00000000  // CORBUBASE: upper 32 bits of base
+		regs[7].Reset = 0x00000000  // CORBWP=0, CORBRP=0 (both at start)
+		regs[8].Reset = 0x00420000  // CORBSIZE=0x42 (supports 256/16/2 entries)
+		regs[9].Reset = 0xFFFFFF80  // RIRBLBASE: 64B-aligned base
+		regs[10].Reset = 0x00000000 // RIRBUBASE: upper 32 bits of base
+		regs[11].Reset = 0x00000000 // RIRBWP=0, RINTCNT=0
+		regs[12].Reset = 0x00420000 // RIRBSIZE=0x42 (supports 256/16/2 entries)
 	}
 
 	return &BARModel{
@@ -385,6 +410,20 @@ func isProbeDataReliable(profile *donor.BARProfile) bool {
 		return true // too few probes to judge
 	}
 	return allRW*10 < nonZero*9 // allRW < 90%
+}
+
+// isBARDataAllFF checks if BAR memory is entirely 0xFF (no responding device).
+// This happens when there's no codec connected - reads return all-ones.
+func isBARDataAllFF(data []byte) bool {
+	if len(data) == 0 {
+		return true
+	}
+	for _, b := range data {
+		if b != 0xFF {
+			return false
+		}
+	}
+	return true
 }
 
 // classRegisterNames returns offset->name hints from the device profile.
