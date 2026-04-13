@@ -13,7 +13,9 @@ type clearMiscPass struct{}
 func (p *clearMiscPass) Name() string { return "clear misc registers" }
 func (p *clearMiscPass) Apply(cs *pci.ConfigSpace, b *board.Board, om *overlay.Map, ctx *ScrubContext) {
 	om.WriteU8(0x0F, 0x00, "clear BIST register")
-	om.WriteU8(0x3C, 0x00, "clear Interrupt Line")
+	// NOTE: Interrupt Line (0x3C) is NOT cleared. Leave donor value intact so
+	// Windows PnP manager can assign the correct IRQ. Clearing to 0x00 causes
+	// Code 10 ("device cannot start") because hdaudio.sys finds no valid IRQ.
 	om.WriteU8(0x0D, 0x00, "clear Latency Timer")
 	om.WriteU8(0x0C, 0x00, "clear Cache Line Size")
 }

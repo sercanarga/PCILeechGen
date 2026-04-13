@@ -24,9 +24,9 @@ func TestScrubConfigSpaceWithOverlay_TracksMods(t *testing.T) {
 		t.Error("BIST should be zeroed after scrub")
 	}
 
-	// Interrupt Line should be zeroed
-	if scrubbed.ReadU8(0x3C) != 0x00 {
-		t.Error("Interrupt Line should be zeroed after scrub")
+	// Interrupt Line should be preserved (not zeroed)
+	if scrubbed.ReadU8(0x3C) != 0x0A {
+		t.Errorf("Interrupt Line should be preserved, got 0x%02X, want 0x0A", scrubbed.ReadU8(0x3C))
 	}
 }
 
