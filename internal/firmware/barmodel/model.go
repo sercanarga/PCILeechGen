@@ -293,6 +293,12 @@ func buildAudioBARModel(barData []byte) *BARModel {
 		// RIRBCTL(8) + RIRBSTS(8) + RIRBSIZE(8)
 		// RIRBCTL: bit 0 (CTE), bit 2 (OIE) writable; RIRBSTS: bits 0,1,2 RW1C; RIRBSIZE: RO
 		{Offset: 0x5C, Width: 4, Name: "RIRBCTL_STS_SIZE", RWMask: 0x00000705},
+		// RIRBINTSTS - RIRB interrupt status
+		{Offset: 0x60, Width: 4, Name: "RIRBINTSTS", RWMask: 0x00000000},
+		// RIRBRESP_LO - RIRB response data lower 32 bits (RO, DMA-served)
+		{Offset: 0x70, Width: 4, Name: "RIRBRESP_LO", RWMask: 0x00000000},
+		// RIRBRESP_HI - RIRB response data upper 32 bits (RO, DMA-served)
+		{Offset: 0x78, Width: 4, Name: "RIRBRESP_HI", RWMask: 0x00000000},
 	}
 
 	// Check if donor BAR data is all 0xFF (no codec connected).

@@ -221,26 +221,20 @@ module pcileech_bar_impl_device #(
                     // RIRBWP is in lower 16 bits of offset 0x58
                     reg_0x00000058[15:0] <= 16'h0001;
 
-                    // Set RIRB response data at unsolicited response register
-                    // offset 0x58 upper bits + offset 0x54
-                    reg_0x00000054[31:0] <= rirb_fake_response[63:32];
-                    reg_0x00000058[31:16]<= rirb_fake_response[47:32];
+                    // Set RIRB response data in spec-defined response registers
+                    reg_0x00000070[31:0] <= rirb_fake_response[31:0];   // RIRBRESP_LO
+                    reg_0x00000078[31:0] <= rirb_fake_response[63:32];  // RIRBRESP_HI
 
-                    // Set RIRBSTS.UIS (unsolicited interrupt status) at 0x5C bit 1
+                    // Set RIRBINTSTS.FRO (FIFO overrun interrupt) at 0x60 bit 0
+                    reg_0x00000060[0] <= 1'b1;
+
+                    // Also set RIRBSTS.UIS (unsolicited interrupt status) at 0x5C bit 1
                     reg_0x0000005C[1] <= 1'b1;
                 end
             end
         end
     end
 
-    // Intercept RIRB response data read: when the driver reads offset 0x58
-    // (RIRBWP_RINTCNT), return our fake response data instead of the raw
-    // register value. This covers the unsolicited response path where the
-    // driver reads RIRB data after seeing UIS set.
-    // The read interception is handled in the read mux below via
-    // rirb_fake_response_data override.
-    wire [31:0] rirb_resp_data_override = (rirb_response_fsm == 8'h00 &&
-        reg_0x00000058[15:0] != 16'h0000) ? rirb_fake_response[31:0] : 32'h0;
 {{ end }}
 {{ if eq .DeviceClass "ethernet" }}
     // PHYAR/ERIAR done-flag auto-clear for r8169 driver.
