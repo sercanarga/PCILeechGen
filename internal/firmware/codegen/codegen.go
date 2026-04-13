@@ -46,49 +46,19 @@ func GenerateConfigSpaceCOE(cs *pci.ConfigSpace) string {
 }
 
 // GenerateWritemaskCOE outputs the writemask COE (1=writable, 0=read-only).
+// Original pcileech-fpga library uses 0xFFFFFFFF for every word — all bits
+// writable. Selective writemasks break Windows BAR sizing which writes
+// 0xFFFFFFFF to each BAR and reads back the size mask.
 func GenerateWritemaskCOE(cs *pci.ConfigSpace) string {
 	masks := make([]uint32, shadowCfgSpaceWords)
-
-	masks[0x04/4] = 0x0000FFFF // Command
-	masks[0x0C/4] = 0x0000FF00 // Latency Timer
-	masks[0x3C/4] = 0x000000FF // Interrupt Line
-
-	// BARs - derive size mask from scrubbed BAR value (already clamped by scrub pipeline)
-	for i := 0; i < 6; i++ {
-		barOffset := 0x10 + (i * 4)
-		barValue := cs.BAR(i)
-		if barValue == 0 {
-			continue
-		}
-
-		if barValue&0x01 != 0 {
-			masks[barOffset/4] = 0xFFFFFFFC // IO BAR
-		} else {
-			// extract size mask from BAR value: the size-indicating bits
-			// are the upper bits that form the size mask (e.g. 0xFFFFF000 for 4KB)
-			sizeMask := barValue & 0xFFFFFFF0
-			if sizeMask == 0 {
-				sizeMask = 0xFFFFF000 // default 4KB
-			}
-			masks[barOffset/4] = sizeMask
-
-			// 64-bit BAR: upper 32 bits must also be writable for address mapping
-			is64bit := (barValue & 0x06) == 0x04
-			if is64bit && i < 5 {
-				masks[(barOffset+4)/4] = 0xFFFFFFFF
-				i++ // skip upper half
-			}
-		}
+	for i := range masks {
+		masks[i] = 0xFFFFFFFF
 	}
-
-	masks[0x30/4] = 0xFFFFF801 // Expansion ROM
-
-	applyCapabilityWritemasks(cs, masks)
-	applyExtCapabilityWritemasks(cs, masks)
 
 	return formatCOE(
 		"; PCILeechGen - Configuration Space Write Mask (4KB shadow)\n"+
 			"; 1 = writable bit, 0 = read-only bit\n"+
+			"; All bits writable — matches original pcileech-fpga library\n"+
 			";\n",
 		masks,
 	)

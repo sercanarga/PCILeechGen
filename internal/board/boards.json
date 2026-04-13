@@ -3,6 +3,7 @@
         "name": "PCIeSquirrel",
         "fpga_part": "xc7a35tfgg484-2",
         "pcie_lanes": 1,
+        "max_link_speed": 2,
         "top_module": "pcileech_squirrel_top",
         "project_dir": "PCIeSquirrel",
         "tcl_file": "vivado_generate_project.tcl"
@@ -11,6 +12,7 @@
         "name": "ScreamerM2",
         "fpga_part": "xc7a35tcsg325-2",
         "pcie_lanes": 1,
+        "max_link_speed": 2,
         "top_module": "pcileech_screamer_m2_top",
         "project_dir": "ScreamerM2",
         "tcl_file": "vivado_generate_project.tcl"
@@ -19,6 +21,7 @@
         "name": "pciescreamer",
         "fpga_part": "xc7a35tfgg484-2",
         "pcie_lanes": 1,
+        "max_link_speed": 2,
         "top_module": "pcileech_pciescreamer_top",
         "project_dir": "pciescreamer",
         "tcl_file": "vivado_generate_project.tcl"
@@ -27,6 +30,7 @@
         "name": "EnigmaX1",
         "fpga_part": "xc7a75tfgg484-2",
         "pcie_lanes": 1,
+        "max_link_speed": 2,
         "top_module": "pcileech_enigma_x1_top",
         "project_dir": "EnigmaX1",
         "tcl_file": "vivado_generate_project.tcl"
@@ -35,6 +39,7 @@
         "name": "CaptainDMA_M2_x1",
         "fpga_part": "xc7a35tcsg325-2",
         "pcie_lanes": 1,
+        "max_link_speed": 2,
         "top_module": "pcileech_35t325_x1_top",
         "project_dir": "CaptainDMA",
         "sub_dir": "35t325_x1",
@@ -44,6 +49,7 @@
         "name": "CaptainDMA_M2_x4",
         "fpga_part": "xc7a35tcsg325-2",
         "pcie_lanes": 4,
+        "max_link_speed": 2,
         "top_module": "pcileech_35t325_x4_top",
         "project_dir": "CaptainDMA",
         "sub_dir": "35t325_x4",
@@ -53,6 +59,7 @@
         "name": "CaptainDMA_35T",
         "fpga_part": "xc7a35tfgg484-2",
         "pcie_lanes": 1,
+        "max_link_speed": 2,
         "top_module": "pcileech_35t484_x1_top",
         "project_dir": "CaptainDMA",
         "sub_dir": "35t484_x1",
@@ -62,6 +69,7 @@
         "name": "CaptainDMA_75T",
         "fpga_part": "xc7a75tfgg484-2",
         "pcie_lanes": 1,
+        "max_link_speed": 2,
         "top_module": "pcileech_75t484_x1_top",
         "project_dir": "CaptainDMA",
         "sub_dir": "75t484_x1",
@@ -71,6 +79,7 @@
         "name": "CaptainDMA_100T",
         "fpga_part": "xc7a100tfgg484-2",
         "pcie_lanes": 1,
+        "max_link_speed": 2,
         "top_module": "pcileech_100t484_x1_top",
         "project_dir": "CaptainDMA",
         "sub_dir": "100t484-1",
@@ -80,6 +89,7 @@
         "name": "ZDMA",
         "fpga_part": "xc7a100tfgg484-2",
         "pcie_lanes": 4,
+        "max_link_speed": 2,
         "top_module": "pcileech_tbx4_100t_top",
         "project_dir": "ZDMA",
         "tcl_file": "vivado_generate_project_100t.tcl",
@@ -89,6 +99,7 @@
         "name": "GBOX",
         "fpga_part": "xc7a35tfgg484-2",
         "pcie_lanes": 1,
+        "max_link_speed": 2,
         "top_module": "pcileech_gbox_top",
         "project_dir": "GBOX",
         "tcl_file": "vivado_generate_project.tcl"
@@ -97,6 +108,7 @@
         "name": "NeTV2_35T",
         "fpga_part": "xc7a35tfgg484-2",
         "pcie_lanes": 1,
+        "max_link_speed": 2,
         "top_module": "pcileech_netv2_top",
         "project_dir": "NeTV2",
         "tcl_file": "vivado_generate_project_35t.tcl"
@@ -105,6 +117,7 @@
         "name": "NeTV2_100T",
         "fpga_part": "xc7a100tfgg484-2",
         "pcie_lanes": 1,
+        "max_link_speed": 2,
         "top_module": "pcileech_netv2_top",
         "project_dir": "NeTV2",
         "tcl_file": "vivado_generate_project_100t.tcl"
@@ -113,6 +126,7 @@
         "name": "ac701_ft601",
         "fpga_part": "xc7a200tfbg676-2",
         "pcie_lanes": 4,
+        "max_link_speed": 2,
         "top_module": "pcileech_ac701_ft601_top",
         "project_dir": "ac701_ft601",
         "tcl_file": "vivado_generate_project.tcl"
@@ -121,6 +135,7 @@
         "name": "acorn",
         "fpga_part": "xc7a200tfbg484-3",
         "pcie_lanes": 4,
+        "max_link_speed": 2,
         "top_module": "pcileech_acorn_top",
         "project_dir": "acorn_ft2232h",
         "tcl_file": "vivado_generate_project_acorn.tcl"
@@ -129,6 +144,7 @@
         "name": "litefury",
         "fpga_part": "xc7a100tfgg484-2",
         "pcie_lanes": 4,
+        "max_link_speed": 2,
         "top_module": "pcileech_acorn_top",
         "project_dir": "acorn_ft2232h",
         "tcl_file": "vivado_generate_project_litefury.tcl"
@@ -137,6 +153,7 @@
         "name": "sp605_ft601",
         "fpga_part": "xc6slx45tfgg484-2",
         "pcie_lanes": 1,
+        "max_link_speed": 2,
         "top_module": "pcileech_top",
         "project_dir": "sp605_ft601",
         "tcl_file": "vivado_generate_project.tcl"

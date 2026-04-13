@@ -70,104 +70,37 @@ type bar0Config struct {
 	Is64bit bool
 }
 
-// buildBAR0Config picks the largest MMIO BAR for the PCIe IP.
-// Falls back to BAR0 when there's no MMIO BAR. Ensures the BAR is large
-// enough for MSI-X when present.
+// buildBAR0Config returns a fixed 4 KB BAR config for the Xilinx IP core.
+// The FPGA's config space BRAM only serves 4 KB regions regardless of the
+// donor's original BAR size. Matching the IP size to the actual served region
+// prevents the driver from mapping more MMIO than the FPGA can back.
 func buildBAR0Config(ctx *donor.DeviceContext, b *board.Board) bar0Config {
-	cfg := bar0Config{Scale: "Kilobytes", Size: "4"}
-	if len(ctx.BARs) == 0 {
-		return cfg
-	}
-
-	// Find the largest MMIO BAR - this is the primary BAR the driver will use
-	var bestSize uint64
-	var bestBAR *pci.BAR
+	// Check if any memory BAR is enabled in the donor config
 	for i := range ctx.BARs {
 		bar := &ctx.BARs[i]
-		if bar.Size == 0 {
-			continue
-		}
-		if bar.Type == pci.BARTypeMem32 || bar.Type == pci.BARTypeMem64 {
-			if bar.Size > bestSize {
-				bestSize = bar.Size
-				bestBAR = bar
+		if bar.Size > 0 && (bar.Type == pci.BARTypeMem32 || bar.Type == pci.BARTypeMem64) {
+			return bar0Config{
+				Enabled: true,
+				Scale:   "Kilobytes",
+				Size:    "4",
+				Is64bit: bar.Type == pci.BARTypeMem64,
 			}
 		}
 	}
-
-	// Fall back to BAR0 if no MMIO BAR found
-	if bestBAR == nil {
-		bar0 := &ctx.BARs[0]
-		if bar0.Size == 0 {
-			return cfg
-		}
-		cfg.Enabled = true
-		barSize := bar0.Size
-		barSize = enforceMinMSIXSize(barSize, ctx)
-		if barSize < bar0.Size {
-			barSize = bar0.Size
-		}
-		cfg.Scale, cfg.Size = barSizeToTCL(barSize)
-		cfg.Is64bit = bar0.Type == pci.BARTypeMem64
-		return cfg
-	}
-
-	cfg.Enabled = true
-	barSize := bestBAR.Size
-	barSize = enforceMinMSIXSize(barSize, ctx)
-	if barSize < bestBAR.Size {
-		barSize = bestBAR.Size
-	}
-	cfg.Scale, cfg.Size = barSizeToTCL(barSize)
-	cfg.Is64bit = bestBAR.Type == pci.BARTypeMem64
-	return cfg
-}
-
-// enforceMinMSIXSize ensures the BAR fits the MSI-X table + PBA at the
-// donor's offsets. Returns the next power-of-two that covers everything.
-func enforceMinMSIXSize(barSize uint64, ctx *donor.DeviceContext) uint64 {
-	if ctx.MSIXData == nil || ctx.MSIXData.TableSize == 0 {
-		return barSize
-	}
-
-	tableOff := uint64(ctx.MSIXData.TableOffset)
-	if tableOff == 0 {
-		tableOff = 0x1000
-	}
-
-	tableBytes := uint64(ctx.MSIXData.TableSize) * 16
-	pbaBytes := ((uint64(ctx.MSIXData.TableSize) + 63) / 64) * 8
-	if pbaBytes < 8 {
-		pbaBytes = 8
-	}
-
-	pbaStart := (tableOff + tableBytes + 7) &^ 7
-	if ctx.MSIXData.PBAOffset > 0 && uint64(ctx.MSIXData.PBAOffset) > tableOff {
-		pbaStart = uint64(ctx.MSIXData.PBAOffset)
-	}
-
-	minSize := pbaStart + pbaBytes
-
-	// round up to next power of two
-	if minSize > barSize {
-		barSize = 1
-		for barSize < minSize {
-			barSize <<= 1
-		}
-	}
-	return barSize
+	// No memory BAR found
+	return bar0Config{Scale: "Kilobytes", Size: "4"}
 }
 
 // GenerateProjectTCL generates the Vivado project creation TCL script.
 func GenerateProjectTCL(ctx *donor.DeviceContext, b *board.Board, libDir string) string {
 	ids := firmware.ExtractDeviceIDs(ctx.ConfigSpace, ctx.ExtCapabilities)
 
-	// Clamp link width/speed to board physical capability
+	// Use the board's max link speed for the Xilinx IP core.
+	// The donor's current speed depends on the slot it was captured in,
+	// not the device's capability. The FPGA should advertise its full
+	// capability so the root complex negotiates the highest common speed.
 	linkWidth := clampLinkWidth(ids.LinkWidth, b.PCIeLanes)
-	linkSpeed := ids.LinkSpeed
-	if linkSpeed == 0 || linkSpeed > b.MaxLinkSpeedOrDefault() {
-		linkSpeed = b.MaxLinkSpeedOrDefault()
-	}
+	linkSpeed := b.MaxLinkSpeedOrDefault()
 
 	bar0 := buildBAR0Config(ctx, b)
 
