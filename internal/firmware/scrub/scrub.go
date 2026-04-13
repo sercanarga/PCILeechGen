@@ -177,10 +177,13 @@ func clampBARsToFPGA(cs *pci.ConfigSpace, om *overlay.Map) {
 			continue
 		}
 
-		is64bit := (barVal & 0x06) == 0x04
-		newBar := bar0SizeMask | (barVal & 0x0F)
-		om.WriteU32(barOffset, newBar, fmt.Sprintf("clamp BAR%d to 4 KB", i))
+		// Force type bits (2:1) to 0b00 (32-bit). The FPGA serves 4KB regions
+		// regardless of original BAR type; a 64-bit type in a 4KB BAR confuses
+		// the Windows driver during enumeration.
+		newBar := bar0SizeMask | (barVal & 0x09)
+		om.WriteU32(barOffset, newBar, fmt.Sprintf("clamp BAR%d to 4 KB (type=32-bit)", i))
 
+		is64bit := (barVal & 0x06) == 0x04
 		if is64bit && i < 5 {
 			om.WriteU32(barOffset+4, 0x00000000, fmt.Sprintf("clear BAR%d upper 32 bits", i+1))
 			i++ // skip upper half

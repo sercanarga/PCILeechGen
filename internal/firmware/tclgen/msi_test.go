@@ -85,29 +85,31 @@ func TestMSIVectorsToTCL(t *testing.T) {
 	}
 }
 
-func TestBuildBAR0Config_PreservesOriginalSize(t *testing.T) {
-	// 16K BAR0 mem64 with 130-vector MSI-X — BAR must stay >= 16K
+func TestBuildBAR0Config_MemoryBAR(t *testing.T) {
+	// Memory BAR — Xilinx IP should be configured with 4 KB to match
+	// the FPGA's BRAM-served region size.
 	ctx := &donor.DeviceContext{
 		BARs: []pci.BAR{
 			{Index: 0, Size: 16384, Type: pci.BARTypeMem64},
 		},
-		MSIXData: &donor.MSIXData{TableSize: 130},
 	}
 
 	cfg := buildBAR0Config(ctx, &board.Board{})
 	if !cfg.Enabled {
 		t.Fatal("BAR0 should be enabled")
 	}
-	if cfg.Size != "16" || cfg.Scale != "Kilobytes" {
-		t.Errorf("BAR0 size = %s %s, want 16 Kilobytes", cfg.Size, cfg.Scale)
+	if cfg.Size != "4" || cfg.Scale != "Kilobytes" {
+		t.Errorf("BAR0 size = %s %s, want 4 Kilobytes (FPGA BRAM limit)", cfg.Size, cfg.Scale)
 	}
+	// Type bit is forced to 32-bit in scrub, but Xilinx IP preserves 64-bit flag from donor
 	if !cfg.Is64bit {
-		t.Error("BAR0 should be 64-bit")
+		t.Error("BAR0 should preserve 64-bit flag from donor")
 	}
 }
 
-func TestBuildBAR0Config_FallbackAlsoProtected(t *testing.T) {
-	// IO BAR0 with a 32K size — fallback path should also preserve size
+func TestBuildBAR0Config_IOBAR(t *testing.T) {
+	// IO BAR — Xilinx IP only serves memory BARs from BRAM.
+	// IO BAR handling is done via config space BRAM, not IP config.
 	ctx := &donor.DeviceContext{
 		BARs: []pci.BAR{
 			{Index: 0, Size: 32768, Type: pci.BARTypeIO},
@@ -115,11 +117,23 @@ func TestBuildBAR0Config_FallbackAlsoProtected(t *testing.T) {
 	}
 
 	cfg := buildBAR0Config(ctx, &board.Board{})
-	if !cfg.Enabled {
-		t.Fatal("BAR0 should be enabled (fallback)")
+	// IO BAR doesn't enable the Xilinx IP memory BAR
+	if cfg.Size != "4" || cfg.Scale != "Kilobytes" {
+		t.Errorf("BAR0 size = %s %s, want 4 Kilobytes (default)", cfg.Size, cfg.Scale)
 	}
-	if cfg.Size != "32" || cfg.Scale != "Kilobytes" {
-		t.Errorf("BAR0 size = %s %s, want 32 Kilobytes", cfg.Size, cfg.Scale)
+}
+
+func TestBuildBAR0Config_NoBARs(t *testing.T) {
+	ctx := &donor.DeviceContext{
+		BARs: []pci.BAR{},
+	}
+
+	cfg := buildBAR0Config(ctx, &board.Board{})
+	if cfg.Enabled {
+		t.Error("BAR0 should not be enabled with no memory BARs")
+	}
+	if cfg.Size != "4" || cfg.Scale != "Kilobytes" {
+		t.Errorf("BAR0 size = %s %s, want 4 Kilobytes", cfg.Size, cfg.Scale)
 	}
 }
 

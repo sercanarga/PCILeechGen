@@ -115,8 +115,8 @@ func TestScrubConfigSpace_ClampBAR0(t *testing.T) {
 	scrubbed := ScrubConfigSpace(cs, nil)
 
 	bar0 := scrubbed.BAR(0)
-	if bar0 != 0xFFFFF004 {
-		t.Errorf("BAR0 should be clamped to 4 KB: got 0x%08x, want 0xFFFFF004", bar0)
+	if bar0 != 0xFFFFF000 {
+		t.Errorf("BAR0 should be clamped to 4 KB (type=32-bit): got 0x%08x, want 0xFFFFF000", bar0)
 	}
 	bar1 := scrubbed.BAR(1)
 	if bar1 != 0 {

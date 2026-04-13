@@ -73,17 +73,29 @@ func applyDSNVariance(cs *pci.ConfigSpace, rng *splitMix64) {
 		if dsnOff+8 > cs.Size {
 			continue
 		}
-		// Keep OUI (bytes 5-7 of the DSN - upper 3 bytes of the second DWORD)
-		// and randomize the serial portion (lower 5 bytes)
+		// Read original DSN to check if donor provided a valid one
+		origLo := cs.ReadU32(dsnOff)
 		origHi := cs.ReadU32(dsnOff + 4)
-		oui := origHi & 0xFFFFFF00 // preserve vendor OUI in upper 24 bits
 
-		serial := uint32(rng.next() & 0xFFFFFFFF)
-		loWord := serial
-		hiWord := oui | uint32(rng.next()&0xFF) // one randomized byte under OUI
+		if origLo == 0 && origHi == 0 {
+			// Donor DSN is all-zeros (no valid OUI). Generate a complete
+			// random DSN so the device appears legitimate to the OS.
+			lo := uint32(rng.next() & 0xFFFFFFFF)
+			hi := uint32(rng.next() & 0x00FFFFFF) // 24-bit serial portion
+			cs.WriteU32(dsnOff, lo)
+			cs.WriteU32(dsnOff+4, hi)
+		} else {
+			// Donor has a valid DSN - keep OUI (upper 24 bits of hi DWORD)
+			// and randomize the serial portion (lower 40 bits).
+			oui := origHi & 0xFFFFFF00 // preserve vendor OUI in upper 24 bits
 
-		cs.WriteU32(dsnOff, loWord)
-		cs.WriteU32(dsnOff+4, hiWord)
+			serial := uint32(rng.next() & 0xFFFFFFFF)
+			loWord := serial
+			hiWord := oui | uint32(rng.next()&0xFF) // one randomized byte under OUI
+
+			cs.WriteU32(dsnOff, loWord)
+			cs.WriteU32(dsnOff+4, hiWord)
+		}
 		return
 	}
 }
