@@ -107,21 +107,22 @@ module pcileech_tlps128_bar_controller(
     wire [87:0] bar0_emu_ctx;
     wire [31:0] bar0_emu_data;
     wire        bar0_emu_valid;
-    wire        bar0_emu_ready = bar0_buf_valid; // backpressure: emulator pulls from buffer
+    wire        bar0_emu_ready = !bar0_emu_busy; // backpressure: emulator signals when it can accept
+    wire        bar0_emu_busy; // from latency emulator: request_pending
 
     // write acknowledge from latency emulator
     wire        bar0_wr_ack;
 
     // buffer between BAR engine and latency emulator to prevent
     // response loss when emulator is busy with previous request.
-    // The buffer captures every BAR response (1-cycle storage).
-    // bar0_emu_ready = bar0_buf_valid provides pull-based backpressure:
-    // the emulator only consumes buffer data when it's ready to accept.
+    // The buffer captures BAR responses only when emulator is busy (1-cycle storage).
+    // When emulator is idle, data flows directly (bypass through buffer).
+    // bar0_emu_ready = !bar0_emu_busy provides push-based backpressure.
     reg  [87:0] bar0_buf_ctx;
     reg  [31:0] bar0_buf_data;
     reg         bar0_buf_valid;
     wire        bar0_buf_empty = !bar0_buf_valid;
-    wire        bar0_buf_write = bar0_raw_valid && bar0_buf_empty;
+    wire        bar0_buf_write = bar0_raw_valid && bar0_emu_busy; // capture only when emulator busy
 {{ end }}
 {{ if .MSIXConfig }}
     // MSI-X intermediate wires
@@ -244,7 +245,8 @@ module pcileech_tlps128_bar_controller(
         .rsp_ready      ( bar0_emu_ready                ),
         .wr_valid       ( wr_valid && wr_bar[0]         ),
         .wr_addr        ( wr_addr                       ),
-        .wr_ack         ( bar0_wr_ack                   )
+        .wr_ack         ( bar0_wr_ack                   ),
+        .busy           ( bar0_emu_busy                 )
     );
 
     // 1-deep buffer FSM: captures BAR responses when emulator is busy
@@ -256,7 +258,7 @@ module pcileech_tlps128_bar_controller(
                 bar0_buf_ctx  <= bar0_raw_ctx;
                 bar0_buf_data <= bar0_raw_data;
                 bar0_buf_valid <= 1'b1;
-            end else if (bar0_buf_valid && bar0_emu_ready) begin
+            end else if (bar0_buf_valid && !bar0_emu_busy) begin
                 bar0_buf_valid <= 1'b0;
             end
         end

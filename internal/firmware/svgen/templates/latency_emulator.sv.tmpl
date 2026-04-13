@@ -33,11 +33,15 @@ module tlp_latency_emulator #(
     output reg [31:0]   rsp_data,
     input wire          rsp_ready,
 
+    output wire         busy,
+
     // write acknowledge path
     input wire          wr_valid,
     input wire [31:0]   wr_addr,
     output reg          wr_ack
 );
+
+    assign busy = request_pending;
 
     reg [7:0] latency_counter;
     reg [7:0] target_latency;
