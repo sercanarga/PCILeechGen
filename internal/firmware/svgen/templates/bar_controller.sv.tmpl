@@ -107,10 +107,21 @@ module pcileech_tlps128_bar_controller(
     wire [87:0] bar0_emu_ctx;
     wire [31:0] bar0_emu_data;
     wire        bar0_emu_valid;
-    wire        bar0_emu_ready = 1'b1;
+    wire        bar0_emu_ready = bar0_buf_valid; // backpressure: emulator pulls from buffer
 
     // write acknowledge from latency emulator
     wire        bar0_wr_ack;
+
+    // buffer between BAR engine and latency emulator to prevent
+    // response loss when emulator is busy with previous request.
+    // The buffer captures every BAR response (1-cycle storage).
+    // bar0_emu_ready = bar0_buf_valid provides pull-based backpressure:
+    // the emulator only consumes buffer data when it's ready to accept.
+    reg  [87:0] bar0_buf_ctx;
+    reg  [31:0] bar0_buf_data;
+    reg         bar0_buf_valid;
+    wire        bar0_buf_empty = !bar0_buf_valid;
+    wire        bar0_buf_write = bar0_raw_valid && bar0_buf_empty;
 {{ end }}
 {{ if .MSIXConfig }}
     // MSI-X intermediate wires
@@ -216,9 +227,9 @@ module pcileech_tlps128_bar_controller(
     tlp_latency_emulator i_latency_emu(
         .clk            ( clk                           ),
         .rst            ( rst                           ),
-        .req_valid      ( bar0_raw_valid                ),
-        .req_ctx        ( bar0_raw_ctx                  ),
-        .req_data       ( bar0_raw_data                 ),
+        .req_valid      ( bar0_buf_valid                ),
+        .req_ctx        ( bar0_buf_ctx                  ),
+        .req_data       ( bar0_buf_data                 ),
         .req_addr       ( rd_req_addr                   ),
         .req_ready      (                               ),
 {{ if .MSIXConfig }}
@@ -235,6 +246,22 @@ module pcileech_tlps128_bar_controller(
         .wr_addr        ( wr_addr                       ),
         .wr_ack         ( bar0_wr_ack                   )
     );
+
+    // 1-deep buffer FSM: captures BAR responses when emulator is busy
+    always @(posedge clk) begin
+        if (rst) begin
+            bar0_buf_valid <= 1'b0;
+        end else begin
+            if (bar0_buf_write) begin
+                bar0_buf_ctx  <= bar0_raw_ctx;
+                bar0_buf_data <= bar0_raw_data;
+                bar0_buf_valid <= 1'b1;
+            end else if (bar0_buf_valid && bar0_emu_ready) begin
+                bar0_buf_valid <= 1'b0;
+            end
+        end
+    end
+
 {{ end }}
 
 {{ if .MSIXConfig }}
