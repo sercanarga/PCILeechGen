@@ -64,6 +64,35 @@ func TestClearMiscPass(t *testing.T) {
 	}
 }
 
+func TestClearMiscPass_SetsInterruptPin(t *testing.T) {
+	cs := pci.NewConfigSpaceFromBytes(make([]byte, 256))
+	cs.Data[0x3C] = 0x0A // Interrupt Line non-zero
+	// Interrupt Pin (0x3D) = 0 (default from zeroed alloc)
+
+	om := overlay.NewMap(cs)
+	pass := &clearMiscPass{}
+	pass.Apply(cs, nil, om, ctxFor(cs))
+
+	// Interrupt Pin should be set to INTA# when it was 0
+	if cs.Data[0x3D] != 0x01 {
+		t.Errorf("Interrupt Pin should be set to 1 when it was 0, got 0x%02X", cs.Data[0x3D])
+	}
+}
+
+func TestClearMiscPass_PreservesNonZeroInterruptPin(t *testing.T) {
+	cs := pci.NewConfigSpaceFromBytes(make([]byte, 256))
+	cs.Data[0x3D] = 0x02 // Interrupt Pin = INTB#
+
+	om := overlay.NewMap(cs)
+	pass := &clearMiscPass{}
+	pass.Apply(cs, nil, om, ctxFor(cs))
+
+	// Interrupt Pin should NOT be changed if already non-zero
+	if cs.Data[0x3D] != 0x02 {
+		t.Errorf("Interrupt Pin should be preserved when non-zero, got 0x%02X want 0x02", cs.Data[0x3D])
+	}
+}
+
 func TestSanitizeCmdStatusPass(t *testing.T) {
 	data := make([]byte, 256)
 	// Command = 0xFFFF (all bits set)
