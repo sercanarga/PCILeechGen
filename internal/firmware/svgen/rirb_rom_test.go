@@ -45,9 +45,9 @@ func TestAudioRIRBResponseROM(t *testing.T) {
 		t.Fatal("rirb_rom_response function not found in generated SV")
 	}
 
-	// Verify ROM entries exist (5'd0 through 5'd19)
+	// Verify ROM entries exist (6'd0 through 6'd19)
 	for i := 0; i <= 19; i++ {
-		pattern := fmt.Sprintf("5'd%d:", i)
+		pattern := fmt.Sprintf("6'd%d:", i)
 		if !strings.Contains(sv, pattern) {
 			t.Fatalf("ROM entry %d (%q) not found", i, pattern)
 		}
@@ -77,7 +77,7 @@ func TestAudioRIRBResponseROM(t *testing.T) {
 	}
 
 	// Verify response index reset on CRST
-	if !strings.Contains(sv, "rirb_response_idx  <= 5'd0") {
+	if !strings.Contains(sv, "rirb_response_idx  <= 6'd0") {
 		t.Fatal("response index reset not found on CRST")
 	}
 

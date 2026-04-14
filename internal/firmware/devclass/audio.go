@@ -59,7 +59,8 @@ func audioProfile() *DeviceProfile {
 			// GCTL - CRST (bit 0) is the key for reset handshake
 			{Offset: 0x08, Width: 4, Name: "GCTL", Reset: 0x00000001, RWMask: 0x00000103},
 			// WAKEEN (lower 16) + STATESTS (upper 16) - codec 0 present
-			{Offset: 0x0C, Width: 4, Name: "WAKEEN_STATESTS", Reset: 0x00010000, RWMask: 0x7FFFFFFF},
+			// WAKEEN [15:0] writable; STATESTS [31:16] is read-only
+			{Offset: 0x0C, Width: 4, Name: "WAKEEN_STATESTS", Reset: 0x00010000, RWMask: 0x0000FFFF},
 			// INTCTL
 			{Offset: 0x20, Width: 4, Name: "INTCTL", Reset: 0x00000000, RWMask: 0xC00000FF},
 			// INTSTS
@@ -68,12 +69,18 @@ func audioProfile() *DeviceProfile {
 			{Offset: 0x40, Width: 4, Name: "CORBLBASE", Reset: 0x00000000, RWMask: 0xFFFFFF80},
 			{Offset: 0x44, Width: 4, Name: "CORBUBASE", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
 			{Offset: 0x48, Width: 4, Name: "CORBWP_CORBRP", Reset: 0x00000000, RWMask: 0x80FF00FF},
-			{Offset: 0x4C, Width: 4, Name: "CORBCTL_STS_SIZE", Reset: 0x00420000, RWMask: 0x00030300},
+			{Offset: 0x4C, Width: 4, Name: "CORBCTL_STS_SIZE", Reset: 0x00420000, RWMask: 0x00000082, IsRW1C: true},
 			// RIRB base addresses and control
 			{Offset: 0x50, Width: 4, Name: "RIRBLBASE", Reset: 0x00000000, RWMask: 0xFFFFFF80},
 			{Offset: 0x54, Width: 4, Name: "RIRBUBASE", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
 			{Offset: 0x58, Width: 4, Name: "RIRBWP_RINTCNT", Reset: 0x00000000, RWMask: 0x800000FF},
-			{Offset: 0x5C, Width: 4, Name: "RIRBCTL_STS_SIZE", Reset: 0x00420000, RWMask: 0x00070700},
+			{Offset: 0x5C, Width: 4, Name: "RIRBCTL_STS_SIZE", Reset: 0x00420000, RWMask: 0x00000507, IsRW1C: true},
+			// RIRBINTSTS - RIRB interrupt status (RW1C: bit 0 INTFL)
+			{Offset: 0x60, Width: 4, Name: "RIRBINTSTS", Reset: 0x00000000, RWMask: 0x00000001, IsRW1C: true},
+			// IC (Immediate Command) — driver writes codec command
+			{Offset: 0x64, Width: 4, Name: "IC", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
+			// IR (Immediate Response) — driver reads codec response (RO, returns 0)
+			{Offset: 0x68, Width: 4, Name: "IR", Reset: 0x00000000, RWMask: 0x00000000},
 			// RIRB response registers — read by hdaudio.sys after RIRBWP advances
 			{Offset: 0x70, Width: 4, Name: "RIRBRESP_LO", Reset: 0x00000000, RWMask: 0x00000000},
 			{Offset: 0x78, Width: 4, Name: "RIRBRESP_HI", Reset: 0x00000000, RWMask: 0x00000000},
