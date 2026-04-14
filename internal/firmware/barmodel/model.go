@@ -17,6 +17,7 @@ type BARRegister struct {
 	Reset  uint32 // reset/initial value (from donor snapshot or spec default)
 	RWMask uint32 // writable bits (1 = host can write, 0 = read-only)
 	Name   string // human-readable register name
+	IsRW1C bool   // true if this register uses write-1-to-clear semantics
 }
 
 // BARModel is the complete register map that ends up in the SV template.
@@ -270,7 +271,8 @@ func buildAudioBARModel(barData []byte) *BARModel {
 		// GCTL - global control, CRST (bit 0) is the key writable bit
 		{Offset: 0x08, Width: 4, Name: "GCTL", RWMask: 0x00000103},
 		// WAKEEN(16) + STATESTS(16) packed into one DWORD
-		{Offset: 0x0C, Width: 4, Name: "WAKEEN_STATESTS", RWMask: 0x7FFFFFFF},
+		// WAKEEN [15:0] is writable; STATESTS [31:16] is read-only status
+		{Offset: 0x0C, Width: 4, Name: "WAKEEN_STATESTS", RWMask: 0x0000FFFF},
 		// INTCTL - interrupt control
 		{Offset: 0x20, Width: 4, Name: "INTCTL", RWMask: 0xC00000FF},
 		// INTSTS - interrupt status
@@ -282,8 +284,8 @@ func buildAudioBARModel(barData []byte) *BARModel {
 		// CORBWP(16) + CORBRP(16) packed
 		{Offset: 0x48, Width: 4, Name: "CORBWP_CORBRP", RWMask: 0x80FF00FF},
 		// CORBCTL(8) + CORBSTS(8) + CORBSIZE(8) packed
-		// CORBCTL: bit 7 (CTE), bit 1 (MEIE) writable; CORBSTS: bit 0 (RPWP) RW1C; CORBSIZE: RO
-		{Offset: 0x4C, Width: 4, Name: "CORBCTL_STS_SIZE", RWMask: 0x000001A2},
+		// CORBCTL: bit 7 (CTE), bit 1 (MEIE) writable; CORBSTS: bit 0 -> DWORD bit 8 (RPWP) RW1C; CORBSIZE: RO
+		{Offset: 0x4C, Width: 4, Name: "CORBCTL_STS_SIZE", RWMask: 0x00000082, IsRW1C: true},
 		// RIRB lower base address
 		{Offset: 0x50, Width: 4, Name: "RIRBLBASE", RWMask: 0xFFFFFF80},
 		// RIRB upper base address
@@ -291,10 +293,15 @@ func buildAudioBARModel(barData []byte) *BARModel {
 		// RIRBWP(16) + RINTCNT(16)
 		{Offset: 0x58, Width: 4, Name: "RIRBWP_RINTCNT", RWMask: 0x800000FF},
 		// RIRBCTL(8) + RIRBSTS(8) + RIRBSIZE(8)
-		// RIRBCTL: bit 0 (CTE), bit 2 (OIE) writable; RIRBSTS: bits 0,1,2 RW1C; RIRBSIZE: RO
-		{Offset: 0x5C, Width: 4, Name: "RIRBCTL_STS_SIZE", RWMask: 0x00000705},
-		// RIRBINTSTS - RIRB interrupt status
-		{Offset: 0x60, Width: 4, Name: "RIRBINTSTS", RWMask: 0x00000000},
+		// RIRBCTL: bit 0 (CTE), bit 2 (OIE) writable; RIRBSTS: bits 0-2 RW1C; RIRBSIZE: RO
+		// RIRBSTS occupies DWORD bits [15:8]: OIS at [8], UIS at [9], INTFL at [10].
+		{Offset: 0x5C, Width: 4, Name: "RIRBCTL_STS_SIZE", RWMask: 0x00000507, IsRW1C: true},
+		// RIRBINTSTS - RIRB interrupt status (RW1C: bit 0 INTFL)
+		{Offset: 0x60, Width: 4, Name: "RIRBINTSTS", RWMask: 0x00000001, IsRW1C: true},
+		// IC (Immediate Command) — driver writes codec command
+		{Offset: 0x64, Width: 4, Name: "IC", RWMask: 0xFFFFFFFF},
+		// IR (Immediate Response) — driver reads codec response (RO)
+		{Offset: 0x68, Width: 4, Name: "IR", RWMask: 0x00000000},
 		// RIRBRESP_LO - RIRB response data lower 32 bits (RO, DMA-served)
 		{Offset: 0x70, Width: 4, Name: "RIRBRESP_LO", RWMask: 0x00000000},
 		// RIRBRESP_HI - RIRB response data upper 32 bits (RO, DMA-served)
@@ -344,6 +351,7 @@ func buildAudioBARModel(barData []byte) *BARModel {
 		regs[10].Reset = 0x00000000 // RIRBUBASE: upper 32 bits of base
 		regs[11].Reset = 0x00000000 // RIRBWP=0, RINTCNT=0
 		regs[12].Reset = 0x00420000 // RIRBSIZE=0x42 (supports 256/16/2 entries)
+		// regs[13] (IC at 0x64) and regs[14] (IR at 0x68) default to 0 — correct.
 	}
 
 	return &BARModel{

@@ -17,17 +17,20 @@ func audioBARModel() *barmodel.BARModel {
 		Registers: []barmodel.BARRegister{
 			{Offset: 0x00, Width: 4, Name: "GCAP_VMIN_VMAJ", Reset: 0x01004401, RWMask: 0x00000000},
 			{Offset: 0x08, Width: 4, Name: "GCTL", Reset: 0x00000001, RWMask: 0x00000103},
-			{Offset: 0x0C, Width: 4, Name: "WAKEEN_STATESTS", Reset: 0x00010000, RWMask: 0x7FFFFFFF},
+			{Offset: 0x0C, Width: 4, Name: "WAKEEN_STATESTS", Reset: 0x00010000, RWMask: 0x0000FFFF},
 			{Offset: 0x20, Width: 4, Name: "INTCTL", Reset: 0x00000000, RWMask: 0xC00000FF},
 			{Offset: 0x24, Width: 4, Name: "INTSTS", Reset: 0x00000000, RWMask: 0x00000000},
 			{Offset: 0x40, Width: 4, Name: "CORBLBASE", Reset: 0x00000000, RWMask: 0xFFFFFF80},
 			{Offset: 0x44, Width: 4, Name: "CORBUBASE", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
 			{Offset: 0x48, Width: 4, Name: "CORBWP_CORBRP", Reset: 0x00000000, RWMask: 0x80FF00FF},
-			{Offset: 0x4C, Width: 4, Name: "CORBCTL_STS_SIZE", Reset: 0x00420000, RWMask: 0x00030300},
+			{Offset: 0x4C, Width: 4, Name: "CORBCTL_STS_SIZE", Reset: 0x00420000, RWMask: 0x00000082, IsRW1C: true},
 			{Offset: 0x50, Width: 4, Name: "RIRBLBASE", Reset: 0x00000000, RWMask: 0xFFFFFF80},
 			{Offset: 0x54, Width: 4, Name: "RIRBUBASE", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
 			{Offset: 0x58, Width: 4, Name: "RIRBWP_RINTCNT", Reset: 0x00000000, RWMask: 0x800000FF},
-			{Offset: 0x5C, Width: 4, Name: "RIRBCTL_STS_SIZE", Reset: 0x00420000, RWMask: 0x00070700},
+			{Offset: 0x5C, Width: 4, Name: "RIRBCTL_STS_SIZE", Reset: 0x00420000, RWMask: 0x00000507, IsRW1C: true},
+			{Offset: 0x60, Width: 4, Name: "RIRBINTSTS", Reset: 0x00000000, RWMask: 0x00000001},
+			{Offset: 0x64, Width: 4, Name: "IC", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
+			{Offset: 0x68, Width: 4, Name: "IR", Reset: 0x00000000, RWMask: 0x00000000},
 			{Offset: 0x70, Width: 4, Name: "RIRBRESP_LO", Reset: 0x00000000, RWMask: 0x00000000},
 			{Offset: 0x78, Width: 4, Name: "RIRBRESP_HI", Reset: 0x00000000, RWMask: 0x00000000},
 		},
@@ -56,11 +59,19 @@ func TestAudioFullGeneration(t *testing.T) {
 		t.Fatalf("GenerateBarImplDeviceSV: %v", err)
 	}
 
-	// Check RIRB ROM entries
+	// Check RIRB ROM entries (discovery phase: 0-19)
 	for i := 0; i <= 19; i++ {
-		pattern := fmt.Sprintf("5'd%d:", i)
+		pattern := fmt.Sprintf("6'd%d:", i)
 		if !strings.Contains(sv, pattern) {
 			t.Errorf("ROM entry %d (%q) not found in generated SV", i, pattern)
+		}
+	}
+
+	// Check runtime phase entries (20-31)
+	for i := 20; i <= 31; i++ {
+		pattern := fmt.Sprintf("6'd%d:", i)
+		if !strings.Contains(sv, pattern) {
+			t.Errorf("ROM runtime entry %d (%q) not found in generated SV", i, pattern)
 		}
 	}
 
@@ -78,7 +89,7 @@ func TestAudioFullGeneration(t *testing.T) {
 	}
 
 	// Check response index reset on CRST
-	if !strings.Contains(sv, "rirb_response_idx  <= 5'd0") {
+	if !strings.Contains(sv, "rirb_response_idx  <= 6'd0") {
 		t.Error("response index reset on CRST not found")
 	}
 

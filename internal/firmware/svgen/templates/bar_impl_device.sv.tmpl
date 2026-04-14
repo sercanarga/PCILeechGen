@@ -166,9 +166,9 @@ module pcileech_bar_impl_device #(
                 // Reset RIRB state machine for clean reinitialization
                 corbwp_prev        <= 8'h00;
                 rirb_pending_count <= 8'h00;
-                rirb_wp_count      <= 16'h0000;
+                rirb_wp_count      <= 8'h00;
                 rirb_response_fsm  <= 8'h00;
-                rirb_response_idx  <= 5'd0;
+                rirb_response_idx  <= 6'd0;
                 reg_0x00000060[0]  <= 1'b0;  // clear RIRBINTSTS.INTFL
                 reg_0x0000005C[1:0] <= 2'b0;  // clear RIRBSTS (UIS + OIS)
             end
@@ -201,8 +201,8 @@ module pcileech_bar_impl_device #(
     reg [63:0] rirb_fake_response;
     reg  [7:0] corbwp_prev;
     reg  [7:0] rirb_pending_count;  // number of VERBs waiting for response
-    reg [15:0] rirb_wp_count;
-    reg  [4:0] rirb_response_idx;   // index into response ROM (0–31)
+    reg  [7:0] rirb_wp_count;
+    reg  [5:0] rirb_response_idx;   // index into response ROM (0–31)
 
     // CORBWP change detection: driver submitted new VERB(s).
     wire corb_cte = reg_0x0000004C[7];   // CORBCTL.CTE
@@ -223,70 +223,191 @@ module pcileech_bar_impl_device #(
     wire rirb_reinit = rirb_cte_prev && !rirb_cte;
     wire rb_reinit   = corb_reinit || rirb_reinit;
 
+    // ========================================================================
+    // RIRBINTSTS RW1C (write-1-to-clear) handler.
+    // The generated write logic (bottom of file) will also write to 0x60
+    // because RWMask=0x01, but it does a direct bit copy (wr_data[0] → reg[0]).
+    // HD Audio spec requires RIRBINTSTS bit 0 (INTFL) to be RW1C:
+    //   write 1 → clear the flag, write 0 → no change.
+    // This always block runs after the generic write and fixes up the value.
+    // ========================================================================
+    reg rirbintsts_rw1c;
+
+    always @(posedge clk) begin
+        if (rst) begin
+            rirbintsts_rw1c <= 1'b0;
+        end else begin
+            // Detect write to RIRBINTSTS at 0x60
+            rirbintsts_rw1c <= wr_valid && (wr_addr[31:0] & 32'hFFFFFFFC) == 32'h00000060;
+        end
+    end
+
+    // Apply RW1C: if driver writes 1 to bit 0, clear INTFL; otherwise preserve.
+    // This overrides the generic write result on the same clock edge.
+    always @(posedge clk) begin
+        if (!rst && rirbintsts_rw1c) begin
+            // RW1C semantics: bit 0 = current & ~written
+            reg_0x00000060[0] <= reg_0x00000060[0] & ~wr_data[0];
+        end
+    end
+
+    // ========================================================================
+    // RIRBCTL/RIRBSTS (0x5C) driver write handler.
+    // This register is IsRW1C — excluded from generic write logic. We must
+    // handle ALL MMIO writes here:
+    //   - Control bits [2:0]: CTE (bit 0), OIE (bit 2) — standard writable
+    //   - Status bits [10:8]: OIS (bit 8), UIS (bit 9), INTFL (bit 10) — RW1C
+    // RW1C for status: driver writes 1 → clear to 0, writes 0 → preserve.
+    // Standard write for control: driver writes value → update the bit.
+    // ========================================================================
+    reg rirbctl_rw1c;
+
+    always @(posedge clk) begin
+        if (rst) begin
+            rirbctl_rw1c <= 1'b0;
+        end else begin
+            rirbctl_rw1c <= wr_valid && (wr_addr[31:0] & 32'hFFFFFFFC) == 32'h0000005C;
+        end
+    end
+
+    always @(posedge clk) begin
+        if (!rst && rirbctl_rw1c) begin
+            // Control bits (CTE, OIE): standard writable — apply write through
+            // mask 0x05 = bits 0 and 2
+            reg_0x0000005C[0] <= (reg_0x0000005C[0] & ~1'b1) | (wr_data[0] & 1'b1);
+            reg_0x0000005C[2] <= (reg_0x0000005C[2] & ~1'b1) | (wr_data[2] & 1'b1);
+
+            // Status bits (OIS, UIS, INTFL): RW1C — write 1 to clear
+            // mask 0x07 = bits 0, 1, 2 of RIRBSTS → DWORD bits 8, 9, 10
+            reg_0x0000005C[10:8] <= reg_0x0000005C[10:8] & ~wr_data[10:8];
+        end
+    end
+
+    // ========================================================================
+    // CORBCTL/CORBSTS (0x4C) driver write handler.
+    // This register is IsRW1C — excluded from generic write logic. We must
+    // handle ALL MMIO writes here:
+    //   - Control bits: CTE (bit 7), MEIE (bit 1) — standard writable
+    //   - Status bit: RPWP (bit 8) — RW1C
+    // RW1C for RPWP: driver writes 1 -> clear to 0, writes 0 -> preserve.
+    // Standard write for control: driver writes value -> update the bit.
+    // ========================================================================
+    reg corbsts_rw1c;
+
+    always @(posedge clk) begin
+        if (rst) begin
+            corbsts_rw1c <= 1'b0;
+        end else begin
+            corbsts_rw1c <= wr_valid && (wr_addr[31:0] & 32'hFFFFFFFC) == 32'h0000004C;
+        end
+    end
+
+    always @(posedge clk) begin
+        if (!rst && corbsts_rw1c) begin
+            // Control bits (CTE, MEIE): standard writable — apply write through
+            // mask 0x82 = bits 1 and 7 of CORBCTL
+            reg_0x0000004C[1] <= (reg_0x0000004C[1] & ~1'b1) | (wr_data[1] & 1'b1);
+            reg_0x0000004C[7] <= (reg_0x0000004C[7] & ~1'b1) | (wr_data[7] & 1'b1);
+
+            // Status bit (RPWP): RW1C — write 1 to clear
+            reg_0x0000004C[8] <= reg_0x0000004C[8] & ~wr_data[8];
+        end
+    end
+
     // CA0132 codec response ROM — provides unique responses per VERB
     // so hdaudio.sys can complete codec topology discovery.
     // Format: {type_nid[31:0], response_data[31:0]}
     // type=1 in upper bits [31:28], NID in [27:4].
+    //
+    // Entries 0–19: initial codec discovery (node parameters, configs).
+    // Entries 20–31: runtime responses (power state, pin sense, amp settings,
+    //   extra nodes) to prevent catch-all saturation during extended operation.
     function [63:0] rirb_rom_response;
-        input [4:0] idx;
+        input [5:0] idx;
         begin
             case (idx)
+                // === DISCOVERY PHASE (indices 0–19) ===
                 // 0: GET_PARAMETERS(Node 0 — AFG)
                 // NumNodes=14 | DevType=AFG(0xA) | Cap: Out+In
-                5'd0:  rirb_rom_response = {32'h00010000, 32'h00A00001};
+                6'd0:  rirb_rom_response = {32'h00010000, 32'h00A00001};
                 // 1: GET_SUBSYSTEM_ID
                 // SubsystemID = 0x11020001 (Creative vendor)
-                5'd1:  rirb_rom_response = {32'h00010000, 32'h11020001};
+                6'd1:  rirb_rom_response = {32'h00010000, 32'h11020001};
                 // 2: GET_PARAMETERS(Node 1 — Audio Out, playback DAC)
                 // OutAmp=0, InAmp=0, Cap=0x3 (Out+Stereo), Type=0x1
-                5'd2:  rirb_rom_response = {32'h00210000, 32'h00030001};
+                6'd2:  rirb_rom_response = {32'h00210000, 32'h00030001};
                 // 3: GET_PARAMETERS(Node 2 — Audio Out, SPDIF out)
                 // DigOut, Type=0x2
-                5'd3:  rirb_rom_response = {32'h00410000, 32'h00020002};
+                6'd3:  rirb_rom_response = {32'h00410000, 32'h00020002};
                 // 4: GET_PARAMETERS(Node 3 — Audio In, recording ADC)
                 // InAmp present, Cap=0x2 (In), Type=0x1
-                5'd4:  rirb_rom_response = {32'h00810000, 32'h00020011};
+                6'd4:  rirb_rom_response = {32'h00810000, 32'h00020011};
                 // 5: GET_PARAMETERS(Node 4 — Audio Mixer)
                 // 3 inputs, mixer type=0x0
-                5'd5:  rirb_rom_response = {32'h01010000, 32'h00030000};
+                6'd5:  rirb_rom_response = {32'h01010000, 32'h00030000};
                 // 6: GET_PARAMETERS(Node 5 — Audio Mixer)
                 // 2 inputs, mixer type=0x0
-                5'd6:  rirb_rom_response = {32'h01410000, 32'h00020000};
+                6'd6:  rirb_rom_response = {32'h01410000, 32'h00020000};
                 // 7: GET_PARAMETERS(Node 6 — Audio Selector)
                 // 2 inputs, sel type=0x3
-                5'd7:  rirb_rom_response = {32'h01810000, 32'h00020003};
+                6'd7:  rirb_rom_response = {32'h01810000, 32'h00020003};
                 // 8: GET_PARAMETERS(Node 7 — Audio Selector)
                 // 3 inputs, sel type=0x3
-                5'd8:  rirb_rom_response = {32'h01C10000, 32'h00030003};
+                6'd8:  rirb_rom_response = {32'h01C10000, 32'h00030003};
                 // 9: GET_PARAMETERS(Node 8 — Audio Selector)
                 // 2 inputs, sel type=0x3
-                5'd9:  rirb_rom_response = {32'h02010000, 32'h00020003};
+                6'd9:  rirb_rom_response = {32'h02010000, 32'h00020003};
                 // 10: GET_PARAMETERS(Node 9 — Pin Complex, line-out)
                 // Cap=0x40000 (Out), type=0x4, default=0x01014010
-                5'd10: rirb_rom_response = {32'h02410000, 32'h00040004};
+                6'd10: rirb_rom_response = {32'h02410000, 32'h00040004};
                 // 11: GET_CONFIG_DEFAULT(Node 9 pin)
                 // Default assoc=1, seq=0, device=Line Out, loc=Ext, conn=1/8
-                5'd11: rirb_rom_response = {32'h02410000, 32'h01014010};
+                6'd11: rirb_rom_response = {32'h02410000, 32'h01014010};
                 // 12: GET_PARAMETERS(Node 10 — Pin Complex, mic in)
                 // Cap=0x20000 (In), type=0x4
-                5'd12: rirb_rom_response = {32'h02810000, 32'h00040024};
+                6'd12: rirb_rom_response = {32'h02810000, 32'h00040024};
                 // 13: GET_CONFIG_DEFAULT(Node 10 pin)
                 // Mic In, rear, 3.5mm
-                5'd13: rirb_rom_response = {32'h02810000, 32'h01A19020};
+                6'd13: rirb_rom_response = {32'h02810000, 32'h01A19020};
                 // 14: GET_PARAMETERS(Node 11 — Vendor-defined widget)
-                5'd14: rirb_rom_response = {32'h02C10000, 32'h0000000F};
+                6'd14: rirb_rom_response = {32'h02C10000, 32'h0000000F};
                 // 15: GET_PARAMETERS(Node 12 — Vendor-defined widget)
-                5'd15: rirb_rom_response = {32'h03010000, 32'h0000000F};
+                6'd15: rirb_rom_response = {32'h03010000, 32'h0000000F};
                 // 16: GET_PARAMETERS(Node 13 — Audio Selector)
-                5'd16: rirb_rom_response = {32'h03410000, 32'h00020003};
+                6'd16: rirb_rom_response = {32'h03410000, 32'h00020003};
                 // 17: GET_CONNECT_LIST(Node 7 — input amp connections)
-                5'd17: rirb_rom_response = {32'h03810000, 32'h00050004};
+                6'd17: rirb_rom_response = {32'h03810000, 32'h00050004};
                 // 18: GET_PARAMETERS(Node 14 — Beep generator)
-                5'd18: rirb_rom_response = {32'h03C10000, 32'h00070007};
+                6'd18: rirb_rom_response = {32'h03C10000, 32'h00070007};
                 // 19: GET_PARAMETERS(Node 15 — Vendor-defined)
-                5'd19: rirb_rom_response = {32'h04010000, 32'h0000000F};
-                // 20+: repeat last response (catch-all)
-                default: rirb_rom_response = {32'h04010000, 32'h0000000F};
+                6'd19: rirb_rom_response = {32'h04010000, 32'h0000000F};
+                // === RUNTIME PHASE (indices 20–31) ===
+                // 20: SET_POWER_STATE(Node 0 AFG — D0 ack)
+                6'd20: rirb_rom_response = {32'h00010000, 32'h00000000};
+                // 21: GET_PIN_SENSE(Node 9 — line-out, no jack detect trigger)
+                6'd21: rirb_rom_response = {32'h02410000, 32'h00000000};
+                // 22: GET_PIN_SENSE(Node 10 — mic in, no jack detect trigger)
+                6'd22: rirb_rom_response = {32'h02810000, 32'h00000000};
+                // 23: GET_AMP_GAIN_MUTE(Node 4 mixer, input 0)
+                6'd23: rirb_rom_response = {32'h01010000, 32'h00000000};
+                // 24: GET_AMP_GAIN_MUTE(Node 4 mixer, input 1)
+                6'd24: rirb_rom_response = {32'h01010000, 32'h00000001};
+                // 25: GET_CONVERTER_SAMPLE_RATE(Node 1)
+                6'd25: rirb_rom_response = {32'h00210000, 32'h0000BB80};  // 48000 Hz
+                // 26: GET_CONVERTER_STREAM_CHAN(Node 1)
+                6'd26: rirb_rom_response = {32'h00210000, 32'h00000000};
+                // 27: GET_VOLUME_KNOCK_CONTROL(Node 14 beep)
+                6'd27: rirb_rom_response = {32'h03C10000, 32'h00000000};
+                // 28: GET_EAPD_BTLENABLE(Node 1 — DAC)
+                6'd28: rirb_rom_response = {32'h00210000, 32'h00000002};
+                // 29: SET_PIN_WIDGET_CONTROL(Node 9 — OUT enable)
+                6'd29: rirb_rom_response = {32'h02410000, 32'h00000000};
+                // 30: SET_PIN_WIDGET_CONTROL(Node 10 — IN enable)
+                6'd30: rirb_rom_response = {32'h02810000, 32'h00000000};
+                // 31: GET_PARAMETERS(Node 1 — repeated for runtime poll)
+                6'd31: rirb_rom_response = {32'h00210000, 32'h00030001};
+                // 32+: catch-all — safe "no-op" response
+                default: rirb_rom_response = {32'h00010000, 32'h00000000};
             endcase
         end
     endfunction
@@ -297,8 +418,8 @@ module pcileech_bar_impl_device #(
             rirb_fake_response <= 64'h0;
             corbwp_prev        <= 8'h00;
             rirb_pending_count <= 8'h00;
-            rirb_wp_count      <= 16'h0000;
-            rirb_response_idx  <= 5'd0;
+            rirb_wp_count      <= 8'h00;
+            rirb_response_idx  <= 6'd0;
             corb_cte_prev      <= 1'b0;
             rirb_cte_prev      <= 1'b0;
         end else begin
@@ -312,27 +433,34 @@ module pcileech_bar_impl_device #(
             // CORB/RIRB reinitialization: driver disabled CTE → reset ROM index
             // and pending state so the next discovery cycle starts from index 0.
             if (rb_reinit) begin
-                rirb_response_idx  <= 5'd0;
+                rirb_response_idx  <= 6'd0;
                 rirb_pending_count <= 8'h00;
                 rirb_response_fsm  <= 8'h00;
-                rirb_wp_count      <= 16'h0000;
+                rirb_wp_count      <= 8'h00;
+                corbwp_prev        <= 8'h00;
+                reg_0x00000048[15:8] <= 8'h00;  // reset CORBRP to 0
                 reg_0x00000060[0]  <= 1'b0;  // clear RIRBINTSTS.INTFL
                 reg_0x0000005C[1:0] <= 2'b0;  // clear RIRBSTS (UIS + OIS)
             end
 
-            // Enqueue: add the actual number of entries the driver submitted
-            if (corbwp_changed) begin
+            // Enqueue: add the actual number of entries the driver submitted.
+            // Guard: if rb_reinit is active, ignore corbwp_changed in the same
+            // cycle. Without this, a driver that changes CORBWP while disabling
+            // CTE would leave a stale pending count after reinitialization.
+            if (corbwp_changed && !rb_reinit) begin
                 rirb_pending_count <= rirb_pending_count + corbwp_delta;
+                // Auto-advance CORB read pointer (controller consumed CORB entries)
+                reg_0x00000048[15:8] <= reg_0x00000048[15:8] + corbwp_delta;
             end
 
             // Build response data when starting a new response
             if (rirb_response_fsm == 8'h00 && rirb_pending_count > 8'h00) begin
                 // Look up the next response from the CA0132 ROM
                 rirb_fake_response <= rirb_rom_response(rirb_response_idx);
-                // Saturate index at 20 (catch-all) instead of wrapping at 32.
-                // Without this, index 31→0 would restart from AFG GET_PARAMETERS,
+                // Saturate index at 32 (catch-all) instead of wrapping at 32.
+                // Without this, index 32→0 would restart from AFG GET_PARAMETERS,
                 // causing the driver to see duplicate discovery responses.
-                rirb_response_idx  <= (rirb_response_idx < 5'd19) ? rirb_response_idx + 5'h1 : rirb_response_idx;
+                rirb_response_idx  <= (rirb_response_idx < 6'd31) ? rirb_response_idx + 6'h1 : rirb_response_idx;
                 rirb_response_fsm  <= 8'h04; // 4-cycle delay before committing
             end
 
@@ -342,9 +470,11 @@ module pcileech_bar_impl_device #(
 
                 // When FSM reaches 1, commit the fake response
                 if (rirb_response_fsm == 8'h01) begin
-                    // Increment RIRBWP (bits [15:8] only — RINTCNT [7:0] is driver-owned)
-                    rirb_wp_count <= rirb_wp_count + 16'h0001;
-                    reg_0x00000058[15:8] <= rirb_wp_count[7:0] + 8'h01;
+                    // Increment RIRBWP counter (8-bit, wraps at 256 per RIRBSIZE).
+                    // reg_0x00000058[15:8] = RIRBWP (firmware-owned)
+                    // reg_0x00000058[7:0]  = RINTCNT (driver-owned, generic write)
+                    rirb_wp_count <= rirb_wp_count + 8'h01;
+                    reg_0x00000058[15:8] <= rirb_wp_count;
 
                     // Set RIRB response data in spec-defined response registers
                     // HD Audio RIRB entry layout (8 bytes at WP*8):
@@ -356,8 +486,10 @@ module pcileech_bar_impl_device #(
                     reg_0x00000070[31:0] <= rirb_fake_response[63:32];  // RIRBRESP_LO = response payload
                     reg_0x00000078[31:0] <= rirb_fake_response[31:0];   // RIRBRESP_HI = type + NID
 
-                    // Set RIRBSTS.UIS (unsolicited interrupt status) at 0x5C bit 1
-                    reg_0x0000005C[1] <= 1'b1;
+                    // Set RIRBSTS.UIS only for unsolicited responses (type=2), not solicited VERB responses (type=1)
+                    if (rirb_fake_response[3:0] == 4'h2) begin
+                        reg_0x0000005C[1] <= 1'b1;
+                    end
 
                     // Set RIRBINTSTS.INTFL — tells driver a response is available
                     reg_0x00000060[0] <= 1'b1;
@@ -498,7 +630,7 @@ module pcileech_bar_impl_device #(
 {{ end }}        end
         else if (wr_valid) begin
             case (wr_addr[31:0] & 32'hFFFFFFFC)
-{{ range .BARModel.Registers }}{{ if ne .RWMask 0 }}                32'h{{ hex08 (alignedOffset .Offset) }}: begin
+{{ range .BARModel.Registers }}{{ if and (ne .RWMask 0) (not .IsRW1C) }}                32'h{{ hex08 (alignedOffset .Offset) }}: begin
                     if (wr_be[0]) reg_0x{{ hex08 .Offset }}[7:0]   <= (reg_0x{{ hex08 .Offset }}[7:0]   & ~8'h{{ hex02 (index (rwMaskBytes .RWMask) 0) }}) | (wr_data[7:0]   & 8'h{{ hex02 (index (rwMaskBytes .RWMask) 0) }});
                     if (wr_be[1]) reg_0x{{ hex08 .Offset }}[15:8]  <= (reg_0x{{ hex08 .Offset }}[15:8]  & ~8'h{{ hex02 (index (rwMaskBytes .RWMask) 1) }}) | (wr_data[15:8]  & 8'h{{ hex02 (index (rwMaskBytes .RWMask) 1) }});
                     if (wr_be[2]) reg_0x{{ hex08 .Offset }}[23:16] <= (reg_0x{{ hex08 .Offset }}[23:16] & ~8'h{{ hex02 (index (rwMaskBytes .RWMask) 2) }}) | (wr_data[23:16] & 8'h{{ hex02 (index (rwMaskBytes .RWMask) 2) }});

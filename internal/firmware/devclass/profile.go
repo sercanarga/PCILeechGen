@@ -30,6 +30,7 @@ type BARDefault struct {
 	Name   string
 	Reset  uint32
 	RWMask uint32
+	IsRW1C bool
 }
 
 // ProfileForClass returns a profile for the class code, or a generic fallback.
