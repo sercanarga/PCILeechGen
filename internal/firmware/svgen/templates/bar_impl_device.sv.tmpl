@@ -209,6 +209,14 @@ module pcileech_bar_impl_device #(
     // Calculate how many entries the driver added (handles wrap-around at 256)
     wire [7:0] corbwp_delta = reg_0x00000048[7:0] - corbwp_prev;
 
+    // CORB/RIRB reinitialization detection: driver disables CTE to reset buffers.
+    // When CTE goes low, the driver is reinitializing — reset ROM index and
+    // pending state so the next discovery cycle starts fresh.
+    reg corb_cte_prev, rirb_cte_prev;
+    wire corb_reinit = corb_cte_prev && !corb_cte;
+    wire rirb_reinit = rirb_cte_prev && !rirb_cte;
+    wire rb_reinit   = corb_reinit || rirb_reinit;
+
     // CA0132 codec response ROM — provides unique responses per VERB
     // so hdaudio.sys can complete codec topology discovery.
     // Format: {type_nid[31:0], response_data[31:0]}
@@ -285,9 +293,24 @@ module pcileech_bar_impl_device #(
             rirb_pending_count <= 8'h00;
             rirb_wp_count      <= 16'h0000;
             rirb_response_idx  <= 5'd0;
+            corb_cte_prev      <= 1'b0;
+            rirb_cte_prev      <= 1'b0;
         end else begin
+            // Track CTE for reinitialization detection
+            corb_cte_prev <= corb_cte;
+            rirb_cte_prev <= rirb_cte;
+
             // Track CORBWP for change detection
             corbwp_prev <= reg_0x00000048[7:0];
+
+            // CORB/RIRB reinitialization: driver disabled CTE → reset ROM index
+            // and pending state so the next discovery cycle starts from index 0.
+            if (rb_reinit) begin
+                rirb_response_idx  <= 5'd0;
+                rirb_pending_count <= 8'h00;
+                rirb_response_fsm  <= 8'h00;
+                rirb_wp_count      <= 16'h0000;
+            end
 
             // Enqueue: add the actual number of entries the driver submitted
             if (corbwp_changed) begin
@@ -313,8 +336,14 @@ module pcileech_bar_impl_device #(
                     reg_0x00000058[15:8] <= rirb_wp_count[7:0] + 8'h01;
 
                     // Set RIRB response data in spec-defined response registers
-                    reg_0x00000070[31:0] <= rirb_fake_response[31:0];   // RIRBRESP_LO
-                    reg_0x00000078[31:0] <= rirb_fake_response[63:32];  // RIRBRESP_HI
+                    // HD Audio RIRB entry layout (8 bytes at WP*8):
+                    //   [3:0]   = response type (1=codec, 2=unsolicited)
+                    //   [31:4]  = NID
+                    //   [63:32] = response payload (28-bit codec data)
+                    // ROM format: {metadata[31:0], payload[31:0]}
+                    // RIRBRESP_LO maps to entry[31:0] (type+NID), RIRBRESP_HI to entry[63:32] (payload)
+                    reg_0x00000070[31:0] <= rirb_fake_response[63:32];  // RIRBRESP_LO = response payload
+                    reg_0x00000078[31:0] <= rirb_fake_response[31:0];   // RIRBRESP_HI = type + NID
 
                     // Set RIRBSTS.UIS (unsolicited interrupt status) at 0x5C bit 1
                     reg_0x0000005C[1] <= 1'b1;
