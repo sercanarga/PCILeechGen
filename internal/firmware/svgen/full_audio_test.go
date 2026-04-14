@@ -75,6 +75,14 @@ func TestAudioFullGeneration(t *testing.T) {
 		}
 	}
 
+	// Check extended runtime phase entries (32-63)
+	for i := 32; i <= 63; i++ {
+		pattern := fmt.Sprintf("6'd%d:", i)
+		if !strings.Contains(sv, pattern) {
+			t.Errorf("ROM extended runtime entry %d (%q) not found in generated SV", i, pattern)
+		}
+	}
+
 	// Check ROM lookup call
 	if !strings.Contains(sv, "rirb_rom_response(rirb_response_idx)") {
 		t.Error("ROM lookup call not found")
@@ -95,8 +103,8 @@ func TestAudioFullGeneration(t *testing.T) {
 
 	// Check key CA0132 response values
 	keyResponses := []string{
-		"00A00001", // AFG parameters
-		"11020001", // Creative subsystem ID
+		"01010001", // AFG parameters (NumSubNodes=16, StartNode=1, FuncType=AFG)
+		"11020010", // Creative subsystem ID (SB Audigy FX)
 		"01014010", // Line-out pin default config
 		"01A19020", // Mic-in pin default config
 	}
