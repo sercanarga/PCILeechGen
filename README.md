@@ -29,6 +29,7 @@
 - [Supported Boards](#supported-boards)
 - [Quick Start](#quick-start)
 - [Commands](#commands)
+- [Utilities](#utilities)
 - [Output](#output)
 - [Architecture](#architecture)
 - [Development](#development)
@@ -85,26 +86,30 @@
 <tr><td valign="top">
 
 **Stealth & Timing**
-- TLP Latency Emulation (PRNG jitter, thermal drift, burst correlation)
+- TLP Latency Emulation (xorshift128+ PRNG, 4-seed, thermal drift, burst correlation)
 - Donor-Profiled TLP Timing (per-device response histogram CDF reproduction)
-- Write Completion Emulation (TLP completion timing)
-- ASPM Clamping (L0s/L1 stealth pass)
+- Write Completion Emulation (separate MMIO write latency FSM with wr_ack handshake)
+- Completion Timeout (force-release hung reads with 0xFFFFFFFF after configurable cycles)
+- ASPM Clamping (L0s/L1, Clock PM, and LTR Mechanism disable)
 - AER Mask Normalization (error reporting stealth)
-- Power State Variance (config space randomization)
-- Link Speed / Width (clamped to board)
+- Power State Variance (PMC Data Scale jitter per build)
+- Subsystem ID Offset Jitter (±1 random offset, stays within driver tolerance)
+- DSN OUI-Preserving Randomization (valid DSNs keep vendor OUI, serial randomized per build)
+- Link Speed / Width (clamped to board maximum, not donor negotiated speed)
 - P&R Randomization (per-build Vivado placement seed)
-- VSEC Entropy Embed (build-unique fingerprint in ext config space)
+- VSEC Entropy Embed (build-unique fingerprint via VSEC ID=0xFC in extended config space)
 
 </td><td valign="top">
 
 **Diagnostics & Validation**
 - VFIO Diagnostics (power state, BAR accessibility, IOMMU isolation)
-- Fallback Config (class-based defaults for NVMe, xHCI, Ethernet, Audio, GPU, SATA, Wi-Fi, Thunderbolt)
-- Post-Build Validation (output files, SV IDs, HEX/COE format)
+- Fallback Config (class-based defaults for NVMe, xHCI, Ethernet, Audio, GPU, SATA, Wi-Fi, Thunderbolt, Generic)
+- Post-Build Validation (output file existence, SV IDs, HEX/COE format)
 - Vivado Build Report (error categorization, benign warning filter)
 - Build Manifest (JSON with SHA256 checksums)
 - Manifest Verification (`verify-manifest` - integrity check)
 - Config Space Diff Report (per-byte change log with reasons)
+- Capability Chain Validation (pointer sanity, loop detection, max depth check)
 
 </td></tr>
 </table>
@@ -297,6 +302,7 @@ sudo ./bin/pcileechgen build --from-json device_context.json --board CaptainDMA_
 | `--output` | `pcileech_datastore` | Output directory |
 | `--lib-dir` | `lib/pcileech-fpga` | Path to pcileech-fpga library |
 | `--skip-vivado` | `false` | Only generate artifacts, skip synthesis |
+| `--stock-bar` | `false` | Skip custom BAR module generation (uses stock pcileech-fpga BAR controller) diagnostic flag for isolating detection issues |
 | `--vivado-path` | auto-detect | Path to Vivado installation |
 | `--jobs` | `4` | Parallel Vivado jobs |
 | `--timeout` | `3600` | Vivado timeout (seconds) |
@@ -350,6 +356,36 @@ Total: 17 boards
 ```
 
 </details>
+
+---
+
+## Utilities
+
+### Windows Device History Cleanup
+
+After flashing and testing firmware, Windows caches device metadata in the registry. Stale entries from previous firmware builds can cause conflicts, Code 10 errors, or driver misidentification. The `tools/` directory contains an interactive cleanup utility:
+
+| File | Description |
+|:-----|:-----------|
+| `cleanup_device_history.bat` | Windows batch launcher (double-click, runs as Administrator) |
+| `cleanup_device_history.ps1` | PowerShell script with interactive arrow-key menu |
+
+**Usage:**
+- **Double-click** `cleanup_device_history.bat` and confirm UAC prompt
+- Or open PowerShell as Administrator and run: `.\cleanup_device_history.ps1`
+
+> [!TIP]
+> If running the `.ps1` directly and you get an execution policy error, use: `powershell -ExecutionPolicy Bypass -File .\cleanup_device_history.ps1`
+
+**Features:**
+- Scans both PCI (`Enum\PCI`) and USB (`Enum\USB`) device history across all ControlSets
+- Deduplicates by Hardware ID + Instance ID, merging multi-ControlSet entries
+- Interactive menu with arrow key navigation, driver info, and device type tags `[PCI]`/`[USB]`
+- Automatic registry backup to desktop before any changes
+- Cleans setupapi logs, DeviceMetadataStore, PnP event logs, and device migration cache
+
+> [!IMPORTANT]
+> Requires Administrator privileges. Reboot after cleanup before reconnecting the device.
 
 ---
 
