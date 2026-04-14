@@ -21,7 +21,7 @@ func TestClearMiscPass_AllFields(t *testing.T) {
 	cs := pci.NewConfigSpace()
 	cs.Size = pci.ConfigSpaceLegacySize
 	cs.WriteU8(0x0F, 0xFF) // BIST
-	cs.WriteU8(0x3C, 0x0A) // Interrupt Line
+	cs.WriteU8(0x3C, 0x0A) // Interrupt Line (preserved, not cleared)
 	cs.WriteU8(0x0D, 0x40) // Latency Timer
 	cs.WriteU8(0x0C, 0x10) // Cache Line Size
 
@@ -32,8 +32,9 @@ func TestClearMiscPass_AllFields(t *testing.T) {
 	if cs.ReadU8(0x0F) != 0 {
 		t.Error("BIST should be cleared")
 	}
-	if cs.ReadU8(0x3C) != 0 {
-		t.Error("Interrupt Line should be cleared")
+	// Interrupt Line is intentionally NOT cleared (see passes.go comment)
+	if cs.ReadU8(0x3C) != 0x0A {
+		t.Errorf("Interrupt Line should be preserved, got 0x%02X want 0x0A", cs.ReadU8(0x3C))
 	}
 	if cs.ReadU8(0x0D) != 0 {
 		t.Error("Latency Timer should be cleared")

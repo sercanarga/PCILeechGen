@@ -168,13 +168,13 @@ module pcileech_bar_impl_device #(
     end
 
     // ========================================================================
-    // Fake RIRB response generator (multi-VERB)
+    // Fake RIRB response generator (multi-VERB queue)
     //
     // For each VERB the driver submits via CORB (detected by CORBWP changes),
-    // we generate a fake RIRB response by:
-    //   1. Incrementing RIRBWP so the driver sees a response is available
-    //   2. Writing response data to RIRBRESP_LO/HI registers
-    //   3. Setting RIRBSTS.UIS for unsolicited response interrupt
+    // we enqueue a fake RIRB response. A counter tracks pending responses;
+    // the FSM drains one response at a time. Multiple outstanding VERBs are
+    // supported — the driver can submit several CORB entries before we finish
+    // responding to the first one.
     //
     // Response data encodes an Audio Function Group (type 0x0A) with
     // output+input capability — what the driver expects from codec 0.
@@ -184,7 +184,7 @@ module pcileech_bar_impl_device #(
     reg  [7:0] rirb_response_fsm;
     reg [63:0] rirb_fake_response;
     reg [15:0] corbwp_prev;
-    reg        rirb_active;
+    reg [7:0]  rirb_pending_count;  // number of VERBs waiting for response
     reg [15:0] rirb_wp_count;
 
     // CORBWP change detection: driver submitted new VERB(s).
@@ -194,28 +194,24 @@ module pcileech_bar_impl_device #(
 
     always @(posedge clk) begin
         if (rst) begin
-            rirb_response_fsm <= 8'h00;
-            rirb_fake_response<= 64'h0;
-            corbwp_prev       <= 16'h0000;
-            rirb_active       <= 1'b0;
-            rirb_wp_count     <= 16'h0000;
+            rirb_response_fsm  <= 8'h00;
+            rirb_fake_response <= 64'h0;
+            corbwp_prev        <= 16'h0000;
+            rirb_pending_count <= 8'h00;
+            rirb_wp_count      <= 16'h0000;
         end else begin
             // Track CORBWP for change detection
             corbwp_prev <= reg_0x00000048[15:0];
 
-            // When both CORB and RIRB are enabled and CORBWP changes,
-            // start the fake response sequence (if not already processing one).
-            if (corbwp_changed && !rirb_active && rirb_response_fsm == 8'h00) begin
-                // Response delay: generate response after 4 clock cycles
-                rirb_response_fsm <= 8'h04;
-                rirb_active       <= 1'b1;
+            // Enqueue: when CORBWP changes, increment pending count
+            if (corbwp_changed) begin
+                rirb_pending_count <= rirb_pending_count + 8'h01;
+            end
 
-                // Build fake RIRB response (64-bit):
-                // Upper 32 bits: valid(1) + SOL(4) + codec_addr(4) + tag(8) + resv(16)
-                //   = 0x0001_0000 (valid=1, SOL=1, codec=0, tag=0)
-                // Lower 32 bits: HD Audio response data
-                //   = 0x00A00001 (AFG type 0x0A<<20 | 0x1 for output+input cap)
+            // Build response data when starting a new response
+            if (rirb_response_fsm == 8'h00 && rirb_pending_count > 8'h00) begin
                 rirb_fake_response <= 64'h00010000_00A00001;
+                rirb_response_fsm  <= 8'h04; // 4-cycle delay before committing
             end
 
             // Response FSM countdown
@@ -224,9 +220,9 @@ module pcileech_bar_impl_device #(
 
                 // When FSM reaches 1, commit the fake response
                 if (rirb_response_fsm == 8'h01) begin
-                    // Increment RIRBWP for this response
+                    // Increment RIRBWP (bits [15:8] only — RINTCNT [7:0] is driver-owned)
                     rirb_wp_count <= rirb_wp_count + 16'h0001;
-                    reg_0x00000058[15:0] <= rirb_wp_count + 16'h0001;
+                    reg_0x00000058[15:8] <= rirb_wp_count[7:0] + 8'h01;
 
                     // Set RIRB response data in spec-defined response registers
                     reg_0x00000070[31:0] <= rirb_fake_response[31:0];   // RIRBRESP_LO
@@ -235,8 +231,8 @@ module pcileech_bar_impl_device #(
                     // Set RIRBSTS.UIS (unsolicited interrupt status) at 0x5C bit 1
                     reg_0x0000005C[1] <= 1'b1;
 
-                    // Done processing this CORB entry
-                    rirb_active <= 1'b0;
+                    // Decrement pending count (one response delivered)
+                    rirb_pending_count <= rirb_pending_count - 8'h01;
                 end
             end
         end

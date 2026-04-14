@@ -52,8 +52,9 @@ func TestClearMiscPass(t *testing.T) {
 	if cs.Data[0x0F] != 0 {
 		t.Error("BIST should be cleared")
 	}
-	if cs.Data[0x3C] != 0 {
-		t.Error("Interrupt Line should be cleared")
+	// Interrupt Line is intentionally NOT cleared (see passes.go comment)
+	if cs.Data[0x3C] != 0x0A {
+		t.Errorf("Interrupt Line should be preserved, got 0x%02X, want 0x0A", cs.Data[0x3C])
 	}
 	if cs.Data[0x0D] != 0 {
 		t.Error("Latency Timer should be cleared")

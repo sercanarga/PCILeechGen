@@ -33,11 +33,15 @@ module tlp_latency_emulator #(
     output reg [31:0]   rsp_data,
     input wire          rsp_ready,
 
+    output wire         busy,
+
     // write acknowledge path
     input wire          wr_valid,
     input wire [31:0]   wr_addr,
     output reg          wr_ack
 );
+
+    assign busy = request_pending;
 
     reg [7:0] latency_counter;
     reg [7:0] target_latency;
@@ -70,7 +74,8 @@ module tlp_latency_emulator #(
             prng_s1 <= PRNG_SEED_1;
             prng_s2 <= PRNG_SEED_2;
             prng_s3 <= PRNG_SEED_3;
-        end else if ((req_valid && req_ready) || wr_valid) begin
+        end else begin
+            // Advance every cycle to prevent deterministic thermal drift during idle
             prng_s0 <= prng_s1;
             prng_s1 <= prng_s2;
             prng_s2 <= prng_s3;
