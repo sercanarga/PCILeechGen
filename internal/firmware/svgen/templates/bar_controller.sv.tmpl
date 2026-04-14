@@ -89,13 +89,24 @@ module pcileech_tlps128_bar_controller(
         .clk            ( clk                           ),
         .tlps_in        ( tlps_in                       ),
         .tlps_in_valid  ( tlps_in.tvalid && in_is_bar && in_is_wr ),
-        .tlps_in_ready  ( in_is_wr_ready                ),
+        .tlps_in_ready  ( wrengine_ready                ),
         .wr_bar         ( wr_bar                        ),
         .wr_addr        ( wr_addr                       ),
         .wr_be          ( wr_be                         ),
         .wr_data        ( wr_data                       ),
         .wr_valid       ( wr_valid                      )
     );
+
+{{ if .LatencyConfig }}
+    // Write backpressure: combine wrengine ready with BAR0 write latency ack.
+    // New writes are blocked until the previous BAR0 write's emulated latency completes.
+    wire        bar0_wr_ack;
+    wire        wrengine_ready;
+    assign in_is_wr_ready = wrengine_ready && bar0_wr_ack;
+{{ else }}
+    wire        wrengine_ready;
+    assign in_is_wr_ready = wrengine_ready;
+{{ end }}
 
 {{ if .LatencyConfig }}
     // BAR0 raw response wires (before latency emulation)
@@ -107,10 +118,45 @@ module pcileech_tlps128_bar_controller(
     wire [87:0] bar0_emu_ctx;
     wire [31:0] bar0_emu_data;
     wire        bar0_emu_valid;
-    wire        bar0_emu_ready = 1'b1;
+    wire        bar0_emu_busy; // from latency emulator: request_pending
+    wire        bar0_emu_ready = !bar0_emu_busy; // 1 when emulator can accept new data
+    reg         bar0_emu_busy_d1; // delayed busy for edge detection
+    wire        bar0_emu_accepted = bar0_emu_busy && !bar0_emu_busy_d1; // 0->1 edge = data taken
 
-    // write acknowledge from latency emulator
-    wire        bar0_wr_ack;
+    // 16-deep circular buffer between BAR engine and latency emulator.
+    // Always captures BAR responses on bar0_raw_valid (1-cycle pulse).
+    // The latency emulator processes one request at a time; the 16-deep
+    // buffer absorbs back-to-back BAR responses from multi-DWORD reads.
+    //
+    // Sizing: the BAR produces responses at 1/cycle (pipelined 2-cycle latency).
+    // The emulator drains at 1 per MIN_LATENCY cycles (default MIN=2, drain=0.5/cycle).
+    // Net fill rate = 0.5 entries/cycle. For a max 32-DWORD BAR read (128 bytes),
+    // the worst-case peak is 16 entries — hence 16-deep.
+    //
+    // AXI-style handshake:
+    //   Push: bar0_raw_valid && !full  (unconditional capture)
+    //   Pop:  bar0_emu_accepted        (emulator went idle->busy = took data)
+    //
+    // Address capture: rd_req_addr is a live signal that increments every
+    // cycle during multi-DWORD reads. By the time the BAR produces a response
+    // (2-cycle latency), rd_req_addr has advanced. We reconstruct the correct
+    // address from rd_req_ctx which contains {first, last, data[31:12], dwaddr}
+    // set by the rdengine at request time.
+    reg  [87:0] bar0_buf_ctx  [0:15];
+    reg  [31:0] bar0_buf_data [0:15];
+    reg  [31:0] bar0_buf_addr [0:15]; // reconstructed request address from ctx
+    reg  [4:0]  bar0_buf_count;   // number of entries (0-16)
+    reg  [3:0]  bar0_buf_rd;      // read pointer
+    reg  [3:0]  bar0_buf_wr;      // write pointer
+    wire        bar0_buf_full  = (bar0_buf_count >= 5'd16);
+    wire        bar0_buf_empty = (bar0_buf_count == 5'd0);
+    wire [87:0] bar0_buf_ctx_w   = bar0_buf_ctx[bar0_buf_rd];
+    wire [31:0] bar0_buf_data_w  = bar0_buf_data[bar0_buf_rd];
+    wire [31:0] bar0_buf_addr_w  = bar0_buf_addr[bar0_buf_rd]; // address from buffer head
+    wire        bar0_buf_write   = bar0_raw_valid && !bar0_buf_full;
+    wire        bar0_buf_pop     = bar0_emu_accepted && !bar0_buf_empty;
+    // Reconstruct address from ctx: {first[87], last[86], data[31:12]..}
+    wire [31:0] bar0_req_addr_from_ctx = {bar0_raw_ctx[31:12], bar0_raw_ctx[11:2], 2'b00};
 {{ end }}
 {{ if .MSIXConfig }}
     // MSI-X intermediate wires
@@ -216,10 +262,10 @@ module pcileech_tlps128_bar_controller(
     tlp_latency_emulator i_latency_emu(
         .clk            ( clk                           ),
         .rst            ( rst                           ),
-        .req_valid      ( bar0_raw_valid                ),
-        .req_ctx        ( bar0_raw_ctx                  ),
-        .req_data       ( bar0_raw_data                 ),
-        .req_addr       ( rd_req_addr                   ),
+        .req_valid      ( !bar0_buf_empty               ), // data available in buffer
+        .req_ctx        ( bar0_buf_ctx_w                ), // read from buffer head
+        .req_data       ( bar0_buf_data_w               ),
+        .req_addr       ( bar0_buf_addr_w               ), // address from buffered request head
         .req_ready      (                               ),
 {{ if .MSIXConfig }}
         .rsp_valid      ( bar0_base_valid               ),
@@ -233,8 +279,40 @@ module pcileech_tlps128_bar_controller(
         .rsp_ready      ( bar0_emu_ready                ),
         .wr_valid       ( wr_valid && wr_bar[0]         ),
         .wr_addr        ( wr_addr                       ),
-        .wr_ack         ( bar0_wr_ack                   )
+        .wr_ack         ( bar0_wr_ack                   ),
+        .busy           ( bar0_emu_busy                 )
     );
+
+    // 16-deep circular buffer FSM:
+    // Push: on bar0_raw_valid, push to write slot if not full.
+    // Pop:  when emulator goes idle->busy (bar0_emu_accepted), it took the head data.
+    // Both push and pop can happen in the same cycle (count adjusts correctly).
+    always @(posedge clk) begin
+        if (rst) begin
+            bar0_buf_count     <= 3'd0;
+            bar0_buf_rd        <= 2'd0;
+            bar0_buf_wr        <= 2'd0;
+            bar0_emu_busy_d1   <= 1'b0;
+        end else begin
+            bar0_emu_busy_d1 <= bar0_emu_busy;
+
+            // Pop head when emulator accepted (idle->busy transition = took head data)
+            if (bar0_buf_pop) begin
+                bar0_buf_rd <= bar0_buf_rd + 2'd1;
+                bar0_buf_count <= bar0_buf_count - 3'd1;
+            end
+
+            // Push tail on new BAR response
+            if (bar0_buf_write) begin
+                bar0_buf_ctx[bar0_buf_wr]  <= bar0_raw_ctx;
+                bar0_buf_data[bar0_buf_wr] <= bar0_raw_data;
+                bar0_buf_addr[bar0_buf_wr] <= bar0_req_addr_from_ctx; // reconstruct address from ctx
+                bar0_buf_wr <= bar0_buf_wr + 2'd1;
+                bar0_buf_count <= bar0_buf_count + 3'd1;
+            end
+        end
+    end
+
 {{ end }}
 
 {{ if .MSIXConfig }}

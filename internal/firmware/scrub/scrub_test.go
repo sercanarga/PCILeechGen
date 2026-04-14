@@ -37,8 +37,8 @@ func TestScrubConfigSpace(t *testing.T) {
 	if scrubbed.BIST() != 0x00 {
 		t.Errorf("BIST not cleared: 0x%02x", scrubbed.BIST())
 	}
-	if scrubbed.InterruptLine() != 0x00 {
-		t.Errorf("InterruptLine not cleared: 0x%02x", scrubbed.InterruptLine())
+	if scrubbed.InterruptLine() != 0x0B {
+		t.Errorf("InterruptLine should be preserved (not cleared): got 0x%02x, want 0x0B", scrubbed.InterruptLine())
 	}
 	if scrubbed.LatencyTimer() != 0x00 {
 		t.Errorf("LatencyTimer not cleared: 0x%02x", scrubbed.LatencyTimer())
