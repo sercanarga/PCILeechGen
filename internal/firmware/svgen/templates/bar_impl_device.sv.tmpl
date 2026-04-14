@@ -169,6 +169,8 @@ module pcileech_bar_impl_device #(
                 rirb_wp_count      <= 16'h0000;
                 rirb_response_fsm  <= 8'h00;
                 rirb_response_idx  <= 5'd0;
+                reg_0x00000060[0]  <= 1'b0;  // clear RIRBINTSTS.INTFL
+                reg_0x0000005C[1:0] <= 2'b0;  // clear RIRBSTS (UIS + OIS)
             end
         end
     end
@@ -207,7 +209,11 @@ module pcileech_bar_impl_device #(
     wire rirb_cte  = reg_0x0000005C[0];   // RIRBCTL.CTE
     wire corbwp_changed = (corbwp_prev != reg_0x00000048[7:0]) && corb_cte && rirb_cte;
     // Calculate how many entries the driver added (handles wrap-around at 256)
-    wire [7:0] corbwp_delta = reg_0x00000048[7:0] - corbwp_prev;
+    wire [7:0] corbwp_delta_raw = reg_0x00000048[7:0] - corbwp_prev;
+    // If delta > 32, the driver reset CORBWP without disabling CTE — treat as
+    // no new VERBs. Without this, a WP reset enqueues 200+ phantom responses
+    // that drain the ROM into the catch-all zone.
+    wire [7:0] corbwp_delta = (corbwp_delta_raw > 8'h20) ? 8'h00 : corbwp_delta_raw;
 
     // CORB/RIRB reinitialization detection: driver disables CTE to reset buffers.
     // When CTE goes low, the driver is reinitializing — reset ROM index and
@@ -310,6 +316,8 @@ module pcileech_bar_impl_device #(
                 rirb_pending_count <= 8'h00;
                 rirb_response_fsm  <= 8'h00;
                 rirb_wp_count      <= 16'h0000;
+                reg_0x00000060[0]  <= 1'b0;  // clear RIRBINTSTS.INTFL
+                reg_0x0000005C[1:0] <= 2'b0;  // clear RIRBSTS (UIS + OIS)
             end
 
             // Enqueue: add the actual number of entries the driver submitted
@@ -321,7 +329,10 @@ module pcileech_bar_impl_device #(
             if (rirb_response_fsm == 8'h00 && rirb_pending_count > 8'h00) begin
                 // Look up the next response from the CA0132 ROM
                 rirb_fake_response <= rirb_rom_response(rirb_response_idx);
-                rirb_response_idx  <= rirb_response_idx + 5'h1;
+                // Saturate index at 20 (catch-all) instead of wrapping at 32.
+                // Without this, index 31→0 would restart from AFG GET_PARAMETERS,
+                // causing the driver to see duplicate discovery responses.
+                rirb_response_idx  <= (rirb_response_idx < 5'd19) ? rirb_response_idx + 5'h1 : rirb_response_idx;
                 rirb_response_fsm  <= 8'h04; // 4-cycle delay before committing
             end
 
@@ -347,6 +358,9 @@ module pcileech_bar_impl_device #(
 
                     // Set RIRBSTS.UIS (unsolicited interrupt status) at 0x5C bit 1
                     reg_0x0000005C[1] <= 1'b1;
+
+                    // Set RIRBINTSTS.INTFL — tells driver a response is available
+                    reg_0x00000060[0] <= 1'b1;
 
                     // Decrement pending count (one response delivered)
                     rirb_pending_count <= rirb_pending_count - 8'h01;
