@@ -168,12 +168,13 @@ module pcileech_bar_impl_device #(
                 rirb_pending_count <= 8'h00;
                 rirb_wp_count      <= 16'h0000;
                 rirb_response_fsm  <= 8'h00;
+                rirb_response_idx  <= 5'd0;
             end
         end
     end
 
     // ========================================================================
-    // Fake RIRB response generator (multi-VERB queue)
+    // Fake RIRB response generator (multi-VERB queue, sequence-based ROM)
     //
     // For each VERB the driver submits via CORB (detected by CORBWP changes),
     // we enqueue a fake RIRB response. A counter tracks pending responses;
@@ -185,16 +186,21 @@ module pcileech_bar_impl_device #(
     // in a single write (e.g., submitting multiple VERBs at once). We compute
     // the actual delta to enqueue the correct number of responses.
     //
-    // Response data encodes an Audio Function Group (type 0x0A) with
-    // output+input capability — what the driver expects from codec 0.
-    // The response format matches HD Audio spec: data field = type<<20 | 0x1
-    // = 0x00A00001 (AFG type 0x0A, output+input cap).
+    // Response ROM: hdaudio.sys sends different VERBs during codec topology
+    // discovery and expects different responses. A canned ROM provides a
+    // realistic sequence matching CA0132 (Creative Sound Blaster Audigy FX V2).
+    // The 64-bit response format:
+    //   [63:32] = type (bits [3:0]) | NID (bits [27:4])
+    //   [31:0]  = response data (28-bit payload)
+    //
+    // RIRB response type 0x1 = standard VERB response data.
     // ========================================================================
     reg  [7:0] rirb_response_fsm;
     reg [63:0] rirb_fake_response;
     reg  [7:0] corbwp_prev;
     reg  [7:0] rirb_pending_count;  // number of VERBs waiting for response
     reg [15:0] rirb_wp_count;
+    reg  [4:0] rirb_response_idx;   // index into response ROM (0–31)
 
     // CORBWP change detection: driver submitted new VERB(s).
     wire corb_cte = reg_0x0000004C[7];   // CORBCTL.CTE
@@ -203,6 +209,74 @@ module pcileech_bar_impl_device #(
     // Calculate how many entries the driver added (handles wrap-around at 256)
     wire [7:0] corbwp_delta = reg_0x00000048[7:0] - corbwp_prev;
 
+    // CA0132 codec response ROM — provides unique responses per VERB
+    // so hdaudio.sys can complete codec topology discovery.
+    // Format: {type_nid[31:0], response_data[31:0]}
+    // type=1 in upper bits [31:28], NID in [27:4].
+    function [63:0] rirb_rom_response;
+        input [4:0] idx;
+        begin
+            case (idx)
+                // 0: GET_PARAMETERS(Node 0 — AFG)
+                // NumNodes=14 | DevType=AFG(0xA) | Cap: Out+In
+                5'd0:  rirb_rom_response = {32'h00010000, 32'h00A00001};
+                // 1: GET_SUBSYSTEM_ID
+                // SubsystemID = 0x11020001 (Creative vendor)
+                5'd1:  rirb_rom_response = {32'h00010000, 32'h11020001};
+                // 2: GET_PARAMETERS(Node 1 — Audio Out, playback DAC)
+                // OutAmp=0, InAmp=0, Cap=0x3 (Out+Stereo), Type=0x1
+                5'd2:  rirb_rom_response = {32'h00210000, 32'h00030001};
+                // 3: GET_PARAMETERS(Node 2 — Audio Out, SPDIF out)
+                // DigOut, Type=0x2
+                5'd3:  rirb_rom_response = {32'h00410000, 32'h00020002};
+                // 4: GET_PARAMETERS(Node 3 — Audio In, recording ADC)
+                // InAmp present, Cap=0x2 (In), Type=0x1
+                5'd4:  rirb_rom_response = {32'h00810000, 32'h00020011};
+                // 5: GET_PARAMETERS(Node 4 — Audio Mixer)
+                // 3 inputs, mixer type=0x0
+                5'd5:  rirb_rom_response = {32'h01010000, 32'h00030000};
+                // 6: GET_PARAMETERS(Node 5 — Audio Mixer)
+                // 2 inputs, mixer type=0x0
+                5'd6:  rirb_rom_response = {32'h01410000, 32'h00020000};
+                // 7: GET_PARAMETERS(Node 6 — Audio Selector)
+                // 2 inputs, sel type=0x3
+                5'd7:  rirb_rom_response = {32'h01810000, 32'h00020003};
+                // 8: GET_PARAMETERS(Node 7 — Audio Selector)
+                // 3 inputs, sel type=0x3
+                5'd8:  rirb_rom_response = {32'h01C10000, 32'h00030003};
+                // 9: GET_PARAMETERS(Node 8 — Audio Selector)
+                // 2 inputs, sel type=0x3
+                5'd9:  rirb_rom_response = {32'h02010000, 32'h00020003};
+                // 10: GET_PARAMETERS(Node 9 — Pin Complex, line-out)
+                // Cap=0x40000 (Out), type=0x4, default=0x01014010
+                5'd10: rirb_rom_response = {32'h02410000, 32'h00040004};
+                // 11: GET_CONFIG_DEFAULT(Node 9 pin)
+                // Default assoc=1, seq=0, device=Line Out, loc=Ext, conn=1/8
+                5'd11: rirb_rom_response = {32'h02410000, 32'h01014010};
+                // 12: GET_PARAMETERS(Node 10 — Pin Complex, mic in)
+                // Cap=0x20000 (In), type=0x4
+                5'd12: rirb_rom_response = {32'h02810000, 32'h00040024};
+                // 13: GET_CONFIG_DEFAULT(Node 10 pin)
+                // Mic In, rear, 3.5mm
+                5'd13: rirb_rom_response = {32'h02810000, 32'h01A19020};
+                // 14: GET_PARAMETERS(Node 11 — Vendor-defined widget)
+                5'd14: rirb_rom_response = {32'h02C10000, 32'h0000000F};
+                // 15: GET_PARAMETERS(Node 12 — Vendor-defined widget)
+                5'd15: rirb_rom_response = {32'h03010000, 32'h0000000F};
+                // 16: GET_PARAMETERS(Node 13 — Audio Selector)
+                5'd16: rirb_rom_response = {32'h03410000, 32'h00020003};
+                // 17: GET_CONNECT_LIST(Node 7 — input amp connections)
+                5'd17: rirb_rom_response = {32'h03810000, 32'h00050004};
+                // 18: GET_PARAMETERS(Node 14 — Beep generator)
+                5'd18: rirb_rom_response = {32'h03C10000, 32'h00070007};
+                // 19: GET_PARAMETERS(Node 15 — Vendor-defined)
+                5'd19: rirb_rom_response = {32'h04010000, 32'h0000000F};
+                // 20+: repeat last response (catch-all)
+                default: rirb_rom_response = {32'h04010000, 32'h0000000F};
+            endcase
+        end
+    endfunction
+
     always @(posedge clk) begin
         if (rst) begin
             rirb_response_fsm  <= 8'h00;
@@ -210,6 +284,7 @@ module pcileech_bar_impl_device #(
             corbwp_prev        <= 8'h00;
             rirb_pending_count <= 8'h00;
             rirb_wp_count      <= 16'h0000;
+            rirb_response_idx  <= 5'd0;
         end else begin
             // Track CORBWP for change detection
             corbwp_prev <= reg_0x00000048[7:0];
@@ -221,7 +296,9 @@ module pcileech_bar_impl_device #(
 
             // Build response data when starting a new response
             if (rirb_response_fsm == 8'h00 && rirb_pending_count > 8'h00) begin
-                rirb_fake_response <= 64'h00010000_00A00001;
+                // Look up the next response from the CA0132 ROM
+                rirb_fake_response <= rirb_rom_response(rirb_response_idx);
+                rirb_response_idx  <= rirb_response_idx + 5'h1;
                 rirb_response_fsm  <= 8'h04; // 4-cycle delay before committing
             end
 

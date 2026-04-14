@@ -74,6 +74,9 @@ func audioProfile() *DeviceProfile {
 			{Offset: 0x54, Width: 4, Name: "RIRBUBASE", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
 			{Offset: 0x58, Width: 4, Name: "RIRBWP_RINTCNT", Reset: 0x00000000, RWMask: 0x800000FF},
 			{Offset: 0x5C, Width: 4, Name: "RIRBCTL_STS_SIZE", Reset: 0x00420000, RWMask: 0x00070700},
+			// RIRB response registers — read by hdaudio.sys after RIRBWP advances
+			{Offset: 0x70, Width: 4, Name: "RIRBRESP_LO", Reset: 0x00000000, RWMask: 0x00000000},
+			{Offset: 0x78, Width: 4, Name: "RIRBRESP_HI", Reset: 0x00000000, RWMask: 0x00000000},
 		},
 
 		Notes: "Intel HDA profile. DWORD-packed register layout. GCAP+VMIN+VMAJ at 0x00, " +
