@@ -163,6 +163,11 @@ module pcileech_bar_impl_device #(
             // falling edge on CRST - controller entering reset
             else if (!reg_0x00000008[0] && crst_prev) begin
                 reg_0x0000000C[31:16] <= 16'h0000;  // clear STATESTS
+                // Reset RIRB state machine for clean reinitialization
+                corbwp_prev        <= 8'h00;
+                rirb_pending_count <= 8'h00;
+                rirb_wp_count      <= 16'h0000;
+                rirb_response_fsm  <= 8'h00;
             end
         end
     end
@@ -176,6 +181,10 @@ module pcileech_bar_impl_device #(
     // supported — the driver can submit several CORB entries before we finish
     // responding to the first one.
     //
+    // CORBWP delta calculation: the driver may advance CORBWP by N entries
+    // in a single write (e.g., submitting multiple VERBs at once). We compute
+    // the actual delta to enqueue the correct number of responses.
+    //
     // Response data encodes an Audio Function Group (type 0x0A) with
     // output+input capability — what the driver expects from codec 0.
     // The response format matches HD Audio spec: data field = type<<20 | 0x1
@@ -183,29 +192,31 @@ module pcileech_bar_impl_device #(
     // ========================================================================
     reg  [7:0] rirb_response_fsm;
     reg [63:0] rirb_fake_response;
-    reg [15:0] corbwp_prev;
-    reg [7:0]  rirb_pending_count;  // number of VERBs waiting for response
+    reg  [7:0] corbwp_prev;
+    reg  [7:0] rirb_pending_count;  // number of VERBs waiting for response
     reg [15:0] rirb_wp_count;
 
     // CORBWP change detection: driver submitted new VERB(s).
     wire corb_cte = reg_0x0000004C[7];   // CORBCTL.CTE
     wire rirb_cte  = reg_0x0000005C[0];   // RIRBCTL.CTE
-    wire corbwp_changed = (corbwp_prev != reg_0x00000048[15:0]) && corb_cte && rirb_cte;
+    wire corbwp_changed = (corbwp_prev != reg_0x00000048[7:0]) && corb_cte && rirb_cte;
+    // Calculate how many entries the driver added (handles wrap-around at 256)
+    wire [7:0] corbwp_delta = reg_0x00000048[7:0] - corbwp_prev;
 
     always @(posedge clk) begin
         if (rst) begin
             rirb_response_fsm  <= 8'h00;
             rirb_fake_response <= 64'h0;
-            corbwp_prev        <= 16'h0000;
+            corbwp_prev        <= 8'h00;
             rirb_pending_count <= 8'h00;
             rirb_wp_count      <= 16'h0000;
         end else begin
             // Track CORBWP for change detection
-            corbwp_prev <= reg_0x00000048[15:0];
+            corbwp_prev <= reg_0x00000048[7:0];
 
-            // Enqueue: when CORBWP changes, increment pending count
+            // Enqueue: add the actual number of entries the driver submitted
             if (corbwp_changed) begin
-                rirb_pending_count <= rirb_pending_count + 8'h01;
+                rirb_pending_count <= rirb_pending_count + corbwp_delta;
             end
 
             // Build response data when starting a new response
