@@ -45,8 +45,8 @@ func TestAudioRIRBResponseROM(t *testing.T) {
 		t.Fatal("rirb_rom_response function not found in generated SV")
 	}
 
-	// Verify ROM entries exist (6'd0 through 6'd19)
-	for i := 0; i <= 19; i++ {
+	// Verify ROM entries exist (discovery: 0-19, runtime: 20-31, extended: 32-63)
+	for i := 0; i <= 63; i++ {
 		pattern := fmt.Sprintf("6'd%d:", i)
 		if !strings.Contains(sv, pattern) {
 			t.Fatalf("ROM entry %d (%q) not found", i, pattern)
@@ -55,8 +55,8 @@ func TestAudioRIRBResponseROM(t *testing.T) {
 
 	// Verify key response values
 	keyValues := []string{
-		"00A00001", // AFG parameters (response 0)
-		"11020001", // Creative subsystem ID (response 1)
+		"01010001", // AFG parameters (NumSubNodes=16, response 0)
+		"11020010", // Creative subsystem ID (SB Audigy FX, response 1)
 		"CA0132",   // Codec reference in comment
 	}
 	for _, v := range keyValues {
