@@ -181,8 +181,7 @@ module pcileech_bar_impl_device #(
                 corb_cte_prev      <= 1'b0;
                 rirb_cte_prev      <= 1'b0;
                 corbwp_prev        <= 8'h00;
-                reg_0x00000060[0]  <= 1'b0;
-                reg_0x0000005C[1:0] <= 2'b0;
+                // RIRBSTS cleared by main FSM on rb_reinit
                 dma_req_valid_r    <= 1'b0;
                 dma_resp_lo_r      <= 32'h0;
                 dma_resp_hi_r      <= 32'h0;
@@ -253,13 +252,16 @@ module pcileech_bar_impl_device #(
     wire rb_reinit   = corb_reinit || rirb_reinit;
 
     // ========================================================================
-    // RIRBINTSTS RW1C (write-1-to-clear) handler.
-    // The generated write logic (bottom of file) will also write to 0x60
-    // because RWMask=0x01, but it does a direct bit copy (wr_data[0] → reg[0]).
+    // RIRBINTSTS RW1C (write-1-to-clear) detection.
+    // RIRBINTSTS (offset 0x60) has IsRW1C=true, so it is excluded from the
+    // generic write handler by the (not .IsRW1C) template filter.
     // HD Audio spec requires RIRBINTSTS bit 0 (INTFL) to be RW1C:
     //   write 1 → clear the flag, write 0 → no change.
-    // This always block runs after the generic write and fixes up the value.
-    // ========================================================================
+    //
+    // We detect the write here but DON'T write to reg_0x00000060 directly —
+    // that would create a multi-driver conflict with the main FSM which also
+    // sets INTFL. Instead, we produce a clear request that the main FSM
+    // merges into the single reg_0x00000060[0] driver.
     reg rirbintsts_rw1c;
 
     always @(posedge clk) begin
@@ -271,14 +273,20 @@ module pcileech_bar_impl_device #(
         end
     end
 
-    // Apply RW1C: if driver writes 1 to bit 0, clear INTFL; otherwise preserve.
-    // This overrides the generic write result on the same clock edge.
-    always @(posedge clk) begin
-        if (!rst && rirbintsts_rw1c) begin
-            // RW1C semantics: bit 0 = current & ~written
-            reg_0x00000060[0] <= reg_0x00000060[0] & ~wr_data[0];
-        end
-    end
+    // Clear request: driver writes 1 to bit 0 → clear INTFL.
+    wire intfl_clear_req = rirbintsts_rw1c && wr_data[0];
+
+    // CRST rising edge clear request: codec reset means driver is re-enumerating,
+    // so INTFL must be cleared to prevent stale interrupt from pending response.
+    // crst_prev is the PREVIOUS cycle value (updated by CRST block), so this
+    // wire fires on the cycle where CRST transitions 0→1.
+    wire intfl_crst_clear_req = reg_0x00000008[0] && !crst_prev;
+
+    // INTFL set request from RIRB response commit FSM.
+    // This is a flag that the FSM uses to request INTFL be set to 1.
+    // The actual reg_0x00000060[0] write is consolidated in a single always
+    // block to avoid multi-driver conflicts.
+    reg intfl_set_req;
 
     // ========================================================================
     // RIRBCTL/RIRBSTS (0x5C) driver write handler.
@@ -530,7 +538,12 @@ module pcileech_bar_impl_device #(
             dma_resp_hi_r      <= 32'h0;
             dma_resp_wp_r      <= 8'h0;
             dma_done_latched   <= 1'b0;
+            intfl_set_req      <= 1'b0;
         end else begin
+            // Default: no INTFL set request this cycle.
+            // Response commit path below may set this to 1.
+            intfl_set_req <= 1'b0;
+
             // CRST falling edge guard: if CRST is being asserted, suppress all
             // FSM activity this cycle. The CRST block (separate always block)
             // resets all state vars — we must not fight it with our own
@@ -565,7 +578,6 @@ module pcileech_bar_impl_device #(
                 rirb_wp_count      <= 8'h00;
                 corbwp_prev        <= 8'h00;
                 reg_0x00000048[15:8] <= 8'h00;  // reset CORBRP to 0
-                reg_0x00000060[0]  <= 1'b0;  // clear RIRBINTSTS.INTFL
                 reg_0x0000005C[1:0] <= 2'b0;  // clear RIRBSTS (UIS + OIS)
                 reg_0x00000050     <= 32'h0;  // clear RIRBLBASE (stale DMA addr)
                 reg_0x00000054     <= 32'h0;  // clear RIRBUBASE
@@ -651,8 +663,10 @@ module pcileech_bar_impl_device #(
                         reg_0x0000005C[1] <= 1'b1;
                     end
 
-                    // Set RIRBINTSTS.INTFL — tells driver a response is available
-                    reg_0x00000060[0] <= 1'b1;
+                    // Set RIRBINTSTS.INTFL — tells driver a response is available.
+                    // Actual register write is handled by consolidated INTFL driver
+                    // at end of FSM block; set flag so it can merge with clear requests.
+                    intfl_set_req <= 1'b1;
 
                     // Decrement pending count (one response delivered)
                     rirb_pending_count <= rirb_pending_count - 8'h01;
@@ -672,6 +686,27 @@ module pcileech_bar_impl_device #(
                 end
             end
         end
+    end
+
+    // ========================================================================
+    // Consolidated INTFL driver — SINGLE source for reg_0x00000060[0].
+    // All INTFL modifications go through here to avoid multi-driver conflicts.
+    // Priority: clear (CRST/rb_reinit/RW1C) takes precedence over set.
+    // ========================================================================
+    always @(posedge clk) begin
+        if (rst) begin
+            reg_0x00000060[0] <= 1'b0;
+        end else if (intfl_set_req && !intfl_clear_req && !intfl_crst_clear_req) begin
+            // RIRB response committed — set INTFL to notify driver.
+            reg_0x00000060[0] <= 1'b1;
+        end else if (rb_reinit || intfl_crst_clear_req) begin
+            // CRST rising edge or CTE reinit — clear INTFL.
+            reg_0x00000060[0] <= 1'b0;
+        end else if (intfl_clear_req) begin
+            // Driver wrote 1 to RIRBINTSTS[0] (RW1C) — clear INTFL.
+            reg_0x00000060[0] <= 1'b0;
+        end
+        // Default: hold current value (no explicit assignment needed for regs).
     end
 
     // Internal DMA interface registers (driven by RIRB FSM)
