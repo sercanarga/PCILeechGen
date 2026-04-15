@@ -80,6 +80,11 @@ func GenerateNVMeDMABridgeSV(cfg *SVGeneratorConfig) (string, error) {
 	return renderTemplate("nvme_dma_bridge", cfg)
 }
 
+// GenerateHDARIRBDMASV renders the HDA RIRB DMA bridge module.
+func GenerateHDARIRBDMASV(cfg *SVGeneratorConfig) (string, error) {
+	return renderTemplate("hda_rirb_dma", cfg)
+}
+
 // svFuncMap provides hex formatting and arithmetic helpers for templates.
 func svFuncMap() template.FuncMap {
 	return template.FuncMap{
