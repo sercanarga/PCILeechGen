@@ -89,7 +89,7 @@ func TestBuildSVConfig(t *testing.T) {
 			ow := NewOutputWriter(t.TempDir(), "", 0, 0)
 			ids := firmware.ExtractDeviceIDs(ctx.ConfigSpace, ctx.ExtCapabilities)
 
-			cfg := ow.buildSVConfig(ctx, ids, 0xDEAD)
+			cfg := ow.buildSVConfig(ctx, ctx.ConfigSpace, ids, 0xDEAD)
 			if cfg == nil {
 				t.Fatal("config should not be nil")
 			}
@@ -108,7 +108,7 @@ func TestBuildSVConfig_NVMeHasIdentify(t *testing.T) {
 	ow := NewOutputWriter(t.TempDir(), "", 0, 0)
 	ids := firmware.ExtractDeviceIDs(ctx.ConfigSpace, ctx.ExtCapabilities)
 
-	cfg := ow.buildSVConfig(ctx, ids, 0xBEEF)
+	cfg := ow.buildSVConfig(ctx, ctx.ConfigSpace, ids, 0xBEEF)
 	if cfg.NVMeIdentify == nil {
 		t.Error("NVMe class should have Identify data")
 	}
@@ -139,7 +139,7 @@ func TestWriteCoreSVArtifacts(t *testing.T) {
 	ow := NewOutputWriter(dir, "", 0, 0)
 	ids := firmware.ExtractDeviceIDs(ctx.ConfigSpace, ctx.ExtCapabilities)
 
-	cfg := ow.buildSVConfig(ctx, ids, 0x42)
+	cfg := ow.buildSVConfig(ctx, ctx.ConfigSpace, ids, 0x42)
 	scrubbed := ctx.ConfigSpace.Clone()
 
 	if err := ow.writeCoreSVArtifacts(cfg, scrubbed); err != nil {
@@ -172,7 +172,7 @@ func TestWriteConditionalArtifacts_NVMe(t *testing.T) {
 	ow := NewOutputWriter(dir, "", 0, 0)
 	ids := firmware.ExtractDeviceIDs(ctx.ConfigSpace, ctx.ExtCapabilities)
 
-	cfg := ow.buildSVConfig(ctx, ids, 0x42)
+	cfg := ow.buildSVConfig(ctx, ctx.ConfigSpace, ids, 0x42)
 
 	if err := ow.writeConditionalArtifacts(cfg, ctx); err != nil {
 		t.Fatalf("writeConditionalArtifacts failed: %v", err)
@@ -201,7 +201,7 @@ func TestWriteConditionalArtifacts_MSIXDonor(t *testing.T) {
 	ow := NewOutputWriter(dir, "", 0, 0)
 	ids := firmware.ExtractDeviceIDs(ctx.ConfigSpace, ctx.ExtCapabilities)
 
-	cfg := ow.buildSVConfig(ctx, ids, 0x42)
+	cfg := ow.buildSVConfig(ctx, ctx.ConfigSpace, ids, 0x42)
 
 	if err := ow.writeConditionalArtifacts(cfg, ctx); err != nil {
 		t.Fatalf("writeConditionalArtifacts failed: %v", err)
@@ -222,7 +222,7 @@ func TestLogSVSummary(t *testing.T) {
 	ow := NewOutputWriter(t.TempDir(), "", 0, 0)
 	ids := firmware.ExtractDeviceIDs(ctx.ConfigSpace, ctx.ExtCapabilities)
 
-	cfg := ow.buildSVConfig(ctx, ids, 0x42)
+	cfg := ow.buildSVConfig(ctx, ctx.ConfigSpace, ids, 0x42)
 	// should not panic
 	ow.logSVSummary(cfg)
 }

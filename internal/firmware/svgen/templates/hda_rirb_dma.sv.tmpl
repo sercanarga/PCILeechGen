@@ -39,13 +39,14 @@ module pcileech_hda_rirb_dma(
     output reg [3:0]    tlp_tx_tkeepdw,
     output reg          tlp_tx_tvalid,
     output reg          tlp_tx_tlast,
-    output reg [8:0]    tlp_tx_tuser
+    output reg [8:0]    tlp_tx_tuser,
+    input               tlp_tx_tready       // backpressure from downstream
 );
 
     localparam [3:0] D_IDLE       = 4'h0;
-    localparam [3:0] D_WR_TLP1    = 4'h1;  // MWr header beat
-    localparam [3:0] D_WR_TLP2    = 4'h2;  // 1st data DW (both) / only data beat (32-bit)
-    localparam [3:0] D_WR_TLP3    = 4'h3;  // 2nd data DW (64-bit only)
+    localparam [3:0] D_WR_TLP1    = 4'h1;  // first beat: header (+ data0 for 32-bit)
+    localparam [3:0] D_WR_TLP2    = 4'h2;  // data beat 1 (32-bit: payload, 64-bit: type+NID)
+    localparam [3:0] D_WR_TLP3    = 4'h3;  // data beat 2 (64-bit only: payload)
     localparam [3:0] D_DONE       = 4'h4;
 
     reg [3:0]  dstate;
@@ -71,13 +72,14 @@ module pcileech_hda_rirb_dma(
             d_is_64bit      <= 1'b0;
         end else begin
             dma_done      <= 1'b0;
-            tlp_tx_tvalid <= 1'b0;
-            tlp_tx_tlast  <= 1'b0;
+            // tvalid/tlast/tdata/tkeepdw/tuser are set per-state below.
+            // Don't blanket-reset them — backpressure requires holding values.
 
             case (dstate)
 
                 // ---- idle: accept new response from BAR module ---------------
                 D_IDLE: begin
+                    tlp_tx_tvalid <= 1'b0;
                     dma_req_ready <= 1'b1;
 
                     if (dma_req_valid) begin
@@ -88,103 +90,126 @@ module pcileech_hda_rirb_dma(
                         d_addr_lo   <= rirb_lbase + ({24'h0, dma_req_wp} * 8);
                         d_addr_hi   <= rirb_ubase;
                         d_is_64bit  <= |rirb_ubase;
-                        d_tag       <= d_tag + 1'b1;
+                        d_tag       <= (d_tag >= 8'hFF) ? 8'h80 : d_tag + 1'b1;
 
                         dma_req_ready <= 1'b0;
+                        dstate <= D_WR_TLP1;
+                    end
+                end
 
-                        if (rirb_ubase != 32'h0) begin
-                            // 64-bit MWr: 4DW header → beat 1
-                            // Fmt=011 (4DW with data), Type=00000 (MWr)
-                            tlp_tx_tdata[31:0]   <= {
-                                3'b011,             // Fmt = 4DW w/ data
-                                5'b00000,           // Type = MWr
-                                1'b0, 3'b000,       // TC=0, Attr=000
-                                4'b0000,            // reserved
-                                1'b0, 1'b0,         // TD=0, EP=0
-                                2'b00, 2'b00,       // reserved
-                                10'h002             // Length = 2 DW
-                            };
-                            tlp_tx_tdata[63:32]  <= {pcie_id, d_tag, 4'hF, 4'h7};
-                            tlp_tx_tdata[95:64]  <= rirb_ubase;
-                            tlp_tx_tdata[127:96] <= {rirb_lbase[31:2], 2'b00};
+                // ---- first beat: header (64-bit) or header+data0 (32-bit) ----
+                D_WR_TLP1: begin
+                    // tvalid already asserted from combinational logic; hold until tready.
+                    if (tlp_tx_tready) begin
+                        dstate <= D_WR_TLP2;
+                    end
+                end
 
-                            tlp_tx_tkeepdw <= 4'b1111;
-                            tlp_tx_tlast   <= 1'b0;
-                            tlp_tx_tuser   <= {8'h00, 1'b1};  // first=1
-                            tlp_tx_tvalid  <= 1'b1;
-
-                            dstate <= D_WR_TLP2;
+                // ---- data beat 1: type+NID (64-bit) or payload (32-bit) ------
+                D_WR_TLP2: begin
+                    if (tlp_tx_tready) begin
+                        if (d_is_64bit) begin
+                            dstate <= D_WR_TLP3;
                         end else begin
-                            // 32-bit MWr: 3DW header + 1st data DW → beat 1
-                            // Fmt=010 (3DW with data), Type=00000 (MWr)
-                            tlp_tx_tdata[31:0]   <= {
-                                3'b010,             // Fmt = 3DW w/ data
-                                5'b00000,           // Type = MWr
-                                1'b0, 3'b000,
-                                4'b0000,
-                                1'b0, 1'b0,
-                                2'b00, 2'b00,
-                                10'h002             // Length = 2 DW
-                            };
-                            tlp_tx_tdata[63:32]  <= {pcie_id, d_tag, 4'hF, 4'h7};
-                            tlp_tx_tdata[95:64]  <= {d_addr_lo[31:2], 2'b00};
-                            tlp_tx_tdata[127:96] <= dma_req_lo;
-
-                            tlp_tx_tkeepdw <= 4'b1111;
-                            tlp_tx_tlast   <= 1'b0;
-                            tlp_tx_tuser   <= {8'h00, 1'b1};  // first=1
-                            tlp_tx_tvalid  <= 1'b1;
-
-                            dstate <= D_WR_TLP2;
+                            dstate <= D_DONE;
                         end
                     end
                 end
 
-                // ---- data beats: use latched values, not live inputs ---------
-                D_WR_TLP2: begin
-                    if (d_is_64bit) begin
-                        // 64-bit: first data DW (type + NID)
-                        tlp_tx_tdata[31:0]   <= d_resp_lo;
-                        tlp_tx_tdata[127:32] <= 96'h0;
-                        tlp_tx_tkeepdw <= 4'b0001;
-                        tlp_tx_tlast   <= 1'b0;
-                        tlp_tx_tuser   <= 9'h0;
-                        tlp_tx_tvalid  <= 1'b1;
-                        dstate <= D_WR_TLP3;
-                    end else begin
-                        // 32-bit: second data DW (payload), last beat
-                        // Use latched d_resp_hi — NOT live dma_req_hi.
-                        tlp_tx_tdata[31:0]   <= d_resp_hi;
-                        tlp_tx_tdata[127:32] <= 96'h0;
-                        tlp_tx_tkeepdw <= 4'b0001;
-                        tlp_tx_tlast   <= 1'b1;
-                        tlp_tx_tuser   <= 9'h0;
-                        tlp_tx_tvalid  <= 1'b1;
+                // ---- data beat 2: payload (64-bit only) ----------------------
+                D_WR_TLP3: begin
+                    if (tlp_tx_tready) begin
                         dstate <= D_DONE;
                     end
-                end
-
-                // ---- 64-bit MWr: 2nd data DW (last beat) --------------------
-                D_WR_TLP3: begin
-                    tlp_tx_tdata[31:0]   <= d_resp_hi;
-                    tlp_tx_tdata[127:32] <= 96'h0;
-                    tlp_tx_tkeepdw <= 4'b0001;
-                    tlp_tx_tlast   <= 1'b1;
-                    tlp_tx_tuser   <= 9'h0;
-                    tlp_tx_tvalid  <= 1'b1;
-                    dstate <= D_DONE;
                 end
 
                 // ---- signal completion to BAR module -------------------------
                 D_DONE: begin
                     dma_done        <= 1'b1;
                     dma_req_ready   <= 1'b1;
+                    tlp_tx_tvalid   <= 1'b0;
+                    tlp_tx_tlast    <= 1'b0;
                     dstate          <= D_IDLE;
                 end
 
-                default: dstate <= D_IDLE;
+                default: begin
+                    dstate <= D_IDLE;
+                    tlp_tx_tvalid <= 1'b0;
+                end
             endcase
         end
+    end
+
+    // Combinational TLP output: set tdata/tkeepdw/tlast/tuser/tvalid based on
+    // current state. This ensures values are held correctly during backpressure
+    // (tready=0) since the state doesn't advance until tready=1.
+    always @(*) begin
+        // Default: inactive
+        tlp_tx_tdata    = 128'h0;
+        tlp_tx_tkeepdw  = 4'b0000;
+        tlp_tx_tlast    = 1'b0;
+        tlp_tx_tuser    = 9'h0;
+        tlp_tx_tvalid   = 1'b0;
+
+        case (dstate)
+            D_WR_TLP1: begin
+                if (d_is_64bit) begin
+                    // 64-bit MWr: 4DW header only (data comes in next beats)
+                    // Fmt=011 (4DW with data), Type=00000 (MWr), Length=2 DW
+                    tlp_tx_tdata[31:0]   = {
+                        3'b011, 5'b00000, 1'b0, 3'b000,
+                        4'b0000, 1'b0, 1'b0, 2'b00, 2'b00, 10'h002
+                    };
+                    tlp_tx_tdata[63:32]  = {pcie_id, d_tag, 4'hF, 4'h7};
+                    tlp_tx_tdata[95:64]  = d_addr_hi;
+                    tlp_tx_tdata[127:96] = {d_addr_lo[31:2], 2'b00};
+                    tlp_tx_tkeepdw = 4'b1111;
+                    tlp_tx_tuser   = {8'h00, 1'b1};  // first=1
+                end else begin
+                    // 32-bit MWr: 3DW header + 1st data DW
+                    // Fmt=010 (3DW with data), Type=00000 (MWr), Length=2 DW
+                    tlp_tx_tdata[31:0]   = {
+                        3'b010, 5'b00000, 1'b0, 3'b000,
+                        4'b0000, 1'b0, 1'b0, 2'b00, 2'b00, 10'h002
+                    };
+                    tlp_tx_tdata[63:32]  = {pcie_id, d_tag, 4'hF, 4'h7};
+                    tlp_tx_tdata[95:64]  = {d_addr_lo[31:2], 2'b00};
+                    tlp_tx_tdata[127:96] = d_resp_lo;
+                    tlp_tx_tkeepdw = 4'b1111;
+                    tlp_tx_tuser   = {8'h00, 1'b1};  // first=1
+                end
+                tlp_tx_tvalid = 1'b1;
+            end
+
+            D_WR_TLP2: begin
+                if (d_is_64bit) begin
+                    // 64-bit: first data DW (type + NID)
+                    tlp_tx_tdata[31:0]   = d_resp_lo;
+                    tlp_tx_tkeepdw = 4'b0001;
+                    tlp_tx_tuser   = 9'h0;
+                end else begin
+                    // 32-bit: second data DW (payload), last beat
+                    tlp_tx_tdata[31:0]   = d_resp_hi;
+                    tlp_tx_tkeepdw = 4'b0001;
+                    tlp_tx_tlast   = 1'b1;
+                    tlp_tx_tuser   = 9'h0;
+                end
+                tlp_tx_tvalid = 1'b1;
+            end
+
+            D_WR_TLP3: begin
+                // 64-bit: second data DW (payload), last beat
+                tlp_tx_tdata[31:0]   = d_resp_hi;
+                tlp_tx_tkeepdw = 4'b0001;
+                tlp_tx_tlast   = 1'b1;
+                tlp_tx_tuser   = 9'h0;
+                tlp_tx_tvalid = 1'b1;
+            end
+
+            default: begin
+                // IDLE, DONE: no output
+            end
+        endcase
     end
 
 endmodule

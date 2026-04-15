@@ -15,7 +15,16 @@ module pcileech_tlps128_bar_controller(
     input                   bar_en,
     input [15:0]            pcie_id,
     IfAXIS128.sink_lite     tlps_in,
-    IfAXIS128.source        tlps_out
+    IfAXIS128.source        tlps_out,
+    // HDA MSI interrupt signals (to FPGA cfg_interrupt).
+    // Always exposed to maintain a stable module signature regardless of
+    // device class. Unused for non-HDA devices — synthesis prunes them.
+    output                  cfg_interrupt,
+    output                  cfg_interrupt_assert,
+    output [7:0]            cfg_interrupt_di,
+    input                   cfg_interrupt_rdy,
+    input                   cfg_interrupt_msienable,
+    input                   cfg_interrupt_msixenable
 );
 
     // TLP receive
@@ -267,7 +276,10 @@ module pcileech_tlps128_bar_controller(
         .dma_rirb_lbase  ( hda_dma_rirb_lbase            ),
         .dma_rirb_ubase  ( hda_dma_rirb_ubase            ),
         .dma_req_ready   ( hda_dma_req_ready             ),
-        .dma_done        ( hda_dma_done                  )
+        .dma_done        ( hda_dma_done                  ),
+        // MSI interrupt ports
+        .msi_trigger     ( hda_msi_trigger               ),
+        .rirbintsts      ( hda_rirbintsts                )
 {{ end }}
     );
 
@@ -388,8 +400,40 @@ module pcileech_tlps128_bar_controller(
         .tlp_tx_tkeepdw ( hda_tlp_tx_tkeepdw            ),
         .tlp_tx_tvalid  ( hda_tlp_tx_tvalid             ),
         .tlp_tx_tlast   ( hda_tlp_tx_tlast              ),
-        .tlp_tx_tuser   ( hda_tlp_tx_tuser              )
+        .tlp_tx_tuser   ( hda_tlp_tx_tuser              ),
+        .tlp_tx_tready  ( tlps_out.tready               )
     );
+
+    // ========================================================================
+    // HDA MSI Interrupt Generator
+    // Fires an MSI TLP when RIRBINTSTS.INTFL transitions 0->1.
+    // The hdaudio.sys driver programs MSI and waits for interrupts —
+    // without MSI, it polls RIRBWP endlessly and eventually times out
+    // with Code 10.
+    // ========================================================================
+    wire        hda_msi_trigger;
+    wire [31:0] hda_rirbintsts;
+
+    pcileech_hda_msi i_hda_msi(
+        .rst                    ( rst                           ),
+        .clk                    ( clk                           ),
+        .pcie_id                ( pcie_id                       ),
+        .msi_trigger            ( hda_msi_trigger               ),
+        .rirbintsts             ( hda_rirbintsts                ),
+        .cfg_interrupt          ( cfg_interrupt                 ),
+        .cfg_interrupt_assert   ( cfg_interrupt_assert          ),
+        .cfg_interrupt_di       ( cfg_interrupt_di              ),
+        .cfg_interrupt_rdy      ( cfg_interrupt_rdy             ),
+        .cfg_interrupt_msienable( cfg_interrupt_msienable       ),
+        .cfg_interrupt_msixenable( cfg_interrupt_msixenable     )
+    );
+{{ end }}
+
+{{ if not (eq .DeviceClass "audio") }}
+    // Non-HDA devices: cfg_interrupt ports are unused — tie to safe defaults.
+    assign cfg_interrupt        = 1'b0;
+    assign cfg_interrupt_assert = 1'b0;
+    assign cfg_interrupt_di     = 8'h00;
 {{ end }}
 
 {{ if and (eq .DeviceClass "nvme") .NVMeIdentify }}

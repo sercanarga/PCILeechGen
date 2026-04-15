@@ -1,0 +1,125 @@
+//
+// HDA MSI Interrupt Generator
+//
+// Generates an MSI Memory Write TLP when RIRBINTSTS.INTFL transitions
+// from 0 to 1, so hdaudio.sys receives an interrupt and reads the RIRB
+// response from system memory.
+//
+// Without this, the driver polls RIRBWP endlessly and eventually times
+// out with Code 10. MSI is the primary interrupt mechanism expected by
+// the Windows HDA driver stack.
+//
+// The MSI TLP format:
+//   3DW MWr header (Fmt=010, Type=00000, Length=1 DW)
+//   Data DWORD = MSI message data (vector/interrupt info)
+//   Address = programmed MSI Message Address (typically 0xFEE00000)
+//
+// Signal routing: the BAR module exposes RIRBINTSTS.INTFL via a pulse
+// signal; this module asserts the FPGA cfg_interrupt signals to trigger
+// an MSI TLP from the PCIe IP core.
+//
+
+`timescale 1ns / 1ps
+
+module pcileech_hda_msi(
+    input               rst,
+    input               clk,
+
+    input [15:0]        pcie_id,        // our BDF
+
+    // Trigger: 1-cycle pulse when INTFL transitions 0->1
+    input               msi_trigger,
+
+    // RIRBINTSTS live value (for edge detection)
+    input [31:0]        rirbintsts,
+
+    // FPGA cfg_interrupt signals — PCIe IP core generates MSI TLP
+    output reg          cfg_interrupt,
+    output reg          cfg_interrupt_assert,
+    output reg [7:0]    cfg_interrupt_di,
+
+    input               cfg_interrupt_rdy,    // FPGA ready to accept interrupt
+    input               cfg_interrupt_msienable, // MSI enabled by host
+    input               cfg_interrupt_msixenable // MSI-X enabled by host
+);
+
+    localparam [1:0] M_IDLE      = 2'b00;
+    localparam [1:0] M_WAIT_RDY  = 2'b01;
+    localparam [1:0] M_ASSERT    = 2'b10;
+
+    reg [1:0] msi_state;
+    reg       msi_trigger_latched;
+    reg       intfl_prev;
+    reg [3:0] msi_assert_cnt;
+
+    // Edge detection: INTFL 0->1 transition
+    always @(posedge clk) begin
+        if (rst) begin
+            intfl_prev        <= 1'b0;
+            msi_trigger_latched <= 1'b0;
+        end else begin
+            // Latch the rising edge
+            if (rirbintsts[0] && !intfl_prev) begin
+                msi_trigger_latched <= 1'b1;
+            end
+
+            // Clear when we start sending
+            if (msi_state == M_WAIT_RDY && cfg_interrupt_rdy) begin
+                msi_trigger_latched <= 1'b0;
+            end
+
+            intfl_prev <= rirbintsts[0];
+        end
+    end
+
+    // MSI TLP FSM: wait for cfg_interrupt_rdy, then assert for a short pulse.
+    // The PCIe IP core handles the actual TLP construction when it sees
+    // cfg_interrupt_assert + cfg_interrupt_di + cfg_interrupt_msienable.
+    always @(posedge clk) begin
+        if (rst) begin
+            msi_state          <= M_IDLE;
+            cfg_interrupt       <= 1'b0;
+            cfg_interrupt_assert <= 1'b0;
+            cfg_interrupt_di    <= 8'h00;
+            msi_assert_cnt      <= 4'h0;
+        end else begin
+            case (msi_state)
+
+                M_IDLE: begin
+                    cfg_interrupt       <= 1'b0;
+                    cfg_interrupt_assert <= 1'b0;
+                    msi_assert_cnt      <= 4'h0;
+
+                    // Trigger from INTFL rising edge OR external pulse
+                    if ((msi_trigger || msi_trigger_latched) && cfg_interrupt_msienable && !cfg_interrupt_msixenable) begin
+                        // cfg_interrupt_rdy is not available from cfg_interrupt path
+                        // so we just assert immediately
+                        cfg_interrupt       <= 1'b1;
+                        cfg_interrupt_assert <= 1'b1;
+                        // MSI message data: 16-bit Data field from MSI cap
+                        // bits [15:8] = vector, bits [7:0] = trigger info
+                        cfg_interrupt_di    <= {1'b0, 7'h00};  // vector 0
+                        msi_state           <= M_ASSERT;
+                    end
+                end
+
+                M_ASSERT: begin
+                    msi_assert_cnt <= msi_assert_cnt + 1'b1;
+
+                    // Hold assert for 4 cycles then release
+                    if (msi_assert_cnt >= 4'h3) begin
+                        cfg_interrupt       <= 1'b0;
+                        cfg_interrupt_assert <= 1'b0;
+                        cfg_interrupt_di    <= 8'h00;
+                        msi_state           <= M_IDLE;
+                    end
+                end
+
+                default: begin
+                    msi_state <= M_IDLE;
+                end
+            endcase
+        end
+    end
+
+endmodule

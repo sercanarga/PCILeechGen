@@ -259,7 +259,7 @@ var coreSVArtifacts = []svArtifact{
 
 // writeSVModules generates device-specific SV and HEX init files.
 func (ow *OutputWriter) writeSVModules(ctx *donor.DeviceContext, scrubbedCS *pci.ConfigSpace, ids firmware.DeviceIDs, entropy uint32) error {
-	cfg := ow.buildSVConfig(ctx, ids, entropy)
+	cfg := ow.buildSVConfig(ctx, scrubbedCS, ids, entropy)
 
 	if err := ow.writeCoreSVArtifacts(cfg, scrubbedCS); err != nil {
 		return err
@@ -273,8 +273,50 @@ func (ow *OutputWriter) writeSVModules(ctx *donor.DeviceContext, scrubbedCS *pci
 	return nil
 }
 
+// extractMSIInfo parses the MSI capability from scrubbed config space.
+// Returns nil if MSI is absent or not yet programmed by the host.
+func extractMSIInfo(cs *pci.ConfigSpace) *svgen.MSIConfig {
+	// Walk the capability linked list
+	ptr := int(cs.CapabilityPointer()) & 0xFC
+	for ptr != 0 && ptr < 0x100 {
+		capID := cs.ReadU8(ptr)
+		nextPtr := int(cs.ReadU8(ptr+1)) & 0xFC
+
+		if capID == 0x05 { // CapIDMSI
+			msgCtl := cs.ReadU16(ptr + 2)
+			is64bit := (msgCtl & (1 << 7)) != 0
+
+			addrLo := cs.ReadU32(ptr + 4)
+			var data uint16
+			if is64bit {
+				data = cs.ReadU16(ptr + 12)
+			} else {
+				data = cs.ReadU16(ptr + 8)
+			}
+
+			// Use standard defaults if not yet programmed by host (addr=0).
+			// The APIC accepts MSI writes to 0xFEE00000.
+			if addrLo == 0 {
+				addrLo = 0xFEE00000
+			}
+			if data == 0 {
+				data = 0x0000 // vector 0, edge, physical mode
+			}
+
+			return &svgen.MSIConfig{
+				Enabled: (msgCtl & (1 << 0)) != 0,
+				AddrLo:  addrLo,
+				Data:    data,
+			}
+		}
+
+		ptr = nextPtr
+	}
+	return nil
+}
+
 // buildSVConfig assembles the SVGeneratorConfig from donor context.
-func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, ids firmware.DeviceIDs, entropy uint32) *svgen.SVGeneratorConfig {
+func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.ConfigSpace, ids firmware.DeviceIDs, entropy uint32) *svgen.SVGeneratorConfig {
 	// Use the same BAR index for content data and probe profile to avoid
 	// mismatched register maps (e.g. IO BAR0 profile + MMIO BAR2 data).
 	barIdx := firmware.LargestBarIndex(ctx.BARContents)
@@ -327,6 +369,12 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, ids firmware.Dev
 			PBAOffset:   pbaOffset,
 		}
 		cfg.HasMSIX = true
+	}
+
+	// Extract MSI capability for interrupt generation.
+	// MSI is the primary interrupt mechanism for HDA devices.
+	if msiInfo := extractMSIInfo(scrubbedCS); msiInfo != nil {
+		cfg.MSIConfig = msiInfo
 	}
 
 	return cfg
@@ -401,6 +449,17 @@ func (ow *OutputWriter) writeConditionalArtifacts(cfg *svgen.SVGeneratorConfig, 
 		if err := ow.writeFile("pcileech_hda_rirb_dma.sv", hdaSV); err != nil {
 			return err
 		}
+
+		// MSI interrupt generator for HDA — critical for driver completion.
+		if cfg.MSIConfig != nil {
+			hdaMSISV, err := svgen.GenerateHDAMSISV(cfg)
+			if err != nil {
+				return fmt.Errorf("generating pcileech_hda_msi.sv: %w", err)
+			}
+			if err := ow.writeFile("pcileech_hda_msi.sv", hdaMSISV); err != nil {
+				return err
+			}
+		}
 	}
 
 	return nil
@@ -419,6 +478,9 @@ func (ow *OutputWriter) logSVSummary(cfg *svgen.SVGeneratorConfig) {
 		features = append(features, "xHCI FSM")
 	case devclass.ClassAudio:
 		features = append(features, "HD Audio FSM", "RIRB DMA Bridge")
+		if cfg.MSIConfig != nil {
+			features = append(features, "MSI Interrupt Gen")
+		}
 	}
 	if cfg.MSIXConfig != nil {
 		features = append(features, fmt.Sprintf("MSI-X %d vectors", cfg.MSIXConfig.NumVectors))

@@ -305,7 +305,10 @@ func buildAudioBARModel(barData []byte) *BARModel {
 		// RIRBRESP_LO - RIRB response data lower 32 bits (RO, DMA-served)
 		{Offset: 0x70, Width: 4, Name: "RIRBRESP_LO", RWMask: 0x00000000},
 		// RIRBRESP_HI - RIRB response data upper 32 bits (RO, DMA-served)
-		{Offset: 0x78, Width: 4, Name: "RIRBRESP_HI", RWMask: 0x00000000},
+		// Must be at 0x74 (immediately after 0x70) — the driver reads 8 bytes
+		// from offset 0x70 as a single RIRB entry. A gap at 0x74 would cause
+		// the upper 32 bits to read as zero.
+		{Offset: 0x74, Width: 4, Name: "RIRBRESP_HI", RWMask: 0x00000000},
 	}
 
 	// Check if donor BAR data is all 0xFF (no codec connected).
