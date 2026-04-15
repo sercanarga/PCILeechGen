@@ -156,9 +156,10 @@ module pcileech_hda_rirb_dma(
                 if (d_is_64bit) begin
                     // 64-bit MWr: 4DW header only (data comes in next beats)
                     // Fmt=011 (4DW with data), Type=00000 (MWr), Length=2 DW
+                    // Last DW BE=0xF, First DW BE=0xF (all bytes valid in both DWs)
                     tlp_tx_tdata[31:0]   = {
                         3'b011, 5'b00000, 1'b0, 3'b000,
-                        4'b0000, 1'b0, 1'b0, 2'b00, 2'b00, 10'h002
+                        4'b0000, 1'b0, 1'b0, 2'b00, 4'hF, 4'hF, 10'h002
                     };
                     tlp_tx_tdata[63:32]  = {pcie_id, d_tag, 4'hF, 4'h7};
                     tlp_tx_tdata[95:64]  = d_addr_hi;
@@ -168,9 +169,10 @@ module pcileech_hda_rirb_dma(
                 end else begin
                     // 32-bit MWr: 3DW header + 1st data DW
                     // Fmt=010 (3DW with data), Type=00000 (MWr), Length=2 DW
+                    // Last DW BE=0xF, First DW BE=0xF (all bytes valid in both DWs)
                     tlp_tx_tdata[31:0]   = {
                         3'b010, 5'b00000, 1'b0, 3'b000,
-                        4'b0000, 1'b0, 1'b0, 2'b00, 2'b00, 10'h002
+                        4'b0000, 1'b0, 1'b0, 2'b00, 4'hF, 4'hF, 10'h002
                     };
                     tlp_tx_tdata[63:32]  = {pcie_id, d_tag, 4'hF, 4'h7};
                     tlp_tx_tdata[95:64]  = {d_addr_lo[31:2], 2'b00};
