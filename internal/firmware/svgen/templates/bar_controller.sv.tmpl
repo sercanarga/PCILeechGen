@@ -67,13 +67,16 @@ module pcileech_tlps128_bar_controller(
         .rd_rsp_valid   ( rd_rsp_valid                  )
     );
 {{ else }}
+    // rdengine output goes to intermediate for DMA bridge TLP muxing
+    IfAXIS128 tlps_rdeng();
+
     pcileech_tlps128_bar_rdengine i_pcileech_tlps128_bar_rdengine(
         .rst            ( rst                           ),
         .clk            ( clk                           ),
         .pcie_id        ( pcie_id                       ),
         .tlps_in        ( tlps_in                       ),
         .tlps_in_valid  ( tlps_in.tvalid && in_is_bar && in_is_rd ),
-        .tlps_out       ( tlps_out                      ),
+        .tlps_out       ( tlps_rdeng.source             ),
         .rd_req_ctx     ( rd_req_ctx                    ),
         .rd_req_bar     ( rd_req_bar                    ),
         .rd_req_addr    ( rd_req_addr                   ),
@@ -255,6 +258,16 @@ module pcileech_tlps128_bar_controller(
         .nvme_asq_hi    ( nvme_reg_asq_hi               ),
         .nvme_acq_lo    ( nvme_reg_acq_lo               ),
         .nvme_acq_hi    ( nvme_reg_acq_hi               )
+{{ end }}{{ if and (eq .DeviceClass "audio") .BARModel }}        ,
+        // HDA RIRB DMA bridge ports
+        .dma_req_valid   ( hda_dma_req_valid             ),
+        .dma_resp_lo     ( hda_dma_resp_lo               ),
+        .dma_resp_hi     ( hda_dma_resp_hi               ),
+        .dma_resp_wp     ( hda_dma_resp_wp               ),
+        .dma_rirb_lbase  ( hda_dma_rirb_lbase            ),
+        .dma_rirb_ubase  ( hda_dma_rirb_ubase            ),
+        .dma_req_ready   ( hda_dma_req_ready             ),
+        .dma_done        ( hda_dma_done                  )
 {{ end }}
     );
 
@@ -334,6 +347,48 @@ module pcileech_tlps128_bar_controller(
         .rd_rsp_data    ( msix_rsp_data                 ),
         .rd_rsp_valid   ( msix_rsp_valid                ),
         .addr_hit       ( msix_addr_hit                 )
+    );
+{{ end }}
+
+{{ if and (eq .DeviceClass "audio") .BARModel }}
+    // ========================================================================
+    // HDA RIRB DMA Bridge
+    // Writes fake RIRB responses to system memory so hdaudio.sys can read
+    // codec responses. Without this, responses only go to MMIO registers
+    // that the driver never reads.
+    // ========================================================================
+    wire        hda_dma_req_valid;
+    wire [31:0] hda_dma_resp_lo;
+    wire [31:0] hda_dma_resp_hi;
+    wire [7:0]  hda_dma_resp_wp;
+    wire [31:0] hda_dma_rirb_lbase;
+    wire [31:0] hda_dma_rirb_ubase;
+    wire        hda_dma_req_ready;
+    wire        hda_dma_done;
+
+    wire [127:0] hda_tlp_tx_tdata;
+    wire [3:0]   hda_tlp_tx_tkeepdw;
+    wire         hda_tlp_tx_tvalid;
+    wire         hda_tlp_tx_tlast;
+    wire [8:0]   hda_tlp_tx_tuser;
+
+    pcileech_hda_rirb_dma i_hda_rirb_dma(
+        .rst            ( rst                           ),
+        .clk            ( clk                           ),
+        .pcie_id        ( pcie_id                       ),
+        .dma_req_valid  ( hda_dma_req_valid             ),
+        .dma_resp_lo    ( hda_dma_resp_lo               ),
+        .dma_resp_hi    ( hda_dma_resp_hi               ),
+        .dma_resp_wp    ( hda_dma_resp_wp               ),
+        .dma_req_ready  ( hda_dma_req_ready             ),
+        .rirb_lbase     ( hda_dma_rirb_lbase            ),
+        .rirb_ubase     ( hda_dma_rirb_ubase            ),
+        .dma_done       ( hda_dma_done                  ),
+        .tlp_tx_tdata   ( hda_tlp_tx_tdata              ),
+        .tlp_tx_tkeepdw ( hda_tlp_tx_tkeepdw            ),
+        .tlp_tx_tvalid  ( hda_tlp_tx_tvalid             ),
+        .tlp_tx_tlast   ( hda_tlp_tx_tlast              ),
+        .tlp_tx_tuser   ( hda_tlp_tx_tuser              )
     );
 {{ end }}
 
@@ -439,14 +494,26 @@ module pcileech_tlps128_bar_controller(
 
     // mux DMA bridge TLPs with rdengine BAR responses onto tlps_out
     // bridge gets priority -- its MWr/MRd TLPs can't wait
-    assign tlps_out.tdata    = nvme_tlp_tx_tvalid ? nvme_tlp_tx_tdata    : tlps_rdeng.tdata;
-    assign tlps_out.tkeepdw  = nvme_tlp_tx_tvalid ? nvme_tlp_tx_tkeepdw  : tlps_rdeng.tkeepdw;
-    assign tlps_out.tvalid   = nvme_tlp_tx_tvalid || tlps_rdeng.tvalid;
-    assign tlps_out.tlast    = nvme_tlp_tx_tvalid ? nvme_tlp_tx_tlast    : tlps_rdeng.tlast;
-    assign tlps_out.tuser    = nvme_tlp_tx_tvalid ? nvme_tlp_tx_tuser    : tlps_rdeng.tuser;
-    assign tlps_out.has_data = nvme_tlp_tx_tvalid || tlps_rdeng.has_data;
-    assign tlps_rdeng.tready = tlps_out.tready && !nvme_tlp_tx_tvalid;
+    // HDA takes priority over NVME (both can fire, HDA RIRB writes are time-critical)
+    assign tlps_out.tdata    = hda_tlp_tx_tvalid ? hda_tlp_tx_tdata    : nvme_tlp_tx_tvalid ? nvme_tlp_tx_tdata    : tlps_rdeng.tdata;
+    assign tlps_out.tkeepdw  = hda_tlp_tx_tvalid ? hda_tlp_tx_tkeepdw  : nvme_tlp_tx_tvalid ? nvme_tlp_tx_tkeepdw  : tlps_rdeng.tkeepdw;
+    assign tlps_out.tvalid   = hda_tlp_tx_tvalid || nvme_tlp_tx_tvalid || tlps_rdeng.tvalid;
+    assign tlps_out.tlast    = hda_tlp_tx_tvalid ? hda_tlp_tx_tlast    : nvme_tlp_tx_tvalid ? nvme_tlp_tx_tlast    : tlps_rdeng.tlast;
+    assign tlps_out.tuser    = hda_tlp_tx_tvalid ? hda_tlp_tx_tuser    : nvme_tlp_tx_tvalid ? nvme_tlp_tx_tuser    : tlps_rdeng.tuser;
+    assign tlps_out.has_data = hda_tlp_tx_tvalid || nvme_tlp_tx_tvalid || tlps_rdeng.has_data;
+    assign tlps_rdeng.tready = tlps_out.tready && !nvme_tlp_tx_tvalid && !hda_tlp_tx_tvalid;
 {{ end }}
+
+{{ if and (eq .DeviceClass "audio") .BARModel }}{{ if not (and (eq .DeviceClass "nvme") .NVMeIdentify) }}
+    // HDA-only build: mux HDA DMA TLPs with rdengine BAR responses
+    assign tlps_out.tdata    = hda_tlp_tx_tvalid ? hda_tlp_tx_tdata    : tlps_rdeng.tdata;
+    assign tlps_out.tkeepdw  = hda_tlp_tx_tvalid ? hda_tlp_tx_tkeepdw  : tlps_rdeng.tkeepdw;
+    assign tlps_out.tvalid   = hda_tlp_tx_tvalid || tlps_rdeng.tvalid;
+    assign tlps_out.tlast    = hda_tlp_tx_tvalid ? hda_tlp_tx_tlast    : tlps_rdeng.tlast;
+    assign tlps_out.tuser    = hda_tlp_tx_tvalid ? hda_tlp_tx_tuser    : tlps_rdeng.tuser;
+    assign tlps_out.has_data = hda_tlp_tx_tvalid || tlps_rdeng.has_data;
+    assign tlps_rdeng.tready = tlps_out.tready && !hda_tlp_tx_tvalid;
+{{ end }}{{ end }}
 
     // BAR1: address loopback
     pcileech_bar_impl_loopaddr i_bar1(
