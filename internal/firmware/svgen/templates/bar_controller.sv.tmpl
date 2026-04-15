@@ -420,14 +420,21 @@ module pcileech_tlps128_bar_controller(
         .intr_req       ( hda_intr_req                  )
     );
 
-    // Route HDA MSI interrupt to module output
-    assign intr_req = hda_intr_req;
 {{ end }}
 
 {{ if and (eq .DeviceClass "nvme") .NVMeIdentify }}
     // NVMe admin responder + DMA bridge
     // - responder handles what the driver throws at us during init
     // - bridge turns those simple DMA ops into actual PCIe TLPs
+
+    // Stub HDA TLP signals — unused in NVME-only builds but referenced
+    // by the TLP mux below. In HDA+NVME builds, real signals override these.
+{{ if not (eq .DeviceClass "audio") }}    wire        hda_tlp_tx_tvalid = 1'b0;
+    wire [127:0] hda_tlp_tx_tdata = 128'h0;
+    wire [3:0]   hda_tlp_tx_tkeepdw = 4'h0;
+    wire         hda_tlp_tx_tlast = 1'b0;
+    wire [8:0]   hda_tlp_tx_tuser = 9'h0;
+{{ end }}
 
     // catch doorbell writes -- offset derived from CAP.DSTRD
     wire nvme_sq0_db_wr = wr_valid && wr_bar[0] && (wr_addr[31:0] == 32'h{{ printf "%08X" .NVMeSQ0DoorbellOffset }});
