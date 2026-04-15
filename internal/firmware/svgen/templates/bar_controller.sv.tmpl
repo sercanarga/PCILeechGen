@@ -424,11 +424,6 @@ module pcileech_tlps128_bar_controller(
     assign intr_req = hda_intr_req;
 {{ end }}
 
-{{ if not (eq .DeviceClass "audio") }}
-    // Non-HDA devices: intr_req is unused — tie to safe default.
-    assign intr_req = 1'b0;
-{{ end }}
-
 {{ if and (eq .DeviceClass "nvme") .NVMeIdentify }}
     // NVMe admin responder + DMA bridge
     // - responder handles what the driver throws at us during init
@@ -568,10 +563,29 @@ module pcileech_tlps128_bar_controller(
         .rd_rsp_valid   ( bar_rsp_valid[1]              )
     );
 
-    // BAR2-6: unimplemented
+    // BAR2: MSI doorbell interrupt — write to offset 0x00 triggers MSI
+    wire        bar2_intr_req;
+
+    pcileech_bar_impl_msi i_bar2(
+        .rst            ( rst                           ),
+        .clk            ( clk                           ),
+        .wr_addr        ( wr_addr                       ),
+        .wr_be          ( wr_be                         ),
+        .wr_data        ( wr_data                       ),
+        .wr_valid       ( wr_valid && wr_bar[2]         ),
+        .rd_req_ctx     ( rd_req_ctx                    ),
+        .rd_req_addr    ( rd_req_addr                   ),
+        .rd_req_valid   ( rd_req_valid && rd_req_bar[2] ),
+        .rd_rsp_ctx     ( bar_rsp_ctx[2]                ),
+        .rd_rsp_data    ( bar_rsp_data[2]               ),
+        .rd_rsp_valid   ( bar_rsp_valid[2]              ),
+        .intr_req       ( bar2_intr_req                 )
+    );
+
+    // BAR3-6: unimplemented
     genvar gi;
     generate
-        for (gi = 2; gi < 7; gi = gi + 1) begin : gen_bar_none
+        for (gi = 3; gi < 7; gi = gi + 1) begin : gen_bar_none
             pcileech_bar_impl_none i_bar_none(
                 .rst            ( rst                           ),
                 .clk            ( clk                           ),
@@ -588,5 +602,13 @@ module pcileech_tlps128_bar_controller(
             );
         end
     endgenerate
+
+{{ if eq .DeviceClass "audio" }}
+    // Combine HDA MSI interrupt with BAR2 doorbell interrupt
+    assign intr_req = hda_intr_req | bar2_intr_req;
+{{ else }}
+    // BAR2 doorbell is the only MSI source for non-HDA devices
+    assign intr_req = bar2_intr_req;
+{{ end }}
 
 endmodule
