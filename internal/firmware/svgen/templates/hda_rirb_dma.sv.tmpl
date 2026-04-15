@@ -160,7 +160,7 @@ module pcileech_hda_rirb_dma(
                         3'b011, 5'b00000, 1'b0, 3'b000,
                         4'b0000, 1'b0, 1'b0, 2'b00, 2'b00, 10'h002
                     };
-                    tlp_tx_tdata[63:32]  = {pcie_id, d_tag, 4'hF, 4'h7};
+                    tlp_tx_tdata[63:32]  = {pcie_id, d_tag, 4'hF, 4'hF};
                     tlp_tx_tdata[95:64]  = d_addr_hi;
                     tlp_tx_tdata[127:96] = {d_addr_lo[31:2], 2'b00};
                     tlp_tx_tkeepdw = 4'b1111;
@@ -172,7 +172,7 @@ module pcileech_hda_rirb_dma(
                         3'b010, 5'b00000, 1'b0, 3'b000,
                         4'b0000, 1'b0, 1'b0, 2'b00, 2'b00, 10'h002
                     };
-                    tlp_tx_tdata[63:32]  = {pcie_id, d_tag, 4'hF, 4'h7};
+                    tlp_tx_tdata[63:32]  = {pcie_id, d_tag, 4'hF, 4'hF};
                     tlp_tx_tdata[95:64]  = {d_addr_lo[31:2], 2'b00};
                     tlp_tx_tdata[127:96] = d_resp_lo;
                     tlp_tx_tkeepdw = 4'b1111;
