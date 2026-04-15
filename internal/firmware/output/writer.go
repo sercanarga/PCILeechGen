@@ -231,6 +231,7 @@ func ListOutputFiles() []string {
 		"src/",
 		"pcileech_bar_impl_device.sv",
 		"pcileech_tlps128_bar_controller.sv",
+		"pcileech_bar_impl_msi.sv",
 		"pcileech_msix_table.sv",
 		"pcileech_nvme_admin_responder.sv",
 		"pcileech_nvme_dma_bridge.sv",
@@ -253,6 +254,7 @@ type svArtifact struct {
 var coreSVArtifacts = []svArtifact{
 	{"pcileech_bar_impl_device.sv", svgen.GenerateBarImplDeviceSV},
 	{"pcileech_tlps128_bar_controller.sv", svgen.GenerateBarControllerSV},
+	{"pcileech_bar_impl_msi.sv", svgen.GenerateBarImplMSISV},
 	{"tlp_latency_emulator.sv", svgen.GenerateLatencyEmulatorSV},
 	{"device_config.sv", svgen.GenerateDeviceConfigSV},
 }

@@ -98,6 +98,11 @@ func GenerateHDAMSISV(cfg *SVGeneratorConfig) (string, error) {
 	return renderTemplate("hda_msi", cfg)
 }
 
+// GenerateBarImplMSISV renders the MSI doorbell BAR implementation.
+func GenerateBarImplMSISV(cfg *SVGeneratorConfig) (string, error) {
+	return renderTemplate("bar_impl_msi", cfg)
+}
+
 // svFuncMap provides hex formatting and arithmetic helpers for templates.
 func svFuncMap() template.FuncMap {
 	return template.FuncMap{
