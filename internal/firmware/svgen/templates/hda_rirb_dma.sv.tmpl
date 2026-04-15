@@ -1,0 +1,190 @@
+//
+// HDA RIRB DMA Bridge
+// Writes fake RIRB responses to system memory at the address programmed
+// in RIRBLBASE/RIRBUBASE so hdaudio.sys can read codec responses.
+//
+// Without this, the BAR module writes responses to MMIO registers (0x70/0x78)
+// that hdaudio.sys never reads — it expects responses in the DMA buffer.
+//
+// RIRB buffer entry format (8 bytes per entry, LE):
+//   offset+0 [3:0]   = response type (1=VERB response, 2=unsolicited)
+//   offset+0 [31:4]  = NID (Node ID)
+//   offset+4 [31:0]  = response payload (28-bit codec data)
+//
+
+`timescale 1ns / 1ps
+
+module pcileech_hda_rirb_dma(
+    input               rst,
+    input               clk,
+
+    input [15:0]        pcie_id,        // our BDF, goes into requester ID
+
+    // handshaking with BAR module
+    input               dma_req_valid,  // pulse: BAR module has response ready
+    input [31:0]        dma_req_lo,     // RIRB entry [31:0]  (type + NID)
+    input [31:0]        dma_req_hi,     // RIRB entry [63:32] (response payload)
+    input [7:0]         dma_req_wp,     // RIRBWP value BEFORE increment
+    output reg          dma_req_ready,  // 1 = ready to accept new response
+
+    // RIRB base address from BAR module (live register values)
+    input [31:0]        rirb_lbase,
+    input [31:0]        rirb_ubase,
+
+    // completion output: pulse when DMA write is done
+    output reg          dma_done,       // 1-cycle pulse: write completed
+
+    // outgoing TLP stream — gets muxed with bar controller responses
+    output reg [127:0]  tlp_tx_tdata,
+    output reg [3:0]    tlp_tx_tkeepdw,
+    output reg          tlp_tx_tvalid,
+    output reg          tlp_tx_tlast,
+    output reg [8:0]    tlp_tx_tuser
+);
+
+    localparam [3:0] D_IDLE       = 4'h0;
+    localparam [3:0] D_WR_TLP1    = 4'h1;  // MWr header beat
+    localparam [3:0] D_WR_TLP2    = 4'h2;  // 1st data DW (both) / only data beat (32-bit)
+    localparam [3:0] D_WR_TLP3    = 4'h3;  // 2nd data DW (64-bit only)
+    localparam [3:0] D_DONE       = 4'h4;
+
+    reg [3:0]  dstate;
+    reg [7:0]  d_tag;               // tags start at 0x80 to avoid host tag collision
+    reg [31:0] d_resp_lo;           // latched response low (type + NID)
+    reg [31:0] d_resp_hi;           // latched response high (payload)
+    reg [31:0] d_addr_lo;           // computed target address [31:0]
+    reg [31:0] d_addr_hi;           // latched target address [63:32]
+    reg        d_is_64bit;          // latched: 64-bit address mode
+
+    always @(posedge clk) begin
+        if (rst) begin
+            dstate          <= D_IDLE;
+            dma_req_ready   <= 1'b1;
+            dma_done        <= 1'b0;
+            tlp_tx_tvalid   <= 1'b0;
+            tlp_tx_tlast    <= 1'b0;
+            d_tag           <= 8'h80;
+            d_resp_lo       <= 32'h0;
+            d_resp_hi       <= 32'h0;
+            d_addr_lo       <= 32'h0;
+            d_addr_hi       <= 32'h0;
+            d_is_64bit      <= 1'b0;
+        end else begin
+            dma_done      <= 1'b0;
+            tlp_tx_tvalid <= 1'b0;
+            tlp_tx_tlast  <= 1'b0;
+
+            case (dstate)
+
+                // ---- idle: accept new response from BAR module ---------------
+                D_IDLE: begin
+                    dma_req_ready <= 1'b1;
+
+                    if (dma_req_valid) begin
+                        // Latch all inputs so we're not dependent on live signals
+                        // during the TLP emission sequence.
+                        d_resp_lo   <= dma_req_lo;
+                        d_resp_hi   <= dma_req_hi;
+                        d_addr_lo   <= rirb_lbase + ({24'h0, dma_req_wp} * 8);
+                        d_addr_hi   <= rirb_ubase;
+                        d_is_64bit  <= |rirb_ubase;
+                        d_tag       <= d_tag + 1'b1;
+
+                        dma_req_ready <= 1'b0;
+
+                        if (rirb_ubase != 32'h0) begin
+                            // 64-bit MWr: 4DW header → beat 1
+                            // Fmt=011 (4DW with data), Type=00000 (MWr)
+                            tlp_tx_tdata[31:0]   <= {
+                                3'b011,             // Fmt = 4DW w/ data
+                                5'b00000,           // Type = MWr
+                                1'b0, 3'b000,       // TC=0, Attr=000
+                                4'b0000,            // reserved
+                                1'b0, 1'b0,         // TD=0, EP=0
+                                2'b00, 2'b00,       // reserved
+                                10'h002             // Length = 2 DW
+                            };
+                            tlp_tx_tdata[63:32]  <= {pcie_id, d_tag, 4'hF, 4'h7};
+                            tlp_tx_tdata[95:64]  <= rirb_ubase;
+                            tlp_tx_tdata[127:96] <= {rirb_lbase[31:2], 2'b00};
+
+                            tlp_tx_tkeepdw <= 4'b1111;
+                            tlp_tx_tlast   <= 1'b0;
+                            tlp_tx_tuser   <= {8'h00, 1'b1};  // first=1
+                            tlp_tx_tvalid  <= 1'b1;
+
+                            dstate <= D_WR_TLP2;
+                        end else begin
+                            // 32-bit MWr: 3DW header + 1st data DW → beat 1
+                            // Fmt=010 (3DW with data), Type=00000 (MWr)
+                            tlp_tx_tdata[31:0]   <= {
+                                3'b010,             // Fmt = 3DW w/ data
+                                5'b00000,           // Type = MWr
+                                1'b0, 3'b000,
+                                4'b0000,
+                                1'b0, 1'b0,
+                                2'b00, 2'b00,
+                                10'h002             // Length = 2 DW
+                            };
+                            tlp_tx_tdata[63:32]  <= {pcie_id, d_tag, 4'hF, 4'h7};
+                            tlp_tx_tdata[95:64]  <= {d_addr_lo[31:2], 2'b00};
+                            tlp_tx_tdata[127:96] <= dma_req_lo;
+
+                            tlp_tx_tkeepdw <= 4'b1111;
+                            tlp_tx_tlast   <= 1'b0;
+                            tlp_tx_tuser   <= {8'h00, 1'b1};  // first=1
+                            tlp_tx_tvalid  <= 1'b1;
+
+                            dstate <= D_WR_TLP2;
+                        end
+                    end
+                end
+
+                // ---- data beats: use latched values, not live inputs ---------
+                D_WR_TLP2: begin
+                    if (d_is_64bit) begin
+                        // 64-bit: first data DW (type + NID)
+                        tlp_tx_tdata[31:0]   <= d_resp_lo;
+                        tlp_tx_tdata[127:32] <= 96'h0;
+                        tlp_tx_tkeepdw <= 4'b0001;
+                        tlp_tx_tlast   <= 1'b0;
+                        tlp_tx_tuser   <= 9'h0;
+                        tlp_tx_tvalid  <= 1'b1;
+                        dstate <= D_WR_TLP3;
+                    end else begin
+                        // 32-bit: second data DW (payload), last beat
+                        // Use latched d_resp_hi — NOT live dma_req_hi.
+                        tlp_tx_tdata[31:0]   <= d_resp_hi;
+                        tlp_tx_tdata[127:32] <= 96'h0;
+                        tlp_tx_tkeepdw <= 4'b0001;
+                        tlp_tx_tlast   <= 1'b1;
+                        tlp_tx_tuser   <= 9'h0;
+                        tlp_tx_tvalid  <= 1'b1;
+                        dstate <= D_DONE;
+                    end
+                end
+
+                // ---- 64-bit MWr: 2nd data DW (last beat) --------------------
+                D_WR_TLP3: begin
+                    tlp_tx_tdata[31:0]   <= d_resp_hi;
+                    tlp_tx_tdata[127:32] <= 96'h0;
+                    tlp_tx_tkeepdw <= 4'b0001;
+                    tlp_tx_tlast   <= 1'b1;
+                    tlp_tx_tuser   <= 9'h0;
+                    tlp_tx_tvalid  <= 1'b1;
+                    dstate <= D_DONE;
+                end
+
+                // ---- signal completion to BAR module -------------------------
+                D_DONE: begin
+                    dma_done        <= 1'b1;
+                    dma_req_ready   <= 1'b1;
+                    dstate          <= D_IDLE;
+                end
+
+                default: dstate <= D_IDLE;
+            endcase
+        end
+    end
+
+endmodule

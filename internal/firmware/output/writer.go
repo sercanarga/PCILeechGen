@@ -393,6 +393,16 @@ func (ow *OutputWriter) writeConditionalArtifacts(cfg *svgen.SVGeneratorConfig, 
 		}
 	}
 
+	if cfg.DeviceClass == devclass.ClassAudio && cfg.BARModel != nil {
+		hdaSV, err := svgen.GenerateHDARIRBDMASV(cfg)
+		if err != nil {
+			return fmt.Errorf("generating pcileech_hda_rirb_dma.sv: %w", err)
+		}
+		if err := ow.writeFile("pcileech_hda_rirb_dma.sv", hdaSV); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -408,7 +418,7 @@ func (ow *OutputWriter) logSVSummary(cfg *svgen.SVGeneratorConfig) {
 	case devclass.ClassXHCI:
 		features = append(features, "xHCI FSM")
 	case devclass.ClassAudio:
-		features = append(features, "HD Audio FSM")
+		features = append(features, "HD Audio FSM", "RIRB DMA Bridge")
 	}
 	if cfg.MSIXConfig != nil {
 		features = append(features, fmt.Sprintf("MSI-X %d vectors", cfg.MSIXConfig.NumVectors))

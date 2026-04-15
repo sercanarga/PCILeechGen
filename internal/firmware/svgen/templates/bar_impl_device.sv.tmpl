@@ -26,7 +26,17 @@ module pcileech_bar_impl_device #(
     output reg [87:0]   rd_rsp_ctx,
     output reg [31:0]   rd_rsp_data,
     output reg          rd_rsp_valid
-{{ if eq .DeviceClass "nvme" }}    ,
+{{ if eq .DeviceClass "audio" }}    ,
+    // HDA RIRB DMA interface (wired to pcileech_hda_rirb_dma in controller)
+    output wire         dma_req_valid,
+    output wire [31:0]  dma_resp_lo,
+    output wire [31:0]  dma_resp_hi,
+    output wire [7:0]   dma_resp_wp,
+    output wire [31:0]  dma_rirb_lbase,
+    output wire [31:0]  dma_rirb_ubase,
+    input               dma_req_ready,
+    input               dma_done
+{{ end }}{{ if eq .DeviceClass "nvme" }}    ,
     // NVMe register outputs for admin responder
     output wire [31:0]  nvme_cc,
     output wire [31:0]  nvme_aqa,
@@ -171,6 +181,11 @@ module pcileech_bar_impl_device #(
                 rirb_response_idx  <= 6'd0;
                 reg_0x00000060[0]  <= 1'b0;  // clear RIRBINTSTS.INTFL
                 reg_0x0000005C[1:0] <= 2'b0;  // clear RIRBSTS (UIS + OIS)
+                dma_req_valid_r    <= 1'b0;
+                dma_resp_lo_r      <= 32'h0;
+                dma_resp_hi_r      <= 32'h0;
+                dma_resp_wp_r      <= 8'h0;
+                dma_done_latched   <= 1'b0;
             end
         end
     end
@@ -208,6 +223,8 @@ module pcileech_bar_impl_device #(
     wire corb_cte = reg_0x0000004C[7];   // CORBCTL.CTE
     wire rirb_cte  = reg_0x0000005C[0];   // RIRBCTL.CTE
     wire corbwp_changed = (corbwp_prev != reg_0x00000048[7:0]) && corb_cte && rirb_cte;
+    // CRST falling edge detection — guards FSM against fighting with CRST block
+    wire crst_falling = !reg_0x00000008[0] && crst_prev;
     // Calculate how many entries the driver added (handles wrap-around at 256)
     wire [7:0] corbwp_delta_raw = reg_0x00000048[7:0] - corbwp_prev;
     // If delta > 32, the driver reset CORBWP without disabling CTE — treat as
@@ -496,17 +513,35 @@ module pcileech_bar_impl_device #(
             rirb_response_idx  <= 6'd0;
             corb_cte_prev      <= 1'b0;
             rirb_cte_prev      <= 1'b0;
+            dma_req_valid_r    <= 1'b0;
+            dma_resp_lo_r      <= 32'h0;
+            dma_resp_hi_r      <= 32'h0;
+            dma_resp_wp_r      <= 8'h0;
+            dma_done_latched   <= 1'b0;
         end else begin
-            // Track CTE for reinitialization detection
-            corb_cte_prev <= corb_cte;
-            rirb_cte_prev <= rirb_cte;
+            // CRST falling edge guard: if CRST is being asserted, suppress all
+            // FSM activity this cycle. The CRST block (separate always block)
+            // resets all state vars — we must not fight it with our own
+            // assignments. Without this guard, both blocks drive the same regs
+            // and the result is synthesis-tool-dependent.
 
-            // Track CORBWP for change detection
-            corbwp_prev <= reg_0x00000048[7:0];
+            // Track CTE for reinitialization detection
+            if (!crst_falling) begin
+                corb_cte_prev <= corb_cte;
+                rirb_cte_prev <= rirb_cte;
+
+                // Track CORBWP for change detection
+                corbwp_prev <= reg_0x00000048[7:0];
+            end else begin
+                corb_cte_prev <= 1'b0;
+                rirb_cte_prev <= 1'b0;
+                corbwp_prev   <= 8'h00;
+            end
 
             // CORB/RIRB reinitialization: driver disabled CTE → reset ROM index
             // and pending state so the next discovery cycle starts from index 0.
-            if (rb_reinit) begin
+            // Guarded by !crst_falling — CRST block handles reset.
+            if (rb_reinit && !crst_falling) begin
                 rirb_response_idx  <= 6'd0;
                 rirb_pending_count <= 8'h00;
                 rirb_response_fsm  <= 8'h00;
@@ -521,14 +556,18 @@ module pcileech_bar_impl_device #(
             // Guard: if rb_reinit is active, ignore corbwp_changed in the same
             // cycle. Without this, a driver that changes CORBWP while disabling
             // CTE would leave a stale pending count after reinitialization.
-            if (corbwp_changed && !rb_reinit) begin
+            // Guarded by !crst_falling — CRST block handles reset.
+            if (corbwp_changed && !rb_reinit && !crst_falling) begin
                 rirb_pending_count <= rirb_pending_count + corbwp_delta;
                 // Auto-advance CORB read pointer (controller consumed CORB entries)
                 reg_0x00000048[15:8] <= reg_0x00000048[15:8] + corbwp_delta;
             end
 
+            // All FSM transitions are guarded by !crst_falling to avoid fighting
+            // with the CRST block which resets state vars in a separate always block.
+
             // Build response data when starting a new response
-            if (rirb_response_fsm == 8'h00 && rirb_pending_count > 8'h00) begin
+            if (rirb_response_fsm == 8'h00 && rirb_pending_count > 8'h00 && !crst_falling) begin
                 // Look up the next response from the CA0132 ROM
                 rirb_fake_response <= rirb_rom_response(rirb_response_idx);
                 // Cycle: advance up to 63, then wrap to 32 (extended runtime zone).
@@ -539,29 +578,46 @@ module pcileech_bar_impl_device #(
             end
 
             // Response FSM countdown
-            if (rirb_response_fsm > 8'h00) begin
+            if (rirb_response_fsm > 8'h00 && !crst_falling) begin
                 rirb_response_fsm <= rirb_response_fsm - 8'h01;
 
-                // When FSM reaches 1, commit the fake response
+                // When FSM reaches 1, initiate DMA write handshake with bridge
                 if (rirb_response_fsm == 8'h01) begin
+                    dma_req_valid_r <= 1'b1;
+                    dma_resp_lo_r   <= rirb_fake_response[31:0];
+                    dma_resp_hi_r   <= rirb_fake_response[63:32];
+                    dma_resp_wp_r   <= rirb_wp_count;
+                    rirb_response_fsm <= 8'h02; // enter DMA wait
+                end
+            end
+
+            // DMA handshake state machine:
+            //   state 2: wait for bridge to accept request (dma_req_ready)
+            //   state 3: wait for bridge to complete write (dma_done)
+            //   state 4: commit RIRBWP and INTFL, return to idle
+            if (rirb_response_fsm == 8'h02 && dma_req_valid_r && dma_req_ready && !crst_falling) begin
+                // Bridge accepted the request, clear our request
+                dma_req_valid_r <= 1'b0;
+                rirb_response_fsm <= 8'h03;
+            end
+
+            if (rirb_response_fsm == 8'h03 && !crst_falling) begin
+                // Waiting for DMA bridge to complete the write.
+                // Use latched done signal to avoid missing the 1-cycle pulse.
+                if (dma_done_latched) begin
+                    // DMA write completed — now commit to MMIO registers
+
                     // Increment RIRBWP counter (8-bit, wraps at 256 per RIRBSIZE).
-                    // reg_0x00000058[15:8] = RIRBWP (firmware-owned)
-                    // reg_0x00000058[7:0]  = RINTCNT (driver-owned, generic write)
                     rirb_wp_count <= rirb_wp_count + 8'h01;
-                    reg_0x00000058[15:8] <= rirb_wp_count;
+                    reg_0x00000058[15:8] <= rirb_wp_count + 8'h01;
 
-                    // Set RIRB response data in spec-defined response registers
-                    // HD Audio RIRB entry layout (8 bytes at WP*8):
-                    //   [3:0]   = response type (1=codec, 2=unsolicited)
-                    //   [31:4]  = NID
-                    //   [63:32] = response payload (28-bit codec data)
-                    // ROM format: {metadata[31:0], payload[31:0]}
-                    // RIRBRESP_LO maps to entry[31:0] (type+NID), RIRBRESP_HI to entry[63:32] (payload)
-                    reg_0x00000070[31:0] <= rirb_fake_response[31:0];   // RIRBRESP_LO = type + NID
-                    reg_0x00000078[31:0] <= rirb_fake_response[63:32];  // RIRBRESP_HI = response data
+                    // Write response data to MMIO response registers (for drivers
+                    // that may fall back to reading these instead of DMA buffer).
+                    reg_0x00000070[31:0] <= dma_resp_lo_r;
+                    reg_0x00000078[31:0] <= dma_resp_hi_r;
 
-                    // Set RIRBSTS.UIS only for unsolicited responses (type=2), not solicited VERB responses (type=1)
-                    if (rirb_fake_response[3:0] == 4'h2) begin
+                    // Set RIRBSTS.UIS only for unsolicited responses (type=2)
+                    if (dma_resp_lo_r[3:0] == 4'h2) begin
                         reg_0x0000005C[1] <= 1'b1;
                     end
 
@@ -570,10 +626,45 @@ module pcileech_bar_impl_device #(
 
                     // Decrement pending count (one response delivered)
                     rirb_pending_count <= rirb_pending_count - 8'h01;
+
+                    // Return to idle — ready for next CORB entry
+                    rirb_response_fsm <= 8'h00;
                 end
             end
         end
     end
+
+    // Internal DMA interface registers (driven by RIRB FSM)
+    reg         dma_req_valid_r;
+    reg [31:0]  dma_resp_lo_r;
+    reg [31:0]  dma_resp_hi_r;
+    reg [7:0]   dma_resp_wp_r;
+    reg         dma_done_latched;  // latches the 1-cycle dma_done pulse
+
+    // Latch dma_done pulse so we don't miss it during state transitions.
+    // dma_done is a 1-cycle pulse from the DMA bridge; if the BAR FSM
+    // enters state 3 in the same cycle, it could miss the pulse due to
+    // routing delay. The latch holds it until consumed.
+    always @(posedge clk) begin
+        if (rst) begin
+            dma_done_latched <= 1'b0;
+        end else begin
+            if (dma_done) begin
+                dma_done_latched <= 1'b1;
+            end
+            if (rirb_response_fsm == 8'h03 && dma_done_latched) begin
+                dma_done_latched <= 1'b0;
+            end
+        end
+    end
+
+    // Port assignments — expose internal regs to module outputs
+    assign dma_req_valid   = dma_req_valid_r;
+    assign dma_resp_lo     = dma_resp_lo_r;
+    assign dma_resp_hi     = dma_resp_hi_r;
+    assign dma_resp_wp     = dma_resp_wp_r;
+    assign dma_rirb_lbase  = reg_0x00000050;  // RIRBLBASE
+    assign dma_rirb_ubase  = reg_0x00000054;  // RIRBUBASE
 
 {{ end }}
 {{ if eq .DeviceClass "ethernet" }}
