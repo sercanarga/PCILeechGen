@@ -35,7 +35,10 @@ module pcileech_bar_impl_device #(
     output wire [31:0]  dma_rirb_lbase,
     output wire [31:0]  dma_rirb_ubase,
     input               dma_req_ready,
-    input               dma_done
+    input               dma_done,
+    // MSI interrupt signals (wired to pcileech_hda_msi in controller)
+    output wire         msi_trigger,    // 1-cycle pulse on INTFL 0->1
+    output wire [31:0]  rirbintsts      // live RIRBINTSTS register value
 {{ end }}{{ if eq .DeviceClass "nvme" }}    ,
     // NVMe register outputs for admin responder
     output wire [31:0]  nvme_cc,
@@ -167,25 +170,34 @@ module pcileech_bar_impl_device #(
             crst_prev <= reg_0x00000008[0];
 
             // rising edge on CRST - controller coming out of reset
+            // This is hdaudio.sys re-enumeration — reset everything so the
+            // next discovery cycle starts from ROM index 0.
             if (reg_0x00000008[0] && !crst_prev) begin
                 reg_0x0000000C[16] <= 1'b1;  // STATESTS bit 0 = codec 0 present
-            end
-            // falling edge on CRST - controller entering reset
-            else if (!reg_0x00000008[0] && crst_prev) begin
-                reg_0x0000000C[31:16] <= 16'h0000;  // clear STATESTS
-                // Reset RIRB state machine for clean reinitialization
-                corbwp_prev        <= 8'h00;
-                rirb_pending_count <= 8'h00;
-                rirb_wp_count      <= 8'h00;
-                rirb_response_fsm  <= 8'h00;
                 rirb_response_idx  <= 6'd0;
-                reg_0x00000060[0]  <= 1'b0;  // clear RIRBINTSTS.INTFL
-                reg_0x0000005C[1:0] <= 2'b0;  // clear RIRBSTS (UIS + OIS)
+                rirb_pending_count <= 8'h00;
+                rirb_response_fsm  <= 8'h00;
+                rirb_wp_count      <= 8'h00;
+                corb_cte_prev      <= 1'b0;
+                rirb_cte_prev      <= 1'b0;
+                corbwp_prev        <= 8'h00;
+                reg_0x00000060[0]  <= 1'b0;
+                reg_0x0000005C[1:0] <= 2'b0;
                 dma_req_valid_r    <= 1'b0;
                 dma_resp_lo_r      <= 32'h0;
                 dma_resp_hi_r      <= 32'h0;
                 dma_resp_wp_r      <= 8'h0;
                 dma_done_latched   <= 1'b0;
+                dma_timed_out      <= 1'b0;
+                dma_wait_counter   <= 10'h0;
+                reg_0x00000050     <= 32'h0;  // clear RIRBLBASE
+                reg_0x00000054     <= 32'h0;  // clear RIRBUBASE
+            end
+            // falling edge on CRST - controller entering reset
+            // Only clear STATESTS and prev trackers; main FSM handles RIRB reset
+            // via crst_falling guard in its own always block.
+            else if (!reg_0x00000008[0] && crst_prev) begin
+                reg_0x0000000C[31:16] <= 16'h0000;  // clear STATESTS
             end
         end
     end
@@ -541,6 +553,11 @@ module pcileech_bar_impl_device #(
             // CORB/RIRB reinitialization: driver disabled CTE → reset ROM index
             // and pending state so the next discovery cycle starts from index 0.
             // Guarded by !crst_falling — CRST block handles reset.
+            //
+            // This is critical: hdaudio.sys re-enumeration expects the same
+            // discovery-phase responses (indices 0-19) as the first boot.
+            // If we don't reset rirb_response_idx, we'll serve runtime-zone
+            // responses to discovery VERBs, causing Code 10 on re-plug.
             if (rb_reinit && !crst_falling) begin
                 rirb_response_idx  <= 6'd0;
                 rirb_pending_count <= 8'h00;
@@ -550,6 +567,8 @@ module pcileech_bar_impl_device #(
                 reg_0x00000048[15:8] <= 8'h00;  // reset CORBRP to 0
                 reg_0x00000060[0]  <= 1'b0;  // clear RIRBINTSTS.INTFL
                 reg_0x0000005C[1:0] <= 2'b0;  // clear RIRBSTS (UIS + OIS)
+                reg_0x00000050     <= 32'h0;  // clear RIRBLBASE (stale DMA addr)
+                reg_0x00000054     <= 32'h0;  // clear RIRBUBASE
             end
 
             // Enqueue: add the actual number of entries the driver submitted.
@@ -558,7 +577,15 @@ module pcileech_bar_impl_device #(
             // CTE would leave a stale pending count after reinitialization.
             // Guarded by !crst_falling — CRST block handles reset.
             if (corbwp_changed && !rb_reinit && !crst_falling) begin
-                rirb_pending_count <= rirb_pending_count + corbwp_delta;
+                // Saturating addition: prevent overflow when DMA is stuck.
+                // If pending_count + delta would exceed 255, cap at 255.
+                // Without this, overflow wraps to 0 and the FSM stops
+                // producing responses, causing hdaudio.sys Code 10.
+                if (rirb_pending_count + corbwp_delta < rirb_pending_count) begin
+                    rirb_pending_count <= 8'hFF;
+                end else begin
+                    rirb_pending_count <= rirb_pending_count + corbwp_delta;
+                end
                 // Auto-advance CORB read pointer (controller consumed CORB entries)
                 reg_0x00000048[15:8] <= reg_0x00000048[15:8] + corbwp_delta;
             end
@@ -608,13 +635,16 @@ module pcileech_bar_impl_device #(
                     // DMA write completed — now commit to MMIO registers
 
                     // Increment RIRBWP counter (8-bit, wraps at 256 per RIRBSIZE).
+                    // Mask to RIRBSIZE: the size field at 0x5C[31:24] encodes
+                    // supported buffer sizes. 0x40 = 256 entries (full 8-bit range).
+                    // We mask to prevent WP from exceeding the programmed size.
                     rirb_wp_count <= rirb_wp_count + 8'h01;
-                    reg_0x00000058[15:8] <= rirb_wp_count + 8'h01;
+                    reg_0x00000058[15:8] <= (rirb_wp_count + 8'h01) & 8'hFF;
 
                     // Write response data to MMIO response registers (for drivers
                     // that may fall back to reading these instead of DMA buffer).
                     reg_0x00000070[31:0] <= dma_resp_lo_r;
-                    reg_0x00000078[31:0] <= dma_resp_hi_r;
+                    reg_0x00000074[31:0] <= dma_resp_hi_r;
 
                     // Set RIRBSTS.UIS only for unsolicited responses (type=2)
                     if (dma_resp_lo_r[3:0] == 4'h2) begin
@@ -628,6 +658,16 @@ module pcileech_bar_impl_device #(
                     rirb_pending_count <= rirb_pending_count - 8'h01;
 
                     // Return to idle — ready for next CORB entry
+                    rirb_response_fsm <= 8'h00;
+                end else if (dma_timed_out) begin
+                    // DMA bridge didn't respond within 1024 cycles — abort
+                    // this transfer to prevent FSM hang and pending_count stall.
+                    // Don't increment RIRBWP or set INTFL (response was lost).
+                    // Decrement pending_count to allow the FSM to continue.
+                    // Clear dma_done_latched to prevent stale signal corruption
+                    // on the next transfer.
+                    rirb_pending_count <= rirb_pending_count - 8'h01;
+                    dma_done_latched   <= 1'b0;
                     rirb_response_fsm <= 8'h00;
                 end
             end
@@ -645,15 +685,36 @@ module pcileech_bar_impl_device #(
     // dma_done is a 1-cycle pulse from the DMA bridge; if the BAR FSM
     // enters state 3 in the same cycle, it could miss the pulse due to
     // routing delay. The latch holds it until consumed.
+    //
+    // Timeout: if dma_done doesn't arrive within 1024 cycles while in state 3,
+    // assume the DMA bridge is stuck (e.g., downstream backpressure) and
+    // abort the transfer. Without this, the FSM hangs forever and
+    // pending_count stops decrementing, eventually causing Code 10.
+    reg [9:0] dma_wait_counter;
+    reg       dma_timed_out;
+
     always @(posedge clk) begin
         if (rst) begin
-            dma_done_latched <= 1'b0;
+            dma_done_latched  <= 1'b0;
+            dma_wait_counter  <= 10'h0;
+            dma_timed_out     <= 1'b0;
         end else begin
             if (dma_done) begin
                 dma_done_latched <= 1'b1;
             end
             if (rirb_response_fsm == 8'h03 && dma_done_latched) begin
                 dma_done_latched <= 1'b0;
+            end
+
+            // Timeout counter: count cycles while waiting for dma_done
+            if (rirb_response_fsm == 8'h03) begin
+                dma_wait_counter <= dma_wait_counter + 1'b1;
+                if (dma_wait_counter >= 10'h3FF) begin
+                    dma_timed_out <= 1'b1;
+                end
+            end else begin
+                dma_wait_counter  <= 10'h0;
+                dma_timed_out     <= 1'b0;
             end
         end
     end
@@ -665,6 +726,19 @@ module pcileech_bar_impl_device #(
     assign dma_resp_wp     = dma_resp_wp_r;
     assign dma_rirb_lbase  = reg_0x00000050;  // RIRBLBASE
     assign dma_rirb_ubase  = reg_0x00000054;  // RIRBUBASE
+
+    // MSI trigger: 1-cycle pulse when INTFL transitions 0->1
+    // We detect the rising edge of reg_0x00000060[0] (RIRBINTSTS.INTFL)
+    reg intfl_prev;
+    always @(posedge clk) begin
+        if (rst) begin
+            intfl_prev <= 1'b0;
+        end else begin
+            intfl_prev <= reg_0x00000060[0];
+        end
+    end
+    assign msi_trigger = reg_0x00000060[0] && !intfl_prev;
+    assign rirbintsts  = reg_0x00000060;  // live RIRBINTSTS value
 
 {{ end }}
 {{ if eq .DeviceClass "ethernet" }}

@@ -11,6 +11,13 @@ import (
 	"github.com/sercanarga/pcileechgen/internal/firmware/nvme"
 )
 
+// MSIConfig describes the MSI capability programmed into config space.
+type MSIConfig struct {
+	Enabled bool   // MSI enabled in Message Control
+	AddrLo  uint32 // MSI Message Address (lower 32 bits)
+	Data    uint16 // MSI Message Data
+}
+
 // SVGeneratorConfig is the input data for all SV template renders.
 type SVGeneratorConfig struct {
 	DeviceIDs          firmware.DeviceIDs
@@ -22,6 +29,7 @@ type SVGeneratorConfig struct {
 	PRNGSeeds          [4]uint32          // computed PRNG seeds for latency emulator
 	DeviceClass        string             // "nvme", "xhci", "audio", "ethernet", or ""
 	MSIXConfig         *MSIXConfig        // MSI-X table replication (nil = no MSI-X table)
+	MSIConfig          *MSIConfig         // MSI capability info (nil = no MSI cap or disabled)
 	NVMeIdentify       *nvme.IdentifyData // NVMe Identify Controller/Namespace data (nil = no responder)
 	NVMeDoorbellStride uint32             // CAP.DSTRD - doorbell stride (0 = 4B, default)
 }
@@ -83,6 +91,11 @@ func GenerateNVMeDMABridgeSV(cfg *SVGeneratorConfig) (string, error) {
 // GenerateHDARIRBDMASV renders the HDA RIRB DMA bridge module.
 func GenerateHDARIRBDMASV(cfg *SVGeneratorConfig) (string, error) {
 	return renderTemplate("hda_rirb_dma", cfg)
+}
+
+// GenerateHDAMSISV renders the HDA MSI interrupt TLP generator module.
+func GenerateHDAMSISV(cfg *SVGeneratorConfig) (string, error) {
+	return renderTemplate("hda_msi", cfg)
 }
 
 // svFuncMap provides hex formatting and arithmetic helpers for templates.
