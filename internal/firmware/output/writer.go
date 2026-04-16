@@ -169,13 +169,14 @@ func (ow *OutputWriter) writeManifest(ctx *donor.DeviceContext, ids firmware.Dev
 }
 
 // svFilesReplacedByGenerator: board source files we replace with
-// generated versions. Must be deleted from src/ to avoid duplicates.
-var svFilesReplacedByGenerator = []string{
-	"pcileech_tlps128_bar_controller.sv",
+// generated versions. These are excluded from the board source copy
+// so Vivado only sees the generated versions.
+var svFilesReplacedByGenerator = map[string]bool{
+	"pcileech_tlps128_bar_controller.sv": true,
 }
 
-// patchSVSources copies the board's SV tree, removes files that will
-// be regenerated, and patches donor IDs into the remaining sources.
+// patchSVSources copies the board's SV tree (excluding files that will
+// be regenerated), and patches donor IDs into the remaining sources.
 func (ow *OutputWriter) patchSVSources(ctx *donor.DeviceContext, b *board.Board, ids firmware.DeviceIDs) error {
 	srcDir := b.SrcPath(ow.LibDir)
 	dstDir := filepath.Join(ow.OutputDir, "src")
@@ -186,20 +187,11 @@ func (ow *OutputWriter) patchSVSources(ctx *donor.DeviceContext, b *board.Board,
 		return fmt.Errorf("board sources not found at %s (is the pcileech-fpga submodule initialized?)", srcDir)
 	}
 
-	if err := util.CopyDir(srcDir, dstDir); err != nil {
+	// Copy board sources, excluding files replaced by the generator.
+	// This prevents Vivado from importing duplicate module definitions
+	// (same name from both board source and generated file).
+	if err := copyDirExcluding(srcDir, dstDir, svFilesReplacedByGenerator); err != nil {
 		return fmt.Errorf("failed to copy SV sources: %w", err)
-	}
-
-	// Delete stock copies so Vivado only sees our generated versions.
-	// Without this, Vivado uses the stock file and causes Code 10.
-	if !ow.StockBar {
-		for _, name := range svFilesReplacedByGenerator {
-			if err := os.Remove(filepath.Join(dstDir, name)); err != nil && !os.IsNotExist(err) {
-				slog.Warn("could not remove stock SV file", "file", name, "error", err)
-			}
-		}
-	} else {
-		slog.Info("stock-bar mode: keeping stock bar controller")
 	}
 
 	patcher := svgen.NewSVPatcher(ids, dstDir)
@@ -212,6 +204,37 @@ func (ow *OutputWriter) patchSVSources(ctx *donor.DeviceContext, b *board.Board,
 		slog.Info("SV patches applied", "summary", svgen.FormatPatchSummary(results))
 	}
 
+	return nil
+}
+
+// copyDirExcluding copies a directory recursively but skips files whose
+// names are in the exclude map. Used to prevent board source files from
+// being imported alongside generated versions with the same module names.
+func copyDirExcluding(src, dst string, exclude map[string]bool) error {
+	if err := os.MkdirAll(dst, 0755); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		srcPath := filepath.Join(src, e.Name())
+		dstPath := filepath.Join(dst, e.Name())
+		if e.IsDir() {
+			if err := copyDirExcluding(srcPath, dstPath, exclude); err != nil {
+				return err
+			}
+		} else if !exclude[e.Name()] {
+			data, err := os.ReadFile(srcPath)
+			if err != nil {
+				return err
+			}
+			if err := os.WriteFile(dstPath, data, 0644); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 
@@ -332,14 +355,21 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 	slog.Info("BAR selection for SV codegen",
 		"bar_index", barIdx,
 		"bar_size", len(barData),
-		"has_profile", barProfile != nil)
+		"has_profile", barProfile != nil,
+		"class_code", fmt.Sprintf("0x%06X", ctx.Device.ClassCode),
+	)
 	bm := barmodel.BuildBARModel(barData, ctx.Device.ClassCode, barProfile)
+	slog.Info("BAR model built",
+		"model_nil", bm == nil,
+		"reg_count", func() int { if bm != nil { return len(bm.Registers) }; return 0 }(),
+	)
 
 	strategy := devclass.StrategyForClassAndVendor(ctx.Device.ClassCode, ids.VendorID)
 	devClass := ""
 	if strategy != nil {
 		devClass = strategy.DeviceClass()
 	}
+	slog.Info("device class resolution", "class", devClass)
 
 	cfg := &svgen.SVGeneratorConfig{
 		DeviceIDs:     ids,
