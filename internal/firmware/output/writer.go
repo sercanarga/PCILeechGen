@@ -169,13 +169,27 @@ func (ow *OutputWriter) writeManifest(ctx *donor.DeviceContext, ids firmware.Dev
 }
 
 // svFilesReplacedByGenerator: board source files we replace with
-// generated versions. Must be deleted from src/ to avoid duplicates.
-var svFilesReplacedByGenerator = []string{
-	"pcileech_tlps128_bar_controller.sv",
+// generated versions. These are excluded from the board source copy
+// so Vivado only sees the generated versions.
+var svFilesReplacedByGenerator = map[string]bool{
+	"pcileech_tlps128_bar_controller.sv": true,
 }
 
-// patchSVSources copies the board's SV tree, removes files that will
-// be regenerated, and patches donor IDs into the remaining sources.
+// barControllerSubModules: sub-module names extracted from the board's
+// BAR controller file. The top-level module (pcileech_tlps128_bar_controller)
+// is replaced by the generated version, but these shared modules are still
+// needed by the generated controller.
+var barControllerSubModules = []string{
+	"pcileech_tlps128_bar_rdengine",
+	"pcileech_tlps128_bar_wrengine",
+	"pcileech_bar_impl_none",
+	"pcileech_bar_impl_loopaddr",
+	"pcileech_bar_impl_zerowrite4k",
+	"pcileech_bar_impl_msi",
+}
+
+// patchSVSources copies the board's SV tree (excluding files that will
+// be regenerated), and patches donor IDs into the remaining sources.
 func (ow *OutputWriter) patchSVSources(ctx *donor.DeviceContext, b *board.Board, ids firmware.DeviceIDs) error {
 	srcDir := b.SrcPath(ow.LibDir)
 	dstDir := filepath.Join(ow.OutputDir, "src")
@@ -186,20 +200,30 @@ func (ow *OutputWriter) patchSVSources(ctx *donor.DeviceContext, b *board.Board,
 		return fmt.Errorf("board sources not found at %s (is the pcileech-fpga submodule initialized?)", srcDir)
 	}
 
-	if err := util.CopyDir(srcDir, dstDir); err != nil {
+	// Copy board sources, excluding files replaced by the generator.
+	// This prevents Vivado from importing duplicate module definitions
+	// (same name from both board source and generated file).
+	if err := copyDirExcluding(srcDir, dstDir, svFilesReplacedByGenerator); err != nil {
 		return fmt.Errorf("failed to copy SV sources: %w", err)
 	}
 
-	// Delete stock copies so Vivado only sees our generated versions.
-	// Without this, Vivado uses the stock file and causes Code 10.
+	// Extract sub-modules from the board's BAR controller file and write
+	// them as separate .sv files. The generated BAR controller depends on
+	// these but the board's top-level module would conflict with the
+	// generated version, so we exclude the original file and split it.
 	if !ow.StockBar {
-		for _, name := range svFilesReplacedByGenerator {
-			if err := os.Remove(filepath.Join(dstDir, name)); err != nil && !os.IsNotExist(err) {
-				slog.Warn("could not remove stock SV file", "file", name, "error", err)
-			}
+		ctrlSrc := filepath.Join(srcDir, "pcileech_tlps128_bar_controller.sv")
+		if err := extractSubModules(ctrlSrc, dstDir, barControllerSubModules); err != nil {
+			slog.Warn("could not extract BAR controller sub-modules, board source may be incompatible", "error", err)
 		}
 	} else {
 		slog.Info("stock-bar mode: keeping stock bar controller")
+		// In stock mode, re-copy the controller since copyDirExcluding skipped it.
+		srcFile := filepath.Join(srcDir, "pcileech_tlps128_bar_controller.sv")
+		dstFile := filepath.Join(dstDir, "pcileech_tlps128_bar_controller.sv")
+		if data, err := os.ReadFile(srcFile); err == nil {
+			os.WriteFile(dstFile, data, 0644)
+		}
 	}
 
 	patcher := svgen.NewSVPatcher(ids, dstDir)
@@ -212,6 +236,74 @@ func (ow *OutputWriter) patchSVSources(ctx *donor.DeviceContext, b *board.Board,
 		slog.Info("SV patches applied", "summary", svgen.FormatPatchSummary(results))
 	}
 
+	return nil
+}
+
+// copyDirExcluding copies a directory recursively but skips files whose
+// names are in the exclude map. Used to prevent board source files from
+// being imported alongside generated versions with the same module names.
+func copyDirExcluding(src, dst string, exclude map[string]bool) error {
+	if err := os.MkdirAll(dst, 0755); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		srcPath := filepath.Join(src, e.Name())
+		dstPath := filepath.Join(dst, e.Name())
+		if e.IsDir() {
+			if err := copyDirExcluding(srcPath, dstPath, exclude); err != nil {
+				return err
+			}
+		} else if !exclude[e.Name()] {
+			data, err := os.ReadFile(srcPath)
+			if err != nil {
+				return err
+			}
+			if err := os.WriteFile(dstPath, data, 0644); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// extractSubModules reads a board BAR controller source file and writes
+// each named sub-module as a separate .sv file. This allows the generated
+// top-level BAR controller to use shared sub-modules without conflicting
+// with the board's original file.
+func extractSubModules(srcPath string, dstDir string, subModules []string) error {
+	data, err := os.ReadFile(srcPath)
+	if err != nil {
+		return err
+	}
+
+	content := string(data)
+	for _, modName := range subModules {
+		searchStr := "module " + modName
+		start := strings.Index(content, searchStr)
+		if start == -1 {
+			slog.Warn("sub-module not found in board controller", "module", modName)
+			continue
+		}
+
+		// Find the end: next "\nmodule " after our match, or end of file.
+		rest := content[start+len(searchStr):]
+		nextIdx := strings.Index(rest, "\nmodule ")
+		var modBody string
+		if nextIdx == -1 {
+			modBody = content[start:]
+		} else {
+			modBody = content[start : start+len(searchStr)+nextIdx+1]
+		}
+
+		dstFile := filepath.Join(dstDir, modName+".sv")
+		if err := os.WriteFile(dstFile, []byte(modBody), 0644); err != nil {
+			slog.Warn("failed to write sub-module file", "module", modName, "error", err)
+		}
+	}
 	return nil
 }
 
@@ -332,14 +424,21 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 	slog.Info("BAR selection for SV codegen",
 		"bar_index", barIdx,
 		"bar_size", len(barData),
-		"has_profile", barProfile != nil)
+		"has_profile", barProfile != nil,
+		"class_code", fmt.Sprintf("0x%06X", ctx.Device.ClassCode),
+	)
 	bm := barmodel.BuildBARModel(barData, ctx.Device.ClassCode, barProfile)
+	slog.Info("BAR model built",
+		"model_nil", bm == nil,
+		"reg_count", func() int { if bm != nil { return len(bm.Registers) }; return 0 }(),
+	)
 
 	strategy := devclass.StrategyForClassAndVendor(ctx.Device.ClassCode, ids.VendorID)
 	devClass := ""
 	if strategy != nil {
 		devClass = strategy.DeviceClass()
 	}
+	slog.Info("device class resolution", "class", devClass)
 
 	cfg := &svgen.SVGeneratorConfig{
 		DeviceIDs:     ids,
