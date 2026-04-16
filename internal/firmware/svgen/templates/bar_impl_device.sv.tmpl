@@ -251,6 +251,19 @@ module pcileech_bar_impl_device #(
     wire rirb_reinit = rirb_cte_prev && !rirb_cte;
     wire rb_reinit   = corb_reinit || rirb_reinit;
 
+    // Internal DMA interface registers (driven by RIRB FSM)
+    // Declared early: used by CRST reset block and main FSM.
+    reg         dma_req_valid_r;
+    reg [31:0]  dma_resp_lo_r;
+    reg [31:0]  dma_resp_hi_r;
+    reg [7:0]   dma_resp_wp_r;
+    reg         dma_done_latched;  // latches the 1-cycle dma_done pulse
+
+    // Timeout: if dma_done doesn't arrive within 1024 cycles while in state 3,
+    // assume the DMA bridge is stuck and abort the transfer.
+    reg [9:0]   dma_wait_counter;
+    reg         dma_timed_out;
+
     // ========================================================================
     // RIRBINTSTS RW1C (write-1-to-clear) detection.
     // RIRBINTSTS (offset 0x60) has IsRW1C=true, so it is excluded from the
@@ -709,25 +722,12 @@ module pcileech_bar_impl_device #(
         // Default: hold current value (no explicit assignment needed for regs).
     end
 
-    // Internal DMA interface registers (driven by RIRB FSM)
-    reg         dma_req_valid_r;
-    reg [31:0]  dma_resp_lo_r;
-    reg [31:0]  dma_resp_hi_r;
-    reg [7:0]   dma_resp_wp_r;
-    reg         dma_done_latched;  // latches the 1-cycle dma_done pulse
-
     // Latch dma_done pulse so we don't miss it during state transitions.
     // dma_done is a 1-cycle pulse from the DMA bridge; if the BAR FSM
     // enters state 3 in the same cycle, it could miss the pulse due to
     // routing delay. The latch holds it until consumed.
-    //
-    // Timeout: if dma_done doesn't arrive within 1024 cycles while in state 3,
-    // assume the DMA bridge is stuck (e.g., downstream backpressure) and
-    // abort the transfer. Without this, the FSM hangs forever and
-    // pending_count stops decrementing, eventually causing Code 10.
-    reg [9:0] dma_wait_counter;
-    reg       dma_timed_out;
-
+    // The latch and timeout logic remain active regardless of CRST state
+    // to ensure pulses are not lost during reset transitions.
     always @(posedge clk) begin
         if (rst) begin
             dma_done_latched  <= 1'b0;
