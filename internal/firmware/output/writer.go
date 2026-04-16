@@ -332,14 +332,21 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 	slog.Info("BAR selection for SV codegen",
 		"bar_index", barIdx,
 		"bar_size", len(barData),
-		"has_profile", barProfile != nil)
+		"has_profile", barProfile != nil,
+		"class_code", fmt.Sprintf("0x%06X", ctx.Device.ClassCode),
+	)
 	bm := barmodel.BuildBARModel(barData, ctx.Device.ClassCode, barProfile)
+	slog.Info("BAR model built",
+		"model_nil", bm == nil,
+		"reg_count", func() int { if bm != nil { return len(bm.Registers) }; return 0 }(),
+	)
 
 	strategy := devclass.StrategyForClassAndVendor(ctx.Device.ClassCode, ids.VendorID)
 	devClass := ""
 	if strategy != nil {
 		devClass = strategy.DeviceClass()
 	}
+	slog.Info("device class resolution", "class", devClass)
 
 	cfg := &svgen.SVGeneratorConfig{
 		DeviceIDs:     ids,

@@ -24,8 +24,23 @@ if {[string equal [get_filesets -quiet sources_1] ""]} {
 
 set obj [get_filesets sources_1]
 set sv_files [glob -nocomplain "{{.SrcPath}}/*.sv"]
+
+# Exclude stock BAR controller — the generated version from the output
+# directory takes its place. Without this filter, Vivado imports both
+# files (same module name) and silently picks the board source which
+# has zerowrite4k hardcoded, causing Code 10 for HDA devices.
+set filtered_sv_files [list]
+foreach f $sv_files {
+  set fname [file tail $f]
+  if {$fname eq "pcileech_tlps128_bar_controller.sv"} {
+    puts "Skipping stock BAR controller: $f (generated version will be used)"
+    continue
+  }
+  lappend filtered_sv_files $f
+}
+
 set svh_files [glob -nocomplain "{{.SrcPath}}/*.svh"]
-set all_src_files [concat $sv_files $svh_files]
+set all_src_files [concat $filtered_sv_files $svh_files]
 if {[llength $all_src_files] > 0} {
   set imported_files [import_files -fileset sources_1 $all_src_files]
 }
