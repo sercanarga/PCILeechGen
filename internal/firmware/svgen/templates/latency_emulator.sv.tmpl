@@ -41,11 +41,11 @@ module tlp_latency_emulator #(
     output reg          wr_ack
 );
 
+    reg request_pending;
     assign busy = request_pending;
 
     reg [7:0] latency_counter;
     reg [7:0] target_latency;
-    reg request_pending;
 
     reg [87:0] stored_ctx;
     reg [31:0] stored_data;

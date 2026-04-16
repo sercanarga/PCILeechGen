@@ -161,8 +161,27 @@ module pcileech_bar_impl_device #(
     // DMA throughput to ~80 KB/s. We generate a fake RIRB response
     // for each VERB the driver submits via CORB, so the driver completes init.
     // ========================================================================
-    reg crst_prev;
 
+    // ---- Register declarations (must precede CRST block and FSM) ----
+    reg crst_prev;
+    reg  [7:0] rirb_response_fsm;
+    reg [63:0] rirb_fake_response;
+    reg  [7:0] corbwp_prev;
+    reg  [7:0] rirb_pending_count;  // number of VERBs waiting for response
+    reg  [7:0] rirb_wp_count;
+    reg  [5:0] rirb_response_idx;   // index into response ROM (0-63)
+    reg corb_cte_prev, rirb_cte_prev;
+
+    // Internal DMA interface registers (driven by RIRB FSM)
+    reg         dma_req_valid_r;
+    reg [31:0]  dma_resp_lo_r;
+    reg [31:0]  dma_resp_hi_r;
+    reg [7:0]   dma_resp_wp_r;
+    reg         dma_done_latched;  // latches the 1-cycle dma_done pulse
+    reg [9:0]   dma_wait_counter;
+    reg         dma_timed_out;
+
+    // ---- CRST handshake ----
     always @(posedge clk) begin
         if (rst) begin
             crst_prev <= 1'b1;
@@ -223,12 +242,6 @@ module pcileech_bar_impl_device #(
     //
     // RIRB response type 0x1 = standard VERB response data.
     // ========================================================================
-    reg  [7:0] rirb_response_fsm;
-    reg [63:0] rirb_fake_response;
-    reg  [7:0] corbwp_prev;
-    reg  [7:0] rirb_pending_count;  // number of VERBs waiting for response
-    reg  [7:0] rirb_wp_count;
-    reg  [5:0] rirb_response_idx;   // index into response ROM (0-63)
 
     // CORBWP change detection: driver submitted new VERB(s).
     wire corb_cte = reg_0x0000004C[7];   // CORBCTL.CTE
@@ -246,23 +259,9 @@ module pcileech_bar_impl_device #(
     // CORB/RIRB reinitialization detection: driver disables CTE to reset buffers.
     // When CTE goes low, the driver is reinitializing — reset ROM index and
     // pending state so the next discovery cycle starts fresh.
-    reg corb_cte_prev, rirb_cte_prev;
     wire corb_reinit = corb_cte_prev && !corb_cte;
     wire rirb_reinit = rirb_cte_prev && !rirb_cte;
     wire rb_reinit   = corb_reinit || rirb_reinit;
-
-    // Internal DMA interface registers (driven by RIRB FSM)
-    // Declared early: used by CRST reset block and main FSM.
-    reg         dma_req_valid_r;
-    reg [31:0]  dma_resp_lo_r;
-    reg [31:0]  dma_resp_hi_r;
-    reg [7:0]   dma_resp_wp_r;
-    reg         dma_done_latched;  // latches the 1-cycle dma_done pulse
-
-    // Timeout: if dma_done doesn't arrive within 1024 cycles while in state 3,
-    // assume the DMA bridge is stuck and abort the transfer.
-    reg [9:0]   dma_wait_counter;
-    reg         dma_timed_out;
 
     // ========================================================================
     // RIRBINTSTS RW1C (write-1-to-clear) detection.
