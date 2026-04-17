@@ -24,7 +24,7 @@ module pcileech_hda_rirb_dma(
     input               dma_req_valid,  // pulse: BAR module has response ready
     input [31:0]        dma_req_lo,     // RIRB entry [31:0]  (type + NID)
     input [31:0]        dma_req_hi,     // RIRB entry [63:32] (response payload)
-    input [7:0]         dma_req_wp,     // RIRBWP value BEFORE increment
+    input [7:0]         dma_req_wp,     // target RIRB slot index (WP+1)
     output reg          dma_req_ready,  // 1 = ready to accept new response
 
     // RIRB base address from BAR module (live register values)
@@ -62,8 +62,6 @@ module pcileech_hda_rirb_dma(
             dstate          <= D_IDLE;
             dma_req_ready   <= 1'b1;
             dma_done        <= 1'b0;
-            tlp_tx_tvalid   <= 1'b0;
-            tlp_tx_tlast    <= 1'b0;
             d_tag           <= 8'h80;
             d_resp_lo       <= 32'h0;
             d_resp_hi       <= 32'h0;
@@ -79,7 +77,6 @@ module pcileech_hda_rirb_dma(
 
                 // ---- idle: accept new response from BAR module ---------------
                 D_IDLE: begin
-                    tlp_tx_tvalid <= 1'b0;
                     dma_req_ready <= 1'b1;
 
                     if (dma_req_valid) begin
@@ -127,14 +124,11 @@ module pcileech_hda_rirb_dma(
                 D_DONE: begin
                     dma_done        <= 1'b1;
                     dma_req_ready   <= 1'b1;
-                    tlp_tx_tvalid   <= 1'b0;
-                    tlp_tx_tlast    <= 1'b0;
                     dstate          <= D_IDLE;
                 end
 
                 default: begin
                     dstate <= D_IDLE;
-                    tlp_tx_tvalid <= 1'b0;
                 end
             endcase
         end
@@ -158,10 +152,13 @@ module pcileech_hda_rirb_dma(
                     // Fmt=011 (4DW with data), Type=00000 (MWr), Length=2 DW
                     // Last DW BE=0xF, First DW BE=0xF (all bytes valid in both DWs)
                     tlp_tx_tdata[31:0]   = {
-                        3'b011, 5'b00000, 1'b0, 3'b000,
-                        4'b0000, 1'b0, 1'b0, 2'b00, 4'hF, 4'hF, 10'h002
+                        3'b011, 5'b00000,         // Fmt, Type
+                        1'b0, 3'b000,             // R, TC
+                        1'b0, 1'b0, 1'b0, 1'b0,  // Attr[2], R, IDO, R
+                        1'b0, 1'b0, 2'b00,        // TD, EP, Attr[1:0]
+                        2'b00, 10'h002            // AT, Length
                     };
-                    tlp_tx_tdata[63:32]  = {pcie_id, d_tag, 4'hF, 4'h7};
+                    tlp_tx_tdata[63:32]  = {pcie_id, d_tag, 4'hF, 4'hF};
                     tlp_tx_tdata[95:64]  = d_addr_hi;
                     tlp_tx_tdata[127:96] = {d_addr_lo[31:2], 2'b00};
                     tlp_tx_tkeepdw = 4'b1111;
@@ -171,10 +168,13 @@ module pcileech_hda_rirb_dma(
                     // Fmt=010 (3DW with data), Type=00000 (MWr), Length=2 DW
                     // Last DW BE=0xF, First DW BE=0xF (all bytes valid in both DWs)
                     tlp_tx_tdata[31:0]   = {
-                        3'b010, 5'b00000, 1'b0, 3'b000,
-                        4'b0000, 1'b0, 1'b0, 2'b00, 4'hF, 4'hF, 10'h002
+                        3'b010, 5'b00000,         // Fmt, Type
+                        1'b0, 3'b000,             // R, TC
+                        1'b0, 1'b0, 1'b0, 1'b0,  // Attr[2], R, IDO, R
+                        1'b0, 1'b0, 2'b00,        // TD, EP, Attr[1:0]
+                        2'b00, 10'h002            // AT, Length
                     };
-                    tlp_tx_tdata[63:32]  = {pcie_id, d_tag, 4'hF, 4'h7};
+                    tlp_tx_tdata[63:32]  = {pcie_id, d_tag, 4'hF, 4'hF};
                     tlp_tx_tdata[95:64]  = {d_addr_lo[31:2], 2'b00};
                     tlp_tx_tdata[127:96] = d_resp_lo;
                     tlp_tx_tkeepdw = 4'b1111;
