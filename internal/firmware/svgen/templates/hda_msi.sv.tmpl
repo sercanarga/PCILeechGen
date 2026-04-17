@@ -34,39 +34,16 @@ module pcileech_hda_msi(
     output              intr_req
 );
 
-    reg       msi_trigger_latched;
-    reg       intfl_prev;
     reg       intr_req_reg;
 
-    // Edge detection: INTFL 0->1 transition
-    always @(posedge clk) begin
-        if (rst) begin
-            intfl_prev          <= 1'b0;
-            msi_trigger_latched <= 1'b0;
-        end else begin
-            // Latch the rising edge
-            if (rirbintsts[0] && !intfl_prev) begin
-                msi_trigger_latched <= 1'b1;
-            end
-
-            // Clear when we produce the pulse
-            if (intr_req_reg) begin
-                msi_trigger_latched <= 1'b0;
-            end
-
-            intfl_prev <= rirbintsts[0];
-        end
-    end
-
-    // Produce a single-cycle intr_req pulse on msi_trigger or latched edge.
-    // The cfg module routes this to cfg_interrupt for MSI TLP generation.
+    // Produce a single-cycle intr_req pulse on msi_trigger.
+    // msi_trigger comes from BAR module with GIE+CIE gating already applied.
+    // The cfg module routes intr_req to cfg_interrupt for MSI TLP generation.
     always @(posedge clk) begin
         if (rst) begin
             intr_req_reg <= 1'b0;
-        end else if (msi_trigger || msi_trigger_latched) begin
-            intr_req_reg <= 1'b1;
         end else begin
-            intr_req_reg <= 1'b0;
+            intr_req_reg <= msi_trigger;
         end
     end
 

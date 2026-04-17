@@ -236,25 +236,26 @@ module tlp_latency_emulator #(
     end
 
     // write acknowledge FSM - delays wr_ack to emulate MMIO write latency
+    // wr_ack is level-based: high when ready to accept a new write,
+    // low while emulating write latency for the previous write.
     always @(posedge clk) begin
         if (rst) begin
             wr_pending <= 1'b0;
             wr_counter <= 8'h0;
             wr_target  <= WR_MIN_LATENCY;
-            wr_ack     <= 1'b0;
+            wr_ack     <= 1'b1;
         end else begin
-            wr_ack <= 1'b0;
-
             if (wr_pending) begin
                 if (wr_counter < wr_target) begin
                     wr_counter <= wr_counter + 8'h1;
                 end else begin
-                    wr_ack     <= 1'b1;
+                    wr_ack     <= 1'b1;  // latency complete, ready for next write
                     wr_pending <= 1'b0;
                     wr_counter <= 8'h0;
                 end
             end else if (wr_valid) begin
                 wr_pending <= 1'b1;
+                wr_ack     <= 1'b0;  // busy: block new writes until latency completes
                 wr_counter <= 8'h0;
                 wr_target  <= wr_latency;
             end
