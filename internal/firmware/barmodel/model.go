@@ -347,11 +347,11 @@ func buildAudioBARModel(barData []byte) *BARModel {
 		regs[2].Reset = 0x00010000  // STATESTS: codec 0 present (upper 16 bits)
 		regs[3].Reset = 0x00000000  // INTCTL: no state interrupts enabled
 		regs[4].Reset = 0x00000000  // INTSTS: no interrupts pending
-		regs[5].Reset = 0xFFFFFF80  // CORBLBASE: 64B-aligned base (all bits writable except low 7)
+		regs[5].Reset = 0x00000000  // CORBLBASE: driver will program before use
 		regs[6].Reset = 0x00000000  // CORBUBASE: upper 32 bits of base
 		regs[7].Reset = 0x00000000  // CORBWP=0, CORBRP=0 (both at start)
 		regs[8].Reset = 0x00420000  // CORBSIZE=0x42 (supports 256/16/2 entries)
-		regs[9].Reset = 0xFFFFFF80  // RIRBLBASE: 64B-aligned base
+		regs[9].Reset = 0x00000000  // RIRBLBASE: driver will program before use
 		regs[10].Reset = 0x00000000 // RIRBUBASE: upper 32 bits of base
 		regs[11].Reset = 0x00000000 // RIRBWP=0, RINTCNT=0
 		regs[12].Reset = 0x00420000 // RIRBSIZE=0x42 (supports 256/16/2 entries)
