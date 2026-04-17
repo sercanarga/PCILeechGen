@@ -17,7 +17,8 @@ type BARRegister struct {
 	Reset  uint32 // reset/initial value (from donor snapshot or spec default)
 	RWMask uint32 // writable bits (1 = host can write, 0 = read-only)
 	Name   string // human-readable register name
-	IsRW1C bool   // true if this register uses write-1-to-clear semantics
+	IsRW1C     bool // true if this register uses write-1-to-clear semantics
+	IsFSMDriven bool // true if driven by a dedicated FSM always block (excluded from generic reset/write)
 }
 
 // BARModel is the complete register map that ends up in the SV template.
@@ -98,7 +99,7 @@ func buildNVMeBARModel(barData []byte) *BARModel {
 		// CC - driver writes EN, FSM watches
 		{Offset: 0x14, Width: 4, Name: "CC", RWMask: 0x00FFFFF1},
 		// CSTS - RO, FSM drives RDY
-		{Offset: 0x1C, Width: 4, Name: "CSTS", RWMask: 0x00000000},
+		{Offset: 0x1C, Width: 4, Name: "CSTS", RWMask: 0x00000000, IsFSMDriven: true},
 		// NSSR
 		{Offset: 0x20, Width: 4, Name: "NSSR", RWMask: 0xFFFFFFFF},
 		// AQA
@@ -149,9 +150,9 @@ func buildXHCIBARModel(barData []byte) *BARModel {
 		{Offset: 0x1C, Width: 4, Name: "HCCPARAMS2", RWMask: 0x00000000},
 
 		// operational regs
-		{Offset: 0x20, Width: 4, Name: "USBCMD", RWMask: 0x00002F0E},
+		{Offset: 0x20, Width: 4, Name: "USBCMD", RWMask: 0x00002F0E, IsFSMDriven: true},
 		// USBSTS (mostly RW1C)
-		{Offset: 0x24, Width: 4, Name: "USBSTS", RWMask: 0x00000000},
+		{Offset: 0x24, Width: 4, Name: "USBSTS", RWMask: 0x00000000, IsFSMDriven: true},
 		// Page Size (read-only)
 		{Offset: 0x28, Width: 4, Name: "PAGESIZE", RWMask: 0x00000000},
 		// Device Notification Control
@@ -219,8 +220,8 @@ func buildEthernetBARModel(barData []byte) *BARModel {
 		{Offset: 0x50, Width: 4, Name: "RXMAXSIZE", RWMask: 0x00003FFF},
 		{Offset: 0x58, Width: 4, Name: "CPLUSCMD", RWMask: 0x0000FFFF},
 		{Offset: 0x6C, Width: 4, Name: "PHYSTATUS", RWMask: 0x00000000}, // RO
-		{Offset: 0xDC, Width: 4, Name: "PHYAR", RWMask: 0xFFFFFFFF},     // bit31 = ready
-		{Offset: 0xE0, Width: 4, Name: "ERIAR", RWMask: 0xFFFFFFFF},     // bit31 = done
+		{Offset: 0xDC, Width: 4, Name: "PHYAR", RWMask: 0xFFFFFFFF, IsFSMDriven: true},     // bit31 = ready
+		{Offset: 0xE0, Width: 4, Name: "ERIAR", RWMask: 0xFFFFFFFF, IsFSMDriven: true},     // bit31 = done
 		{Offset: 0xFC, Width: 4, Name: "RXMISSED", RWMask: 0x00000000},  // RO
 	}
 
@@ -282,33 +283,33 @@ func buildAudioBARModel(barData []byte) *BARModel {
 		// CORB upper base address
 		{Offset: 0x44, Width: 4, Name: "CORBUBASE", RWMask: 0xFFFFFFFF},
 		// CORBWP(16) + CORBRP(16) packed
-		{Offset: 0x48, Width: 4, Name: "CORBWP_CORBRP", RWMask: 0x80FF00FF},
+		{Offset: 0x48, Width: 4, Name: "CORBWP_CORBRP", RWMask: 0x800000FF, IsFSMDriven: true},
 		// CORBCTL(8) + CORBSTS(8) + CORBSIZE(8) packed
-		// CORBCTL: bit 7 (CTE), bit 1 (MEIE) writable; CORBSTS: bit 0 -> DWORD bit 8 (RPWP) RW1C; CORBSIZE: RO
-		{Offset: 0x4C, Width: 4, Name: "CORBCTL_STS_SIZE", RWMask: 0x00000082, IsRW1C: true},
+		// CORBCTL: bit 1 (CORBRUN), bit 0 (CMEIE) writable; CORBSTS: bit 0 -> DWORD bit 8 (RPWP) RW1C; CORBSIZE: RO
+		{Offset: 0x4C, Width: 4, Name: "CORBCTL_STS_SIZE", RWMask: 0x00000103, IsRW1C: true},
 		// RIRB lower base address
 		{Offset: 0x50, Width: 4, Name: "RIRBLBASE", RWMask: 0xFFFFFF80},
 		// RIRB upper base address
 		{Offset: 0x54, Width: 4, Name: "RIRBUBASE", RWMask: 0xFFFFFFFF},
 		// RIRBWP(16) + RINTCNT(16)
-		{Offset: 0x58, Width: 4, Name: "RIRBWP_RINTCNT", RWMask: 0x800000FF},
+		{Offset: 0x58, Width: 4, Name: "RIRBWP_RINTCNT", RWMask: 0xFFFF8000, IsFSMDriven: true},
 		// RIRBCTL(8) + RIRBSTS(8) + RIRBSIZE(8)
-		// RIRBCTL: bit 0 (CTE), bit 2 (OIE) writable; RIRBSTS: bits 0-2 RW1C; RIRBSIZE: RO
-		// RIRBSTS occupies DWORD bits [15:8]: OIS at [8], UIS at [9], INTFL at [10].
-		{Offset: 0x5C, Width: 4, Name: "RIRBCTL_STS_SIZE", RWMask: 0x00000507, IsRW1C: true},
+		// RIRBCTL: bit 0 (RINTCTL), bit 1 (RIRBDMAEN), bit 2 (OIC) writable
+		// RIRBSTS: bit 8 (RINTFL) RW1C, bit 9 (OIS) RW1C
+		{Offset: 0x5C, Width: 4, Name: "RIRBCTL_STS_SIZE", RWMask: 0x00000307, IsRW1C: true, IsFSMDriven: true},
 		// RIRBINTSTS - RIRB interrupt status (RW1C: bit 0 INTFL)
-		{Offset: 0x60, Width: 4, Name: "RIRBINTSTS", RWMask: 0x00000001, IsRW1C: true},
+		{Offset: 0x60, Width: 4, Name: "RIRBINTSTS", RWMask: 0x00000001, IsRW1C: true, IsFSMDriven: true},
 		// IC (Immediate Command) — driver writes codec command
 		{Offset: 0x64, Width: 4, Name: "IC", RWMask: 0xFFFFFFFF},
 		// IR (Immediate Response) — driver reads codec response (RO)
 		{Offset: 0x68, Width: 4, Name: "IR", RWMask: 0x00000000},
 		// RIRBRESP_LO - RIRB response data lower 32 bits (RO, DMA-served)
-		{Offset: 0x70, Width: 4, Name: "RIRBRESP_LO", RWMask: 0x00000000},
+		{Offset: 0x70, Width: 4, Name: "RIRBRESP_LO", RWMask: 0x00000000, IsFSMDriven: true},
 		// RIRBRESP_HI - RIRB response data upper 32 bits (RO, DMA-served)
 		// Must be at 0x74 (immediately after 0x70) — the driver reads 8 bytes
 		// from offset 0x70 as a single RIRB entry. A gap at 0x74 would cause
 		// the upper 32 bits to read as zero.
-		{Offset: 0x74, Width: 4, Name: "RIRBRESP_HI", RWMask: 0x00000000},
+		{Offset: 0x74, Width: 4, Name: "RIRBRESP_HI", RWMask: 0x00000000, IsFSMDriven: true},
 	}
 
 	// Check if donor BAR data is all 0xFF (no codec connected).
