@@ -68,6 +68,7 @@ module pcileech_bar_impl_device #(
             cc_en_prev          <= 1'b1;
             csts_transition_cnt <= 4'h0;
             csts_rdy_pending    <= 1'b0;
+            reg_0x0000001C      <= 32'h00000001;  // CSTS: RDY=1, SHST=0
         end else begin
             cc_en_prev <= reg_0x00000014[0]; // CC.EN
 
@@ -105,9 +106,8 @@ module pcileech_bar_impl_device #(
     assign nvme_acq_hi = reg_0x00000034;
 {{ end }}
 {{ if eq .DeviceClass "xhci" }}
-    // xHCI HCRST auto-clear
-    // usbxhci.sys writes USBCMD.HCRST (bit 1) then waits for it to drop.
-    // we count a few cycles and clear it so the driver doesn't hang.
+    // xHCI HCRST auto-clear + R/S-HCH tracking.
+    // USBCMD (0x20) and USBSTS (0x24) are IsFSMDriven — sole driver is this block.
     reg [3:0] hcrst_cnt;
     reg       hcrst_pending;
 
@@ -116,11 +116,19 @@ module pcileech_bar_impl_device #(
 
     always @(posedge clk) begin
         if (rst) begin
-            hcrst_cnt     <= 4'h0;
-            hcrst_pending <= 1'b0;
-            rs_prev       <= 1'b0;
+            hcrst_cnt      <= 4'h0;
+            hcrst_pending  <= 1'b0;
+            rs_prev        <= 1'b0;
+            reg_0x00000020 <= 32'h00000001;  // USBCMD: R/S=1 (running)
+            reg_0x00000024 <= 32'h00000000;  // USBSTS: HCH=0 (not halted)
         end else begin
             rs_prev <= reg_0x00000020[0]; // USBCMD.R/S
+
+            // MMIO write forwarding for USBCMD (RWMask=0x00002F0E)
+            if (wr_valid && (wr_addr[31:0] & 32'hFFFFFFFC) == 32'h00000020 && !hcrst_pending) begin
+                if (wr_be[0]) reg_0x00000020[7:0]   <= (reg_0x00000020[7:0]   & ~8'h0E) | (wr_data[7:0]   & 8'h0E);
+                if (wr_be[1]) reg_0x00000020[15:8]  <= (reg_0x00000020[15:8]  & ~8'h2F) | (wr_data[15:8]  & 8'h2F);
+            end
 
             // HCRST handling
             if (reg_0x00000020[1] && !hcrst_pending) begin
@@ -182,46 +190,18 @@ module pcileech_bar_impl_device #(
     reg         dma_timed_out;
 
     // ---- CRST handshake ----
+    // only tracks edges; actual state reset is done by the main FSM
+    // to avoid multi-driver conflicts on shared registers.
     always @(posedge clk) begin
         if (rst) begin
             crst_prev <= 1'b1;
         end else begin
             crst_prev <= reg_0x00000008[0];
-
-            // rising edge on CRST - controller coming out of reset
-            // This is hdaudio.sys re-enumeration — reset everything so the
-            // next discovery cycle starts from ROM index 0.
-            if (reg_0x00000008[0] && !crst_prev) begin
-                reg_0x0000000C[16] <= 1'b1;  // STATESTS bit 0 = codec 0 present
-                rirb_response_idx  <= 6'd0;
-                rirb_pending_count <= 8'h00;
-                rirb_response_fsm  <= 8'h00;
-                rirb_wp_count      <= 8'h00;
-                corb_cte_prev      <= 1'b0;
-                rirb_cte_prev      <= 1'b0;
-                corbwp_prev        <= 8'h00;
-                // RIRBSTS cleared by main FSM on rb_reinit
-                dma_req_valid_r    <= 1'b0;
-                dma_resp_lo_r      <= 32'h0;
-                dma_resp_hi_r      <= 32'h0;
-                dma_resp_wp_r      <= 8'h0;
-                dma_done_latched   <= 1'b0;
-                dma_timed_out      <= 1'b0;
-                dma_wait_counter   <= 10'h0;
-                // NOTE: RIRBLBASE/RIRBUBASE are NOT cleared on CRST deassert.
-                // HDA spec: DMA engine base addresses survive CRST reset.
-                // The driver programs them before CRST=1 and expects them to persist.
-                // Clearing them here causes the RIRB DMA to write to address 0,
-                // so codec responses never reach the driver buffer, causing Code 10.
-            end
-            // falling edge on CRST - controller entering reset
-            // Only clear STATESTS and prev trackers; main FSM handles RIRB reset
-            // via crst_falling guard in its own always block.
-            else if (!reg_0x00000008[0] && crst_prev) begin
-                reg_0x0000000C[31:16] <= 16'h0000;  // clear STATESTS
-            end
         end
     end
+
+    wire crst_rising  = reg_0x00000008[0] && !crst_prev;  // coming out of reset
+    wire crst_falling = !reg_0x00000008[0] && crst_prev;   // entering reset
 
     // ========================================================================
     // Fake RIRB response generator (multi-VERB queue, sequence-based ROM)
@@ -247,11 +227,9 @@ module pcileech_bar_impl_device #(
     // ========================================================================
 
     // CORBWP change detection: driver submitted new VERB(s).
-    wire corb_cte = reg_0x0000004C[7];   // CORBCTL.CTE
-    wire rirb_cte  = reg_0x0000005C[0];   // RIRBCTL.CTE
+    wire corb_cte = reg_0x0000004C[1];   // CORBCTL.CORBRUN (bit 1)
+    wire rirb_cte  = reg_0x0000005C[1];   // RIRBCTL.RIRBDMAEN (bit 1)
     wire corbwp_changed = (corbwp_prev != reg_0x00000048[7:0]) && corb_cte && rirb_cte;
-    // CRST falling edge detection — guards FSM against fighting with CRST block
-    wire crst_falling = !reg_0x00000008[0] && crst_prev;
     // Calculate how many entries the driver added (handles wrap-around at 256)
     wire [7:0] corbwp_delta_raw = reg_0x00000048[7:0] - corbwp_prev;
     // If delta > 32, the driver reset CORBWP without disabling CTE — treat as
@@ -289,13 +267,10 @@ module pcileech_bar_impl_device #(
     end
 
     // Clear request: driver writes 1 to bit 0 → clear INTFL.
-    wire intfl_clear_req = rirbintsts_rw1c && wr_data[0];
+    wire intfl_clear_req = rirbintsts_rw1c && wr_be[0] && wr_data[0];
 
-    // CRST rising edge clear request: codec reset means driver is re-enumerating,
-    // so INTFL must be cleared to prevent stale interrupt from pending response.
-    // crst_prev is the PREVIOUS cycle value (updated by CRST block), so this
-    // wire fires on the cycle where CRST transitions 0→1.
-    wire intfl_crst_clear_req = reg_0x00000008[0] && !crst_prev;
+    // CRST rising edge clear request: same as crst_rising
+    wire intfl_crst_clear_req = crst_rising;
 
     // INTFL set request from RIRB response commit FSM.
     // This is a flag that the FSM uses to request INTFL be set to 1.
@@ -322,18 +297,11 @@ module pcileech_bar_impl_device #(
         end
     end
 
-    always @(posedge clk) begin
-        if (!rst && rirbctl_rw1c) begin
-            // Control bits (CTE, OIE): standard writable — apply write through
-            // mask 0x05 = bits 0 and 2
-            reg_0x0000005C[0] <= (reg_0x0000005C[0] & ~1'b1) | (wr_data[0] & 1'b1);
-            reg_0x0000005C[2] <= (reg_0x0000005C[2] & ~1'b1) | (wr_data[2] & 1'b1);
-
-            // Status bits (OIS, UIS, INTFL): RW1C — write 1 to clear
-            // mask 0x07 = bits 0, 1, 2 of RIRBSTS → DWORD bits 8, 9, 10
-            reg_0x0000005C[10:8] <= reg_0x0000005C[10:8] & ~wr_data[10:8];
-        end
-    end
+    // RIRBCTL/RIRBSTS write requests - consumed by main FSM to avoid multi-driver.
+    wire rirbctl_wr_rintctl_val = wr_data[0];  // RINTCTL (bit 0)
+    wire rirbctl_wr_cte_val = wr_data[1];  // RIRBDMAEN (bit 1)
+    wire rirbctl_wr_oie_val = wr_data[2];  // OIC (bit 2)
+    wire [2:0] rirbsts_clear_mask = wr_data[10:8];
 
     // ========================================================================
     // CORBCTL/CORBSTS (0x4C) driver write handler.
@@ -354,17 +322,10 @@ module pcileech_bar_impl_device #(
         end
     end
 
-    always @(posedge clk) begin
-        if (!rst && corbsts_rw1c) begin
-            // Control bits (CTE, MEIE): standard writable — apply write through
-            // mask 0x82 = bits 1 and 7 of CORBCTL
-            reg_0x0000004C[1] <= (reg_0x0000004C[1] & ~1'b1) | (wr_data[1] & 1'b1);
-            reg_0x0000004C[7] <= (reg_0x0000004C[7] & ~1'b1) | (wr_data[7] & 1'b1);
-
-            // Status bit (RPWP): RW1C — write 1 to clear
-            reg_0x0000004C[8] <= reg_0x0000004C[8] & ~wr_data[8];
-        end
-    end
+    // CORBCTL/CORBSTS write requests - consumed by write handler to avoid multi-driver.
+    wire corbctl_wr_cmeie_val = wr_data[0];
+    wire corbctl_wr_run_val = wr_data[1];
+    wire corbsts_clear_bit = wr_data[8];
 
     // CA0132 codec response ROM — provides unique responses per VERB
     // so hdaudio.sys can complete codec topology discovery.
@@ -538,6 +499,27 @@ module pcileech_bar_impl_device #(
         end
     endfunction
 
+    // MMIO write detection for FSM-driven registers (0x48, 0x58).
+    // These are excluded from the generic write case to avoid multi-driver
+    // conflicts, so we detect and forward writes here.
+    reg wr_0x48_pending, wr_0x58_pending;
+    reg [31:0] wr_0x48_data, wr_0x58_data;
+    reg [3:0]  wr_0x48_be,   wr_0x58_be;
+
+    always @(posedge clk) begin
+        if (rst) begin
+            wr_0x48_pending <= 1'b0;
+            wr_0x58_pending <= 1'b0;
+        end else begin
+            wr_0x48_pending <= wr_valid && (wr_addr[31:0] & 32'hFFFFFFFC) == 32'h00000048;
+            wr_0x58_pending <= wr_valid && (wr_addr[31:0] & 32'hFFFFFFFC) == 32'h00000058;
+            wr_0x48_data    <= wr_data;
+            wr_0x58_data    <= wr_data;
+            wr_0x48_be      <= wr_be;
+            wr_0x58_be      <= wr_be;
+        end
+    end
+
     always @(posedge clk) begin
         if (rst) begin
             rirb_response_fsm  <= 8'h00;
@@ -552,8 +534,13 @@ module pcileech_bar_impl_device #(
             dma_resp_lo_r      <= 32'h0;
             dma_resp_hi_r      <= 32'h0;
             dma_resp_wp_r      <= 8'h0;
-            dma_done_latched   <= 1'b0;
             intfl_set_req      <= 1'b0;
+            // FSM-driven register resets (sole driver for these regs)
+            reg_0x00000048     <= 32'h00000000;
+            reg_0x00000058     <= 32'h00000000;
+            reg_0x0000005C     <= 32'h00420000;
+            reg_0x00000070     <= 32'h00000000;
+            reg_0x00000074     <= 32'h00000000;
         end else begin
             // Default: no INTFL set request this cycle.
             // Response commit path below may set this to 1.
@@ -566,16 +553,31 @@ module pcileech_bar_impl_device #(
             // and the result is synthesis-tool-dependent.
 
             // Track CTE for reinitialization detection
-            if (!crst_falling) begin
+            if (!crst_falling && !crst_rising) begin
                 corb_cte_prev <= corb_cte;
                 rirb_cte_prev <= rirb_cte;
 
-                // Track CORBWP for change detection
-                corbwp_prev <= reg_0x00000048[7:0];
-            end else begin
+                // corbwp_prev is NOT updated here - only when
+                // corbwp_changed fires to avoid losing VERB deltas.
+            end else if (crst_falling) begin
                 corb_cte_prev <= 1'b0;
                 rirb_cte_prev <= 1'b0;
                 corbwp_prev   <= 8'h00;
+            end
+
+            // CRST rising edge: controller coming out of reset
+            if (crst_rising) begin
+                rirb_response_idx  <= 6'd0;
+                rirb_pending_count <= 8'h00;
+                rirb_response_fsm  <= 8'h00;
+                rirb_wp_count      <= 8'h00;
+                corb_cte_prev      <= 1'b0;
+                rirb_cte_prev      <= 1'b0;
+                corbwp_prev        <= 8'h00;
+                dma_req_valid_r    <= 1'b0;
+                dma_resp_lo_r      <= 32'h0;
+                dma_resp_hi_r      <= 32'h0;
+                dma_resp_wp_r      <= 8'h0;
             end
 
             // CORB/RIRB reinitialization: driver disabled CTE → reset ROM index
@@ -592,10 +594,54 @@ module pcileech_bar_impl_device #(
                 rirb_response_fsm  <= 8'h00;
                 rirb_wp_count      <= 8'h00;
                 corbwp_prev        <= 8'h00;
-                reg_0x00000048[15:8] <= 8'h00;  // reset CORBRP to 0
-                reg_0x0000005C[1:0] <= 2'b0;  // clear RIRBSTS (UIS + OIS)
+                reg_0x00000048[23:16] <= 8'h00;  // reset CORBRP to 0
+                reg_0x0000005C[9:8] <= 2'b0;  // clear RIRBSTS (RINTFL + OIS)
                 // NOTE: RIRBLBASE/RIRBUBASE preserved, driver may not reprogram
                 // them on re-init if the buffer address hasn't changed.
+            end
+
+            // MMIO write forwarding for FSM-driven registers.
+            // These registers are excluded from the generic write case
+            // to avoid multi-driver conflicts. Host writes are forwarded
+            // through delayed detection flags (wr_0x48_pending, etc.).
+
+            // 0x48: CORBWP (bits 7:0 writable), CORBRPRST (bit 31 self-clear)
+            // bits 23:16 (CORBRP) handled by FSM above, not host-writable.
+            if (wr_0x48_pending && !rb_reinit && !crst_falling) begin
+                if (wr_0x48_be[0]) reg_0x00000048[7:0]   <= (reg_0x00000048[7:0]   & ~8'hFF) | (wr_0x48_data[7:0]   & 8'hFF);
+                if (wr_0x48_be[3]) reg_0x00000048[31]    <= wr_0x48_data[31];  // CORBRPRST
+            end
+
+            // 0x58: RIRBWPRST (bit 15 self-clear), RINTCNT (bits 31:16 writable)
+            // bits 7:0 (RIRBWP) driven by FSM, not host-writable.
+            if (wr_0x58_pending && !rb_reinit && !crst_falling) begin
+                if (wr_0x58_be[1]) reg_0x00000058[15]    <= wr_0x58_data[15];  // RIRBWPRST
+                if (wr_0x58_be[2]) reg_0x00000058[23:16] <= wr_0x58_data[23:16];
+                if (wr_0x58_be[3]) reg_0x00000058[31:24] <= wr_0x58_data[31:24];
+            end
+
+            // RIRBCTL/RIRBSTS driver write - merged into FSM to avoid multi-driver
+            if (rirbctl_rw1c && !rb_reinit) begin
+                if (wr_be[0]) begin
+                    reg_0x0000005C[0] <= rirbctl_wr_rintctl_val;
+                    reg_0x0000005C[1] <= rirbctl_wr_cte_val;
+                    reg_0x0000005C[2] <= rirbctl_wr_oie_val;
+                end
+                if (wr_be[1]) begin
+                    reg_0x0000005C[10:8] <= reg_0x0000005C[10:8] & ~rirbsts_clear_mask;
+                end
+            end
+
+            // RIRBWPRST: driver writes 1 to bit 15 of 0x58 to reset RIRBWP
+            if (reg_0x00000058[15] && !crst_falling) begin
+                rirb_wp_count <= 8'h00;
+                reg_0x00000058[15] <= 1'b0;  // auto-clear RIRBWPRST
+            end
+
+            // CORBRPRST: driver writes 1 to bit 31 of 0x48 to reset CORBRP
+            if (reg_0x00000048[31] && !crst_falling) begin
+                reg_0x00000048[23:16] <= 8'h00;  // reset CORBRP to 0
+                reg_0x00000048[31] <= 1'b0;  // auto-clear CORBRPRST
             end
 
             // Enqueue: add the actual number of entries the driver submitted.
@@ -614,7 +660,9 @@ module pcileech_bar_impl_device #(
                     rirb_pending_count <= rirb_pending_count + corbwp_delta;
                 end
                 // Auto-advance CORB read pointer (controller consumed CORB entries)
-                reg_0x00000048[15:8] <= reg_0x00000048[15:8] + corbwp_delta;
+                reg_0x00000048[23:16] <= reg_0x00000048[23:16] + corbwp_delta;
+                // Snapshot CORBWP so next delta is calculated correctly
+                corbwp_prev <= reg_0x00000048[7:0];
             end
 
             // All FSM transitions are guarded by !crst_falling to avoid fighting
@@ -632,30 +680,35 @@ module pcileech_bar_impl_device #(
             end
 
             // Response FSM countdown
-            if (rirb_response_fsm > 8'h00 && !crst_falling) begin
+            if (rirb_response_fsm > 8'h00 && rirb_response_fsm <= 8'h04 && !crst_falling) begin
                 rirb_response_fsm <= rirb_response_fsm - 8'h01;
 
                 // When FSM reaches 1, initiate DMA write handshake with bridge
                 if (rirb_response_fsm == 8'h01) begin
                     dma_req_valid_r <= 1'b1;
                     dma_resp_lo_r   <= rirb_fake_response[31:0];
-                    dma_resp_hi_r   <= rirb_fake_response[63:32];
-                    dma_resp_wp_r   <= rirb_wp_count;
-                    rirb_response_fsm <= 8'h02; // enter DMA wait
+                    // convert ROM custom format to HDA spec RESP_EX:
+                    // ROM resp_hi[3:0] = type (1=solicited, 2=unsolicited)
+                    // HDA spec RESP_EX: [3:0]=codec_addr, [4]=unsolicited
+                    // all responses come from codec 0 (matches STATESTS bit 0)
+                    dma_resp_hi_r   <= (rirb_fake_response[35:32] == 4'h2) ?
+                                       32'h00000010 :  // codec 0, unsolicited
+                                       32'h00000000;   // codec 0, solicited
+                    dma_resp_wp_r   <= rirb_wp_count + 8'h01;
+                    rirb_response_fsm <= 8'h10; // enter DMA accept wait (outside countdown range)
                 end
             end
 
-            // DMA handshake state machine:
-            //   state 2: wait for bridge to accept request (dma_req_ready)
-            //   state 3: wait for bridge to complete write (dma_done)
-            //   state 4: commit RIRBWP and INTFL, return to idle
-            if (rirb_response_fsm == 8'h02 && dma_req_valid_r && dma_req_ready && !crst_falling) begin
+            // DMA handshake state machine (states 0x10/0x11, outside countdown range):
+            //   0x10: wait for bridge to accept request (dma_req_ready)
+            //   0x11: wait for bridge to complete write (dma_done)
+            if (rirb_response_fsm == 8'h10 && dma_req_valid_r && dma_req_ready && !crst_falling) begin
                 // Bridge accepted the request, clear our request
                 dma_req_valid_r <= 1'b0;
-                rirb_response_fsm <= 8'h03;
+                rirb_response_fsm <= 8'h11;
             end
 
-            if (rirb_response_fsm == 8'h03 && !crst_falling) begin
+            if (rirb_response_fsm == 8'h11 && !crst_falling) begin
                 // Waiting for DMA bridge to complete the write.
                 // Use latched done signal to avoid missing the 1-cycle pulse.
                 if (dma_done_latched) begin
@@ -666,16 +719,16 @@ module pcileech_bar_impl_device #(
                     // supported buffer sizes. 0x40 = 256 entries (full 8-bit range).
                     // We mask to prevent WP from exceeding the programmed size.
                     rirb_wp_count <= rirb_wp_count + 8'h01;
-                    reg_0x00000058[15:8] <= (rirb_wp_count + 8'h01) & 8'hFF;
 
                     // Write response data to MMIO response registers (for drivers
                     // that may fall back to reading these instead of DMA buffer).
                     reg_0x00000070[31:0] <= dma_resp_lo_r;
                     reg_0x00000074[31:0] <= dma_resp_hi_r;
 
-                    // Set RIRBSTS.UIS only for unsolicited responses (type=2)
-                    if (dma_resp_lo_r[3:0] == 4'h2) begin
-                        reg_0x0000005C[1] <= 1'b1;
+                    // Set RIRBSTS.UIS for unsolicited responses
+                    // RESP_EX bit 4 = unsolicited flag (set by format conversion above)
+                    if (dma_resp_hi_r[4]) begin
+                        reg_0x0000005C[9] <= 1'b1;
                     end
 
                     // Set RIRBINTSTS.INTFL — tells driver a response is available.
@@ -696,7 +749,6 @@ module pcileech_bar_impl_device #(
                     // Clear dma_done_latched to prevent stale signal corruption
                     // on the next transfer.
                     rirb_pending_count <= rirb_pending_count - 8'h01;
-                    dma_done_latched   <= 1'b0;
                     rirb_response_fsm <= 8'h00;
                 end
             end
@@ -704,13 +756,13 @@ module pcileech_bar_impl_device #(
     end
 
     // ========================================================================
-    // Consolidated INTFL driver — SINGLE source for reg_0x00000060[0].
+    // Consolidated INTFL driver — SINGLE source for reg_0x00000060.
     // All INTFL modifications go through here to avoid multi-driver conflicts.
     // Priority: clear (CRST/rb_reinit/RW1C) takes precedence over set.
     // ========================================================================
     always @(posedge clk) begin
         if (rst) begin
-            reg_0x00000060[0] <= 1'b0;
+            reg_0x00000060 <= 32'h00000000;
         end else if (intfl_set_req && !intfl_clear_req && !intfl_crst_clear_req) begin
             // RIRB response committed — set INTFL to notify driver.
             reg_0x00000060[0] <= 1'b1;
@@ -736,15 +788,20 @@ module pcileech_bar_impl_device #(
             dma_wait_counter  <= 10'h0;
             dma_timed_out     <= 1'b0;
         end else begin
-            if (dma_done) begin
+            // priority: consume > set > idle-clear
+            if (rirb_response_fsm == 8'h11 && dma_done_latched) begin
+                // FSM consumed the latch
+                dma_done_latched <= 1'b0;
+            end else if (dma_done) begin
+                // new pulse from bridge
                 dma_done_latched <= 1'b1;
-            end
-            if (rirb_response_fsm == 8'h03 && dma_done_latched) begin
+            end else if (rirb_response_fsm != 8'h11 && rirb_response_fsm != 8'h10) begin
+                // FSM not in DMA wait states — clear stale latch
                 dma_done_latched <= 1'b0;
             end
 
             // Timeout counter: count cycles while waiting for dma_done
-            if (rirb_response_fsm == 8'h03) begin
+            if (rirb_response_fsm == 8'h11) begin
                 dma_wait_counter <= dma_wait_counter + 1'b1;
                 if (dma_wait_counter >= 10'h3FF) begin
                     dma_timed_out <= 1'b1;
@@ -774,13 +831,17 @@ module pcileech_bar_impl_device #(
             intfl_prev <= reg_0x00000060[0];
         end
     end
-    assign msi_trigger = reg_0x00000060[0] && !intfl_prev;
+    // MSI trigger gated by INTCTL: GIE (bit 31) and CIE (bit 30) must be enabled
+    wire intctl_gie = reg_0x00000020[31];
+    wire intctl_cie = reg_0x00000020[30];
+    assign msi_trigger = reg_0x00000060[0] && !intfl_prev && intctl_gie && intctl_cie;
     assign rirbintsts  = reg_0x00000060;  // live RIRBINTSTS value
 
 {{ end }}
 {{ if eq .DeviceClass "ethernet" }}
     // PHYAR/ERIAR done-flag auto-clear for r8169 driver.
     // Driver sets bit 31 and polls until it drops.
+    // These registers are IsFSMDriven — sole driver is this always block.
     reg [2:0] phyar_cnt;
     reg       phyar_pending;
     reg [2:0] eriar_cnt;
@@ -788,15 +849,23 @@ module pcileech_bar_impl_device #(
 
     always @(posedge clk) begin
         if (rst) begin
-            phyar_pending <= 1'b0;
-            phyar_cnt     <= 3'h0;
-            eriar_pending <= 1'b0;
-            eriar_cnt     <= 3'h0;
+            phyar_pending  <= 1'b0;
+            phyar_cnt      <= 3'h0;
+            eriar_pending  <= 1'b0;
+            eriar_cnt      <= 3'h0;
+            reg_0x000000DC <= 32'h80000000;  // PHYAR: bit31 = ready
+            reg_0x000000E0 <= 32'h80000000;  // ERIAR: bit31 = done
         end else begin
-            // PHYAR at 0xDC
-            if (wr_valid && (wr_addr[31:0] & 32'hFFFFFFFC) == 32'h000000DC && wr_data[31]) begin
-                phyar_pending <= 1'b1;
-                phyar_cnt     <= 3'h1;
+            // MMIO write forwarding for PHYAR (0xDC)
+            if (wr_valid && (wr_addr[31:0] & 32'hFFFFFFFC) == 32'h000000DC) begin
+                if (wr_be[0]) reg_0x000000DC[7:0]   <= wr_data[7:0];
+                if (wr_be[1]) reg_0x000000DC[15:8]  <= wr_data[15:8];
+                if (wr_be[2]) reg_0x000000DC[23:16] <= wr_data[23:16];
+                if (wr_be[3]) reg_0x000000DC[31:24] <= wr_data[31:24];
+                if (wr_data[31]) begin
+                    phyar_pending <= 1'b1;
+                    phyar_cnt     <= 3'h1;
+                end
             end
             if (phyar_pending) begin
                 phyar_cnt <= phyar_cnt + 1'b1;
@@ -806,10 +875,16 @@ module pcileech_bar_impl_device #(
                 end
             end
 
-            // ERIAR at 0xE0
-            if (wr_valid && (wr_addr[31:0] & 32'hFFFFFFFC) == 32'h000000E0 && wr_data[31]) begin
-                eriar_pending <= 1'b1;
-                eriar_cnt     <= 3'h1;
+            // MMIO write forwarding for ERIAR (0xE0)
+            if (wr_valid && (wr_addr[31:0] & 32'hFFFFFFFC) == 32'h000000E0) begin
+                if (wr_be[0]) reg_0x000000E0[7:0]   <= wr_data[7:0];
+                if (wr_be[1]) reg_0x000000E0[15:8]  <= wr_data[15:8];
+                if (wr_be[2]) reg_0x000000E0[23:16] <= wr_data[23:16];
+                if (wr_be[3]) reg_0x000000E0[31:24] <= wr_data[31:24];
+                if (wr_data[31]) begin
+                    eriar_pending <= 1'b1;
+                    eriar_cnt     <= 3'h1;
+                end
             end
             if (eriar_pending) begin
                 eriar_cnt <= eriar_cnt + 1'b1;
@@ -902,11 +977,11 @@ module pcileech_bar_impl_device #(
 
     always @(posedge clk) begin
         if (rst) begin
-{{ range .BARModel.Registers }}            reg_0x{{ hex08 .Offset }} <= {{ mul .Width 8 }}'h{{ hex08 .Reset }};
-{{ end }}        end
+{{ range .BARModel.Registers }}{{ if not .IsFSMDriven }}            reg_0x{{ hex08 .Offset }} <= {{ mul .Width 8 }}'h{{ hex08 .Reset }};
+{{ end }}{{ end }}        end
         else if (wr_valid) begin
             case (wr_addr[31:0] & 32'hFFFFFFFC)
-{{ range .BARModel.Registers }}{{ if and (ne .RWMask 0) (not .IsRW1C) }}                32'h{{ hex08 (alignedOffset .Offset) }}: begin
+{{ range .BARModel.Registers }}{{ if and (ne .RWMask 0) (not .IsRW1C) (not .IsFSMDriven) }}                32'h{{ hex08 (alignedOffset .Offset) }}: begin
                     if (wr_be[0]) reg_0x{{ hex08 .Offset }}[7:0]   <= (reg_0x{{ hex08 .Offset }}[7:0]   & ~8'h{{ hex02 (index (rwMaskBytes .RWMask) 0) }}) | (wr_data[7:0]   & 8'h{{ hex02 (index (rwMaskBytes .RWMask) 0) }});
                     if (wr_be[1]) reg_0x{{ hex08 .Offset }}[15:8]  <= (reg_0x{{ hex08 .Offset }}[15:8]  & ~8'h{{ hex02 (index (rwMaskBytes .RWMask) 1) }}) | (wr_data[15:8]  & 8'h{{ hex02 (index (rwMaskBytes .RWMask) 1) }});
                     if (wr_be[2]) reg_0x{{ hex08 .Offset }}[23:16] <= (reg_0x{{ hex08 .Offset }}[23:16] & ~8'h{{ hex02 (index (rwMaskBytes .RWMask) 2) }}) | (wr_data[23:16] & 8'h{{ hex02 (index (rwMaskBytes .RWMask) 2) }});
@@ -917,7 +992,31 @@ module pcileech_bar_impl_device #(
                 end
             endcase
         end
-    end
+{{ if eq .DeviceClass "audio" }}
+        // CORBCTL/CORBSTS - delayed RW1C handler (1 cycle after wr_valid)
+        if (!rst && corbsts_rw1c) begin
+            if (wr_be[0]) begin
+                reg_0x0000004C[0] <= corbctl_wr_cmeie_val;
+                reg_0x0000004C[1] <= corbctl_wr_run_val;
+            end
+            if (wr_be[1]) begin
+                reg_0x0000004C[8] <= reg_0x0000004C[8] & ~corbsts_clear_bit;
+            end
+        end
+
+        // STATESTS: set codec 0 present on CRST rising, clear on CRST falling
+        if (!rst && crst_rising) begin
+            reg_0x0000000C[16] <= 1'b1;
+        end else if (!rst && crst_falling) begin
+            reg_0x0000000C[31:16] <= 16'h0000;
+        end
+
+        // STATESTS [31:16] RW1C: driver writes 1 to clear codec status bits
+        if (!rst && wr_valid && (wr_addr[31:0] & 32'hFFFFFFFC) == 32'h0000000C) begin
+            if (wr_be[2]) reg_0x0000000C[23:16] <= reg_0x0000000C[23:16] & ~wr_data[23:16];
+            if (wr_be[3]) reg_0x0000000C[31:24] <= reg_0x0000000C[31:24] & ~wr_data[31:24];
+        end
+{{ end }}    end
 
     // ========================================================================
     // Read Logic (2-cycle latency)
@@ -933,8 +1032,11 @@ module pcileech_bar_impl_device #(
 
         if (rd_req_valid) begin
             case (rd_req_addr[31:0] & 32'hFFFFFFFC)
-{{ range .BARModel.Registers }}                32'h{{ hex08 (alignedOffset .Offset) }}: rd_data_d1 <= reg_0x{{ hex08 .Offset }};
-{{ end }}                default: rd_data_d1 <= 32'h00000000;
+{{ range .BARModel.Registers }}{{ if and (eq .Offset 0x24) (eq $.DeviceClass "audio") }}                32'h{{ hex08 (alignedOffset .Offset) }}: rd_data_d1 <= {reg_0x00000060[0], reg_0x00000060[0], 30'h0};  // INTSTS: GIS=CIS=INTFL
+{{ else if and (eq .Offset 0x48) (eq $.DeviceClass "audio") }}                32'h{{ hex08 (alignedOffset .Offset) }}: rd_data_d1 <= {reg_0x00000048[31:24], reg_0x00000048[23:16], 8'h00, reg_0x00000048[7:0]};  // live CORBRP + CORBWP
+{{ else if and (eq .Offset 0x58) (eq $.DeviceClass "audio") }}                32'h{{ hex08 (alignedOffset .Offset) }}: rd_data_d1 <= {reg_0x00000058[31:16], 8'h00, rirb_wp_count};  // live RIRBWP + RINTCNT
+{{ else }}                32'h{{ hex08 (alignedOffset .Offset) }}: rd_data_d1 <= reg_0x{{ hex08 .Offset }};
+{{ end }}{{ end }}                default: rd_data_d1 <= 32'h00000000;
             endcase
         end
         else begin
