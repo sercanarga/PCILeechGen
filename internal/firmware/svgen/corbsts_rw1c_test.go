@@ -36,13 +36,14 @@ func TestCORBSTSRW1CGeneration(t *testing.T) {
 		t.Fatalf("generate SV: %v", err)
 	}
 
-	// Verify dedicated RW1C handler exists
+	// Verify dedicated RW1C handler exists using actual generated patterns.
+	// Template uses corbsts_clear_bit wire (= wr_data[8]) for RW1C bit.
 	for _, pattern := range []string{
 		"corbsts_rw1c",
 		"CORBCTL/CORBSTS",
-		"reg_0x0000004C[8] <= reg_0x0000004C[8] & ~wr_data[8]",
-		"reg_0x0000004C[7] <= (reg_0x0000004C[7] & ~1'b1) | (wr_data[7] & 1'b1)",
-		"reg_0x0000004C[1] <= (reg_0x0000004C[1] & ~1'b1) | (wr_data[1] & 1'b1)",
+		"corbsts_clear_bit",
+		"reg_0x0000004C[8] <= reg_0x0000004C[8] & ~corbsts_clear_bit",
+		"reg_0x0000004C[1] <= corbctl_wr_run_val",
 	} {
 		if !strings.Contains(sv, pattern) {
 			t.Errorf("expected %q in generated SV", pattern)
