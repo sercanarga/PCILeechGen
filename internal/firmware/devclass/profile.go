@@ -25,12 +25,13 @@ type DeviceProfile struct {
 
 // BARDefault is one register the driver expects in the BAR.
 type BARDefault struct {
-	Offset uint32
-	Width  int
-	Name   string
-	Reset  uint32
-	RWMask uint32
-	IsRW1C bool
+	Offset      uint32
+	Width       int
+	Name        string
+	Reset       uint32
+	RWMask      uint32
+	IsRW1C      bool
+	IsFSMDriven bool // driven by dedicated FSM, excluded from generic reset/write
 }
 
 // ProfileForClass returns a profile for the class code, or a generic fallback.
