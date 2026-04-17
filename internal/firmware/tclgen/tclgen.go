@@ -74,6 +74,9 @@ type bar0Config struct {
 // The FPGA's config space BRAM only serves 4 KB regions regardless of the
 // donor's original BAR size. Matching the IP size to the actual served region
 // prevents the driver from mapping more MMIO than the FPGA can back.
+// BAR type is always 32-bit: the scrubber (clampBARsToFPGA) forces 32-bit
+// type in the shadow config space. The IP core must match to avoid BAR
+// sizing inconsistency that causes Code 10 on Windows.
 func buildBAR0Config(ctx *donor.DeviceContext, b *board.Board) bar0Config {
 	// Check if any memory BAR is enabled in the donor config
 	for i := range ctx.BARs {
@@ -83,7 +86,7 @@ func buildBAR0Config(ctx *donor.DeviceContext, b *board.Board) bar0Config {
 				Enabled: true,
 				Scale:   "Kilobytes",
 				Size:    "4",
-				Is64bit: bar.Type == pci.BARTypeMem64,
+				Is64bit: false, // must match scrubber: always 32-bit
 			}
 		}
 	}
