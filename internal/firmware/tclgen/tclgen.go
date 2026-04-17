@@ -142,10 +142,15 @@ func GenerateProjectTCL(ctx *donor.DeviceContext, b *board.Board, libDir string)
 	if ctx.MSIXData != nil && ctx.MSIXData.TableSize > 0 {
 		data.MSIXEnabled = true
 		data.MSIXTableSize = ctx.MSIXData.TableSize - 1 // Vivado expects N-1
-		data.MSIXTableBIR = barBIRToTCL(ctx.MSIXData.TableBIR)
-		data.MSIXTableOffset = fmt.Sprintf("%08X", ctx.MSIXData.TableOffset)
-		data.MSIXPBABIR = barBIRToTCL(ctx.MSIXData.PBABIR)
-		data.MSIXPBAOffset = fmt.Sprintf("%08X", ctx.MSIXData.PBAOffset)
+		// scrubber relocates MSI-X to BAR0 (BIR=0), table at 0x1000, PBA after table.
+		// IP core must match scrubbed config space values, not donor originals.
+		data.MSIXTableBIR = barBIRToTCL(0) // always BAR0 after scrub
+		tableSize := ctx.MSIXData.TableSize * 16
+		pbaOffset := uint32(0x1000) + uint32(tableSize)
+		pbaOffset = (pbaOffset + 7) &^ 7 // 8-byte align
+		data.MSIXTableOffset = fmt.Sprintf("%08X", 0x1000)
+		data.MSIXPBABIR = barBIRToTCL(0)
+		data.MSIXPBAOffset = fmt.Sprintf("%08X", pbaOffset)
 	}
 
 	var buf bytes.Buffer
