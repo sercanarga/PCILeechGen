@@ -46,19 +46,64 @@ func GenerateConfigSpaceCOE(cs *pci.ConfigSpace) string {
 }
 
 // GenerateWritemaskCOE outputs the writemask COE (1=writable, 0=read-only).
-// Original pcileech-fpga library uses 0xFFFFFFFF for every word — all bits
-// writable. Selective writemasks break Windows BAR sizing which writes
-// 0xFFFFFFFF to each BAR and reads back the size mask.
+//
+// when shadow config space is enabled (cfgtlp_zero=0), the shadow BRAM is the
+// sole source for config space reads. BAR sizing probes (host writes 0xFFFFFFFF
+// then reads back) go through the BRAM, not the IP core. the writemask must
+// limit writable bits to match the BAR size mask so the host reads back the
+// correct size-encoded value (e.g. 0xFFFFF000 for 4KB).
+//
+// identity registers (VID/DID, ClassCode, SubsysIDs) are read-only to prevent
+// host writes from corrupting device identity.
 func GenerateWritemaskCOE(cs *pci.ConfigSpace) string {
 	masks := make([]uint32, shadowCfgSpaceWords)
-	for i := range masks {
+
+	// standard config space capabilities (0x40-0xFF): fully writable.
+	// capabilities have writable control fields (PM PMCSR, MSI, PCIe DevCtl)
+	// that the OS must be able to program.
+	for i := 0x40 / 4; i < 0x100/4; i++ {
 		masks[i] = 0xFFFFFFFF
 	}
+
+	// extended config space (0x100-0xFFF): read-only.
+	// scrubber already neutralized all writable extended cap fields.
+
+	// header type 0 registers (DWORD index = byte offset / 4)
+	masks[0] = 0x00000000  // 0x00: VID:DID (read-only identity)
+	masks[1] = 0xFFFFFFFF  // 0x04: Command:Status (OS needs full control)
+	masks[2] = 0x00000000  // 0x08: RevisionID:ClassCode (read-only identity)
+	masks[3] = 0xFF00FFFF  // 0x0C: CLS+LT writable, HeaderType RO, BIST writable
+
+	// BAR registers 0x10-0x24 (DWORD 4-9): size-matching masks
+	for i := 0; i < 6; i++ {
+		barOffset := 0x10 + (i * 4)
+		barVal := cs.ReadU32(barOffset)
+		dw := barOffset / 4
+		if barVal == 0 {
+			masks[dw] = 0x00000000 // unused BAR
+			continue
+		}
+		if barVal&0x01 != 0 {
+			// I/O BAR: type bits [1:0] read-only
+			masks[dw] = barVal & 0xFFFFFFFC
+		} else {
+			// memory BAR: type+prefetch bits [3:0] read-only
+			masks[dw] = barVal & 0xFFFFFFF0
+		}
+	}
+
+	masks[10] = 0x00000000 // 0x28: CardBus CIS (read-only)
+	masks[11] = 0x00000000 // 0x2C: SubsysVID:SubsysDID (read-only identity)
+	masks[12] = 0x00000000 // 0x30: Expansion ROM (not implemented on FPGA)
+	masks[13] = 0x00000000 // 0x34: CapPtr + reserved (read-only)
+	masks[14] = 0x00000000 // 0x38: reserved
+	masks[15] = 0x000000FF // 0x3C: IntLine writable, IntPin/MinGnt/MaxLat RO
 
 	return formatCOE(
 		"; PCILeechGen - Configuration Space Write Mask (4KB shadow)\n"+
 			"; 1 = writable bit, 0 = read-only bit\n"+
-			"; All bits writable — matches original pcileech-fpga library\n"+
+			"; BAR masks match scrubbed BAR sizes for correct BAR sizing\n"+
+			"; Identity registers (VID/DID, ClassCode, SubsysIDs) are read-only\n"+
 			";\n",
 		masks,
 	)

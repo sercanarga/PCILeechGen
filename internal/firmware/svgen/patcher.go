@@ -176,6 +176,15 @@ func (p *SVPatcher) patchFifoSV() error {
 			replacement: "${1}1'b0${2}",
 			label:       "Shadow config space: ENABLED (CFGTLP ZERO DATA -> 0)",
 		},
+		// Shadow config space: CFGTLP PCIE WRITE ENABLE -> 1
+		// without this, host config writes (BAR sizing, command reg, PM)
+		// never reach the shadow BRAM. The writemask DROM filters which
+		// bits are actually stored.
+		{
+			pattern:     `(rw\[206\]\s*<=\s*)1'b0(\s*;\s*//\s*CFGTLP PCIE WRITE ENABLE)`,
+			replacement: "${1}1'b1${2}",
+			label:       "Shadow config space: PCIe WRITE ENABLED (cfgtlp_wren -> 1)",
+		},
 		// CFG_SUBSYS_VEND_ID
 		{
 			pattern:     `(rw\[143:128\]\s*<=\s*16'h)[0-9a-fA-F]{4}(\s*;\s*//.*CFG_SUBSYS_VEND_ID)`,

@@ -31,22 +31,73 @@ func TestGenerateWritemaskCOE(t *testing.T) {
 	cs := pci.NewConfigSpace()
 	cs.Size = pci.ConfigSpaceSize
 	cs.WriteU16(0x00, 0x8086)
-	cs.WriteU32(0x10, 0xFFFFF004) // BAR0 memory
+	cs.WriteU32(0x10, 0xFFFFF000) // BAR0: 4KB 32-bit memory BAR (scrubbed)
 
 	wm := GenerateWritemaskCOE(cs)
 
 	if !strings.Contains(wm, "memory_initialization_radix=16") {
 		t.Error("writemask COE should contain radix")
 	}
-	// All masks should be 0xFFFFFFFF to match original pcileech-fpga library
+
+	// parse data lines into DWORD array
 	lines := strings.Split(wm, "\n")
+	var dwords []string
 	for _, l := range lines {
 		l = strings.TrimSpace(l)
-		if l == "" || strings.HasPrefix(l, ";") {
+		if l == "" || strings.HasPrefix(l, ";") || strings.HasPrefix(l, "memory") {
 			continue
 		}
-		if strings.Contains(l, "00000000") {
-			t.Errorf("writemask should have no zeros — all bits must be 0xFFFFFFFF, found: %s", l)
+		l = strings.TrimSuffix(l, ",")
+		l = strings.TrimSuffix(l, ";")
+		dwords = append(dwords, l)
+	}
+
+	if len(dwords) != 1024 {
+		t.Fatalf("writemask should have 1024 DWORDs, got %d", len(dwords))
+	}
+
+	// DWORD 0 (VID:DID) must be read-only
+	if dwords[0] != "00000000" {
+		t.Errorf("VID:DID mask should be 00000000, got %s", dwords[0])
+	}
+
+	// DWORD 2 (Rev:ClassCode) must be read-only
+	if dwords[2] != "00000000" {
+		t.Errorf("Rev:ClassCode mask should be 00000000, got %s", dwords[2])
+	}
+
+	// DWORD 4 (BAR0) must match scrubbed BAR size mask (0xFFFFF000)
+	if dwords[4] != "fffff000" {
+		t.Errorf("BAR0 mask should be fffff000 (4KB size), got %s", dwords[4])
+	}
+
+	// DWORD 5 (BAR1) must be 0 (unused after scrubber clamp)
+	if dwords[5] != "00000000" {
+		t.Errorf("BAR1 mask should be 00000000 (unused), got %s", dwords[5])
+	}
+
+	// DWORD 11 (SubsysIDs) must be read-only
+	if dwords[11] != "00000000" {
+		t.Errorf("SubsysIDs mask should be 00000000, got %s", dwords[11])
+	}
+
+	// DWORD 15 (IntLine/IntPin) — only IntLine writable
+	if dwords[15] != "000000ff" {
+		t.Errorf("IntLine/IntPin mask should be 000000ff, got %s", dwords[15])
+	}
+
+	// capability region (0x40-0xFF) should be fully writable
+	for i := 0x40 / 4; i < 0x100/4; i++ {
+		if dwords[i] != "ffffffff" {
+			t.Errorf("cap region DWORD[%d] should be ffffffff, got %s", i, dwords[i])
+		}
+	}
+
+	// extended config space (0x100+) should be read-only
+	for i := 0x100 / 4; i < len(dwords); i++ {
+		if dwords[i] != "00000000" {
+			t.Errorf("ext cap DWORD[%d] should be 00000000, got %s", i, dwords[i])
+			break
 		}
 	}
 }
