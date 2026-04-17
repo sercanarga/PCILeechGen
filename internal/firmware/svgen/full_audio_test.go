@@ -27,7 +27,7 @@ func audioBARModel() *barmodel.BARModel {
 			{Offset: 0x50, Width: 4, Name: "RIRBLBASE", Reset: 0x00000000, RWMask: 0xFFFFFF80},
 			{Offset: 0x54, Width: 4, Name: "RIRBUBASE", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
 			{Offset: 0x58, Width: 4, Name: "RIRBWP_RINTCNT", Reset: 0x00000000, RWMask: 0x800000FF},
-			{Offset: 0x5C, Width: 4, Name: "RIRBCTL_STS_SIZE", Reset: 0x00420000, RWMask: 0x00000507, IsRW1C: true},
+			{Offset: 0x5C, Width: 4, Name: "RIRBCTL_STS_SIZE", Reset: 0x00420000, RWMask: 0x00000307, IsRW1C: true},
 			{Offset: 0x60, Width: 4, Name: "RIRBINTSTS", Reset: 0x00000000, RWMask: 0x00000001},
 			{Offset: 0x64, Width: 4, Name: "IC", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
 			{Offset: 0x68, Width: 4, Name: "IR", Reset: 0x00000000, RWMask: 0x00000000},

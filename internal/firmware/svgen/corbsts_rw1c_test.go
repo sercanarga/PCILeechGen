@@ -24,7 +24,7 @@ func TestCORBSTSRW1CGeneration(t *testing.T) {
 				{Offset: 0x08, Width: 4, Name: "GCTL", Reset: 0x00000001, RWMask: 0x00000103},
 				{Offset: 0x0C, Width: 4, Name: "WAKEEN_STATESTS", Reset: 0x00010000, RWMask: 0x0000FFFF},
 				{Offset: 0x4C, Width: 4, Name: "CORBCTL_STS_SIZE", Reset: 0x00420000, RWMask: 0x00000082, IsRW1C: true},
-				{Offset: 0x5C, Width: 4, Name: "RIRBCTL_STS_SIZE", Reset: 0x00420000, RWMask: 0x00000507, IsRW1C: true},
+				{Offset: 0x5C, Width: 4, Name: "RIRBCTL_STS_SIZE", Reset: 0x00420000, RWMask: 0x00000307, IsRW1C: true},
 				{Offset: 0x60, Width: 4, Name: "RIRBINTSTS", Reset: 0x00000000, RWMask: 0x00000001, IsRW1C: true},
 			},
 		},
