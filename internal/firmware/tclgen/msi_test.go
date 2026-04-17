@@ -101,9 +101,9 @@ func TestBuildBAR0Config_MemoryBAR(t *testing.T) {
 	if cfg.Size != "4" || cfg.Scale != "Kilobytes" {
 		t.Errorf("BAR0 size = %s %s, want 4 Kilobytes (FPGA BRAM limit)", cfg.Size, cfg.Scale)
 	}
-	// Type bit is forced to 32-bit in scrub, but Xilinx IP preserves 64-bit flag from donor
-	if !cfg.Is64bit {
-		t.Error("BAR0 should preserve 64-bit flag from donor")
+	// scrubber forces all BARs to 32-bit; IP core must match
+	if cfg.Is64bit {
+		t.Error("BAR0 should be 32-bit (scrubber forces 32-bit type)")
 	}
 }
 
@@ -165,8 +165,9 @@ func TestGenerateProjectTCL_MSIXConfig(t *testing.T) {
 		"MSIx_Table_Size",
 		"MSIx_Enabled",
 		"MSIx_Table_BIR",
-		"BAR_1:0",
+		"BAR_0",
 		"MSIx_PBA_BIR",
+		"00001000",
 		"129vec",
 	} {
 		if !strings.Contains(tcl, want) {

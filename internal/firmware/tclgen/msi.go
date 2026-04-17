@@ -47,11 +47,8 @@ func msiVectorsToTCL(vectors int) string {
 	}
 }
 
-// barBIRToTCL formats a BAR index for Vivado. A 64-bit BAR at index 0
-// is represented as "BAR_1:0"; higher indices use "BAR_N".
+// barBIRToTCL formats a BAR index for Vivado. All BARs are 32-bit after scrub,
+// so BIR 0 maps to "BAR_0", not "BAR_1:0" (which is the 64-bit format).
 func barBIRToTCL(bir int) string {
-	if bir == 0 {
-		return "BAR_1:0"
-	}
 	return fmt.Sprintf("BAR_%d", bir)
 }
