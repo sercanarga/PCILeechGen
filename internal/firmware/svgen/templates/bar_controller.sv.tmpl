@@ -307,30 +307,35 @@ module pcileech_tlps128_bar_controller(
     // 16-deep circular buffer FSM:
     // Push: on bar0_raw_valid, push to write slot if not full.
     // Pop:  when emulator goes idle->busy (bar0_emu_accepted), it took the head data.
-    // Both push and pop can happen in the same cycle (count adjusts correctly).
+    // Push+pop in the same cycle: count stays the same (single NBA expression).
     always @(posedge clk) begin
         if (rst) begin
-            bar0_buf_count     <= 3'd0;
-            bar0_buf_rd        <= 2'd0;
-            bar0_buf_wr        <= 2'd0;
+            bar0_buf_count     <= 5'd0;
+            bar0_buf_rd        <= 4'd0;
+            bar0_buf_wr        <= 4'd0;
             bar0_emu_busy_d1   <= 1'b0;
         end else begin
             bar0_emu_busy_d1 <= bar0_emu_busy;
 
             // Pop head when emulator accepted (idle->busy transition = took head data)
             if (bar0_buf_pop) begin
-                bar0_buf_rd <= bar0_buf_rd + 2'd1;
-                bar0_buf_count <= bar0_buf_count - 3'd1;
+                bar0_buf_rd <= bar0_buf_rd + 4'd1;
             end
 
             // Push tail on new BAR response
             if (bar0_buf_write) begin
                 bar0_buf_ctx[bar0_buf_wr]  <= bar0_raw_ctx;
                 bar0_buf_data[bar0_buf_wr] <= bar0_raw_data;
-                bar0_buf_addr[bar0_buf_wr] <= bar0_req_addr_from_ctx; // reconstruct address from ctx
-                bar0_buf_wr <= bar0_buf_wr + 2'd1;
-                bar0_buf_count <= bar0_buf_count + 3'd1;
+                bar0_buf_addr[bar0_buf_wr] <= bar0_req_addr_from_ctx;
+                bar0_buf_wr <= bar0_buf_wr + 4'd1;
             end
+
+            // single count update: avoids NBA last-write-wins on simultaneous push+pop
+            if (bar0_buf_write && !bar0_buf_pop)
+                bar0_buf_count <= bar0_buf_count + 5'd1;
+            else if (!bar0_buf_write && bar0_buf_pop)
+                bar0_buf_count <= bar0_buf_count - 5'd1;
+            // else: both or neither -> count unchanged
         end
     end
 
@@ -385,9 +390,9 @@ module pcileech_tlps128_bar_controller(
         .clk            ( clk                           ),
         .pcie_id        ( pcie_id                       ),
         .dma_req_valid  ( hda_dma_req_valid             ),
-        .dma_resp_lo    ( hda_dma_resp_lo               ),
-        .dma_resp_hi    ( hda_dma_resp_hi               ),
-        .dma_resp_wp    ( hda_dma_resp_wp               ),
+        .dma_req_lo     ( hda_dma_resp_lo               ),
+        .dma_req_hi     ( hda_dma_resp_hi               ),
+        .dma_req_wp     ( hda_dma_resp_wp               ),
         .dma_req_ready  ( hda_dma_req_ready             ),
         .rirb_lbase     ( hda_dma_rirb_lbase            ),
         .rirb_ubase     ( hda_dma_rirb_ubase            ),
@@ -553,6 +558,17 @@ module pcileech_tlps128_bar_controller(
     assign tlps_out.has_data = hda_tlp_tx_tvalid || tlps_rdeng.has_data;
     assign tlps_rdeng.tready = tlps_out.tready && !hda_tlp_tx_tvalid;
 {{ end }}{{ end }}
+
+{{ if not (or (and (eq .DeviceClass "nvme") .NVMeIdentify) (and (eq .DeviceClass "audio") .BARModel)) }}
+    // no DMA bridge: rdengine output goes straight to tlps_out
+    assign tlps_out.tdata    = tlps_rdeng.tdata;
+    assign tlps_out.tkeepdw  = tlps_rdeng.tkeepdw;
+    assign tlps_out.tvalid   = tlps_rdeng.tvalid;
+    assign tlps_out.tlast    = tlps_rdeng.tlast;
+    assign tlps_out.tuser    = tlps_rdeng.tuser;
+    assign tlps_out.has_data = tlps_rdeng.has_data;
+    assign tlps_rdeng.tready = tlps_out.tready;
+{{ end }}
 
     // BAR1: address loopback
     pcileech_bar_impl_loopaddr i_bar1(
