@@ -33,6 +33,14 @@ func TestGenerateWritemaskCOE(t *testing.T) {
 	cs.WriteU16(0x00, 0x8086)
 	cs.WriteU32(0x10, 0xFFFFF000) // BAR0: 4KB 32-bit memory BAR (scrubbed)
 
+	// set up a capability chain: PM at 0x40, PCIe at 0x70
+	cs.WriteU16(0x06, 0x0010) // status: cap list present
+	cs.WriteU8(0x34, 0x40)    // cap pointer
+	cs.WriteU8(0x40, 0x01)    // PM cap ID
+	cs.WriteU8(0x41, 0x70)    // PM next -> PCIe
+	cs.WriteU8(0x70, 0x10)    // PCIe cap ID
+	cs.WriteU8(0x71, 0x00)    // PCIe next = end
+
 	wm := GenerateWritemaskCOE(cs)
 
 	if !strings.Contains(wm, "memory_initialization_radix=16") {
@@ -81,16 +89,30 @@ func TestGenerateWritemaskCOE(t *testing.T) {
 		t.Errorf("SubsysIDs mask should be 00000000, got %s", dwords[11])
 	}
 
-	// DWORD 15 (IntLine/IntPin) — only IntLine writable
+	// DWORD 15 (IntLine/IntPin) - only IntLine writable
 	if dwords[15] != "000000ff" {
 		t.Errorf("IntLine/IntPin mask should be 000000ff, got %s", dwords[15])
 	}
 
-	// capability region (0x40-0xFF) should be fully writable
-	for i := 0x40 / 4; i < 0x100/4; i++ {
-		if dwords[i] != "ffffffff" {
-			t.Errorf("cap region DWORD[%d] should be ffffffff, got %s", i, dwords[i])
-		}
+	// PM cap header (DWORD 0x40/4 = 16) must be locked (RO)
+	if dwords[0x40/4] != "00000000" {
+		t.Errorf("PM cap header should be locked, got %s", dwords[0x40/4])
+	}
+
+	// PM PMCSR (DWORD 0x44/4 = 17): only PME_Status (bit 15) writable
+	if dwords[0x44/4] != "00008000" {
+		t.Errorf("PM PMCSR mask should be 00008000 (PowerState RO), got %s", dwords[0x44/4])
+	}
+
+	// PCIe cap header (DWORD 0x70/4 = 28) must be locked
+	if dwords[0x70/4] != "00000000" {
+		t.Errorf("PCIe cap header should be locked, got %s", dwords[0x70/4])
+	}
+
+	// non-capability DWORD in cap region should remain writable
+	// DWORD at 0x48 (between PM end and PCIe start) should be writable
+	if dwords[0x48/4] != "ffffffff" {
+		t.Errorf("non-cap DWORD at 0x48 should be ffffffff, got %s", dwords[0x48/4])
 	}
 
 	// extended config space (0x100+) should be read-only

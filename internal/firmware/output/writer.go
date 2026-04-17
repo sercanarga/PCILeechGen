@@ -550,7 +550,7 @@ func (ow *OutputWriter) writeConditionalArtifacts(cfg *svgen.SVGeneratorConfig, 
 			return err
 		}
 
-		// MSI interrupt generator for HDA — critical for driver completion.
+		// MSI interrupt generator for HDA - critical for driver completion.
 		// always generated for audio devices: template instantiates unconditionally.
 		hdaMSISV, err := svgen.GenerateHDAMSISV(cfg)
 		if err != nil {

@@ -791,9 +791,13 @@ func TestSamsungVendorWhitelist(t *testing.T) {
 	cs.WriteU16(0x06, 0x0010) // caps present
 	cs.WriteU8(0x34, 0x40)    // cap ptr
 	cs.WriteU8(0x40, pci.CapIDPowerManagement)
-	cs.WriteU8(0x41, 0x00)
+	cs.WriteU8(0x41, 0x70) // next -> PCIe at 0x70
 	cs.WriteU16(0x42, 0xC9C3)
 	cs.WriteU16(0x44, 0x0008)
+
+	// PCIe cap at 0x70 (prevents inject pass from placing cap in vendor region)
+	cs.WriteU8(0x70, pci.CapIDPCIExpress)
+	cs.WriteU8(0x71, 0x00)
 
 	// write vendor data in Samsung whitelist range (0x40-0x50)
 	cs.WriteU32(0x48, 0xDEADBEEF)

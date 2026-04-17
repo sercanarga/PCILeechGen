@@ -77,11 +77,11 @@ func audioProfile() *DeviceProfile {
 			{Offset: 0x5C, Width: 4, Name: "RIRBCTL_STS_SIZE", Reset: 0x00420000, RWMask: 0x00000507, IsRW1C: true, IsFSMDriven: true},
 			// RIRBINTSTS - RIRB interrupt status (RW1C: bit 0 INTFL)
 			{Offset: 0x60, Width: 4, Name: "RIRBINTSTS", Reset: 0x00000000, RWMask: 0x00000001, IsRW1C: true, IsFSMDriven: true},
-			// IC (Immediate Command) — driver writes codec command
+			// IC (Immediate Command) - driver writes codec command
 			{Offset: 0x64, Width: 4, Name: "IC", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
-			// IR (Immediate Response) — driver reads codec response (RO, returns 0)
+			// IR (Immediate Response) - driver reads codec response (RO, returns 0)
 			{Offset: 0x68, Width: 4, Name: "IR", Reset: 0x00000000, RWMask: 0x00000000},
-			// RIRB response registers — read by hdaudio.sys after RIRBWP advances
+			// RIRB response registers - read by hdaudio.sys after RIRBWP advances
 			{Offset: 0x70, Width: 4, Name: "RIRBRESP_LO", Reset: 0x00000000, RWMask: 0x00000000, IsFSMDriven: true},
 			{Offset: 0x74, Width: 4, Name: "RIRBRESP_HI", Reset: 0x00000000, RWMask: 0x00000000, IsFSMDriven: true},
 		},

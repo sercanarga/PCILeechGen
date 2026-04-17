@@ -8,6 +8,13 @@ import (
 	"github.com/sercanarga/pcileechgen/internal/pci"
 )
 
+type injectPCIeCapPass struct{}
+
+func (p *injectPCIeCapPass) Name() string { return "inject PCIe capability" }
+func (p *injectPCIeCapPass) Apply(cs *pci.ConfigSpace, b *board.Board, om *overlay.Map, ctx *ScrubContext) {
+	injectPCIeCapIfMissing(cs, b, om, ctx)
+}
+
 type clearMiscPass struct{}
 
 func (p *clearMiscPass) Name() string { return "clear misc registers" }
