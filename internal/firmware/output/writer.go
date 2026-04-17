@@ -185,7 +185,6 @@ var barControllerSubModules = []string{
 	"pcileech_bar_impl_none",
 	"pcileech_bar_impl_loopaddr",
 	"pcileech_bar_impl_zerowrite4k",
-	"pcileech_bar_impl_msi",
 }
 
 // patchSVSources copies the board's SV tree (excluding files that will
@@ -552,14 +551,13 @@ func (ow *OutputWriter) writeConditionalArtifacts(cfg *svgen.SVGeneratorConfig, 
 		}
 
 		// MSI interrupt generator for HDA — critical for driver completion.
-		if cfg.MSIConfig != nil {
-			hdaMSISV, err := svgen.GenerateHDAMSISV(cfg)
-			if err != nil {
-				return fmt.Errorf("generating pcileech_hda_msi.sv: %w", err)
-			}
-			if err := ow.writeFile("pcileech_hda_msi.sv", hdaMSISV); err != nil {
-				return err
-			}
+		// always generated for audio devices: template instantiates unconditionally.
+		hdaMSISV, err := svgen.GenerateHDAMSISV(cfg)
+		if err != nil {
+			return fmt.Errorf("generating pcileech_hda_msi.sv: %w", err)
+		}
+		if err := ow.writeFile("pcileech_hda_msi.sv", hdaMSISV); err != nil {
+			return err
 		}
 	}
 
