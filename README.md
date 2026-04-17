@@ -66,9 +66,10 @@
 <tr><td valign="top">
 
 **Config Space**
-- Full 4KB shadow + scrubbing pipeline
-- Per-register write masks (SlotCtl, DevCtl2, LinkCtl2, upper 32-bit BAR)
-- Power Management (D-state + NoSoftReset)
+- Full 4KB shadow + scrubbing pipeline (17 passes)
+- Per-register write masks (PM/PCIe lock, SlotCtl, DevCtl2, LinkCtl2, upper 32-bit BAR)
+- PCIe Capability Injection (synthesized PCIe v2 Endpoint for conventional PCI donors)
+- Power Management lock (D-state + NoSoftReset, PMCSR write-protected)
 - Vendor Quirks (Renesas firmware status)
 - Vendor-Specific Capability Preservation (Intel, Realtek, Broadcom, Qualcomm, ASMedia)
 
@@ -163,7 +164,7 @@ flowchart LR
 
 ### Prerequisites
 
-- **Go** 1.25+
+- **Go** 1.26+
 - **Linux** with IOMMU/VFIO enabled
 - **Vivado** 2023.2+ (for synthesis)
 
@@ -289,7 +290,7 @@ sudo ./bin/pcileechgen build --from-json device_context.json --board CaptainDMA_
 ```
 
 > [!WARNING]
-> Full synthesis may take 30–60 minutes depending on FPGA size. Use `--skip-vivado` to generate only artifacts.
+> Full synthesis may take 30-60 minutes depending on FPGA size. Use `--skip-vivado` to generate only artifacts.
 
 <details>
 <summary>All flags</summary>
@@ -430,7 +431,7 @@ internal/
 ├── donor/                    VFIO device reader + BAR profiling
 ├── pci/                      Config space parser, capabilities, MSI-X
 ├── firmware/
-│   ├── scrub/                Config space scrubbing (16-pass pipeline)
+│   ├── scrub/                Config space scrubbing (17-pass pipeline)
 │   ├── barmodel/             BAR register model (spec + profiled)
 │   ├── svgen/                SV code generation (embedded .sv.tmpl templates)
 │   ├── nvme/                 NVMe Identify data generation

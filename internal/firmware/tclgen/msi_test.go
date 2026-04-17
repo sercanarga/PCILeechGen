@@ -86,7 +86,7 @@ func TestMSIVectorsToTCL(t *testing.T) {
 }
 
 func TestBuildBAR0Config_MemoryBAR(t *testing.T) {
-	// Memory BAR — Xilinx IP should be configured with 4 KB to match
+	// Memory BAR - Xilinx IP should be configured with 4 KB to match
 	// the FPGA's BRAM-served region size.
 	ctx := &donor.DeviceContext{
 		BARs: []pci.BAR{
@@ -108,7 +108,7 @@ func TestBuildBAR0Config_MemoryBAR(t *testing.T) {
 }
 
 func TestBuildBAR0Config_IOBAR(t *testing.T) {
-	// IO BAR — Xilinx IP only serves memory BARs from BRAM.
+	// IO BAR - Xilinx IP only serves memory BARs from BRAM.
 	// IO BAR handling is done via config space BRAM, not IP config.
 	ctx := &donor.DeviceContext{
 		BARs: []pci.BAR{

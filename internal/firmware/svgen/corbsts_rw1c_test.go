@@ -52,7 +52,7 @@ func TestCORBSTSRW1CGeneration(t *testing.T) {
 
 	// Verify 0x4C is NOT in the generic write case block.
 	// The generic write case has the pattern "32'hXXXX: begin" followed by
-	// wr_be lines. The read case has "32'hXXXX: rd_data_d1 <=" — we only
+	// wr_be lines. The read case has "32'hXXXX: rd_data_d1 <=" - we only
 	// want to ensure the write case is absent.
 	// Search for the write-case pattern: "32'h0000004C: begin"
 	if strings.Contains(sv, "32'h0000004C: begin") {

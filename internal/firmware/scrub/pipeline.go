@@ -25,6 +25,7 @@ func defaultPipeline() []ScrubPass {
 	return []ScrubPass{
 		&clearMiscPass{},
 		&sanitizeCmdStatusPass{},
+		&injectPCIeCapPass{},
 		&scrubPCIeCapPass{},
 		&scrubPMCapPass{},
 		&scrubAERPass{},

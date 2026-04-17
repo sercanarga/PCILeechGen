@@ -299,14 +299,14 @@ func buildAudioBARModel(barData []byte) *BARModel {
 		{Offset: 0x5C, Width: 4, Name: "RIRBCTL_STS_SIZE", RWMask: 0x00000307, IsRW1C: true, IsFSMDriven: true},
 		// RIRBINTSTS - RIRB interrupt status (RW1C: bit 0 INTFL)
 		{Offset: 0x60, Width: 4, Name: "RIRBINTSTS", RWMask: 0x00000001, IsRW1C: true, IsFSMDriven: true},
-		// IC (Immediate Command) — driver writes codec command
+		// IC (Immediate Command) - driver writes codec command
 		{Offset: 0x64, Width: 4, Name: "IC", RWMask: 0xFFFFFFFF},
-		// IR (Immediate Response) — driver reads codec response (RO)
+		// IR (Immediate Response) - driver reads codec response (RO)
 		{Offset: 0x68, Width: 4, Name: "IR", RWMask: 0x00000000},
 		// RIRBRESP_LO - RIRB response data lower 32 bits (RO, DMA-served)
 		{Offset: 0x70, Width: 4, Name: "RIRBRESP_LO", RWMask: 0x00000000, IsFSMDriven: true},
 		// RIRBRESP_HI - RIRB response data upper 32 bits (RO, DMA-served)
-		// Must be at 0x74 (immediately after 0x70) — the driver reads 8 bytes
+		// Must be at 0x74 (immediately after 0x70) - the driver reads 8 bytes
 		// from offset 0x70 as a single RIRB entry. A gap at 0x74 would cause
 		// the upper 32 bits to read as zero.
 		{Offset: 0x74, Width: 4, Name: "RIRBRESP_HI", RWMask: 0x00000000, IsFSMDriven: true},
@@ -355,7 +355,7 @@ func buildAudioBARModel(barData []byte) *BARModel {
 		regs[10].Reset = 0x00000000 // RIRBUBASE: upper 32 bits of base
 		regs[11].Reset = 0x00000000 // RIRBWP=0, RINTCNT=0
 		regs[12].Reset = 0x00420000 // RIRBSIZE=0x42 (supports 256/16/2 entries)
-		// regs[13] (IC at 0x64) and regs[14] (IR at 0x68) default to 0 — correct.
+		// regs[13] (IC at 0x64) and regs[14] (IR at 0x68) default to 0 - correct.
 	}
 
 	return &BARModel{
