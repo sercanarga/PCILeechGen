@@ -182,3 +182,207 @@ func TestGenerateMSIXTableHex_Empty(t *testing.T) {
 		t.Error("Empty MSI-X should show 0 vectors")
 	}
 }
+
+// writemask for a donor with BAR0=0 that was scrubbed to 4KB memory BAR.
+// this simulates the exact scenario where clampBARsToFPGA creates BAR0.
+func TestWritemask_ScrubbedBAR0FromZero(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	cs.WriteU16(0x00, 0x1102)     // Creative Labs
+	cs.WriteU16(0x02, 0x0012)
+	cs.WriteU32(0x10, 0xFFFFF000) // BAR0 = 4KB mem (from scrubber)
+
+	wm := GenerateWritemaskCOE(cs)
+	dwords := parseCOEDwords(t, wm)
+
+	// BAR0 writemask should allow sizing writes
+	if dwords[4] != "fffff000" {
+		t.Errorf("BAR0 mask = %s, want fffff000 (4KB size mask)", dwords[4])
+	}
+}
+
+// simulate BAR sizing: host writes 0xFFFFFFFF, reads back, decodes size.
+func TestWritemask_BARSizingSimulation(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	cs.WriteU32(0x10, 0xFFFFF000) // 4KB 32-bit memory BAR
+
+	wm := GenerateWritemaskCOE(cs)
+	dwords := parseCOEDwords(t, wm)
+
+	// writemask must be 0xFFFFF000 for BAR0
+	if dwords[4] != "fffff000" {
+		t.Fatalf("BAR0 mask = %s, want fffff000", dwords[4])
+	}
+
+	// simulate host BAR sizing:
+	// 1. host writes 0xFFFFFFFF to BAR0
+	// 2. BRAM stores: 0xFFFFFFFF & writemask = 0xFFFFF000
+	// 3. host reads back 0xFFFFF000
+	// 4. host decodes: ~(0xFFFFF000 & ~0xF) + 1 = ~0xFFFFF000 + 1 = 0x1000 = 4KB
+	hostWrite := uint32(0xFFFFFFFF)
+	mask := uint32(0xFFFFF000)
+	bramResult := hostWrite & mask
+	if bramResult != 0xFFFFF000 {
+		t.Errorf("BAR sizing result = 0x%08X, want 0xFFFFF000", bramResult)
+	}
+	sizeBits := bramResult & ^uint32(0x0F)
+	barSize := ^sizeBits + 1
+	if barSize != 4096 {
+		t.Errorf("decoded BAR size = %d, want 4096", barSize)
+	}
+}
+
+// writemask with IO BAR donor that was overwritten to memory BAR by scrubber.
+func TestWritemask_IOBAROverwrittenToMemory(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	cs.WriteU32(0x10, 0xFFFFF000) // scrubber forced memory BAR
+
+	wm := GenerateWritemaskCOE(cs)
+	dwords := parseCOEDwords(t, wm)
+
+	// must be memory BAR mask, NOT IO mask, NOT zero
+	if dwords[4] == "00000000" {
+		t.Error("BAR0 mask should not be zero after scrubber creates memory BAR")
+	}
+	if dwords[4] != "fffff000" {
+		t.Errorf("BAR0 mask = %s, want fffff000", dwords[4])
+	}
+}
+
+// identity registers must be read-only in writemask.
+func TestWritemask_IdentityRegistersReadOnly(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	cs.WriteU16(0x00, 0x1102) // VID
+	cs.WriteU16(0x02, 0x0012) // DID
+	cs.WriteU32(0x08, 0x04030000) // ClassCode + RevID
+	cs.WriteU16(0x2C, 0x1102) // SubsysVID
+	cs.WriteU16(0x2E, 0x0012) // SubsysDID
+	cs.WriteU32(0x10, 0xFFFFF000) // BAR0
+
+	wm := GenerateWritemaskCOE(cs)
+	dwords := parseCOEDwords(t, wm)
+
+	roRegs := map[int]string{
+		0:  "VID:DID",
+		2:  "RevisionID:ClassCode",
+		10: "CardBus CIS",
+		11: "SubsysVID:SubsysDID",
+		12: "Expansion ROM",
+		13: "CapPtr",
+		14: "Reserved",
+	}
+	for dw, name := range roRegs {
+		if dwords[dw] != "00000000" {
+			t.Errorf("%s (DWORD %d) mask = %s, want 00000000 (read-only)", name, dw, dwords[dw])
+		}
+	}
+}
+
+// command/status register must be fully writable.
+func TestWritemask_CommandStatusWritable(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	cs.WriteU32(0x10, 0xFFFFF000)
+
+	wm := GenerateWritemaskCOE(cs)
+	dwords := parseCOEDwords(t, wm)
+
+	if dwords[1] != "ffffffff" {
+		t.Errorf("Command:Status mask = %s, want ffffffff", dwords[1])
+	}
+}
+
+// prefetchable memory BAR: type bits [3:0] must be read-only.
+func TestWritemask_PrefetchableBAR(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	cs.WriteU32(0x10, 0xFFFFF008) // 4KB prefetchable 32-bit memory
+
+	wm := GenerateWritemaskCOE(cs)
+	dwords := parseCOEDwords(t, wm)
+
+	// mask should be 0xFFFFF008 & 0xFFFFFFF0 = 0xFFFFF000
+	// type bits [3:0] read-only, size bits writable
+	if dwords[4] != "fffff000" {
+		t.Errorf("prefetchable BAR mask = %s, want fffff000", dwords[4])
+	}
+}
+
+// multiple BARs: each should get its own mask.
+func TestWritemask_MultipleBARs(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	cs.WriteU32(0x10, 0xFFFFF000) // BAR0: 4KB memory
+	cs.WriteU32(0x14, 0x00000000) // BAR1: unused
+	cs.WriteU32(0x18, 0xFFFF0000) // BAR2: 64KB memory
+
+	wm := GenerateWritemaskCOE(cs)
+	dwords := parseCOEDwords(t, wm)
+
+	if dwords[4] != "fffff000" {
+		t.Errorf("BAR0 mask = %s, want fffff000", dwords[4])
+	}
+	if dwords[5] != "00000000" {
+		t.Errorf("BAR1 mask = %s, want 00000000 (unused)", dwords[5])
+	}
+	if dwords[6] != "ffff0000" {
+		t.Errorf("BAR2 mask = %s, want ffff0000", dwords[6])
+	}
+}
+
+// config space COE must contain correct DWORDs for a scrubbed config space.
+func TestConfigSpaceCOE_ScrubbedDeviceIdentity(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	cs.WriteU16(0x00, 0x1102) // VID
+	cs.WriteU16(0x02, 0x0012) // DID
+	cs.WriteU32(0x08, 0x04030000) // ClassCode 04:03:00
+
+	coe := GenerateConfigSpaceCOE(cs)
+
+	// DWORD 0 = 0x00121102 (LE: VID=1102, DID=0012)
+	if !strings.Contains(coe, "00121102") {
+		t.Error("COE should contain VID:DID DWORD 00121102")
+	}
+	// DWORD 2 = ClassCode bytes
+	if !strings.Contains(coe, "04030000") {
+		t.Error("COE should contain ClassCode DWORD")
+	}
+}
+
+// config space HEX format verification.
+func TestConfigSpaceHex_DWORDFormat(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	cs.WriteU32(0x10, 0xFFFFF000) // BAR0
+
+	hex := GenerateConfigSpaceHex(cs)
+	// offset [010] line should have FFFFF000
+	if !strings.Contains(hex, "FFFFF000 // [010]") {
+		t.Error("HEX should contain BAR0 at offset [010]")
+	}
+}
+
+// parseCOEDwords extracts hex DWORD strings from a COE file.
+func parseCOEDwords(t *testing.T, coe string) []string {
+	t.Helper()
+	lines := strings.Split(coe, "\n")
+	var dwords []string
+	for _, l := range lines {
+		l = strings.TrimSpace(l)
+		if l == "" || strings.HasPrefix(l, ";") || strings.HasPrefix(l, "memory") {
+			continue
+		}
+		l = strings.TrimSuffix(l, ",")
+		l = strings.TrimSuffix(l, ";")
+		dwords = append(dwords, l)
+	}
+	if len(dwords) != 1024 {
+		t.Fatalf("expected 1024 DWORDs, got %d", len(dwords))
+	}
+	return dwords
+}
+
