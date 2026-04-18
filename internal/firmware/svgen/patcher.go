@@ -138,10 +138,9 @@ func (p *SVPatcher) patchFile(filename string, patches []svRegexPatch) error {
 	return nil
 }
 
-// patchCfgSV patches the DSN (Device Serial Number) value in pcileech_pcie_cfg_a7.sv.
-// When the donor device has a DSN, we write that value.
-// When it doesn't, we zero out the hardcoded default to avoid
-// exposing a capability the real device never had.
+// patchCfgSV patches pcileech_pcie_cfg_a7.sv with DSN and power management
+// settings. In addition to DSN, it forces the IP core to reject ASPM L0s/L1
+// transitions so the link stays in L0 even if the root complex requests it.
 func (p *SVPatcher) patchCfgSV() error {
 	var patches []svRegexPatch
 
@@ -161,6 +160,23 @@ func (p *SVPatcher) patchCfgSV() error {
 			label:       "DSN: cleared (donor has no DSN)",
 		})
 	}
+
+	// halt ASPM L0s at IP core level - prevents root complex from
+	// transitioning the link to L0s even if it requests it.
+	patches = append(patches, svRegexPatch{
+		pattern:     `(rw\[211\]\s*<=\s*)0(\s*;\s*//\s*cfg_pm_halt_aspm_l0s)`,
+		replacement: "${1}1${2}",
+		label:       "PM: halt ASPM L0s (cfg_pm_halt_aspm_l0s -> 1)",
+	})
+
+	// halt ASPM L1 at IP core level - prevents root complex from
+	// transitioning the link to L1, which would stop TLP processing
+	// and cause the device to appear dead after ~5 minutes of idle.
+	patches = append(patches, svRegexPatch{
+		pattern:     `(rw\[212\]\s*<=\s*)0(\s*;\s*//\s*cfg_pm_halt_aspm_l1)`,
+		replacement: "${1}1${2}",
+		label:       "PM: halt ASPM L1 (cfg_pm_halt_aspm_l1 -> 1)",
+	})
 
 	return p.patchFile("pcileech_pcie_cfg_a7.sv", patches)
 }
