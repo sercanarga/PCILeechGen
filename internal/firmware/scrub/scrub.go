@@ -189,6 +189,15 @@ func clampBARsToFPGA(cs *pci.ConfigSpace, om *overlay.Map) {
 			i++ // skip upper half
 		}
 	}
+
+	// ensure BAR0 is a valid 4KB 32-bit memory BAR.
+	// conventional PCI donors may have BAR0=0 (no memory BAR) or IO-only.
+	// the FPGA always serves a 4KB memory region; if BAR0 is missing or
+	// IO type, Windows can't map the HDA registers and fails with Code 10.
+	bar0 := cs.BAR(0)
+	if bar0 == 0 || (bar0&0x01 != 0) {
+		om.WriteU32(0x10, bar0SizeMask, "create BAR0 as 4KB 32-bit memory (donor had none)")
+	}
 }
 
 // relocateMSIXToBRAM moves MSI-X table/PBA offsets to 0x1000+ so the
