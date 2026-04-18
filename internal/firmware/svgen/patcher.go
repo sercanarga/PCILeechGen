@@ -178,6 +178,18 @@ func (p *SVPatcher) patchCfgSV() error {
 		label:       "PM: halt ASPM L1 (cfg_pm_halt_aspm_l1 -> 1)",
 	})
 
+	// force IP core to stay in D0 power state. without this, Windows
+	// can write D3 to PMCSR which the IP core processes internally
+	// before the shadow BRAM even sees it. once in D3, the IP core
+	// stops processing memory/IO TLPs -> DPC_WATCHDOG_VIOLATION BSOD.
+	// cfg_pm_force_state = 00 (D0) is already the default, we just
+	// need to enable the force mechanism.
+	patches = append(patches, svRegexPatch{
+		pattern:     `(rw\[210\]\s*<=\s*)0(\s*;\s*//\s*cfg_pm_force_state_en)`,
+		replacement: "${1}1${2}",
+		label:       "PM: force D0 state (cfg_pm_force_state_en -> 1)",
+	})
+
 	return p.patchFile("pcileech_pcie_cfg_a7.sv", patches)
 }
 
