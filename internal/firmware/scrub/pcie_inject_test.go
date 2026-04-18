@@ -354,3 +354,64 @@ func TestInjectPCIeCap_FullPipelineIntegration(t *testing.T) {
 		t.Fatalf("cap chain invalid after full pipeline: %v", err)
 	}
 }
+
+// TestFullPipeline_NoBARs_NoCaps simulates a worst-case donor like Creative
+// Labs CA0132: no memory BARs, no capability chain. The scrubber must create
+// BAR0 and a full PM+MSI+PCIe cap chain from scratch.
+func TestFullPipeline_NoBARs_NoCaps(t *testing.T) {
+	cs := makeCSNoCaps()
+	// BAR0 = 0 (no BAR at all)
+	b := makeBoard(2, 1)
+
+	scrubbed := ScrubConfigSpace(cs, b)
+
+	// BAR0 must be a 4KB 32-bit memory BAR
+	bar0 := scrubbed.ReadU32(0x10)
+	if bar0 == 0 {
+		t.Fatal("BAR0 should not be 0 after scrub (scrubber must create one)")
+	}
+	if bar0&0x01 != 0 {
+		t.Fatal("BAR0 should be memory type, not IO")
+	}
+	if bar0&0x06 != 0 {
+		t.Fatal("BAR0 should be 32-bit (type bits [2:1] = 00)")
+	}
+
+	// PCIe cap must exist
+	caps := pci.ParseCapabilities(scrubbed)
+	hasPCIe := false
+	for _, c := range caps {
+		if c.ID == pci.CapIDPCIExpress {
+			hasPCIe = true
+		}
+	}
+	if !hasPCIe {
+		t.Fatal("PCIe capability not found after scrub (inject should create it)")
+	}
+
+	// cap chain must be valid
+	if err := ValidateCapChain(scrubbed); err != nil {
+		t.Fatalf("cap chain invalid: %v", err)
+	}
+}
+
+// TestFullPipeline_IOOnlyBAR simulates a donor with only I/O BARs.
+// The scrubber must create a memory BAR0 for the FPGA.
+func TestFullPipeline_IOOnlyBAR(t *testing.T) {
+	cs := makeCSWithPMAndMSI()
+	// BAR0 = IO BAR (bit 0 = 1)
+	binary.LittleEndian.PutUint32(cs.Data[0x10:], 0xFFFFFF01)
+	b := makeBoard(2, 1)
+
+	scrubbed := ScrubConfigSpace(cs, b)
+
+	// BAR0 must be a 4KB memory BAR (overwritten by scrubber)
+	bar0 := scrubbed.ReadU32(0x10)
+	if bar0&0x01 != 0 {
+		t.Fatalf("BAR0 should be memory after scrub, got 0x%08X (IO bit set)", bar0)
+	}
+	if bar0 == 0 {
+		t.Fatal("BAR0 should not be 0 after scrub")
+	}
+}
+
