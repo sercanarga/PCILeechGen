@@ -214,10 +214,14 @@ func injectFullCapChain(cs *pci.ConfigSpace, b *board.Board, om *overlay.Map, ct
 	// PM capability (8 bytes)
 	om.WriteU8(pmOffset, pci.CapIDPowerManagement, "inject PM cap ID")
 	om.WriteU8(pmOffset+1, msiOffset, "PM next -> MSI")
-	// PMC: D3hot supported, PME from D0+D3hot, version 3
-	om.WriteU16(pmOffset+2, 0xC803, "PM capabilities (D3hot, PME, v3)")
-	// PMCSR: D0 state, NoSoftReset
-	om.WriteU16(pmOffset+4, 0x0008, "PMCSR: D0, NoSoftReset")
+	// PMC: version 3, no PME support from any D-state.
+	// advertising PME from D3hot/D3cold tells Windows the device can wake
+	// from D3, which causes the PM framework to aggressively transition to
+	// D3hot after ~5 minutes of idle. the FPGA IP core can't properly
+	// handle D3 and stops processing TLPs.
+	om.WriteU16(pmOffset+2, 0x0003, "PM capabilities (v3, no PME support)")
+	// PMCSR: D0 state, NoSoftReset, PME_Enable=0
+	om.WriteU16(pmOffset+4, 0x0008, "PMCSR: D0, NoSoftReset, PME disabled")
 	om.WriteU16(pmOffset+6, 0x0000, "PM bridge/data")
 
 	// MSI capability (10 bytes, 32-bit address, 1 vector)
