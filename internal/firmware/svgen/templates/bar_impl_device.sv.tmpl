@@ -36,6 +36,10 @@ module pcileech_bar_impl_device #(
     output wire [31:0]  dma_rirb_ubase,
     input               dma_req_ready,
     input               dma_done,
+    // Cancel in-flight DMA transfer on BAR FSM timeout.
+    // Prevents stale TLP from corrupting system memory after the FSM
+    // has already moved on to a different response.
+    output reg          dma_abort,
     // MSI interrupt signals (wired to pcileech_hda_msi in controller)
     output wire         msi_trigger,    // 1-cycle pulse on INTFL 0->1
     output wire [31:0]  rirbintsts      // live RIRBINTSTS register value
@@ -188,6 +192,7 @@ module pcileech_bar_impl_device #(
     reg         dma_done_latched;  // latches the 1-cycle dma_done pulse
     reg [9:0]   dma_wait_counter;
     reg         dma_timed_out;
+    reg         dma_abort;        // cancel in-flight bridge TLP on timeout
 
     // ---- CRST handshake ----
     // only tracks edges; actual state reset is done by the main FSM
@@ -535,6 +540,7 @@ module pcileech_bar_impl_device #(
             dma_resp_hi_r      <= 32'h0;
             dma_resp_wp_r      <= 8'h0;
             intfl_set_req      <= 1'b0;
+            dma_abort          <= 1'b0;
             // FSM-driven register resets (sole driver for these regs)
             reg_0x00000048     <= 32'h00000000;
             reg_0x00000058     <= 32'h00000000;
@@ -551,6 +557,12 @@ module pcileech_bar_impl_device #(
             // resets all state vars — we must not fight it with our own
             // assignments. Without this guard, both blocks drive the same regs
             // and the result is synthesis-tool-dependent.
+
+            // Clear dma_abort pulse after 1 cycle — bridge catches it in any
+            // D_WR_TLPn state and immediately returns to IDLE.
+            if (dma_abort) begin
+                dma_abort <= 1'b0;
+            end
 
             // Track CTE for reinitialization detection
             if (!crst_falling && !crst_rising) begin
@@ -748,8 +760,11 @@ module pcileech_bar_impl_device #(
                     // Decrement pending_count to allow the FSM to continue.
                     // Clear dma_done_latched to prevent stale signal corruption
                     // on the next transfer.
+                    // Also signal the bridge to abort its in-flight TLP so it
+                    // can't complete later and corrupt system memory.
                     rirb_pending_count <= rirb_pending_count - 8'h01;
                     rirb_response_fsm <= 8'h00;
+                    dma_abort <= 1'b1;
                 end
             end
         end
