@@ -415,3 +415,346 @@ func TestFullPipeline_IOOnlyBAR(t *testing.T) {
 	}
 }
 
+// verify injected PCIe cap fields are correct after full scrub pipeline.
+func TestFullPipeline_PCIeCapDataIntegrity(t *testing.T) {
+	cs := makeCSNoCaps()
+	b := makeBoard(2, 1) // Gen2 x1
+
+	scrubbed := ScrubConfigSpace(cs, b)
+
+	caps := pci.ParseCapabilities(scrubbed)
+	var pcieOff int
+	found := false
+	for _, c := range caps {
+		if c.ID == pci.CapIDPCIExpress {
+			pcieOff = c.Offset
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("PCIe cap not found after pipeline")
+	}
+
+	// cap ID
+	if scrubbed.ReadU8(pcieOff) != pci.CapIDPCIExpress {
+		t.Errorf("cap ID = 0x%02X, want 0x10", scrubbed.ReadU8(pcieOff))
+	}
+
+	// PCIe Capabilities Register (offset+2): version=2, device type=0 (endpoint)
+	pcieCapReg := scrubbed.ReadU16(pcieOff + 2)
+	version := pcieCapReg & 0x0F
+	devType := (pcieCapReg >> 4) & 0x0F
+	if version != 2 {
+		t.Errorf("PCIe cap version = %d, want 2", version)
+	}
+	if devType != 0 {
+		t.Errorf("PCIe device type = %d, want 0 (endpoint)", devType)
+	}
+
+	// Device Status (offset+10): must be cleared by scrubPCIeCapPass
+	devStatus := scrubbed.ReadU16(pcieOff + 10)
+	if devStatus != 0 {
+		t.Errorf("Device Status = 0x%04X, want 0x0000 (cleared)", devStatus)
+	}
+
+	// Link Capabilities (offset+0x0C): speed and width
+	linkCap := scrubbed.ReadU32(pcieOff + 0x0C)
+	speed := linkCap & 0x0F
+	width := (linkCap >> 4) & 0x3F
+	if speed != 2 {
+		t.Errorf("link speed = %d, want 2 (Gen2)", speed)
+	}
+	if width != 1 {
+		t.Errorf("link width = %d, want 1 (x1)", width)
+	}
+
+	// ASPM must be cleared (bits 11:10 of Link Capabilities)
+	aspmSupport := (linkCap >> 10) & 0x03
+	if aspmSupport != 0 {
+		t.Errorf("ASPM support = %d, want 0 (disabled)", aspmSupport)
+	}
+
+	// Clock PM must be cleared (bit 18 of Link Capabilities)
+	clockPM := (linkCap >> 18) & 0x01
+	if clockPM != 0 {
+		t.Errorf("Clock PM = %d, want 0 (disabled)", clockPM)
+	}
+}
+
+// PM capability must be D0 + NoSoftReset after scrub.
+func TestFullPipeline_PMCapState(t *testing.T) {
+	cs := makeCSWithPMAndMSI()
+	// set PM to D3hot
+	binary.LittleEndian.PutUint16(cs.Data[0x54:], 0x0003) // PMCSR = D3
+	b := makeBoard(2, 1)
+
+	scrubbed := ScrubConfigSpace(cs, b)
+
+	caps := pci.ParseCapabilities(scrubbed)
+	for _, c := range caps {
+		if c.ID != pci.CapIDPowerManagement {
+			continue
+		}
+		pmcsr := scrubbed.ReadU16(c.Offset + 4)
+		powerState := pmcsr & 0x03
+		noSoftReset := (pmcsr >> 3) & 0x01
+		pmeStatus := (pmcsr >> 15) & 0x01
+
+		if powerState != 0 {
+			t.Errorf("PM power state = D%d, want D0", powerState)
+		}
+		if noSoftReset != 1 {
+			t.Error("NoSoftReset should be set")
+		}
+		if pmeStatus != 0 {
+			t.Error("PME_Status should be cleared")
+		}
+		return
+	}
+	t.Fatal("PM capability not found")
+}
+
+// command register must have BME + MSE set after scrub.
+func TestFullPipeline_CommandRegister(t *testing.T) {
+	cs := makeCSNoCaps()
+	// command = 0 (nothing enabled)
+	binary.LittleEndian.PutUint16(cs.Data[0x04:], 0x0000)
+	b := makeBoard(2, 1)
+
+	scrubbed := ScrubConfigSpace(cs, b)
+
+	cmd := scrubbed.ReadU16(0x04)
+	if cmd&0x02 == 0 {
+		t.Error("Memory Space Enable (MSE) should be set")
+	}
+	if cmd&0x04 == 0 {
+		t.Error("Bus Master Enable (BME) should be set")
+	}
+}
+
+// 64-bit BAR must be forced to 32-bit by scrubber.
+func TestFullPipeline_64bitBAR(t *testing.T) {
+	cs := makeCSWithPMAndMSI()
+	// BAR0 = 64-bit memory BAR (type bits [2:1] = 10)
+	binary.LittleEndian.PutUint32(cs.Data[0x10:], 0xFFF00004) // 64-bit, 1MB
+	binary.LittleEndian.PutUint32(cs.Data[0x14:], 0x00000001) // upper 32 bits
+	b := makeBoard(2, 1)
+
+	scrubbed := ScrubConfigSpace(cs, b)
+
+	bar0 := scrubbed.ReadU32(0x10)
+	// type bits [2:1] must be 00 (32-bit)
+	if bar0&0x06 != 0 {
+		t.Errorf("BAR0 type bits = %d, want 0 (32-bit), got 0x%08X", (bar0>>1)&0x03, bar0)
+	}
+	// BAR1 (upper 32 of old 64-bit) must be cleared
+	bar1 := scrubbed.ReadU32(0x14)
+	if bar1 != 0 {
+		t.Errorf("BAR1 (upper) = 0x%08X, want 0 (cleared after 64->32 conversion)", bar1)
+	}
+	// BAR0 size must be 4KB
+	sizeBits := bar0 & 0xFFFFF000
+	if sizeBits != 0xFFFFF000 {
+		t.Errorf("BAR0 size mask = 0x%08X, want 0xFFFFF000 (4KB)", sizeBits)
+	}
+}
+
+// interrupt pin must be set to INTA# if donor has 0.
+func TestFullPipeline_InterruptPin(t *testing.T) {
+	cs := makeCSNoCaps()
+	cs.Data[0x3D] = 0x00 // interrupt pin = 0
+	b := makeBoard(2, 1)
+
+	scrubbed := ScrubConfigSpace(cs, b)
+
+	pin := scrubbed.ReadU8(0x3D)
+	if pin != 0x01 {
+		t.Errorf("interrupt pin = %d, want 1 (INTA#)", pin)
+	}
+}
+
+// interrupt pin must be preserved if donor has valid value.
+func TestFullPipeline_InterruptPinPreserved(t *testing.T) {
+	cs := makeCSWithPMAndMSI()
+	cs.Data[0x3D] = 0x02 // INTB#
+	b := makeBoard(2, 1)
+
+	scrubbed := ScrubConfigSpace(cs, b)
+
+	pin := scrubbed.ReadU8(0x3D)
+	if pin != 0x02 {
+		t.Errorf("interrupt pin = %d, want 2 (INTB# preserved)", pin)
+	}
+}
+
+// status register capabilities list bit must be set after injection.
+func TestFullPipeline_StatusCapListBit(t *testing.T) {
+	cs := makeCSNoCaps()
+	// status has no capabilities list bit
+	binary.LittleEndian.PutUint16(cs.Data[0x06:], 0x0000)
+	b := makeBoard(2, 1)
+
+	scrubbed := ScrubConfigSpace(cs, b)
+
+	status := scrubbed.ReadU16(0x06)
+	if status&0x0010 == 0 {
+		t.Error("Status register Capabilities List bit should be set after injection")
+	}
+}
+
+// CapPtr must point to a valid capability after full chain injection.
+func TestFullPipeline_CapPtrValid(t *testing.T) {
+	cs := makeCSNoCaps()
+	b := makeBoard(2, 1)
+
+	scrubbed := ScrubConfigSpace(cs, b)
+
+	capPtr := scrubbed.ReadU8(0x34)
+	if capPtr == 0 {
+		t.Fatal("CapPtr should be non-zero after injection")
+	}
+	if capPtr < 0x40 {
+		t.Errorf("CapPtr = 0x%02X, should be >= 0x40", capPtr)
+	}
+	if capPtr&0x03 != 0 {
+		t.Errorf("CapPtr = 0x%02X, should be DWORD-aligned", capPtr)
+	}
+}
+
+// full chain must have PM + MSI + PCIe when donor has no caps at all.
+func TestFullPipeline_FullChainFromScratch(t *testing.T) {
+	cs := makeCSNoCaps()
+	b := makeBoard(3, 4) // Gen3 x4
+
+	scrubbed := ScrubConfigSpace(cs, b)
+
+	caps := pci.ParseCapabilities(scrubbed)
+
+	hasPM, hasMSI, hasPCIe := false, false, false
+	for _, c := range caps {
+		switch c.ID {
+		case pci.CapIDPowerManagement:
+			hasPM = true
+		case pci.CapIDMSI:
+			hasMSI = true
+		case pci.CapIDPCIExpress:
+			hasPCIe = true
+			// verify Gen3 x4
+			linkCap := scrubbed.ReadU32(c.Offset + 0x0C)
+			speed := linkCap & 0x0F
+			width := (linkCap >> 4) & 0x3F
+			if speed != 3 {
+				t.Errorf("link speed = %d, want 3 (Gen3)", speed)
+			}
+			if width != 4 {
+				t.Errorf("link width = %d, want 4 (x4)", width)
+			}
+		}
+	}
+	if !hasPM {
+		t.Error("missing PM in injected chain")
+	}
+	if !hasMSI {
+		t.Error("missing MSI in injected chain")
+	}
+	if !hasPCIe {
+		t.Error("missing PCIe in injected chain")
+	}
+
+	if err := ValidateCapChain(scrubbed); err != nil {
+		t.Fatalf("cap chain invalid: %v", err)
+	}
+}
+
+// BAR0 must have correct 4KB size mask after scrub (for zero-BAR donor).
+func TestFullPipeline_BAR0SizeMask(t *testing.T) {
+	cs := makeCSNoCaps()
+	b := makeBoard(2, 1)
+
+	scrubbed := ScrubConfigSpace(cs, b)
+
+	bar0 := scrubbed.ReadU32(0x10)
+	expectedMask := uint32(0xFFFFF000)
+	if bar0 != expectedMask {
+		t.Errorf("BAR0 = 0x%08X, want 0x%08X (4KB size mask)", bar0, expectedMask)
+	}
+}
+
+// BIST register must be cleared after scrub.
+func TestFullPipeline_BISTCleared(t *testing.T) {
+	cs := makeCSWithPMAndMSI()
+	cs.Data[0x0F] = 0xFF // non-zero BIST
+	b := makeBoard(2, 1)
+
+	scrubbed := ScrubConfigSpace(cs, b)
+
+	if scrubbed.ReadU8(0x0F) != 0 {
+		t.Error("BIST register should be cleared")
+	}
+}
+
+// latency timer and cache line size must be cleared.
+func TestFullPipeline_LatencyCacheCleared(t *testing.T) {
+	cs := makeCSWithPMAndMSI()
+	cs.Data[0x0C] = 0x10 // cache line size
+	cs.Data[0x0D] = 0x40 // latency timer
+	b := makeBoard(2, 1)
+
+	scrubbed := ScrubConfigSpace(cs, b)
+
+	if scrubbed.ReadU8(0x0C) != 0 {
+		t.Error("Cache Line Size should be cleared")
+	}
+	if scrubbed.ReadU8(0x0D) != 0 {
+		t.Error("Latency Timer should be cleared")
+	}
+}
+
+// BAR1-BAR5 must remain 0 if donor has no BARs.
+func TestFullPipeline_OnlyBAR0Created(t *testing.T) {
+	cs := makeCSNoCaps()
+	b := makeBoard(2, 1)
+
+	scrubbed := ScrubConfigSpace(cs, b)
+
+	for i := 1; i < 6; i++ {
+		barVal := scrubbed.ReadU32(0x10 + i*4)
+		if barVal != 0 {
+			t.Errorf("BAR%d = 0x%08X, want 0 (only BAR0 should be created)", i, barVal)
+		}
+	}
+}
+
+// VID/DID must be preserved through entire pipeline.
+func TestFullPipeline_IdentityPreserved(t *testing.T) {
+	cs := makeCSWithPMAndMSI()
+	b := makeBoard(2, 1)
+
+	scrubbed := ScrubConfigSpace(cs, b)
+
+	if scrubbed.VendorID() != 0x1102 {
+		t.Errorf("VID = 0x%04X, want 0x1102", scrubbed.VendorID())
+	}
+	if scrubbed.DeviceID() != 0x0012 {
+		t.Errorf("DID = 0x%04X, want 0x0012", scrubbed.DeviceID())
+	}
+}
+
+// donor with BAR0=memory and BAR2=IO: BAR0 stays memory, BAR2 gets clamped.
+func TestFullPipeline_MixedBARTypes(t *testing.T) {
+	cs := makeCSWithPMAndMSI()
+	binary.LittleEndian.PutUint32(cs.Data[0x10:], 0xFFF00000) // BAR0: 1MB memory
+	binary.LittleEndian.PutUint32(cs.Data[0x18:], 0x0000FF01) // BAR2: IO
+	b := makeBoard(2, 1)
+
+	scrubbed := ScrubConfigSpace(cs, b)
+
+	bar0 := scrubbed.ReadU32(0x10)
+	if bar0&0x01 != 0 {
+		t.Error("BAR0 should be memory type")
+	}
+	if bar0&0xFFFFF000 != 0xFFFFF000 {
+		t.Errorf("BAR0 size mask = 0x%08X, want 4KB", bar0&0xFFFFF000)
+	}
+}
