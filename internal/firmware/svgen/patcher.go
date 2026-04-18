@@ -190,6 +190,26 @@ func (p *SVPatcher) patchCfgSV() error {
 		label:       "PM: force D0 state (cfg_pm_force_state_en -> 1)",
 	})
 
+	// enable periodic command register auto-set. every ~1ms this
+	// writes 0x0007 (BME+MSE+IOSE) to the IP core's command register
+	// via cfg_mgmt. without this, Windows clearing Bus Master Enable
+	// during Code 10 restart attempts permanently kills DMA.
+	patches = append(patches, svRegexPatch{
+		pattern:     `(rw\[21\]\s*<=\s*)0(\s*;\s*//\s*CFGSPACE_COMMAND_REGISTER_AUTO_SET)`,
+		replacement: "${1}1${2}",
+		label:       "CMD: auto-set BME+MSE+IOSE (CFGSPACE_COMMAND_REGISTER_AUTO_SET -> 1)",
+	})
+
+	// enable periodic status register error bit clearing. every ~1ms
+	// this clears W1C error bits (master abort, target abort, parity)
+	// in the status register. prevents error accumulation that would
+	// cause Windows to disable the device.
+	patches = append(patches, svRegexPatch{
+		pattern:     `(rw\[20\]\s*<=\s*)0(\s*;\s*//\s*CFGSPACE_STATUS_REGISTER_AUTO_CLEAR)`,
+		replacement: "${1}1${2}",
+		label:       "STATUS: auto-clear error bits (CFGSPACE_STATUS_REGISTER_AUTO_CLEAR -> 1)",
+	})
+
 	return p.patchFile("pcileech_pcie_cfg_a7.sv", patches)
 }
 
