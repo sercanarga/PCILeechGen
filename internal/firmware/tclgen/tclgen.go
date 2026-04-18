@@ -9,7 +9,6 @@ import (
 	"github.com/sercanarga/pcileechgen/internal/board"
 	"github.com/sercanarga/pcileechgen/internal/donor"
 	"github.com/sercanarga/pcileechgen/internal/firmware"
-	"github.com/sercanarga/pcileechgen/internal/pci"
 )
 
 // projectTCLData holds template data for Vivado project generation.
@@ -71,27 +70,19 @@ type bar0Config struct {
 }
 
 // buildBAR0Config returns a fixed 4 KB BAR config for the Xilinx IP core.
-// The FPGA's config space BRAM only serves 4 KB regions regardless of the
-// donor's original BAR size. Matching the IP size to the actual served region
-// prevents the driver from mapping more MMIO than the FPGA can back.
-// BAR type is always 32-bit: the scrubber (clampBARsToFPGA) forces 32-bit
-// type in the shadow config space. The IP core must match to avoid BAR
-// sizing inconsistency that causes Code 10 on Windows.
+// BAR0 is always enabled as 4 KB 32-bit non-prefetchable memory. The scrubber
+// (clampBARsToFPGA) forces BAR0 to 32-bit memory type regardless of the donor
+// device's original BAR layout. The IP core must always have BAR0 enabled to
+// match the scrubbed shadow config space. Without this, conventional PCI donors
+// with only IO BARs would have BAR0 disabled in the IP core, causing
+// BarTypes mismatch and Code 10 on Windows.
 func buildBAR0Config(ctx *donor.DeviceContext, b *board.Board) bar0Config {
-	// Check if any memory BAR is enabled in the donor config
-	for i := range ctx.BARs {
-		bar := &ctx.BARs[i]
-		if bar.Size > 0 && (bar.Type == pci.BARTypeMem32 || bar.Type == pci.BARTypeMem64) {
-			return bar0Config{
-				Enabled: true,
-				Scale:   "Kilobytes",
-				Size:    "4",
-				Is64bit: false, // must match scrubber: always 32-bit
-			}
-		}
+	return bar0Config{
+		Enabled: true,
+		Scale:   "Kilobytes",
+		Size:    "4",
+		Is64bit: false, // must match scrubber: always 32-bit
 	}
-	// No memory BAR found
-	return bar0Config{Scale: "Kilobytes", Size: "4"}
 }
 
 // GenerateProjectTCL generates the Vivado project creation TCL script.

@@ -108,8 +108,8 @@ func TestBuildBAR0Config_MemoryBAR(t *testing.T) {
 }
 
 func TestBuildBAR0Config_IOBAR(t *testing.T) {
-	// IO BAR - Xilinx IP only serves memory BARs from BRAM.
-	// IO BAR handling is done via config space BRAM, not IP config.
+	// IO BAR donor: BAR0 must still be enabled as memory.
+	// scrubber forces BAR0 to 32-bit memory regardless of donor type.
 	ctx := &donor.DeviceContext{
 		BARs: []pci.BAR{
 			{Index: 0, Size: 32768, Type: pci.BARTypeIO},
@@ -117,23 +117,33 @@ func TestBuildBAR0Config_IOBAR(t *testing.T) {
 	}
 
 	cfg := buildBAR0Config(ctx, &board.Board{})
-	// IO BAR doesn't enable the Xilinx IP memory BAR
+	if !cfg.Enabled {
+		t.Fatal("BAR0 should be enabled even with IO-only donor")
+	}
 	if cfg.Size != "4" || cfg.Scale != "Kilobytes" {
-		t.Errorf("BAR0 size = %s %s, want 4 Kilobytes (default)", cfg.Size, cfg.Scale)
+		t.Errorf("BAR0 size = %s %s, want 4 Kilobytes", cfg.Size, cfg.Scale)
+	}
+	if cfg.Is64bit {
+		t.Error("BAR0 should be 32-bit")
 	}
 }
 
 func TestBuildBAR0Config_NoBARs(t *testing.T) {
+	// no donor BARs: BAR0 must still be enabled.
+	// the scrubber creates BAR0 as 4KB 32-bit memory for all devices.
 	ctx := &donor.DeviceContext{
 		BARs: []pci.BAR{},
 	}
 
 	cfg := buildBAR0Config(ctx, &board.Board{})
-	if cfg.Enabled {
-		t.Error("BAR0 should not be enabled with no memory BARs")
+	if !cfg.Enabled {
+		t.Fatal("BAR0 should always be enabled")
 	}
 	if cfg.Size != "4" || cfg.Scale != "Kilobytes" {
 		t.Errorf("BAR0 size = %s %s, want 4 Kilobytes", cfg.Size, cfg.Scale)
+	}
+	if cfg.Is64bit {
+		t.Error("BAR0 should be 32-bit")
 	}
 }
 
