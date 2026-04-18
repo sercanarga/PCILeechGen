@@ -87,7 +87,8 @@ func clampLinkCapability(cs *pci.ConfigSpace, b *board.Board, om *overlay.Map, c
 	}
 }
 
-// clampDeviceCapability forces MPS=128B, disables phantoms and ext tags.
+// clampDeviceCapability forces MPS=128B, disables phantoms, ext tags, and
+// all power-management-triggering features the FPGA can't emulate.
 func clampDeviceCapability(cs *pci.ConfigSpace, om *overlay.Map, caps []pci.Capability) {
 	for _, cap := range caps {
 		if cap.ID != pci.CapIDPCIExpress {
@@ -101,7 +102,8 @@ func clampDeviceCapability(cs *pci.ConfigSpace, om *overlay.Map, caps []pci.Capa
 			newDevCap &= ^uint32(0x07) // MPS -> 128B
 			newDevCap &= ^uint32(0x18) // phantom functions off
 			newDevCap &= ^uint32(0x20) // extended tag off
-			om.WriteU32(cap.Offset+0x04, newDevCap, "clamp Device Capabilities (MPS/phantom/exttag)")
+			newDevCap &= ^uint32(1 << 28) // FLR capable off - prevents Windows from issuing function level reset
+			om.WriteU32(cap.Offset+0x04, newDevCap, "clamp Device Capabilities (MPS/phantom/exttag/FLR)")
 		}
 
 		// DevCtl (cap+0x08)
@@ -115,6 +117,7 @@ func clampDeviceCapability(cs *pci.ConfigSpace, om *overlay.Map, caps []pci.Capa
 			if mrrs := (newDevCtl >> 12) & 0x07; mrrs > 2 {
 				newDevCtl = (newDevCtl & 0x8FFF) | (2 << 12)
 			}
+			newDevCtl &= ^uint16(1 << 15) // initiate FLR off
 			om.WriteU16(cap.Offset+0x08, newDevCtl, "clamp Device Control (MPS/MRRS/phantom/exttag)")
 		}
 
@@ -122,11 +125,24 @@ func clampDeviceCapability(cs *pci.ConfigSpace, om *overlay.Map, caps []pci.Capa
 		if cap.Offset+0x24+4 <= pci.ConfigSpaceLegacySize {
 			devCap2 := cs.ReadU32(cap.Offset + 0x24)
 			newDevCap2 := devCap2
-			newDevCap2 &= ^uint32(1 << 16) // 10-bit tag completer off
-			newDevCap2 &= ^uint32(1 << 17) // 10-bit tag requester off
-			om.WriteU32(cap.Offset+0x24, newDevCap2, "clamp Device Capabilities 2 (10-bit tags)")
+			newDevCap2 &= ^uint32(1 << 11)  // LTR Mechanism Supported off
+			newDevCap2 &= ^uint32(0x03 << 18) // OBFF Supported off (bits 19:18)
+			newDevCap2 &= ^uint32(1 << 16)  // 10-bit tag completer off
+			newDevCap2 &= ^uint32(1 << 17)  // 10-bit tag requester off
+			newDevCap2 &= ^uint32(1 << 28)  // FRS Supported off
+			om.WriteU32(cap.Offset+0x24, newDevCap2, "clamp Device Capabilities 2 (LTR/OBFF/tags/FRS)")
+		}
+
+		// DevCtl2 (cap+0x28) - clear OBFF Enable and Completion Timeout Value
+		if cap.Offset+0x28+2 <= pci.ConfigSpaceLegacySize {
+			devCtl2 := cs.ReadU16(cap.Offset + 0x28)
+			newDevCtl2 := devCtl2
+			newDevCtl2 &= ^uint16(0x03 << 13) // OBFF Enable off (bits 14:13)
+			newDevCtl2 &= ^uint16(0x0F)        // Completion Timeout Value = default
+			om.WriteU16(cap.Offset+0x28, newDevCtl2, "clear OBFF Enable + Completion Timeout Value")
 		}
 
 		break
 	}
 }
+
