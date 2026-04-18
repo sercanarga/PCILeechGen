@@ -3,7 +3,6 @@ package codegen
 
 import (
 	"fmt"
-	"log/slog"
 	"strings"
 
 	"github.com/sercanarga/pcileechgen/internal/firmware"
@@ -59,8 +58,11 @@ func GenerateConfigSpaceCOE(cs *pci.ConfigSpace) string {
 func GenerateWritemaskCOE(cs *pci.ConfigSpace) string {
 	masks := make([]uint32, shadowCfgSpaceWords)
 
-	// standard config space capabilities (0x40-0xFF): start fully writable,
-	// then lock critical PM and PCIe fields to prevent host from killing the link.
+	// standard config space capabilities (0x40-0xFF): fully writable.
+	// the writemask only controls what goes into shadow BRAM; the Xilinx
+	// IP core processes config writes independently. locking fields here
+	// would create a BRAM/IP-core mismatch (e.g. BRAM shows D0 while IP
+	// core is in D3), confusing the OS and causing completion timeouts.
 	for i := 0x40 / 4; i < 0x100/4; i++ {
 		masks[i] = 0xFFFFFFFF
 	}
@@ -98,11 +100,6 @@ func GenerateWritemaskCOE(cs *pci.ConfigSpace) string {
 	masks[13] = 0x00000000 // 0x34: CapPtr + reserved (read-only)
 	masks[14] = 0x00000000 // 0x38: reserved
 	masks[15] = 0x000000FF // 0x3C: IntLine writable, IntPin/MinGnt/MaxLat RO
-
-	// lock PM and PCIe capability fields to prevent D3 / ASPM re-enable.
-	// without this, Windows writes D3hot to PMCSR after Code 10, the Xilinx
-	// IP core transitions to D3, and DMA stops until power cycle.
-	lockCapabilityMasks(cs, masks)
 
 	return formatCOE(
 		"; PCILeechGen - Configuration Space Write Mask (4KB shadow)\n"+
@@ -167,95 +164,3 @@ func GenerateMSIXTableHex(entries []pci.MSIXEntry) string {
 	return sb.String()
 }
 
-// lockCapabilityMasks walks the capability chain and makes PM and PCIe
-// capability DWORDs read-only in the writemask. this prevents the host
-// OS from:
-//   - writing D3hot to PMCSR (kills TLP processing, DMA stops)
-//   - re-enabling ASPM in PCIe LinkCtl (link enters L1, FPGA can't exit)
-//   - modifying MPS/MRRS in DevCtl (mismatch with IP core)
-//   - setting LTR in DevCtl2 (platform throttles link)
-//
-// MSI/MSI-X capabilities remain fully writable so the OS can program
-// interrupt addresses and data for driver operation.
-func lockCapabilityMasks(cs *pci.ConfigSpace, masks []uint32) {
-	caps := pci.ParseCapabilities(cs)
-	for _, cap := range caps {
-		switch cap.ID {
-		case pci.CapIDPowerManagement:
-			lockPMCap(cap.Offset, masks)
-		case pci.CapIDPCIExpress:
-			lockPCIeCap(cap.Offset, masks)
-		}
-	}
-}
-
-// lockPMCap makes the PM capability read-only.
-// cap+0: [PMC : NextPtr : CapID] - all RO
-// cap+4: [BSE+Data : PMCSR] - PowerState bits [1:0] RO (prevents D3)
-func lockPMCap(offset int, masks []uint32) {
-	setMask := func(off int, mask uint32) {
-		dw := off / 4
-		if dw >= 0 && dw < len(masks) {
-			masks[dw] = mask
-		}
-	}
-	// header + PMC: fully RO
-	setMask(offset, 0x00000000)
-	// PMCSR: only PME_Status (bit 15) writable for RW1C clearing.
-	// PowerState [1:0] = RO, NoSoftReset [3] = RO, PME_En [8] = RO.
-	// BSE + Data (upper 16 bits) = RO.
-	setMask(offset+4, 0x00008000)
-
-	slog.Debug("locked PM capability writemask",
-		"offset", fmt.Sprintf("0x%02X", offset))
-}
-
-// lockPCIeCap makes the PCIe capability mostly read-only.
-// the scrubber already set correct link speed, ASPM=off, MPS=128, etc.
-// locking these prevents Windows from re-enabling ASPM or modifying
-// link parameters after scrubbing.
-func lockPCIeCap(offset int, masks []uint32) {
-	setMask := func(off int, mask uint32) {
-		dw := off / 4
-		if dw >= 0 && dw < len(masks) {
-			masks[dw] = mask
-		}
-	}
-
-	// cap+0x00: [PCIeCapReg : NextPtr : CapID] - RO
-	setMask(offset+0x00, 0x00000000)
-	// cap+0x04: DevCap - RO
-	setMask(offset+0x04, 0x00000000)
-	// cap+0x08: [DevStatus : DevCtl] - RO
-	// DevCtl: MPS/MRRS must match IP core, FLR dangerous
-	// DevStatus: RW1C bits, but harmless to lock
-	setMask(offset+0x08, 0x00000000)
-	// cap+0x0C: LinkCap - RO
-	setMask(offset+0x0C, 0x00000000)
-	// cap+0x10: [LinkStatus : LinkCtl]
-	// LinkCtl: ASPM [1:0] and ClockPM [8] MUST be RO
-	// allow harmless bits: CommonClock [6], ExtSynch [7], BW interrupts [11:10]
-	// LinkStatus: RO + RW1C, allow RW1C clearing
-	setMask(offset+0x10, 0xFFFF0CC0)
-	// cap+0x14 to cap+0x23: slot/root regs - RO (endpoint, unused)
-	for i := 0x14; i <= 0x20; i += 4 {
-		setMask(offset+i, 0x00000000)
-	}
-	// cap+0x24: DevCap2 - RO
-	setMask(offset+0x24, 0x00000000)
-	// cap+0x28: [DevStatus2 : DevCtl2]
-	// DevCtl2 LTR [10] must be RO, rest mostly safe
-	setMask(offset+0x28, 0x00000000)
-	// cap+0x2C: LinkCap2 - RO
-	setMask(offset+0x2C, 0x00000000)
-	// cap+0x30: [LinkStatus2 : LinkCtl2]
-	// LinkCtl2 target speed [3:0] - RO
-	setMask(offset+0x30, 0x00000000)
-	// cap+0x34 to cap+0x3B: slot2 regs - RO
-	for i := 0x34; i <= 0x38; i += 4 {
-		setMask(offset+i, 0x00000000)
-	}
-
-	slog.Debug("locked PCIe capability writemask",
-		"offset", fmt.Sprintf("0x%02X", offset))
-}
