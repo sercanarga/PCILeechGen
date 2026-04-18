@@ -758,3 +758,214 @@ func TestFullPipeline_MixedBARTypes(t *testing.T) {
 		t.Errorf("BAR0 size mask = 0x%08X, want 4KB", bar0&0xFFFFF000)
 	}
 }
+
+// DevCap2 must have LTR, OBFF, and FRS support cleared after scrub.
+func TestFullPipeline_DevCap2PowerBitsCleared(t *testing.T) {
+	cs := makeCSWithPCIe()
+	b := makeBoard(2, 1)
+
+	// set power-triggering bits in donor's DevCap2
+	pcieOff := findPCIeCapOffset(t, cs)
+	devCap2 := cs.ReadU32(pcieOff + 0x24)
+	devCap2 |= 1 << 11          // LTR Mechanism Supported
+	devCap2 |= 0x03 << 18       // OBFF Supported (Wake# and WAKE# signaling)
+	devCap2 |= 1 << 28          // FRS Supported
+	cs.WriteU32(pcieOff+0x24, devCap2)
+
+	scrubbed := ScrubConfigSpace(cs, b)
+
+	pcieOff2 := findPCIeCapOffset(t, scrubbed)
+	result := scrubbed.ReadU32(pcieOff2 + 0x24)
+
+	if result&(1<<11) != 0 {
+		t.Error("LTR Mechanism Supported should be cleared (causes platform link PM)")
+	}
+	if result&(0x03<<18) != 0 {
+		t.Error("OBFF Supported should be cleared (causes power state transitions)")
+	}
+	if result&(1<<28) != 0 {
+		t.Error("FRS Supported should be cleared")
+	}
+}
+
+// DevCtl2 must have OBFF Enable and LTR Enable cleared.
+func TestFullPipeline_DevCtl2PowerBitsCleared(t *testing.T) {
+	cs := makeCSWithPCIe()
+	b := makeBoard(2, 1)
+
+	pcieOff := findPCIeCapOffset(t, cs)
+	devCtl2 := cs.ReadU16(pcieOff + 0x28)
+	devCtl2 |= 1 << 10         // LTR Enable
+	devCtl2 |= 0x03 << 13      // OBFF Enable
+	cs.WriteU16(pcieOff+0x28, devCtl2)
+
+	scrubbed := ScrubConfigSpace(cs, b)
+
+	pcieOff2 := findPCIeCapOffset(t, scrubbed)
+	result := scrubbed.ReadU16(pcieOff2 + 0x28)
+
+	if result&(1<<10) != 0 {
+		t.Error("LTR Enable should be cleared")
+	}
+	if result&(0x03<<13) != 0 {
+		t.Error("OBFF Enable should be cleared")
+	}
+}
+
+// DevCap FLR capability must be cleared to prevent Windows FLR resets.
+func TestFullPipeline_FLRCleared(t *testing.T) {
+	cs := makeCSWithPCIe()
+	b := makeBoard(2, 1)
+
+	pcieOff := findPCIeCapOffset(t, cs)
+	devCap := cs.ReadU32(pcieOff + 0x04)
+	devCap |= 1 << 28 // FLR Capable
+	cs.WriteU32(pcieOff+0x04, devCap)
+
+	scrubbed := ScrubConfigSpace(cs, b)
+
+	pcieOff2 := findPCIeCapOffset(t, scrubbed)
+	result := scrubbed.ReadU32(pcieOff2 + 0x04)
+
+	if result&(1<<28) != 0 {
+		t.Error("FLR Capable should be cleared")
+	}
+}
+
+// PMC PME_Support must be cleared for donor caps (not just injected).
+func TestFullPipeline_DonorPMCPMECleared(t *testing.T) {
+	cs := makeCSWithPMAndMSI()
+	b := makeBoard(2, 1)
+
+	// donor has PMC = 0xC803 (PME from D0, D3hot, D3cold)
+	scrubbed := ScrubConfigSpace(cs, b)
+
+	caps := pci.ParseCapabilities(scrubbed)
+	for _, c := range caps {
+		if c.ID != pci.CapIDPowerManagement {
+			continue
+		}
+		pmc := scrubbed.ReadU16(c.Offset + 2)
+		if pmc&0xF800 != 0 {
+			t.Errorf("donor PMC PME_Support = 0x%04X, should be 0", pmc&0xF800)
+		}
+		pmcsr := scrubbed.ReadU16(c.Offset + 4)
+		if pmcsr&0x0100 != 0 {
+			t.Error("donor PMCSR PME_Enable should be cleared")
+		}
+		return
+	}
+	t.Fatal("PM capability not found")
+}
+
+// PMC PME_Support must be cleared for injected caps (no-caps donor).
+func TestFullPipeline_InjectedPMCPMECleared(t *testing.T) {
+	cs := makeCSNoCaps()
+	b := makeBoard(2, 1)
+
+	scrubbed := ScrubConfigSpace(cs, b)
+
+	caps := pci.ParseCapabilities(scrubbed)
+	for _, c := range caps {
+		if c.ID != pci.CapIDPowerManagement {
+			continue
+		}
+		pmc := scrubbed.ReadU16(c.Offset + 2)
+		if pmc&0xF800 != 0 {
+			t.Errorf("injected PMC PME_Support = 0x%04X, should be 0", pmc&0xF800)
+		}
+		return
+	}
+	t.Fatal("PM capability not found")
+}
+
+// comprehensive D3 prevention invariant: after full pipeline, no config space
+// field should hint that the device supports D3 power management wake.
+func TestFullPipeline_D3PreventionInvariant(t *testing.T) {
+	tests := []struct {
+		name string
+		cs   *pci.ConfigSpace
+	}{
+		{"donor_with_caps", makeCSWithPMAndMSI()},
+		{"donor_no_caps", makeCSNoCaps()},
+		{"donor_with_pcie", makeCSWithPCIe()},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := makeBoard(2, 1)
+			scrubbed := ScrubConfigSpace(tt.cs, b)
+
+			caps := pci.ParseCapabilities(scrubbed)
+
+			// check PM cap
+			for _, c := range caps {
+				if c.ID == pci.CapIDPowerManagement {
+					pmc := scrubbed.ReadU16(c.Offset + 2)
+					if pmc&0xF800 != 0 {
+						t.Errorf("PMC PME_Support not cleared: 0x%04X", pmc)
+					}
+					pmcsr := scrubbed.ReadU16(c.Offset + 4)
+					if pmcsr&0x03 != 0 {
+						t.Errorf("PMCSR not D0: D%d", pmcsr&0x03)
+					}
+					if pmcsr&0x0100 != 0 {
+						t.Error("PMCSR PME_Enable not cleared")
+					}
+				}
+			}
+
+			// check PCIe cap
+			for _, c := range caps {
+				if c.ID == pci.CapIDPCIExpress {
+					// ASPM support
+					linkCap := scrubbed.ReadU32(c.Offset + 0x0C)
+					if linkCap&0x0C00 != 0 {
+						t.Errorf("ASPM Support not cleared: 0x%08X", linkCap)
+					}
+					// Clock PM
+					if linkCap&(1<<18) != 0 {
+						t.Error("Clock PM not cleared")
+					}
+					// LTR Supported
+					devCap2 := scrubbed.ReadU32(c.Offset + 0x24)
+					if devCap2&(1<<11) != 0 {
+						t.Error("LTR Supported not cleared")
+					}
+					// OBFF Supported
+					if devCap2&(0x03<<18) != 0 {
+						t.Error("OBFF Supported not cleared")
+					}
+					// LTR Enable
+					devCtl2 := scrubbed.ReadU16(c.Offset + 0x28)
+					if devCtl2&(1<<10) != 0 {
+						t.Error("LTR Enable not cleared")
+					}
+					// OBFF Enable
+					if devCtl2&(0x03<<13) != 0 {
+						t.Error("OBFF Enable not cleared")
+					}
+					// ASPM Enable
+					linkCtl := scrubbed.ReadU16(c.Offset + 0x10)
+					if linkCtl&0x03 != 0 {
+						t.Error("ASPM Enable not cleared")
+					}
+				}
+			}
+		})
+	}
+}
+
+// helper to find PCIe cap offset in a config space.
+func findPCIeCapOffset(t *testing.T, cs *pci.ConfigSpace) int {
+	t.Helper()
+	caps := pci.ParseCapabilities(cs)
+	for _, c := range caps {
+		if c.ID == pci.CapIDPCIExpress {
+			return c.Offset
+		}
+	}
+	t.Fatal("PCIe cap not found")
+	return 0
+}
+
