@@ -250,7 +250,7 @@ func (p *normalizeAERMasksPass) Apply(cs *pci.ConfigSpace, b *board.Board, om *o
 			om.WriteU32(cap.Offset+0x14, 0x00002000, "set AER correctable mask (spec defaults)")
 		}
 		if cap.Offset+0x10 <= pci.ConfigSpaceSize {
-			om.WriteU32(cap.Offset+0x0C, 0x00462011, "set AER uncorrectable severity (spec defaults)")
+			om.WriteU32(cap.Offset+0x0C, 0x0045E011, "set AER uncorrectable severity (CT non-fatal per spec)")
 		}
 	}
 }
