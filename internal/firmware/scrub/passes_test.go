@@ -90,12 +90,26 @@ func TestScrubPMCapPass(t *testing.T) {
 	cs.WriteU8(0x34, 0x40)
 	cs.WriteU8(0x40, pci.CapIDPowerManagement)
 	cs.WriteU8(0x41, 0x00)
-	cs.WriteU16(0x44, 0x8003) // D3, PME_Status set
+	// PMC with PME from D0, D3hot, D3cold
+	cs.WriteU16(0x42, 0xC803)
+	// PMCSR: D3, PME_Enable=1, PME_Status=1
+	cs.WriteU16(0x44, 0x9103)
 
 	om := overlay.NewMap(cs)
 	p := &scrubPMCapPass{}
 	p.Apply(cs, nil, om, ctxFor(cs))
 
+	// PMC: PME_Support bits [15:11] must be cleared
+	pmc := cs.ReadU16(0x42)
+	if pmc&0xF800 != 0 {
+		t.Errorf("PMC PME_Support = 0x%04X, should be 0 (prevent D3 transitions)", pmc&0xF800)
+	}
+	// PMC version should be preserved
+	if pmc&0x07 != 3 {
+		t.Errorf("PMC version = %d, should be 3", pmc&0x07)
+	}
+
+	// PMCSR checks
 	pmcsr := cs.ReadU16(0x44)
 	if pmcsr&0x03 != 0 {
 		t.Error("Power state should be D0 (bits 1:0 = 0)")
@@ -105,6 +119,44 @@ func TestScrubPMCapPass(t *testing.T) {
 	}
 	if pmcsr&0x08 == 0 {
 		t.Error("NoSoftReset should be set")
+	}
+	if pmcsr&0x0100 != 0 {
+		t.Error("PME_Enable should be cleared (prevent PME wake)")
+	}
+}
+
+// verify D3 prevention: scrub should remove all PME hints so Windows
+// doesn't aggressively transition the device to D3hot after idle.
+func TestScrubPMCapPass_PreventsD3(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceLegacySize
+	cs.WriteU16(0x06, 0x0010)
+	cs.WriteU8(0x34, 0x40)
+	cs.WriteU8(0x40, pci.CapIDPowerManagement)
+	cs.WriteU8(0x41, 0x00)
+	// donor advertises PME from all D-states
+	cs.WriteU16(0x42, 0xF803) // PME from D0, D1, D2, D3hot, D3cold
+	cs.WriteU16(0x44, 0x0103) // D3, PME_Enable=1
+
+	om := overlay.NewMap(cs)
+	p := &scrubPMCapPass{}
+	p.Apply(cs, nil, om, ctxFor(cs))
+
+	pmc := cs.ReadU16(0x42)
+	// no PME support from any state
+	for bit := 11; bit <= 15; bit++ {
+		if pmc&(1<<bit) != 0 {
+			t.Errorf("PMC bit %d (PME_Support) should be cleared, PMC=0x%04X", bit, pmc)
+		}
+	}
+
+	pmcsr := cs.ReadU16(0x44)
+	// D0 + PME disabled
+	if pmcsr&0x03 != 0 {
+		t.Errorf("should be D0, got D%d", pmcsr&0x03)
+	}
+	if pmcsr&0x0100 != 0 {
+		t.Error("PME_Enable should be cleared")
 	}
 }
 

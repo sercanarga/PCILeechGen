@@ -62,13 +62,25 @@ type scrubPMCapPass struct{}
 func (p *scrubPMCapPass) Name() string { return "scrub PM capability" }
 func (p *scrubPMCapPass) Apply(cs *pci.ConfigSpace, b *board.Board, om *overlay.Map, ctx *ScrubContext) {
 	for _, cap := range ctx.Caps {
-		if cap.ID == pci.CapIDPowerManagement && cap.Offset+4 < pci.ConfigSpaceLegacySize {
-			pmcsr := cs.ReadU16(cap.Offset + 4)
-			pmcsr &= 0xFFFC // force D0
-			pmcsr &= 0x7FFF // clear PME_Status
-			pmcsr |= 0x0008 // NoSoftReset
-			om.WriteU16(cap.Offset+4, pmcsr, "PM: D0, NoSoftReset, clear PME_Status")
+		if cap.ID != pci.CapIDPowerManagement || cap.Offset+6 >= pci.ConfigSpaceLegacySize {
+			continue
 		}
+
+		// PMC (cap+2): clear PME_Support bits [15:11].
+		// advertising PME from D3hot/D3cold tells Windows the device can
+		// wake from D3, triggering aggressive PM transitions (~5 min idle).
+		// the FPGA IP core can't handle D3 and stops processing TLPs.
+		pmc := cs.ReadU16(cap.Offset + 2)
+		pmc &= 0x07FF // clear bits [15:11] = PME_Support
+		om.WriteU16(cap.Offset+2, pmc, "PM: clear PME_Support (prevent D3 transitions)")
+
+		// PMCSR (cap+4): force D0, NoSoftReset, clear PME_Status + PME_Enable
+		pmcsr := cs.ReadU16(cap.Offset + 4)
+		pmcsr &= 0xFFFC  // bits [1:0] = 00 (D0)
+		pmcsr &= ^uint16(1 << 8)  // bit 8 = PME_Enable off
+		pmcsr &= 0x7FFF  // bit 15 = PME_Status clear
+		pmcsr |= 0x0008  // bit 3 = NoSoftReset
+		om.WriteU16(cap.Offset+4, pmcsr, "PM: D0, NoSoftReset, PME disabled")
 	}
 }
 
