@@ -165,6 +165,33 @@ module pcileech_tlps128_bar_controller(
     wire        bar0_buf_pop     = bar0_emu_accepted && !bar0_buf_empty;
     // Reconstruct address from ctx: {first[87], last[86], data[31:12]..}
     wire [31:0] bar0_req_addr_from_ctx = {bar0_raw_ctx[31:12], bar0_raw_ctx[11:2], 2'b00};
+
+    // Buffer overflow retry: when the buffer is full, hold the response in
+    // a spill register and retry on the next cycle. Prevents silent data loss
+    // during sustained multi-DWORD reads when the latency emulator can't drain
+    // fast enough (e.g., during HDA DMA backpressure).
+    reg         bar0_spill_valid;
+    reg  [87:0] bar0_spill_ctx;
+    reg  [31:0] bar0_spill_data;
+    wire        bar0_retry = bar0_raw_valid && bar0_buf_full;
+
+    always @(posedge clk) begin
+        if (rst) begin
+            bar0_spill_valid <= 1'b0;
+        end else if (bar0_spill_valid && !bar0_buf_full) begin
+            // Retry: spill slot became free, move to buffer
+            bar0_spill_valid <= 1'b0;
+        end else if (bar0_retry) begin
+            // Buffer full — capture response in spill register
+            bar0_spill_valid <= 1'b1;
+            bar0_spill_ctx   <= bar0_raw_ctx;
+            bar0_spill_data  <= bar0_raw_data;
+        end
+    end
+
+    // Push to buffer: either new response or retry from spill
+    wire bar0_actual_write = (bar0_raw_valid && !bar0_buf_full) ||
+                             (bar0_spill_valid && !bar0_buf_full);
 {{ end }}
 {{ if .MSIXConfig }}
     // MSI-X intermediate wires
@@ -273,6 +300,7 @@ module pcileech_tlps128_bar_controller(
         .dma_rirb_ubase  ( hda_dma_rirb_ubase            ),
         .dma_req_ready   ( hda_dma_req_ready             ),
         .dma_done        ( hda_dma_done                  ),
+        .dma_abort       ( hda_dma_abort                 ),
         // MSI interrupt ports
         .msi_trigger     ( hda_msi_trigger               ),
         .rirbintsts      ( hda_rirbintsts                )
@@ -322,18 +350,24 @@ module pcileech_tlps128_bar_controller(
                 bar0_buf_rd <= bar0_buf_rd + 4'd1;
             end
 
-            // Push tail on new BAR response
+            // Push tail on new BAR response or spill retry
             if (bar0_buf_write) begin
                 bar0_buf_ctx[bar0_buf_wr]  <= bar0_raw_ctx;
                 bar0_buf_data[bar0_buf_wr] <= bar0_raw_data;
                 bar0_buf_addr[bar0_buf_wr] <= bar0_req_addr_from_ctx;
                 bar0_buf_wr <= bar0_buf_wr + 4'd1;
+            end else if (bar0_spill_valid && !bar0_buf_full) begin
+                // Retry from spill register
+                bar0_buf_ctx[bar0_buf_wr]  <= bar0_spill_ctx;
+                bar0_buf_data[bar0_buf_wr] <= bar0_spill_data;
+                bar0_buf_addr[bar0_buf_wr] <= bar0_req_addr_from_ctx;
+                bar0_buf_wr <= bar0_buf_wr + 4'd1;
             end
 
             // single count update: avoids NBA last-write-wins on simultaneous push+pop
-            if (bar0_buf_write && !bar0_buf_pop)
+            if ((bar0_buf_write || (bar0_spill_valid && !bar0_buf_full)) && !bar0_buf_pop)
                 bar0_buf_count <= bar0_buf_count + 5'd1;
-            else if (!bar0_buf_write && bar0_buf_pop)
+            else if (!(bar0_buf_write || (bar0_spill_valid && !bar0_buf_full)) && bar0_buf_pop)
                 bar0_buf_count <= bar0_buf_count - 5'd1;
             // else: both or neither -> count unchanged
         end
@@ -378,6 +412,7 @@ module pcileech_tlps128_bar_controller(
     wire [31:0] hda_dma_rirb_ubase;
     wire        hda_dma_req_ready;
     wire        hda_dma_done;
+    wire        hda_dma_abort;    // BAR FSM → bridge: cancel in-flight TLP
 
     wire [127:0] hda_tlp_tx_tdata;
     wire [3:0]   hda_tlp_tx_tkeepdw;
@@ -397,6 +432,7 @@ module pcileech_tlps128_bar_controller(
         .rirb_lbase     ( hda_dma_rirb_lbase            ),
         .rirb_ubase     ( hda_dma_rirb_ubase            ),
         .dma_done       ( hda_dma_done                  ),
+        .dma_abort      ( hda_dma_abort                 ),
         .tlp_tx_tdata   ( hda_tlp_tx_tdata              ),
         .tlp_tx_tkeepdw ( hda_tlp_tx_tkeepdw            ),
         .tlp_tx_tvalid  ( hda_tlp_tx_tvalid             ),
