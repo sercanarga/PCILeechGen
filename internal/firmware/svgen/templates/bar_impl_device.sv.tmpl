@@ -754,12 +754,16 @@ module pcileech_bar_impl_device #(
                     // Return to idle — ready for next CORB entry
                     rirb_response_fsm <= 8'h00;
                 end else if (dma_timed_out) begin
-                    // DMA bridge didn't respond within timeout — abort
-                    // this transfer to prevent FSM hang and pending_count stall.
-                    // Don't increment RIRBWP or set INTFL (response was lost).
-                    // Decrement pending_count to allow the FSM to continue.
-                    // The bridge's own timeout will return it to IDLE eventually.
-                    rirb_pending_count <= rirb_pending_count - 8'h01;
+                    // DMA bridge didn't respond within timeout — return to idle
+                    // but PRESERVE pending_count. The response data remains
+                    // latched in dma_resp_lo/hi/wp_r registers. On the next
+                    // cycle, pending_count > 0 triggers a new response attempt
+                    // with the same data, giving the bridge another chance.
+                    // Only after bridge timeout+recovery cycle (16384+ cycles)
+                    // does the request get re-submitted cleanly.
+                    // Decrementing pending_count here would permanently lose
+                    // the response, causing RIRBWP to stall and the driver
+                    // to eventually timeout with Code 10.
                     rirb_response_fsm <= 8'h00;
                 end
             end
