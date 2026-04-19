@@ -60,7 +60,7 @@ module pcileech_hda_rirb_dma(
     reg [31:0] d_addr_lo;           // computed target address [31:0]
     reg [31:0] d_addr_hi;           // latched target address [63:32]
     reg        d_is_64bit;          // latched: 64-bit address mode
-    reg [15:0] d_tlp_timeout;       // backpressure timeout counter (max 65536)
+    reg [19:0] d_tlp_timeout;       // backpressure timeout counter (max 1M cycles = ~8ms)
     reg        d_tlp_timed_out;     // timeout flag
 
     always @(posedge clk) begin
@@ -74,7 +74,7 @@ module pcileech_hda_rirb_dma(
             d_addr_lo       <= 32'h0;
             d_addr_hi       <= 32'h0;
             d_is_64bit      <= 1'b0;
-            d_tlp_timeout   <= 16'h0;
+            d_tlp_timeout   <= 20'h0;
             d_tlp_timed_out <= 1'b0;
         end else begin
             dma_done      <= 1'b0;
@@ -90,7 +90,7 @@ module pcileech_hda_rirb_dma(
             if (crst_falling) begin
                 dstate          <= D_IDLE;
                 dma_req_ready   <= 1'b1;
-                d_tlp_timeout   <= 16'h0;
+                d_tlp_timeout   <= 20'h0;
                 d_tlp_timed_out <= 1'b0;
                 d_resp_lo       <= 32'h0;
                 d_resp_hi       <= 32'h0;
@@ -104,7 +104,7 @@ module pcileech_hda_rirb_dma(
                 // ---- idle: accept new response from BAR module ---------------
                 D_IDLE: begin
                     dma_req_ready <= 1'b1;
-                    d_tlp_timeout   <= 16'h0;
+                    d_tlp_timeout   <= 20'h0;
                     d_tlp_timed_out <= 1'b0;
 
                     if (dma_req_valid) begin
@@ -125,7 +125,7 @@ module pcileech_hda_rirb_dma(
                 // ---- first beat: header (64-bit) or header+data0 (32-bit) ----
                 D_WR_TLP1: begin
                     d_tlp_timeout <= d_tlp_timeout + 1'b1;
-                    if (d_tlp_timeout >= 16'h3FFF) begin
+                    if (d_tlp_timeout >= 20'hFFFFF) begin
                         d_tlp_timed_out <= 1'b1;
                         dstate          <= D_IDLE;
                     end else if (tlp_tx_tready) begin
@@ -136,7 +136,7 @@ module pcileech_hda_rirb_dma(
                 // ---- data beat 1: type+NID (64-bit) or payload (32-bit) ------
                 D_WR_TLP2: begin
                     d_tlp_timeout <= d_tlp_timeout + 1'b1;
-                    if (d_tlp_timeout >= 16'h3FFF) begin
+                    if (d_tlp_timeout >= 20'hFFFFF) begin
                         d_tlp_timed_out <= 1'b1;
                         dstate          <= D_IDLE;
                     end else if (tlp_tx_tready) begin
@@ -151,7 +151,7 @@ module pcileech_hda_rirb_dma(
                 // ---- data beat 2: payload (64-bit only) ----------------------
                 D_WR_TLP3: begin
                     d_tlp_timeout <= d_tlp_timeout + 1'b1;
-                    if (d_tlp_timeout >= 16'h3FFF) begin
+                    if (d_tlp_timeout >= 20'hFFFFF) begin
                         d_tlp_timed_out <= 1'b1;
                         dstate          <= D_IDLE;
                     end else if (tlp_tx_tready) begin
