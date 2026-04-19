@@ -300,7 +300,6 @@ module pcileech_tlps128_bar_controller(
         .dma_rirb_ubase  ( hda_dma_rirb_ubase            ),
         .dma_req_ready   ( hda_dma_req_ready             ),
         .dma_done        ( hda_dma_done                  ),
-        .dma_abort       ( hda_dma_abort                 ),
         // MSI interrupt ports
         .msi_trigger     ( hda_msi_trigger               ),
         .rirbintsts      ( hda_rirbintsts                )
@@ -412,7 +411,6 @@ module pcileech_tlps128_bar_controller(
     wire [31:0] hda_dma_rirb_ubase;
     wire        hda_dma_req_ready;
     wire        hda_dma_done;
-    wire        hda_dma_abort;    // BAR FSM → bridge: cancel in-flight TLP
 
     wire [127:0] hda_tlp_tx_tdata;
     wire [3:0]   hda_tlp_tx_tkeepdw;
@@ -432,7 +430,6 @@ module pcileech_tlps128_bar_controller(
         .rirb_lbase     ( hda_dma_rirb_lbase            ),
         .rirb_ubase     ( hda_dma_rirb_ubase            ),
         .dma_done       ( hda_dma_done                  ),
-        .dma_abort      ( hda_dma_abort                 ),
         .tlp_tx_tdata   ( hda_tlp_tx_tdata              ),
         .tlp_tx_tkeepdw ( hda_tlp_tx_tkeepdw            ),
         .tlp_tx_tvalid  ( hda_tlp_tx_tvalid             ),
