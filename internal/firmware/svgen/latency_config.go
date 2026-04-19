@@ -69,7 +69,7 @@ func DefaultLatencyConfig(classCode uint32) *LatencyConfig {
 		return withUniformCDF(&LatencyConfig{
 			MinCycles: 2, MaxCycles: 10, AvgCycles: 5,
 			BurstCorrelation: 120, ThermalPeriod: 36864,
-			WrMinCycles: 1, WrMaxCycles: 5, CplTimeoutCycles: 65536,
+			WrMinCycles: 1, WrMaxCycles: 5, CplTimeoutCycles: 262144,
 		})
 	case baseClass == 0x02 && subClass == 0x80: // Wi-Fi
 		return withUniformCDF(&LatencyConfig{

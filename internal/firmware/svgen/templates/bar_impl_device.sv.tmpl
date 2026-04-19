@@ -188,9 +188,9 @@ module pcileech_bar_impl_device #(
     reg [31:0]  dma_resp_hi_r;
     reg [7:0]   dma_resp_wp_r;
     reg         dma_done_latched;  // latches the 1-cycle dma_done pulse
-    reg [15:0]  dma_wait_counter;  // 16-bit for longer timeout (65536 cycles)
+    reg [27:0]  dma_wait_counter;  // 28-bit: 268,435,455 cycles = ~2.1s @125MHz
     reg         dma_timed_out;
-    reg  [3:0]  dma_recovery_count; // bridge recovery attempt limit (max 16)
+    reg  [15:0] dma_recovery_count; // bridge recovery attempt limit (max 65536)
 
     // ---- CRST handshake ----
     // only tracks edges; actual state reset is done by the main FSM
@@ -537,7 +537,7 @@ module pcileech_bar_impl_device #(
             dma_resp_hi_r      <= 32'h0;
             dma_resp_wp_r      <= 8'h0;
             intfl_set_req      <= 1'b0;
-            dma_recovery_count <= 4'h0;
+            dma_recovery_count <= 16'h0;
             // FSM-driven register resets (sole driver for these regs)
             reg_0x00000048     <= 32'h00000000;
             reg_0x00000058     <= 32'h00000000;
@@ -581,7 +581,7 @@ module pcileech_bar_impl_device #(
                 dma_resp_lo_r      <= 32'h0;
                 dma_resp_hi_r      <= 32'h0;
                 dma_resp_wp_r      <= 8'h0;
-                dma_recovery_count <= 4'h0;
+                dma_recovery_count <= 16'h0;
             end
 
             // CORB/RIRB reinitialization: driver disabled CTE → reset ROM index
@@ -607,7 +607,7 @@ module pcileech_bar_impl_device #(
                 dma_req_valid_r    <= 1'b0;
                 dma_done_latched   <= 1'b0;
                 dma_timed_out      <= 1'b0;
-                dma_recovery_count <= 4'h0;
+                dma_recovery_count <= 16'h0;
                 // NOTE: RIRBLBASE/RIRBUBASE preserved, driver may not reprogram
                 // them on re-init if the buffer address hasn't changed.
             end
@@ -723,11 +723,11 @@ module pcileech_bar_impl_device #(
             // Bridge recovery: if bridge timed out (returned to IDLE, dma_req_ready=1)
             // but we're still in state 0x11 waiting for dma_done, re-assert the request
             // so the bridge can accept it again with fresh data.
-            // Limit: after 16 recovery attempts, give up — the bridge is permanently
+            // Limit: after 65536 recovery attempts, give up — the bridge is permanently
             // stuck (e.g. downstream AXI blocked). Abort this response so the FSM
             // can process remaining pending responses instead of freezing forever.
             if (rirb_response_fsm == 8'h11 && dma_req_ready && !dma_req_valid_r && !crst_falling) begin
-                if (dma_recovery_count >= 4'hF) begin
+                if (dma_recovery_count >= 16'hFFFF) begin
                     // Retry limit exceeded — abort this response permanently.
                     // Decrement pending_count so we don't retry endlessly.
                     // Don't increment RIRBWP or set INTFL (response was lost).
@@ -735,16 +735,16 @@ module pcileech_bar_impl_device #(
                     rirb_pending_count <= rirb_pending_count - 8'h01;
                     rirb_response_fsm  <= 8'h00;
                     dma_req_valid_r    <= 1'b0;
-                    dma_recovery_count <= 4'h0;
+                    dma_recovery_count <= 16'h0;
                     dma_done_latched   <= 1'b0;
                     dma_timed_out      <= 1'b0;
                 end else begin
                     // Bridge returned to IDLE — re-assert request for retry
                     dma_req_valid_r    <= 1'b1;
                     rirb_response_fsm  <= 8'h10;
-                    dma_wait_counter   <= 16'h0;
+                    dma_wait_counter   <= 28'h0;
                     dma_timed_out      <= 1'b0;
-                    dma_recovery_count <= dma_recovery_count + 4'h1;
+                    dma_recovery_count <= dma_recovery_count + 16'h1;
                 end
             end
 
@@ -778,7 +778,7 @@ module pcileech_bar_impl_device #(
 
                     // Decrement pending count (one response delivered)
                     rirb_pending_count <= rirb_pending_count - 8'h01;
-                    dma_recovery_count <= 4'h0;
+                    dma_recovery_count <= 16'h0;
 
                     // Return to idle — ready for next CORB entry
                     rirb_response_fsm <= 8'h00;
@@ -838,7 +838,7 @@ module pcileech_bar_impl_device #(
     always @(posedge clk) begin
         if (rst) begin
             dma_done_latched  <= 1'b0;
-            dma_wait_counter  <= 16'h0;
+            dma_wait_counter  <= 28'h0;
             dma_timed_out     <= 1'b0;
         end else begin
             // priority: consume > set > idle-clear
@@ -856,11 +856,11 @@ module pcileech_bar_impl_device #(
             // Timeout counter: count cycles while waiting for dma_done
             if (rirb_response_fsm == 8'h11) begin
                 dma_wait_counter <= dma_wait_counter + 1'b1;
-                if (dma_wait_counter >= 16'hFFFF) begin
+                if (dma_wait_counter >= 28'hFFFFFFF) begin
                     dma_timed_out <= 1'b1;
                 end
             end else begin
-                dma_wait_counter  <= 16'h0;
+                dma_wait_counter  <= 28'h0;
                 dma_timed_out     <= 1'b0;
             end
         end
