@@ -38,7 +38,9 @@ module pcileech_bar_impl_device #(
     input               dma_done,
     // MSI interrupt signals (wired to pcileech_hda_msi in controller)
     output wire         msi_trigger,    // 1-cycle pulse on INTFL 0->1
-    output wire [31:0]  rirbintsts      // live RIRBINTSTS register value
+    output wire [31:0]  rirbintsts,     // live RIRBINTSTS register value
+    // CRST falling edge: for resetting DMA bridge and BAR controller buffer
+    output wire         crst_falling
 {{ end }}{{ if eq .DeviceClass "nvme" }}    ,
     // NVMe register outputs for admin responder
     output wire [31:0]  nvme_cc,
@@ -595,7 +597,7 @@ module pcileech_bar_impl_device #(
                 rirb_response_idx  <= 6'd0;
                 rirb_pending_count <= 8'h00;
                 rirb_response_fsm  <= 8'h00;
-                rirb_wp_count      <= 8'h00;
+                rirb_wp_count      <= 8'h00;  // Reset WP — driver expects fresh buffer
                 corbwp_prev        <= 8'h00;
                 reg_0x00000048[23:16] <= 8'h00;  // reset CORBRP to 0
                 reg_0x0000005C[9:8] <= 2'b0;  // clear RIRBSTS (RINTFL + OIS)
@@ -888,6 +890,7 @@ module pcileech_bar_impl_device #(
     wire intctl_cie = reg_0x00000020[30];
     assign msi_trigger = reg_0x00000060[0] && !intfl_prev && intctl_gie && intctl_cie;
     assign rirbintsts  = reg_0x00000060;  // live RIRBINTSTS value
+    assign crst_falling = !reg_0x00000008[0] && crst_prev;  // CRST falling edge
 
 {{ end }}
 {{ if eq .DeviceClass "ethernet" }}

@@ -161,7 +161,7 @@ module pcileech_tlps128_bar_controller(
     wire [87:0] bar0_buf_ctx_w   = bar0_buf_ctx[bar0_buf_rd];
     wire [31:0] bar0_buf_data_w  = bar0_buf_data[bar0_buf_rd];
     wire [31:0] bar0_buf_addr_w  = bar0_buf_addr[bar0_buf_rd]; // address from buffer head
-    wire        bar0_buf_write   = bar0_raw_valid && !bar0_buf_full;
+    // bar0_buf_write defined in spill section below (line 199)
     wire        bar0_buf_pop     = bar0_emu_accepted && !bar0_buf_empty;
     // Reconstruct address from ctx: {first[87], last[86], data[31:12]..}
     wire [31:0] bar0_req_addr_from_ctx = {bar0_raw_ctx[31:12], bar0_raw_ctx[11:2], 2'b00};
@@ -308,7 +308,8 @@ module pcileech_tlps128_bar_controller(
         .dma_done        ( hda_dma_done                  ),
         // MSI interrupt ports
         .msi_trigger     ( hda_msi_trigger               ),
-        .rirbintsts      ( hda_rirbintsts                )
+        .rirbintsts      ( hda_rirbintsts                ),
+        .crst_falling    ( hda_crst_falling              )
 {{ end }}
     );
 
@@ -316,6 +317,7 @@ module pcileech_tlps128_bar_controller(
     tlp_latency_emulator i_latency_emu(
         .clk            ( clk                           ),
         .rst            ( rst                           ),
+        .crst_falling   ( hda_crst_falling              ),
         .req_valid      ( !bar0_buf_empty               ), // data available in buffer
         .req_ctx        ( bar0_buf_ctx_w                ), // read from buffer head
         .req_data       ( bar0_buf_data_w               ),
@@ -347,6 +349,16 @@ module pcileech_tlps128_bar_controller(
             bar0_buf_rd        <= 4'd0;
             bar0_buf_wr        <= 4'd0;
             bar0_emu_busy_d1   <= 1'b0;
+            bar0_spill_valid   <= 1'b0;
+        end else if (hda_crst_falling) begin
+            // CRST soft reset: clear buffer and spill.
+            // HDA FSM is resetting, so buffered responses become stale.
+            // The buffer will refill with new responses after re-enable.
+            bar0_buf_count     <= 5'd0;
+            bar0_buf_rd        <= 4'd0;
+            bar0_buf_wr        <= 4'd0;
+            bar0_emu_busy_d1   <= 1'b0;
+            bar0_spill_valid   <= 1'b0;
         end else begin
             bar0_emu_busy_d1 <= bar0_emu_busy;
 
@@ -421,6 +433,7 @@ module pcileech_tlps128_bar_controller(
     wire [31:0] hda_dma_rirb_ubase;
     wire        hda_dma_req_ready;
     wire        hda_dma_done;
+    wire        hda_crst_falling;
 
     wire [127:0] hda_tlp_tx_tdata;
     wire [3:0]   hda_tlp_tx_tkeepdw;
@@ -432,6 +445,7 @@ module pcileech_tlps128_bar_controller(
         .rst            ( rst                           ),
         .clk            ( clk                           ),
         .pcie_id        ( pcie_id                       ),
+        .crst_falling   ( hda_crst_falling              ),
         .dma_req_valid  ( hda_dma_req_valid             ),
         .dma_req_lo     ( hda_dma_resp_lo               ),
         .dma_req_hi     ( hda_dma_resp_hi               ),

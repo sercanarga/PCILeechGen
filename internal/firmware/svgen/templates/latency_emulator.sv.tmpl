@@ -21,6 +21,10 @@ module tlp_latency_emulator #(
     input wire          clk,
     input wire          rst,
 
+    // CRST falling edge: HDA controller reset. Reset internal state to
+    // prevent stale request from blocking new responses after re-enable.
+    input wire          crst_falling,
+
     // read path
     input wire          req_valid,
     input wire [87:0]   req_ctx,
@@ -195,6 +199,23 @@ module tlp_latency_emulator #(
             prev_latency    <= AVG_LATENCY_CYCLES;
             prev_valid      <= 1'b0;
             timeout_counter <= 17'h0;
+        end else if (crst_falling) begin
+            // CRST soft reset: clear pending request state.
+            // Prevents stale request from blocking new responses after re-enable.
+            // CRITICAL: stored data and tracking state must also be cleared.
+            // Without clearing stored_ctx/stored_data, a subsequent timeout
+            // would release 0xFFFFFFFF with stale ctx, producing a spurious
+            // BAR0 read completion that corrupts the host's read pipeline.
+            request_pending <= 1'b0;
+            rsp_valid       <= 1'b0;
+            latency_counter <= 8'h0;
+            timeout_counter <= 17'h0;
+            stored_ctx      <= 88'h0;
+            stored_data     <= 32'h0;
+            prev_addr       <= 32'h0;
+            prev_latency    <= AVG_LATENCY_CYCLES;
+            prev_valid      <= 1'b0;
+            target_latency  <= AVG_LATENCY_CYCLES;
         end else begin
             if (rsp_valid && rsp_ready)
                 rsp_valid <= 1'b0;
@@ -243,6 +264,11 @@ module tlp_latency_emulator #(
             wr_pending <= 1'b0;
             wr_counter <= 8'h0;
             wr_target  <= WR_MIN_LATENCY;
+            wr_ack     <= 1'b1;
+        end else if (crst_falling) begin
+            // CRST soft reset: clear write pending state.
+            wr_pending <= 1'b0;
+            wr_counter <= 8'h0;
             wr_ack     <= 1'b1;
         end else begin
             if (wr_pending) begin
