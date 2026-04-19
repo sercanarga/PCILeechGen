@@ -170,28 +170,34 @@ module pcileech_tlps128_bar_controller(
     // a spill register and retry on the next cycle. Prevents silent data loss
     // during sustained multi-DWORD reads when the latency emulator can't drain
     // fast enough (e.g., during HDA DMA backpressure).
+    //
+    // CRITICAL: spill drains BEFORE accepting new data. Without this, when
+    // buffer stays full across multiple cycles, each new response overwrites
+    // the spill and permanently loses the previous one.
     reg         bar0_spill_valid;
     reg  [87:0] bar0_spill_ctx;
     reg  [31:0] bar0_spill_data;
-    wire        bar0_retry = bar0_raw_valid && bar0_buf_full;
 
     always @(posedge clk) begin
         if (rst) begin
             bar0_spill_valid <= 1'b0;
         end else if (bar0_spill_valid && !bar0_buf_full) begin
-            // Retry: spill slot became free, move to buffer
+            // Drain spill to buffer — takes priority over new data
             bar0_spill_valid <= 1'b0;
-        end else if (bar0_retry) begin
-            // Buffer full — capture response in spill register
+        end else if (!bar0_spill_valid && bar0_raw_valid && bar0_buf_full) begin
+            // Only capture new response in spill when spill slot is empty.
+            // If spill is already valid and buffer is full, the new response
+            // is dropped (buffer will drain soon and spill will retry).
             bar0_spill_valid <= 1'b1;
             bar0_spill_ctx   <= bar0_raw_ctx;
             bar0_spill_data  <= bar0_raw_data;
         end
     end
 
-    // Push to buffer: either new response or retry from spill
-    wire bar0_actual_write = (bar0_raw_valid && !bar0_buf_full) ||
-                             (bar0_spill_valid && !bar0_buf_full);
+    // Push to buffer: either new response or retry from spill.
+    // Spill drain takes priority — new data is only accepted when spill is empty.
+    wire bar0_buf_write = (bar0_spill_valid && !bar0_buf_full) ||
+                          (!bar0_spill_valid && bar0_raw_valid && !bar0_buf_full);
 {{ end }}
 {{ if .MSIXConfig }}
     // MSI-X intermediate wires
@@ -332,7 +338,7 @@ module pcileech_tlps128_bar_controller(
     );
 
     // 16-deep circular buffer FSM:
-    // Push: on bar0_raw_valid, push to write slot if not full.
+    // Push: spill drains first (priority), then new BAR responses.
     // Pop:  when emulator goes idle->busy (bar0_emu_accepted), it took the head data.
     // Push+pop in the same cycle: count stays the same (single NBA expression).
     always @(posedge clk) begin
@@ -349,24 +355,28 @@ module pcileech_tlps128_bar_controller(
                 bar0_buf_rd <= bar0_buf_rd + 4'd1;
             end
 
-            // Push tail on new BAR response or spill retry
+            // Push tail: bar0_buf_write covers both spill drain and new data.
+            // Use the correct data source — spill data gets its own address
+            // reconstruction since ctx fields come from a different source.
             if (bar0_buf_write) begin
-                bar0_buf_ctx[bar0_buf_wr]  <= bar0_raw_ctx;
-                bar0_buf_data[bar0_buf_wr] <= bar0_raw_data;
-                bar0_buf_addr[bar0_buf_wr] <= bar0_req_addr_from_ctx;
-                bar0_buf_wr <= bar0_buf_wr + 4'd1;
-            end else if (bar0_spill_valid && !bar0_buf_full) begin
-                // Retry from spill register
-                bar0_buf_ctx[bar0_buf_wr]  <= bar0_spill_ctx;
-                bar0_buf_data[bar0_buf_wr] <= bar0_spill_data;
-                bar0_buf_addr[bar0_buf_wr] <= bar0_req_addr_from_ctx;
+                if (bar0_spill_valid) begin
+                    // Draining spill: use spill's own ctx for address reconstruction
+                    bar0_buf_ctx[bar0_buf_wr]  <= bar0_spill_ctx;
+                    bar0_buf_data[bar0_buf_wr] <= bar0_spill_data;
+                    bar0_buf_addr[bar0_buf_wr] <= {bar0_spill_ctx[31:12], bar0_spill_ctx[11:2], 2'b00};
+                end else begin
+                    // New response
+                    bar0_buf_ctx[bar0_buf_wr]  <= bar0_raw_ctx;
+                    bar0_buf_data[bar0_buf_wr] <= bar0_raw_data;
+                    bar0_buf_addr[bar0_buf_wr] <= bar0_req_addr_from_ctx;
+                end
                 bar0_buf_wr <= bar0_buf_wr + 4'd1;
             end
 
             // single count update: avoids NBA last-write-wins on simultaneous push+pop
-            if ((bar0_buf_write || (bar0_spill_valid && !bar0_buf_full)) && !bar0_buf_pop)
+            if (bar0_buf_write && !bar0_buf_pop)
                 bar0_buf_count <= bar0_buf_count + 5'd1;
-            else if (!(bar0_buf_write || (bar0_spill_valid && !bar0_buf_full)) && bar0_buf_pop)
+            else if (!bar0_buf_write && bar0_buf_pop)
                 bar0_buf_count <= bar0_buf_count - 5'd1;
             // else: both or neither -> count unchanged
         end
