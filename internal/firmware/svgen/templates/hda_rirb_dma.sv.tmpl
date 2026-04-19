@@ -34,10 +34,6 @@ module pcileech_hda_rirb_dma(
     // completion output: pulse when DMA write is done
     output reg          dma_done,       // 1-cycle pulse: write completed
 
-    // Abort: cancel in-flight TLP and return to IDLE.
-    // Asserted by BAR FSM on its timeout to prevent stale memory writes.
-    input               dma_abort,
-
     // outgoing TLP stream — gets muxed with bar controller responses
     output reg [127:0]  tlp_tx_tdata,
     output reg [3:0]    tlp_tx_tkeepdw,
@@ -80,15 +76,6 @@ module pcileech_hda_rirb_dma(
             dma_done      <= 1'b0;
             // tvalid/tlast/tdata/tkeepdw/tuser are set per-state below.
             // Don't blanket-reset them — backpressure requires holding values.
-
-            // Immediate abort: BAR FSM timed out, discard in-flight TLP.
-            // Higher priority than state transitions to prevent stale writes.
-            if (dma_abort && dstate != D_IDLE && dstate != D_DONE) begin
-                dstate          <= D_IDLE;
-                dma_done        <= 1'b0;
-                d_tlp_timeout   <= 12'h0;
-                d_tlp_timed_out <= 1'b1;
-            end else
 
             case (dstate)
 
