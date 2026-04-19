@@ -204,7 +204,6 @@ module pcileech_bar_impl_device #(
     end
 
     wire crst_rising  = reg_0x00000008[0] && !crst_prev;  // coming out of reset
-    wire crst_falling = !reg_0x00000008[0] && crst_prev;   // entering reset
 
     // ========================================================================
     // Fake RIRB response generator (multi-VERB queue, sequence-based ROM)
