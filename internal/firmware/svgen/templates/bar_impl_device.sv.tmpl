@@ -186,7 +186,7 @@ module pcileech_bar_impl_device #(
     reg [31:0]  dma_resp_hi_r;
     reg [7:0]   dma_resp_wp_r;
     reg         dma_done_latched;  // latches the 1-cycle dma_done pulse
-    reg [9:0]   dma_wait_counter;
+    reg [15:0]  dma_wait_counter;  // 16-bit for longer timeout (65536 cycles)
     reg         dma_timed_out;
 
     // ---- CRST handshake ----
@@ -708,6 +708,18 @@ module pcileech_bar_impl_device #(
                 rirb_response_fsm <= 8'h11;
             end
 
+            // Bridge recovery: if bridge timed out (returned to IDLE, dma_req_ready=1)
+            // but we're still in state 0x11 waiting for dma_done, re-assert the request
+            // so the bridge can accept it again with fresh data.
+            // This prevents losing the response on every bridge timeout event.
+            if (rirb_response_fsm == 8'h11 && dma_req_ready && !dma_req_valid_r && !crst_falling) begin
+                // Bridge returned to IDLE — re-assert request for retry
+                dma_req_valid_r <= 1'b1;
+                rirb_response_fsm <= 8'h10;
+                dma_wait_counter  <= 16'h0;
+                dma_timed_out     <= 1'b0;
+            end
+
             if (rirb_response_fsm == 8'h11 && !crst_falling) begin
                 // Waiting for DMA bridge to complete the write.
                 // Use latched done signal to avoid missing the 1-cycle pulse.
@@ -742,7 +754,7 @@ module pcileech_bar_impl_device #(
                     // Return to idle — ready for next CORB entry
                     rirb_response_fsm <= 8'h00;
                 end else if (dma_timed_out) begin
-                    // DMA bridge didn't respond within 1024 cycles — abort
+                    // DMA bridge didn't respond within timeout — abort
                     // this transfer to prevent FSM hang and pending_count stall.
                     // Don't increment RIRBWP or set INTFL (response was lost).
                     // Decrement pending_count to allow the FSM to continue.
@@ -784,7 +796,7 @@ module pcileech_bar_impl_device #(
     always @(posedge clk) begin
         if (rst) begin
             dma_done_latched  <= 1'b0;
-            dma_wait_counter  <= 10'h0;
+            dma_wait_counter  <= 16'h0;
             dma_timed_out     <= 1'b0;
         end else begin
             // priority: consume > set > idle-clear
@@ -802,11 +814,11 @@ module pcileech_bar_impl_device #(
             // Timeout counter: count cycles while waiting for dma_done
             if (rirb_response_fsm == 8'h11) begin
                 dma_wait_counter <= dma_wait_counter + 1'b1;
-                if (dma_wait_counter >= 10'h3FF) begin
+                if (dma_wait_counter >= 16'hFFFF) begin
                     dma_timed_out <= 1'b1;
                 end
             end else begin
-                dma_wait_counter  <= 10'h0;
+                dma_wait_counter  <= 16'h0;
                 dma_timed_out     <= 1'b0;
             end
         end
