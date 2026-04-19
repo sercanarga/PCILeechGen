@@ -599,6 +599,14 @@ module pcileech_bar_impl_device #(
                 corbwp_prev        <= 8'h00;
                 reg_0x00000048[23:16] <= 8'h00;  // reset CORBRP to 0
                 reg_0x0000005C[9:8] <= 2'b0;  // clear RIRBSTS (RINTFL + OIS)
+                // Clear DMA handshake state to prevent bridge from accepting
+                // stale request data after reinit. Without this, if reinit
+                // fires while FSM is in state 0x10/0x11, dma_req_valid_r
+                // stays asserted and the bridge sends garbage TLPs.
+                dma_req_valid_r    <= 1'b0;
+                dma_done_latched   <= 1'b0;
+                dma_timed_out      <= 1'b0;
+                dma_recovery_count <= 4'h0;
                 // NOTE: RIRBLBASE/RIRBUBASE preserved, driver may not reprogram
                 // them on re-init if the buffer address hasn't changed.
             end
@@ -722,10 +730,13 @@ module pcileech_bar_impl_device #(
                     // Retry limit exceeded — abort this response permanently.
                     // Decrement pending_count so we don't retry endlessly.
                     // Don't increment RIRBWP or set INTFL (response was lost).
+                    // Clear stale latch to prevent false dma_done on next request.
                     rirb_pending_count <= rirb_pending_count - 8'h01;
                     rirb_response_fsm  <= 8'h00;
                     dma_req_valid_r    <= 1'b0;
                     dma_recovery_count <= 4'h0;
+                    dma_done_latched   <= 1'b0;
+                    dma_timed_out      <= 1'b0;
                 end else begin
                     // Bridge returned to IDLE — re-assert request for retry
                     dma_req_valid_r    <= 1'b1;
@@ -781,6 +792,9 @@ module pcileech_bar_impl_device #(
                     // Decrementing pending_count here would permanently lose
                     // the response, causing RIRBWP to stall and the driver
                     // to eventually timeout with Code 10.
+                    // Clear stale latch to prevent false dma_done on next request.
+                    dma_done_latched  <= 1'b0;
+                    dma_timed_out     <= 1'b0;
                     rirb_response_fsm <= 8'h00;
                 end
             end
@@ -790,17 +804,23 @@ module pcileech_bar_impl_device #(
     // ========================================================================
     // Consolidated INTFL driver — SINGLE source for reg_0x00000060.
     // All INTFL modifications go through here to avoid multi-driver conflicts.
-    // Priority: clear (CRST/rb_reinit/RW1C) takes precedence over set.
+    // Priority: set (response committed) takes precedence over RW1C clear.
+    // This ensures the MSI edge is never missed when driver clears INTFL in
+    // the same cycle we set it — the set wins, clear applies on next write.
+    // CRST/reinit clear still takes absolute priority (full reset).
     // ========================================================================
     always @(posedge clk) begin
         if (rst) begin
             reg_0x00000060 <= 32'h00000000;
-        end else if (intfl_set_req && !intfl_clear_req && !intfl_crst_clear_req) begin
-            // RIRB response committed — set INTFL to notify driver.
-            reg_0x00000060[0] <= 1'b1;
         end else if (rb_reinit || intfl_crst_clear_req) begin
             // CRST rising edge or CTE reinit — clear INTFL.
             reg_0x00000060[0] <= 1'b0;
+        end else if (intfl_set_req) begin
+            // RIRB response committed — set INTFL to notify driver.
+            // Takes priority over RW1C clear: if both fire simultaneously,
+            // INTFL goes 0→1, triggering MSI edge detection. The driver's
+            // clear takes effect on the next write to RIRBINTSTS.
+            reg_0x00000060[0] <= 1'b1;
         end else if (intfl_clear_req) begin
             // Driver wrote 1 to RIRBINTSTS[0] (RW1C) — clear INTFL.
             reg_0x00000060[0] <= 1'b0;
