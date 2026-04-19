@@ -20,6 +20,10 @@ module pcileech_hda_rirb_dma(
 
     input [15:0]        pcie_id,        // our BDF, goes into requester ID
 
+    // CRST falling edge: HDA controller reset. Reset bridge to IDLE to
+    // prevent stale TLP transmission during device re-enumeration.
+    input               crst_falling,
+
     // handshaking with BAR module
     input               dma_req_valid,  // pulse: BAR module has response ready
     input [31:0]        dma_req_lo,     // RIRB entry [31:0]  (type + NID)
@@ -76,6 +80,24 @@ module pcileech_hda_rirb_dma(
             dma_done      <= 1'b0;
             // tvalid/tlast/tdata/tkeepdw/tuser are set per-state below.
             // Don't blanket-reset them — backpressure requires holding values.
+
+            // CRST falling: reset bridge to IDLE and clear ALL latched data.
+            // Prevents stale TLP transmission during device re-enumeration.
+            // CRITICAL: response data and address MUST be cleared. Without this,
+            // if dma_req_valid_r is still asserted (from BAR FSM waiting in state
+            // 0x11), the bridge re-accepts in the next cycle with stale data —
+            // transmitting duplicate/corrupt RIRB entries to system memory.
+            if (crst_falling) begin
+                dstate          <= D_IDLE;
+                dma_req_ready   <= 1'b1;
+                d_tlp_timeout   <= 16'h0;
+                d_tlp_timed_out <= 1'b0;
+                d_resp_lo       <= 32'h0;
+                d_resp_hi       <= 32'h0;
+                d_addr_lo       <= 32'h0;
+                d_addr_hi       <= 32'h0;
+                d_is_64bit      <= 1'b0;
+            end else begin
 
             case (dstate)
 
@@ -148,6 +170,8 @@ module pcileech_hda_rirb_dma(
                     dstate <= D_IDLE;
                 end
             endcase
+            end // crst_falling guard
+
         end
     end
 
