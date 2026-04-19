@@ -59,9 +59,9 @@ module tlp_latency_emulator #(
     reg        prev_valid;
 
     // completion timeout counter
-    reg [16:0] timeout_counter;
+    reg [18:0] timeout_counter;
     wire timeout_expired = (CPL_TIMEOUT_CYCLES > 0) && request_pending &&
-                           (timeout_counter >= CPL_TIMEOUT_CYCLES[16:0]);
+                           (timeout_counter >= CPL_TIMEOUT_CYCLES[18:0]);
 
     // xorshift128+ PRNG
     reg [31:0] prng_s0, prng_s1, prng_s2, prng_s3;
@@ -198,7 +198,7 @@ module tlp_latency_emulator #(
             prev_addr       <= 32'h0;
             prev_latency    <= AVG_LATENCY_CYCLES;
             prev_valid      <= 1'b0;
-            timeout_counter <= 17'h0;
+            timeout_counter <= 19'h0;
         end else if (crst_falling) begin
             // CRST soft reset: clear pending request state.
             // Prevents stale request from blocking new responses after re-enable.
@@ -209,7 +209,7 @@ module tlp_latency_emulator #(
             request_pending <= 1'b0;
             rsp_valid       <= 1'b0;
             latency_counter <= 8'h0;
-            timeout_counter <= 17'h0;
+            timeout_counter <= 19'h0;
             stored_ctx      <= 88'h0;
             stored_data     <= 32'h0;
             prev_addr       <= 32'h0;
@@ -230,7 +230,7 @@ module tlp_latency_emulator #(
                     rsp_data        <= 32'hFFFFFFFF;
                     request_pending <= 1'b0;
                     latency_counter <= 8'h0;
-                    timeout_counter <= 17'h0;
+                    timeout_counter <= 19'h0;
                     prev_valid      <= 1'b0;
                 end else if (latency_counter < target_latency) begin
                     latency_counter <= latency_counter + 8'h1;
@@ -240,7 +240,7 @@ module tlp_latency_emulator #(
                     rsp_data        <= stored_data;
                     request_pending <= 1'b0;
                     latency_counter <= 8'h0;
-                    timeout_counter <= 17'h0;
+                    timeout_counter <= 19'h0;
                     prev_latency    <= target_latency;
                     prev_valid      <= 1'b1;
                 end
@@ -250,7 +250,7 @@ module tlp_latency_emulator #(
                 stored_data     <= req_data;
                 prev_addr       <= req_addr;
                 latency_counter <= 8'h0;
-                timeout_counter <= 17'h0;
+                timeout_counter <= 19'h0;
                 target_latency  <= computed_latency;
             end
         end
