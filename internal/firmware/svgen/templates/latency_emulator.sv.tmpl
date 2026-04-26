@@ -57,6 +57,7 @@ module tlp_latency_emulator #(
     reg [31:0] prev_addr;
     reg [7:0]  prev_latency;
     reg        prev_valid;
+    reg [3:0]  idle_counter;
 
     // completion timeout counter
     reg [18:0] timeout_counter;
@@ -78,6 +79,11 @@ module tlp_latency_emulator #(
             prng_s1 <= PRNG_SEED_1;
             prng_s2 <= PRNG_SEED_2;
             prng_s3 <= PRNG_SEED_3;
+        end else if (crst_falling) begin
+            prng_s0 <= PRNG_SEED_0;
+            prng_s1 <= PRNG_SEED_1;
+            prng_s2 <= PRNG_SEED_2;
+            prng_s3 <= PRNG_SEED_3;
         end else begin
             // Advance every cycle to prevent deterministic thermal drift during idle
             prng_s0 <= prng_s1;
@@ -95,14 +101,17 @@ module tlp_latency_emulator #(
         if (rst) begin
             thermal_counter <= 16'h0;
             thermal_offset  <= 4'h0;
+        end else if (crst_falling) begin
+            thermal_counter <= 16'h0;
+            thermal_offset  <= 4'h0;
         end else begin
             thermal_counter <= thermal_counter + 1'b1;
             if (thermal_counter == THERMAL_DRIFT_PERIOD[15:0]) begin
                 thermal_counter <= 16'h0;
                 if (prng_out[0])
-                    thermal_offset <= (thermal_offset < 4'h7) ? thermal_offset + 1'b1 : thermal_offset;
+                    thermal_offset <= (thermal_offset < 4'hF) ? thermal_offset + 1'b1 : thermal_offset;
                 else
-                    thermal_offset <= (thermal_offset > 4'h8) ? thermal_offset - 1'b1 : thermal_offset;
+                    thermal_offset <= (thermal_offset > 4'h0) ? thermal_offset - 1'b1 : thermal_offset;
             end
         end
     end
@@ -198,6 +207,7 @@ module tlp_latency_emulator #(
             prev_addr       <= 32'h0;
             prev_latency    <= AVG_LATENCY_CYCLES;
             prev_valid      <= 1'b0;
+            idle_counter    <= 4'h0;
             timeout_counter <= 19'h0;
         end else if (crst_falling) begin
             // CRST soft reset: clear pending request state.
@@ -215,10 +225,20 @@ module tlp_latency_emulator #(
             prev_addr       <= 32'h0;
             prev_latency    <= AVG_LATENCY_CYCLES;
             prev_valid      <= 1'b0;
+            idle_counter    <= 4'h0;
             target_latency  <= AVG_LATENCY_CYCLES;
         end else begin
             if (rsp_valid && rsp_ready)
                 rsp_valid <= 1'b0;
+
+            // idle tracking: decay burst correlation when no requests arrive
+            if (!request_pending && !(req_valid && req_ready))
+                idle_counter <= idle_counter + 1'b1;
+            else if (req_valid && req_ready)
+                idle_counter <= 4'h0;
+
+            if (idle_counter >= 4'hF)
+                prev_valid <= 1'b0;
 
             if (request_pending) begin
                 timeout_counter <= timeout_counter + 1'b1;
