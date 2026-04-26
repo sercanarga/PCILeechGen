@@ -23,16 +23,16 @@ func audioBARModel() *barmodel.BARModel {
 			{Offset: 0x40, Width: 4, Name: "CORBLBASE", Reset: 0x00000000, RWMask: 0xFFFFFF80},
 			{Offset: 0x44, Width: 4, Name: "CORBUBASE", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
 			{Offset: 0x48, Width: 4, Name: "CORBWP_CORBRP", Reset: 0x00000000, RWMask: 0x80FF00FF},
-			{Offset: 0x4C, Width: 4, Name: "CORBCTL_STS_SIZE", Reset: 0x00420000, RWMask: 0x00000082, IsRW1C: true},
+			{Offset: 0x4C, Width: 4, Name: "CORBCTL_STS_SIZE", Reset: 0x00820000, RWMask: 0x00000082, IsRW1C: true},
 			{Offset: 0x50, Width: 4, Name: "RIRBLBASE", Reset: 0x00000000, RWMask: 0xFFFFFF80},
 			{Offset: 0x54, Width: 4, Name: "RIRBUBASE", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
 			{Offset: 0x58, Width: 4, Name: "RIRBWP_RINTCNT", Reset: 0x00000000, RWMask: 0x800000FF},
-			{Offset: 0x5C, Width: 4, Name: "RIRBCTL_STS_SIZE", Reset: 0x00420000, RWMask: 0x00000307, IsRW1C: true},
+			{Offset: 0x5C, Width: 4, Name: "RIRBCTL_STS_SIZE", Reset: 0x00820000, RWMask: 0x00000307, IsRW1C: true},
 			{Offset: 0x60, Width: 4, Name: "RIRBINTSTS", Reset: 0x00000000, RWMask: 0x00000001},
 			{Offset: 0x64, Width: 4, Name: "IC", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
 			{Offset: 0x68, Width: 4, Name: "IR", Reset: 0x00000000, RWMask: 0x00000000},
 			{Offset: 0x70, Width: 4, Name: "RIRBRESP_LO", Reset: 0x00000000, RWMask: 0x00000000},
-			{Offset: 0x78, Width: 4, Name: "RIRBRESP_HI", Reset: 0x00000000, RWMask: 0x00000000},
+			{Offset: 0x74, Width: 4, Name: "RIRBRESP_HI", Reset: 0x00000000, RWMask: 0x00000000},
 		},
 	}
 }
@@ -92,8 +92,8 @@ func TestAudioFullGeneration(t *testing.T) {
 	if !strings.Contains(sv, "reg_0x00000070") {
 		t.Error("reg_0x00000070 (RIRBRESP_LO) declaration not found")
 	}
-	if !strings.Contains(sv, "reg_0x00000078") {
-		t.Error("reg_0x00000078 (RIRBRESP_HI) declaration not found")
+	if !strings.Contains(sv, "reg_0x00000074") {
+		t.Error("reg_0x00000074 (RIRBRESP_HI) declaration not found")
 	}
 
 	// Check response index reset on CRST
@@ -118,7 +118,7 @@ func TestAudioFullGeneration(t *testing.T) {
 	if !strings.Contains(sv, "32'h00000070: rd_data_d1 <= reg_0x00000070") {
 		t.Error("RIRBRESP_LO not in read case statement")
 	}
-	if !strings.Contains(sv, "32'h00000078: rd_data_d1 <= reg_0x00000078") {
+	if !strings.Contains(sv, "32'h00000074: rd_data_d1 <= reg_0x00000074") {
 		t.Error("RIRBRESP_HI not in read case statement")
 	}
 
