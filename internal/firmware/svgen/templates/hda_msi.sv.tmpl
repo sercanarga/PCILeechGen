@@ -1,8 +1,8 @@
 //
 // HDA MSI Interrupt Generator
 //
-// Generates a single-cycle intr_req pulse when RIRBINTSTS.INTFL transitions
-// from 0 to 1 or when msi_trigger fires. The pulse is OR'd into the FPGA's
+// Generates a multi-cycle intr_req pulse when msi_trigger fires.
+// The pulse is OR'd into the FPGA's
 // cfg_interrupt signal by the cfg module, which triggers an MSI TLP from
 // the PCIe IP core.
 //
@@ -20,6 +20,7 @@
 module pcileech_hda_msi(
     input               rst,
     input               clk,
+    input               crst_falling,
 
     input [15:0]        pcie_id,        // our BDF
 
@@ -29,21 +30,36 @@ module pcileech_hda_msi(
     // RIRBINTSTS live value (for edge detection)
     input [31:0]        rirbintsts,
 
-    // Single-cycle interrupt request pulse — routed to cfg_interrupt
-    // by the cfg module (pcileech_pcie_cfg_a7).
+    // Multi-cycle interrupt request pulse — routed to cfg_interrupt
+    // by the cfg module (pcileech_pcie_cfg_a7). The pulse is held for
+    // at least 2 cycles so the cfg latch reliably captures it.
     output              intr_req
 );
 
-    reg       intr_req_reg;
+    reg intr_req_reg;
+    reg intr_req_hold;
 
-    // Produce a single-cycle intr_req pulse on msi_trigger.
+    // Produce a 2-cycle minimum intr_req pulse on msi_trigger.
     // msi_trigger comes from BAR module with GIE+CIE gating already applied.
     // The cfg module routes intr_req to cfg_interrupt for MSI TLP generation.
+    // crst_falling suppresses stray interrupts during HDA bus reset.
     always @(posedge clk) begin
         if (rst) begin
-            intr_req_reg <= 1'b0;
+            intr_req_reg  <= 1'b0;
+            intr_req_hold <= 1'b0;
+        end else if (crst_falling) begin
+            intr_req_reg  <= 1'b0;
+            intr_req_hold <= 1'b0;
         end else begin
-            intr_req_reg <= msi_trigger;
+            if (msi_trigger) begin
+                intr_req_reg  <= 1'b1;
+                intr_req_hold <= 1'b1;
+            end else if (intr_req_hold) begin
+                intr_req_reg  <= 1'b0;
+                intr_req_hold <= 1'b0;
+            end else begin
+                intr_req_reg  <= 1'b0;
+            end
         end
     end
 
