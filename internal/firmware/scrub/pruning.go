@@ -23,6 +23,9 @@ var unsafeStandardCaps = map[uint8]string{
 	pci.CapIDEnhancedAlloc:     "Enhanced Allocation",
 	pci.CapIDFlatteningPortal:  "Flattening Portal",
 	pci.CapIDPCIX:              "PCI-X",
+	pci.CapIDBridgeSubsysVID:  "Bridge Subsystem VID",
+	pci.CapIDSecureDevice:     "Secure Device",
+	pci.CapIDAdvancedFeatures: "Advanced Features",
 }
 
 // PruneStandardCaps unlinks unsupported caps and returns what was removed.

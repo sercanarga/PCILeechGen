@@ -111,7 +111,7 @@ type filterExtCapsPass struct{}
 func (p *filterExtCapsPass) Name() string { return "filter ext capabilities" }
 func (p *filterExtCapsPass) Apply(cs *pci.ConfigSpace, b *board.Board, om *overlay.Map, ctx *ScrubContext) {
 	if cs.Size >= pci.ConfigSpaceSize {
-		FilterExtCapabilities(cs)
+		FilterExtCapabilities(cs, om)
 	}
 }
 
