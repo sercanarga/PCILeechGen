@@ -357,7 +357,6 @@ module pcileech_tlps128_bar_controller(
             bar0_buf_rd        <= 4'd0;
             bar0_buf_wr        <= 4'd0;
             bar0_emu_busy_d1   <= 1'b0;
-            bar0_spill_valid   <= 1'b0;
         end else if (hda_crst_falling) begin
             // CRST soft reset: clear buffer pointers and counters.
             // HDA FSM is resetting, so buffered responses become stale.
