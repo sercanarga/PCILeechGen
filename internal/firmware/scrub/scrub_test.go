@@ -71,7 +71,7 @@ func TestFilterExtCaps_RemoveMiddle(t *testing.T) {
 	cs.WriteU32(0x200, makeExtCapHeader(pci.ExtCapIDDeviceSerialNumber, 1, 0x250))
 	cs.WriteU32(0x250, makeExtCapHeader(pci.ExtCapIDLTR, 1, 0))
 
-	removed := FilterExtCapabilities(cs)
+	removed := FilterExtCapabilities(cs, overlay.NewMap(cs))
 
 	if len(removed) != 1 {
 		t.Fatalf("Expected 1 removed cap, got %d: %v", len(removed), removed)
@@ -93,7 +93,7 @@ func TestFilterExtCaps_AllRemoved(t *testing.T) {
 	cs.WriteU32(0x100, makeExtCapHeader(pci.ExtCapIDSRIOV, 1, 0x150))
 	cs.WriteU32(0x150, makeExtCapHeader(pci.ExtCapIDResizableBAR, 1, 0))
 
-	removed := FilterExtCapabilities(cs)
+	removed := FilterExtCapabilities(cs, overlay.NewMap(cs))
 	if len(removed) != 2 {
 		t.Fatalf("Expected 2 removed caps, got %d", len(removed))
 	}
@@ -655,7 +655,7 @@ func TestFilterExtCapabilities(t *testing.T) {
 	// AER at 0x150
 	cs.WriteU32(0x150, uint32(pci.ExtCapIDAER)|(1<<16))
 
-	removed := FilterExtCapabilities(cs)
+	removed := FilterExtCapabilities(cs, overlay.NewMap(cs))
 
 	if len(removed) != 1 {
 		t.Fatalf("Expected 1 removed cap, got %d: %v", len(removed), removed)
@@ -668,7 +668,7 @@ func TestFilterExtCapabilities(t *testing.T) {
 func TestFilterExtCapabilities_NoCaps(t *testing.T) {
 	cs := pci.NewConfigSpace()
 	cs.Size = pci.ConfigSpaceSize
-	removed := FilterExtCapabilities(cs)
+	removed := FilterExtCapabilities(cs, overlay.NewMap(cs))
 	if removed != nil {
 		t.Errorf("Expected nil, got %v", removed)
 	}
@@ -678,7 +678,7 @@ func TestFilterExtCapabilities_AllSafe(t *testing.T) {
 	cs := pci.NewConfigSpace()
 	cs.Size = pci.ConfigSpaceSize
 	cs.WriteU32(0x100, uint32(pci.ExtCapIDAER)|(1<<16))
-	removed := FilterExtCapabilities(cs)
+	removed := FilterExtCapabilities(cs, overlay.NewMap(cs))
 	if removed != nil {
 		t.Errorf("Expected nil (all safe), got %v", removed)
 	}
@@ -764,7 +764,7 @@ func TestSecondaryPCIeNotFiltered(t *testing.T) {
 	cs.WriteU32(0x150, makeExtCapHeader(pci.ExtCapIDSecondaryPCIe, 1, 0x200))
 	cs.WriteU32(0x200, makeExtCapHeader(pci.ExtCapIDLTR, 1, 0))
 
-	removed := FilterExtCapabilities(cs)
+	removed := FilterExtCapabilities(cs, overlay.NewMap(cs))
 	if len(removed) != 0 {
 		t.Errorf("SecondaryPCIe should NOT be filtered, but removed: %v", removed)
 	}
@@ -829,7 +829,7 @@ func TestL1PMSubstatesNotFiltered(t *testing.T) {
 	cs.WriteU32(0x150, makeExtCapHeader(pci.ExtCapIDL1PMSubstates, 1, 0x200))
 	cs.WriteU32(0x200, makeExtCapHeader(pci.ExtCapIDLTR, 1, 0))
 
-	removed := FilterExtCapabilities(cs)
+	removed := FilterExtCapabilities(cs, overlay.NewMap(cs))
 	if len(removed) != 0 {
 		t.Errorf("L1PM Substates should NOT be filtered (handled by scrubASPMPass), but removed: %v", removed)
 	}
