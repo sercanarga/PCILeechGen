@@ -36,9 +36,9 @@ func defaultPipeline() []ScrubPass {
 		&clampLinkPass{},
 		&scrubASPMPass{},
 		&clampDeviceCapPass{},
-		&zeroVendorPass{},
 		&applyVendorQuirksPass{},
 		&pruneStdCapsPass{},
+		&zeroVendorPass{},
 		&validateCapChainPass{},
 	}
 }
