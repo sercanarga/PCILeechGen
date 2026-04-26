@@ -16,7 +16,7 @@ func (s *audioStrategy) ScrubBAR(data []byte) {
 	util.WriteLE32(data, 0x08, gctl)
 
 	statests := util.ReadLE32(data, 0x0C)
-	statests |= 0x00010000
+	statests = (statests & 0x0000FFFF) | 0x00010000
 	util.WriteLE32(data, 0x0C, statests)
 }
 
@@ -25,7 +25,7 @@ func (s *audioStrategy) PostInitRegisters(regs map[uint32]*uint32) {
 		*v |= 0x00000001
 	}
 	if v, ok := regs[0x0C]; ok {
-		*v |= 0x00010000
+		*v = (*v & 0x0000FFFF) | 0x00010000
 	}
 }
 
@@ -68,13 +68,13 @@ func audioProfile() *DeviceProfile {
 			// CORB base addresses and control
 			{Offset: 0x40, Width: 4, Name: "CORBLBASE", Reset: 0x00000000, RWMask: 0xFFFFFF80},
 			{Offset: 0x44, Width: 4, Name: "CORBUBASE", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
-			{Offset: 0x48, Width: 4, Name: "CORBWP_CORBRP", Reset: 0x00000000, RWMask: 0x80FF00FF, IsFSMDriven: true},
-			{Offset: 0x4C, Width: 4, Name: "CORBCTL_STS_SIZE", Reset: 0x00420000, RWMask: 0x00000082, IsRW1C: true},
+			{Offset: 0x48, Width: 4, Name: "CORBWP_CORBRP", Reset: 0x00000000, RWMask: 0x0000FFFF, IsFSMDriven: true},
+			{Offset: 0x4C, Width: 4, Name: "CORBCTL_STS_SIZE", Reset: 0x00820000, RWMask: 0x00030003, IsRW1C: true},
 			// RIRB base addresses and control
 			{Offset: 0x50, Width: 4, Name: "RIRBLBASE", Reset: 0x00000000, RWMask: 0xFFFFFF80},
 			{Offset: 0x54, Width: 4, Name: "RIRBUBASE", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
-			{Offset: 0x58, Width: 4, Name: "RIRBWP_RINTCNT", Reset: 0x00000000, RWMask: 0x800000FF, IsFSMDriven: true},
-			{Offset: 0x5C, Width: 4, Name: "RIRBCTL_STS_SIZE", Reset: 0x00420000, RWMask: 0x00000507, IsRW1C: true, IsFSMDriven: true},
+			{Offset: 0x58, Width: 4, Name: "RIRBWP_RINTCNT", Reset: 0x00000000, RWMask: 0x0000FFFF, IsFSMDriven: true},
+			{Offset: 0x5C, Width: 4, Name: "RIRBCTL_STS_SIZE", Reset: 0x00820000, RWMask: 0x00000307, IsRW1C: true, IsFSMDriven: true},
 			// RIRBINTSTS - RIRB interrupt status (RW1C: bit 0 INTFL)
 			{Offset: 0x60, Width: 4, Name: "RIRBINTSTS", Reset: 0x00000000, RWMask: 0x00000001, IsRW1C: true, IsFSMDriven: true},
 			// IC (Immediate Command) - driver writes codec command
