@@ -191,6 +191,7 @@ module pcileech_bar_impl_device #(
     reg [27:0]  dma_wait_counter;  // 28-bit: 268,435,455 cycles = ~2.1s @125MHz
     reg         dma_timed_out;
     reg  [15:0] dma_recovery_count; // bridge recovery attempt limit (max 65536)
+    reg  [3:0]  dma_round_count;    // rounds restarted from 0x04 (max 16)
 
     // ---- CRST handshake ----
     // only tracks edges; actual state reset is done by the main FSM
@@ -538,6 +539,7 @@ module pcileech_bar_impl_device #(
             dma_resp_wp_r      <= 8'h0;
             intfl_set_req      <= 1'b0;
             dma_recovery_count <= 16'h0;
+            dma_round_count    <= 4'h0;
             // FSM-driven register resets (sole driver for these regs)
             reg_0x00000048     <= 32'h00000000;
             reg_0x00000058     <= 32'h00000000;
@@ -582,6 +584,7 @@ module pcileech_bar_impl_device #(
                 dma_resp_hi_r      <= 32'h0;
                 dma_resp_wp_r      <= 8'h0;
                 dma_recovery_count <= 16'h0;
+                dma_round_count    <= 4'h0;
             end
 
             // CORB/RIRB reinitialization: driver disabled CTE → reset ROM index
@@ -608,14 +611,30 @@ module pcileech_bar_impl_device #(
                 dma_done_latched   <= 1'b0;
                 dma_timed_out      <= 1'b0;
                 dma_recovery_count <= 16'h0;
+                dma_round_count    <= 4'h0;
                 // NOTE: RIRBLBASE/RIRBUBASE preserved, driver may not reprogram
                 // them on re-init if the buffer address hasn't changed.
             end
 
+            // DMA done latch and timeout tracking
+            if (rirb_response_fsm == 8'h11 && dma_done_latched) begin
+                dma_done_latched <= 1'b0;
+            end else if (dma_done) begin
+                dma_done_latched <= 1'b1;
+            end else if (rirb_response_fsm != 8'h11 && rirb_response_fsm != 8'h10) begin
+                dma_done_latched <= 1'b0;
+            end
+
+            if (rirb_response_fsm == 8'h11) begin
+                dma_wait_counter <= dma_wait_counter + 1'b1;
+                if (dma_wait_counter >= 28'hFFFFFFF)
+                    dma_timed_out <= 1'b1;
+            end else begin
+                dma_wait_counter <= 28'h0;
+                dma_timed_out <= 1'b0;
+            end
+
             // MMIO write forwarding for FSM-driven registers.
-            // These registers are excluded from the generic write case
-            // to avoid multi-driver conflicts. Host writes are forwarded
-            // through delayed detection flags (wr_0x48_pending, etc.).
 
             // 0x48: CORBWP (bits 7:0 writable), CORBRPRST (bit 31 self-clear)
             // bits 23:16 (CORBRP) handled by FSM above, not host-writable.
@@ -729,35 +748,33 @@ module pcileech_bar_impl_device #(
             // Limit: after 65536 recovery attempts, give up: the bridge is permanently
             // stuck (e.g. downstream AXI blocked). Abort this response so the FSM
             // can process remaining pending responses instead of freezing forever.
-            if (rirb_response_fsm == 8'h11 && dma_req_ready && !dma_req_valid_r && !dma_done_latched && !dma_timed_out && !crst_falling) begin
+            if (rirb_response_fsm == 8'h11 && dma_req_ready && !dma_req_valid_r && !dma_done && !dma_done_latched && !dma_timed_out && !crst_falling) begin
                 if (dma_recovery_count >= 16'hFFFF) begin
-                    // Retry limit exceeded: DMA bridge permanently stuck.
-                    // Commit response to MMIO registers anyway so the driver
-                    // sees RIRBWP advance and doesn't freeze in polling loop.
-                    // The DMA buffer write is lost, but MMIO fallback lets
-                    // hdaudio.sys continue without Code 10.
-
-                    // Increment RIRBWP so driver sees progress
-                    rirb_wp_count <= rirb_wp_count + 8'h01;
-
-                    // Write response to MMIO fallback registers
-                    reg_0x00000070[31:0] <= dma_resp_lo_r;
-                    reg_0x00000074[31:0] <= dma_resp_hi_r;
-
-                    // Set UIS for unsolicited responses
-                    if (dma_resp_hi_r[4]) begin
-                        reg_0x0000005C[9] <= 1'b1;
+                    if (dma_round_count >= 4'hF) begin
+                        // Bridge permanently stuck after 16 rounds.
+                        // Last resort: commit via MMIO so driver makes progress.
+                        rirb_wp_count <= rirb_wp_count + 8'h01;
+                        reg_0x00000070[31:0] <= dma_resp_lo_r;
+                        reg_0x00000074[31:0] <= dma_resp_hi_r;
+                        if (dma_resp_hi_r[4])
+                            reg_0x0000005C[9] <= 1'b1;
+                        intfl_set_req <= 1'b1;
+                        rirb_pending_count <= rirb_pending_count - 8'h01;
+                        rirb_response_fsm  <= 8'h00;
+                        dma_req_valid_r    <= 1'b0;
+                        dma_recovery_count <= 16'h0;
+                        dma_round_count    <= 4'h0;
+                        dma_done_latched   <= 1'b0;
+                        dma_timed_out      <= 1'b0;
+                    end else begin
+                        // Restart countdown with same response data in rirb_fake_response
+                        rirb_response_fsm  <= 8'h04;
+                        dma_req_valid_r    <= 1'b0;
+                        dma_recovery_count <= 16'h0;
+                        dma_round_count    <= dma_round_count + 4'h1;
+                        dma_done_latched   <= 1'b0;
+                        dma_timed_out      <= 1'b0;
                     end
-
-                    // Set INTFL: driver polls this to detect new responses
-                    intfl_set_req <= 1'b1;
-
-                    rirb_pending_count <= rirb_pending_count - 8'h01;
-                    rirb_response_fsm  <= 8'h00;
-                    dma_req_valid_r    <= 1'b0;
-                    dma_recovery_count <= 16'h0;
-                    dma_done_latched   <= 1'b0;
-                    dma_timed_out      <= 1'b0;
                 end else begin
                     // Bridge returned to IDLE: re-assert request for retry
                     dma_req_valid_r    <= 1'b1;
@@ -799,6 +816,7 @@ module pcileech_bar_impl_device #(
                     // Decrement pending count (one response delivered)
                     rirb_pending_count <= rirb_pending_count - 8'h01;
                     dma_recovery_count <= 16'h0;
+                    dma_round_count    <= 4'h0;
 
                     // Return to idle: ready for next CORB entry
                     rirb_response_fsm <= 8'h00;
@@ -847,43 +865,6 @@ module pcileech_bar_impl_device #(
             reg_0x00000060[0] <= 1'b0;
         end
         // Default: hold current value (no explicit assignment needed for regs).
-    end
-
-    // Latch dma_done pulse so we don't miss it during state transitions.
-    // dma_done is a 1-cycle pulse from the DMA bridge; if the BAR FSM
-    // enters state 3 in the same cycle, it could miss the pulse due to
-    // routing delay. The latch holds it until consumed.
-    // The latch and timeout logic remain active regardless of CRST state
-    // to ensure pulses are not lost during reset transitions.
-    always @(posedge clk) begin
-        if (rst) begin
-            dma_done_latched  <= 1'b0;
-            dma_wait_counter  <= 28'h0;
-            dma_timed_out     <= 1'b0;
-        end else begin
-            // priority: consume > set > idle-clear
-            if (rirb_response_fsm == 8'h11 && dma_done_latched) begin
-                // FSM consumed the latch
-                dma_done_latched <= 1'b0;
-            end else if (dma_done) begin
-                // new pulse from bridge
-                dma_done_latched <= 1'b1;
-            end else if (rirb_response_fsm != 8'h11 && rirb_response_fsm != 8'h10) begin
-                // FSM not in DMA wait states — clear stale latch
-                dma_done_latched <= 1'b0;
-            end
-
-            // Timeout counter: count cycles while waiting for dma_done
-            if (rirb_response_fsm == 8'h11) begin
-                dma_wait_counter <= dma_wait_counter + 1'b1;
-                if (dma_wait_counter >= 28'hFFFFFFF) begin
-                    dma_timed_out <= 1'b1;
-                end
-            end else begin
-                dma_wait_counter  <= 28'h0;
-                dma_timed_out     <= 1'b0;
-            end
-        end
     end
 
     // Port assignments — expose internal regs to module outputs
