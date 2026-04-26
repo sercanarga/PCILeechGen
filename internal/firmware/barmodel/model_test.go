@@ -329,7 +329,7 @@ func TestBuildBARModel_Audio_CORBSIZE(t *testing.T) {
 	for _, reg := range model.Registers {
 		if reg.Name == "CORBCTL_STS_SIZE" {
 			if reg.Reset == 0 {
-				t.Error("CORBCTL_STS_SIZE should have non-zero default (CORBSIZE=0x42)")
+				t.Error("CORBCTL_STS_SIZE should have non-zero default (CORBSIZE=0x82)")
 			}
 			return
 		}
@@ -396,12 +396,12 @@ func TestBuildBARModel_Audio_AllFFDonor(t *testing.T) {
 				t.Errorf("WAKEEN_STATESTS: expected 0x00010000, got 0x%08X", reg.Reset)
 			}
 		case 0x4C:
-			if reg.Reset != 0x00420000 {
-				t.Errorf("CORBCTL_STS_SIZE: expected 0x00420000, got 0x%08X", reg.Reset)
+			if reg.Reset != 0x00820000 {
+				t.Errorf("CORBCTL_STS_SIZE: expected 0x00820000, got 0x%08X", reg.Reset)
 			}
 		case 0x5C:
-			if reg.Reset != 0x00420000 {
-				t.Errorf("RIRBCTL_STS_SIZE: expected 0x00420000, got 0x%08X", reg.Reset)
+			if reg.Reset != 0x00820000 {
+				t.Errorf("RIRBCTL_STS_SIZE: expected 0x00820000, got 0x%08X", reg.Reset)
 			}
 		}
 	}
