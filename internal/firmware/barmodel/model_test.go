@@ -287,9 +287,9 @@ func TestBuildBARModel_Audio_GCAP(t *testing.T) {
 			if reg.Reset == 0 {
 				t.Error("GCAP_VMIN_VMAJ should have a non-zero default")
 			}
-			// GCAP should be 0x4401 in the lower 16 bits
-			if reg.Reset&0xFFFF != 0x4401 {
-				t.Errorf("GCAP portion: got 0x%04X, want 0x4401", reg.Reset&0xFFFF)
+			// GCAP should be 0x6401 in the lower 16 bits (includes B64OK bit 13)
+			if reg.Reset&0xFFFF != 0x6401 {
+				t.Errorf("GCAP portion: got 0x%04X, want 0x6401", reg.Reset&0xFFFF)
 			}
 			return
 		}
@@ -357,7 +357,7 @@ func TestBuildBARModel_Audio_DonorData(t *testing.T) {
 	model := buildAudioBARModel(barData)
 	for _, reg := range model.Registers {
 		if reg.Name == "GCAP_VMIN_VMAJ" {
-			if reg.Reset != 0x01004401 {
+			if reg.Reset != 0x01006401 {
 				t.Logf("GCAP from donor data: 0x%08X", reg.Reset)
 			}
 			return
@@ -384,8 +384,8 @@ func TestBuildBARModel_Audio_AllFFDonor(t *testing.T) {
 	for _, reg := range model.Registers {
 		switch reg.Offset {
 		case 0x00:
-			if reg.Reset != 0x01004401 {
-				t.Errorf("GCAP_VMIN_VMAJ: expected 0x01004401, got 0x%08X", reg.Reset)
+			if reg.Reset != 0x01006401 {
+				t.Errorf("GCAP_VMIN_VMAJ: expected 0x01006401, got 0x%08X", reg.Reset)
 			}
 		case 0x08:
 			if reg.Reset != 0x00000001 {
