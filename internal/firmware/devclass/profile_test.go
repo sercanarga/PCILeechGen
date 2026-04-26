@@ -61,8 +61,8 @@ func TestProfileForClass_Audio(t *testing.T) {
 	if p.PrefersMSIX {
 		t.Error("HD Audio should prefer MSI (not MSI-X)")
 	}
-	if p.Uses64BitBAR != true {
-		t.Error("HD Audio should use 64-bit BAR")
+	if p.Uses64BitBAR != false {
+		t.Error("HD Audio should NOT use 64-bit BAR (scrub pipeline forces 32-bit)")
 	}
 }
 
