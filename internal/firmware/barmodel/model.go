@@ -268,7 +268,9 @@ func buildEthernetBARModel(barData []byte) *BARModel {
 func buildAudioBARModel(barData []byte) *BARModel {
 	regs := []BARRegister{
 		// GCAP(16) + VMIN(8) + VMAJ(8) packed into one DWORD
-		{Offset: 0x00, Width: 4, Name: "GCAP_VMIN_VMAJ", RWMask: 0x00000000},
+		{Offset: 0x00, Width: 4, Name: "GCAP_VMIN_VMAJ", Reset: 0x01006401, RWMask: 0x00000000},
+		// OUTPAY (15:0) + INPAY (31:16) — read-only stream payload capabilities
+		{Offset: 0x04, Width: 4, Name: "OUTPAY_INPAY", Reset: 0x00400040, RWMask: 0x00000000},
 		// GCTL - global control, CRST (bit 0) is the key writable bit
 		{Offset: 0x08, Width: 4, Name: "GCTL", RWMask: 0x00000103},
 		// WAKEEN(16) + STATESTS(16) packed into one DWORD
@@ -278,6 +280,8 @@ func buildAudioBARModel(barData []byte) *BARModel {
 		{Offset: 0x20, Width: 4, Name: "INTCTL", RWMask: 0xC00000FF},
 		// INTSTS - interrupt status
 		{Offset: 0x24, Width: 4, Name: "INTSTS", RWMask: 0x00000000},
+		// WALCLK - 32-bit free-running wall clock counter (read-only)
+		{Offset: 0x30, Width: 4, Name: "WALCLK", Reset: 0x00000000, RWMask: 0x00000000},
 		// CORB lower base address
 		{Offset: 0x40, Width: 4, Name: "CORBLBASE", RWMask: 0xFFFFFF80},
 		// CORB upper base address
@@ -324,7 +328,7 @@ func buildAudioBARModel(barData []byte) *BARModel {
 			switch regs[i].Offset {
 			case 0x00:
 				if regs[i].Reset == 0 {
-					regs[i].Reset = 0x01004401
+					regs[i].Reset = 0x01006401
 				}
 			case 0x08:
 				regs[i].Reset |= 0x00000001
@@ -342,20 +346,22 @@ func buildAudioBARModel(barData []byte) *BARModel {
 		}
 	} else {
 		// No valid donor data - use HD Audio spec defaults.
-		regs[0].Reset = 0x01004401  // GCAP=4401h (2-in/2-out, 44.1kHz), VMIN=0, VMAJ=1
-		regs[1].Reset = 0x00000001  // GCTL.CRST=1 (out of reset)
-		regs[2].Reset = 0x00010000  // STATESTS: codec 0 present (upper 16 bits)
-		regs[3].Reset = 0x00000000  // INTCTL: no state interrupts enabled
-		regs[4].Reset = 0x00000000  // INTSTS: no interrupts pending
-		regs[5].Reset = 0x00000000  // CORBLBASE: driver will program before use
-		regs[6].Reset = 0x00000000  // CORBUBASE: upper 32 bits of base
-		regs[7].Reset = 0x00000000  // CORBWP=0, CORBRP=0 (both at start)
-		regs[8].Reset = 0x00820000  // CORBSIZE=0x82 (supports 256/16/2 entries)
-		regs[9].Reset = 0x00000000  // RIRBLBASE: driver will program before use
-		regs[10].Reset = 0x00000000 // RIRBUBASE: upper 32 bits of base
-		regs[11].Reset = 0x00000000 // RIRBWP=0, RINTCNT=0
-		regs[12].Reset = 0x00820000 // RIRBSIZE=0x82 (supports 256/16/2 entries)
-		// regs[13] (IC at 0x64) and regs[14] (IR at 0x68) default to 0 - correct.
+		regs[0].Reset = 0x01006401  // GCAP=6401h (2-in/2-out, 44.1kHz, B64OK), VMIN=0, VMAJ=1
+		regs[1].Reset = 0x00400040  // OUTPAY=0x40 (64 bytes), INPAY=0x40 (64 bytes)
+		regs[2].Reset = 0x00000001  // GCTL.CRST=1 (out of reset)
+		regs[3].Reset = 0x00010000  // STATESTS: codec 0 present (upper 16 bits)
+		regs[4].Reset = 0x00000000  // INTCTL: no state interrupts enabled
+		regs[5].Reset = 0x00000000  // INTSTS: no interrupts pending
+		regs[6].Reset = 0x00000000  // WALCLK: wall clock counter starts at 0
+		regs[7].Reset = 0x00000000  // CORBLBASE: driver will program before use
+		regs[8].Reset = 0x00000000  // CORBUBASE: upper 32 bits of base
+		regs[9].Reset = 0x00000000  // CORBWP=0, CORBRP=0 (both at start)
+		regs[10].Reset = 0x00820000 // CORBSIZE=0x82 (supports 256/16/2 entries)
+		regs[11].Reset = 0x00000000 // RIRBLBASE: driver will program before use
+		regs[12].Reset = 0x00000000 // RIRBUBASE: upper 32 bits of base
+		regs[13].Reset = 0x00000000 // RIRBWP=0, RINTCNT=0
+		regs[14].Reset = 0x00820000 // RIRBSIZE=0x82 (supports 256/16/2 entries)
+		// regs[16] (IC at 0x64) and regs[17] (IR at 0x68) default to 0 - correct.
 	}
 
 	return &BARModel{
