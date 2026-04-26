@@ -20,7 +20,7 @@ func clampLinkCapability(cs *pci.ConfigSpace, b *board.Board, om *overlay.Map, c
 		} else {
 			maxSpeed = firmware.LinkSpeedGen2
 		}
-		maxWidth := uint8(0)
+		maxWidth := uint8(1)
 		if b != nil && b.PCIeLanes > 0 {
 			maxWidth = uint8(b.PCIeLanes)
 		}
