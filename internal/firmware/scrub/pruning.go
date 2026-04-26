@@ -49,8 +49,8 @@ func PruneStandardCaps(cs *pci.ConfigSpace, om *overlay.Map) []string {
 			om.WriteU8(prevNextOff, uint8(nextPtr),
 				fmt.Sprintf("prune cap 0x%02X (%s): relink", capID, name))
 
-			cs.WriteU8(ptr, 0)
-			cs.WriteU8(ptr+1, 0)
+			om.WriteU8(ptr, 0, "zero pruned cap header")
+			om.WriteU8(ptr+1, 0, "zero pruned cap next ptr")
 
 			removed = append(removed, fmt.Sprintf("%s (0x%02X) at 0x%02X", name, capID, ptr))
 		} else {

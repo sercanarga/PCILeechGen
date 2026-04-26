@@ -71,8 +71,8 @@ func (p *scrubPMCapPass) Apply(cs *pci.ConfigSpace, b *board.Board, om *overlay.
 		// wake from D3, triggering aggressive PM transitions (~5 min idle).
 		// the FPGA IP core can't handle D3 and stops processing TLPs.
 		pmc := cs.ReadU16(cap.Offset + 2)
-		pmc &= 0x07FF // clear bits [15:11] = PME_Support
-		om.WriteU16(cap.Offset+2, pmc, "PM: clear PME_Support (prevent D3 transitions)")
+		pmc &= 0x01FF // clear bits [15:11] = PME_Support, bits [10:9] = D1/D2 Support
+		om.WriteU16(cap.Offset+2, pmc, "PM: clear PME_Support + D1/D2 Support (prevent D3/D2/D1 transitions)")
 
 		// PMCSR (cap+4): force D0, NoSoftReset, clear PME_Status + PME_Enable
 		pmcsr := cs.ReadU16(cap.Offset + 4)

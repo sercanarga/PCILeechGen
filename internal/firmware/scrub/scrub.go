@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	cmdMask    = 0x0547 // keep BusMaster, IO, Memory, SERR, ParityErr
+	cmdMask    = 0x0147 // keep BusMaster, IO, Memory, SERR, ParityErr (clear Interrupt Disable)
 	cmdForce   = 0x0006 // always set BME(2) + MSE(1) - donor may lack these
 	statusMask = 0x06F0 // keep 66MHz, FastB2B, CapList, DevSel bits
 )
