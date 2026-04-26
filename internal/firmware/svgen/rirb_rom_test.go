@@ -28,7 +28,7 @@ func TestAudioRIRBResponseROM(t *testing.T) {
 				{Offset: 0x58, Width: 4, Reset: 0x00, RWMask: 0x0},
 				{Offset: 0x5C, Width: 4, Reset: 0x00, RWMask: 0x0},
 				{Offset: 0x70, Width: 4, Reset: 0x00, RWMask: 0x0},
-				{Offset: 0x78, Width: 4, Reset: 0x00, RWMask: 0x0},
+				{Offset: 0x74, Width: 4, Reset: 0x00, RWMask: 0x0},
 			},
 		},
 		DeviceClass: "audio",
