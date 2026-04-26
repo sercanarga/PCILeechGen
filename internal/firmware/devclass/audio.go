@@ -34,7 +34,7 @@ func audioProfile() *DeviceProfile {
 		ClassName:         "HD Audio",
 		PreferredBAR:      0,
 		MinBARSize:        4096,
-		Uses64BitBAR:      true,
+		Uses64BitBAR:      false,
 		BARIsPrefetchable: false,
 
 		PrefersMSIX:    false,
@@ -55,7 +55,9 @@ func audioProfile() *DeviceProfile {
 		// DWORD-aligned to match barmodel and bar_impl_device template
 		BARDefaults: []BARDefault{
 			// GCAP + VMIN + VMAJ packed in one DWORD
-			{Offset: 0x00, Width: 4, Name: "GCAP_VMIN_VMAJ", Reset: 0x01004401, RWMask: 0x00000000},
+			{Offset: 0x00, Width: 4, Name: "GCAP_VMIN_VMAJ", Reset: 0x01006401, RWMask: 0x00000000},
+			// OUTPAY (15:0) + INPAY (31:16) — read-only stream payload capabilities
+			{Offset: 0x04, Width: 4, Name: "OUTPAY_INPAY", Reset: 0x00400040, RWMask: 0x00000000},
 			// GCTL - CRST (bit 0) is the key for reset handshake
 			{Offset: 0x08, Width: 4, Name: "GCTL", Reset: 0x00000001, RWMask: 0x00000103},
 			// WAKEEN (lower 16) + STATESTS (upper 16) - codec 0 present
@@ -65,6 +67,8 @@ func audioProfile() *DeviceProfile {
 			{Offset: 0x20, Width: 4, Name: "INTCTL", Reset: 0x00000000, RWMask: 0xC00000FF},
 			// INTSTS
 			{Offset: 0x24, Width: 4, Name: "INTSTS", Reset: 0x00000000, RWMask: 0x00000000},
+			// WALCLK - 32-bit free-running wall clock counter (read-only)
+			{Offset: 0x30, Width: 4, Name: "WALCLK", Reset: 0x00000000, RWMask: 0x00000000},
 			// CORB base addresses and control
 			{Offset: 0x40, Width: 4, Name: "CORBLBASE", Reset: 0x00000000, RWMask: 0xFFFFFF80},
 			{Offset: 0x44, Width: 4, Name: "CORBUBASE", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
