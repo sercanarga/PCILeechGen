@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/sercanarga/pcileechgen/internal/firmware/overlay"
 	"github.com/sercanarga/pcileechgen/internal/pci"
 )
 
@@ -104,7 +105,7 @@ func parseExtCapChain(cs *pci.ConfigSpace) []extCapEntry {
 }
 
 // relinkExtCapChain patches the next-pointers of surviving entries.
-func relinkExtCapChain(cs *pci.ConfigSpace, entries []extCapEntry, removeSet map[int]bool) {
+func relinkExtCapChain(cs *pci.ConfigSpace, om *overlay.Map, entries []extCapEntry, removeSet map[int]bool) {
 	firstSurvivor := -1
 	for i := range entries {
 		if !removeSet[i] {
@@ -120,12 +121,12 @@ func relinkExtCapChain(cs *pci.ConfigSpace, entries []extCapEntry, removeSet map
 		}
 		e := entries[i]
 		for b := 0; b < e.size && e.offset+b < pci.ConfigSpaceSize; b++ {
-			cs.WriteU8(e.offset+b, 0x00)
+			om.WriteU8(e.offset+b, 0x00, "remove unsafe ext cap")
 		}
 	}
 
 	if firstSurvivor < 0 {
-		cs.WriteU32(0x100, 0x00000000) // all gone
+		om.WriteU32(0x100, 0x00000000, "relink ext cap chain") // all gone
 		return
 	}
 
@@ -134,10 +135,10 @@ func relinkExtCapChain(cs *pci.ConfigSpace, entries []extCapEntry, removeSet map
 		surv := entries[firstSurvivor]
 
 		for b := 0; b < surv.size && surv.offset+b < pci.ConfigSpaceSize; b++ {
-			cs.WriteU8(0x100+b, cs.ReadU8(surv.offset+b))
+			om.WriteU8(0x100+b, cs.ReadU8(surv.offset+b), "relink ext cap chain")
 		}
 		for b := 0; b < surv.size && surv.offset+b < pci.ConfigSpaceSize; b++ {
-			cs.WriteU8(surv.offset+b, 0x00)
+			om.WriteU8(surv.offset+b, 0x00, "remove unsafe ext cap")
 		}
 
 		newNext := 0
@@ -150,7 +151,7 @@ func relinkExtCapChain(cs *pci.ConfigSpace, entries []extCapEntry, removeSet map
 
 		hdr := cs.ReadU32(0x100)
 		hdr = (hdr & 0x000FFFFF) | (uint32(newNext) << 20)
-		cs.WriteU32(0x100, hdr)
+		om.WriteU32(0x100, hdr, "relink ext cap chain")
 
 		entries[firstSurvivor].offset = 0x100
 	}
@@ -174,12 +175,12 @@ func relinkExtCapChain(cs *pci.ConfigSpace, entries []extCapEntry, removeSet map
 
 		hdr := cs.ReadU32(e.offset)
 		hdr = (hdr & 0x000FFFFF) | (uint32(newNext) << 20)
-		cs.WriteU32(e.offset, hdr)
+		om.WriteU32(e.offset, hdr, "relink ext cap chain")
 	}
 }
 
 // FilterExtCapabilities strips unsupported ext caps and relinks the chain.
-func FilterExtCapabilities(cs *pci.ConfigSpace) []string {
+func FilterExtCapabilities(cs *pci.ConfigSpace, om *overlay.Map) []string {
 	entries := parseExtCapChain(cs)
 	if len(entries) == 0 {
 		return nil
@@ -203,6 +204,6 @@ func FilterExtCapabilities(cs *pci.ConfigSpace) []string {
 		return nil
 	}
 
-	relinkExtCapChain(cs, entries, removeSet)
+	relinkExtCapChain(cs, om, entries, removeSet)
 	return removed
 }
