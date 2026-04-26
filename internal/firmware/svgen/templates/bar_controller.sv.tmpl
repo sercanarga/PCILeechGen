@@ -467,7 +467,7 @@ module pcileech_tlps128_bar_controller(
         .tlp_tx_tvalid  ( hda_tlp_tx_tvalid             ),
         .tlp_tx_tlast   ( hda_tlp_tx_tlast              ),
         .tlp_tx_tuser   ( hda_tlp_tx_tuser              ),
-        .tlp_tx_tready  ( tlps_out.tready               )
+        .tlp_tx_tready  ( tlps_out.tready && !dma_yield  )
     );
 
     // ========================================================================
@@ -605,24 +605,56 @@ module pcileech_tlps128_bar_controller(
     // mux DMA bridge TLPs with rdengine BAR responses onto tlps_out
     // bridge gets priority -- its MWr/MRd TLPs can't wait
     // HDA takes priority over NVME (both can fire, HDA RIRB writes are time-critical)
-    assign tlps_out.tdata    = hda_tlp_tx_tvalid ? hda_tlp_tx_tdata    : nvme_tlp_tx_tvalid ? nvme_tlp_tx_tdata    : tlps_rdeng.tdata;
-    assign tlps_out.tkeepdw  = hda_tlp_tx_tvalid ? hda_tlp_tx_tkeepdw  : nvme_tlp_tx_tvalid ? nvme_tlp_tx_tkeepdw  : tlps_rdeng.tkeepdw;
-    assign tlps_out.tvalid   = hda_tlp_tx_tvalid || nvme_tlp_tx_tvalid || tlps_rdeng.tvalid;
-    assign tlps_out.tlast    = hda_tlp_tx_tvalid ? hda_tlp_tx_tlast    : nvme_tlp_tx_tvalid ? nvme_tlp_tx_tlast    : tlps_rdeng.tlast;
-    assign tlps_out.tuser    = hda_tlp_tx_tvalid ? hda_tlp_tx_tuser    : nvme_tlp_tx_tvalid ? nvme_tlp_tx_tuser    : tlps_rdeng.tuser;
-    assign tlps_out.has_data = hda_tlp_tx_tvalid || nvme_tlp_tx_tvalid || tlps_rdeng.has_data;
-    assign tlps_rdeng.tready = tlps_out.tready && !nvme_tlp_tx_tvalid && !hda_tlp_tx_tvalid;
+    //
+    // fairness: after 8 consecutive DMA TLP words a 1-cycle gap is forced so
+    // BAR read completions cannot be starved by sustained DMA bursts
+    reg [2:0] dma_burst_cnt;
+    wire dma_active = hda_tlp_tx_tvalid || nvme_tlp_tx_tvalid;
+    wire dma_yield = (dma_burst_cnt == 3'd7);
+    wire dma_tx    = dma_active && tlps_out.tready && !dma_yield;
+
+    always @(posedge clk) begin
+        if (dma_yield)
+            dma_burst_cnt <= 3'd0;
+        else if (dma_tx && dma_burst_cnt != 3'd7)
+            dma_burst_cnt <= dma_burst_cnt + 3'd1;
+        else if (!dma_active)
+            dma_burst_cnt <= 3'd0;
+    end
+
+    assign tlps_out.tdata    = (hda_tlp_tx_tvalid && !dma_yield) ? hda_tlp_tx_tdata    : (nvme_tlp_tx_tvalid && !dma_yield) ? nvme_tlp_tx_tdata    : tlps_rdeng.tdata;
+    assign tlps_out.tkeepdw  = (hda_tlp_tx_tvalid && !dma_yield) ? hda_tlp_tx_tkeepdw  : (nvme_tlp_tx_tvalid && !dma_yield) ? nvme_tlp_tx_tkeepdw  : tlps_rdeng.tkeepdw;
+    assign tlps_out.tvalid   = (dma_active && !dma_yield) || tlps_rdeng.tvalid;
+    assign tlps_out.tlast    = (hda_tlp_tx_tvalid && !dma_yield) ? hda_tlp_tx_tlast    : (nvme_tlp_tx_tvalid && !dma_yield) ? nvme_tlp_tx_tlast    : tlps_rdeng.tlast;
+    assign tlps_out.tuser    = (hda_tlp_tx_tvalid && !dma_yield) ? hda_tlp_tx_tuser    : (nvme_tlp_tx_tvalid && !dma_yield) ? nvme_tlp_tx_tuser    : tlps_rdeng.tuser;
+    assign tlps_out.has_data = (dma_active && !dma_yield) || tlps_rdeng.has_data;
+    assign tlps_rdeng.tready = tlps_out.tready && (dma_yield || !dma_active);
 {{ end }}
 
 {{ if and (eq .DeviceClass "audio") .BARModel }}{{ if not (and (eq .DeviceClass "nvme") .NVMeIdentify) }}
     // HDA-only build: mux HDA DMA TLPs with rdengine BAR responses
-    assign tlps_out.tdata    = hda_tlp_tx_tvalid ? hda_tlp_tx_tdata    : tlps_rdeng.tdata;
-    assign tlps_out.tkeepdw  = hda_tlp_tx_tvalid ? hda_tlp_tx_tkeepdw  : tlps_rdeng.tkeepdw;
-    assign tlps_out.tvalid   = hda_tlp_tx_tvalid || tlps_rdeng.tvalid;
-    assign tlps_out.tlast    = hda_tlp_tx_tvalid ? hda_tlp_tx_tlast    : tlps_rdeng.tlast;
-    assign tlps_out.tuser    = hda_tlp_tx_tvalid ? hda_tlp_tx_tuser    : tlps_rdeng.tuser;
-    assign tlps_out.has_data = hda_tlp_tx_tvalid || tlps_rdeng.has_data;
-    assign tlps_rdeng.tready = tlps_out.tready && !hda_tlp_tx_tvalid;
+    //
+    // fairness: after 8 consecutive DMA TLP words a 1-cycle gap is forced so
+    // BAR read completions cannot be starved by sustained DMA bursts
+    reg [2:0] dma_burst_cnt;
+    wire dma_yield = (dma_burst_cnt == 3'd7);
+
+    always @(posedge clk) begin
+        if (dma_yield)
+            dma_burst_cnt <= 3'd0;
+        else if (hda_tlp_tx_tvalid && tlps_out.tready && dma_burst_cnt != 3'd7)
+            dma_burst_cnt <= dma_burst_cnt + 3'd1;
+        else if (!hda_tlp_tx_tvalid)
+            dma_burst_cnt <= 3'd0;
+    end
+
+    assign tlps_out.tdata    = (hda_tlp_tx_tvalid && !dma_yield) ? hda_tlp_tx_tdata    : tlps_rdeng.tdata;
+    assign tlps_out.tkeepdw  = (hda_tlp_tx_tvalid && !dma_yield) ? hda_tlp_tx_tkeepdw  : tlps_rdeng.tkeepdw;
+    assign tlps_out.tvalid   = (hda_tlp_tx_tvalid && !dma_yield) || tlps_rdeng.tvalid;
+    assign tlps_out.tlast    = (hda_tlp_tx_tvalid && !dma_yield) ? hda_tlp_tx_tlast    : tlps_rdeng.tlast;
+    assign tlps_out.tuser    = (hda_tlp_tx_tvalid && !dma_yield) ? hda_tlp_tx_tuser    : tlps_rdeng.tuser;
+    assign tlps_out.has_data = (hda_tlp_tx_tvalid && !dma_yield) || tlps_rdeng.has_data;
+    assign tlps_rdeng.tready = tlps_out.tready && (dma_yield || !hda_tlp_tx_tvalid);
 {{ end }}{{ end }}
 
 {{ if not (or (and (eq .DeviceClass "nvme") .NVMeIdentify) (and (eq .DeviceClass "audio") .BARModel)) }}
