@@ -283,20 +283,20 @@ func buildAudioBARModel(barData []byte) *BARModel {
 		// CORB upper base address
 		{Offset: 0x44, Width: 4, Name: "CORBUBASE", RWMask: 0xFFFFFFFF},
 		// CORBWP(16) + CORBRP(16) packed
-		{Offset: 0x48, Width: 4, Name: "CORBWP_CORBRP", RWMask: 0x800000FF, IsFSMDriven: true},
+		{Offset: 0x48, Width: 4, Name: "CORBWP_CORBRP", RWMask: 0x0000FFFF, IsFSMDriven: true},
 		// CORBCTL(8) + CORBSTS(8) + CORBSIZE(8) packed
 		// CORBCTL: bit 1 (CORBRUN), bit 0 (CMEIE) writable; CORBSTS: bit 0 -> DWORD bit 8 (RPWP) RW1C; CORBSIZE: RO
-		{Offset: 0x4C, Width: 4, Name: "CORBCTL_STS_SIZE", RWMask: 0x00000103, IsRW1C: true},
+		{Offset: 0x4C, Width: 4, Name: "CORBCTL_STS_SIZE", RWMask: 0x00030003, IsRW1C: true},
 		// RIRB lower base address
 		{Offset: 0x50, Width: 4, Name: "RIRBLBASE", RWMask: 0xFFFFFF80},
 		// RIRB upper base address
 		{Offset: 0x54, Width: 4, Name: "RIRBUBASE", RWMask: 0xFFFFFFFF},
 		// RIRBWP(16) + RINTCNT(16)
-		{Offset: 0x58, Width: 4, Name: "RIRBWP_RINTCNT", RWMask: 0xFFFF8000, IsFSMDriven: true},
+		{Offset: 0x58, Width: 4, Name: "RIRBWP_RINTCNT", RWMask: 0x0000FFFF, IsFSMDriven: true},
 		// RIRBCTL(8) + RIRBSTS(8) + RIRBSIZE(8)
 		// RIRBCTL: bit 0 (RINTCTL), bit 1 (RIRBDMAEN), bit 2 (OIC) writable
 		// RIRBSTS: bit 8 (RINTFL) RW1C, bit 9 (OIS) RW1C
-		{Offset: 0x5C, Width: 4, Name: "RIRBCTL_STS_SIZE", RWMask: 0x00000307, IsRW1C: true, IsFSMDriven: true},
+		{Offset: 0x5C, Width: 4, Name: "RIRBCTL_STS_SIZE", RWMask: 0x00000007, IsRW1C: true, IsFSMDriven: true},
 		// RIRBINTSTS - RIRB interrupt status (RW1C: bit 0 INTFL)
 		{Offset: 0x60, Width: 4, Name: "RIRBINTSTS", RWMask: 0x00000001, IsRW1C: true, IsFSMDriven: true},
 		// IC (Immediate Command) - driver writes codec command
@@ -329,14 +329,14 @@ func buildAudioBARModel(barData []byte) *BARModel {
 			case 0x08:
 				regs[i].Reset |= 0x00000001
 			case 0x0C:
-				regs[i].Reset |= 0x00010000
+				regs[i].Reset = (regs[i].Reset & 0x0000FFFF) | 0x00010000
 			case 0x4C:
 				if regs[i].Reset == 0 {
-					regs[i].Reset = 0x00420000
+					regs[i].Reset = 0x00820000
 				}
 			case 0x5C:
 				if regs[i].Reset == 0 {
-					regs[i].Reset = 0x00420000
+					regs[i].Reset = 0x00820000
 				}
 			}
 		}
@@ -350,11 +350,11 @@ func buildAudioBARModel(barData []byte) *BARModel {
 		regs[5].Reset = 0x00000000  // CORBLBASE: driver will program before use
 		regs[6].Reset = 0x00000000  // CORBUBASE: upper 32 bits of base
 		regs[7].Reset = 0x00000000  // CORBWP=0, CORBRP=0 (both at start)
-		regs[8].Reset = 0x00420000  // CORBSIZE=0x42 (supports 256/16/2 entries)
+		regs[8].Reset = 0x00820000  // CORBSIZE=0x82 (supports 256/16/2 entries)
 		regs[9].Reset = 0x00000000  // RIRBLBASE: driver will program before use
 		regs[10].Reset = 0x00000000 // RIRBUBASE: upper 32 bits of base
 		regs[11].Reset = 0x00000000 // RIRBWP=0, RINTCNT=0
-		regs[12].Reset = 0x00420000 // RIRBSIZE=0x42 (supports 256/16/2 entries)
+		regs[12].Reset = 0x00820000 // RIRBSIZE=0x82 (supports 256/16/2 entries)
 		// regs[13] (IC at 0x64) and regs[14] (IR at 0x68) default to 0 - correct.
 	}
 
