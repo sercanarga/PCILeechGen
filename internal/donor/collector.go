@@ -15,7 +15,7 @@ const (
 	nativeDriverInitDelay  = 5 * time.Second
 	nativeDriverRetryDelay = 1 * time.Second
 	nativeDriverMaxRetries = 3
-	memSpaceSettleDelay    = 100 * time.Millisecond
+	memSpaceSettleDelay    = 200 * time.Millisecond
 	maxBARReadSize         = 4096
 )
 
@@ -297,6 +297,17 @@ func (c *Collector) tryNativeDriverRebind(bdf pci.BDF, bars []pci.BAR, current m
 		time.Sleep(memSpaceSettleDelay)
 	}
 
+	if err := vfio.WakeToD0(bdf.String()); err != nil {
+		slog.Warn("native driver rebind: could not wake device to D0 after rebind",
+			"error", err)
+	} else {
+		time.Sleep(memSpaceSettleDelay)
+	}
+	if ps, err := vfio.CheckPowerState(bdf.String()); err == nil {
+		slog.Info("native driver rebind: device power state after wake",
+			"state", ps)
+	}
+
 	if len(recovered) > 0 {
 		for idx, data := range recovered {
 			current[idx] = data
@@ -354,6 +365,7 @@ func (c *Collector) collectBARMemory(bdf pci.BDF, bars []pci.BAR) map[int][]byte
 			slog.Info("PCI memory space enabled", "bdf", bdf)
 			time.Sleep(memSpaceSettleDelay)
 		}
+		_ = vfio.WakeToD0(bdf.String())
 		c.readBARs(bdf, eligible, contents)
 		if !memBARsAllFF(contents, bars) {
 			return contents
