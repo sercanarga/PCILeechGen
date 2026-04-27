@@ -50,8 +50,8 @@ func TestValidateBARContents_AllFF_NVMe(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for all-0xFF BAR on NVMe, got nil")
 	}
-	if !strings.Contains(err.Error(), "all 0xFF") {
-		t.Errorf("error should mention all 0xFF, got: %s", err.Error())
+	if !strings.Contains(err.Error(), "returned 0xFF") {
+		t.Errorf("error should mention 0xFF, got: %s", err.Error())
 	}
 	if !strings.Contains(err.Error(), "Code 10") {
 		t.Errorf("error should mention Code 10, got: %s", err.Error())
@@ -153,14 +153,41 @@ func TestValidateBARContents_AllFF_WiFi(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for all-0xFF BAR on WiFi, got nil")
 	}
-	if !strings.Contains(err.Error(), "all 0xFF") {
-		t.Errorf("error should mention all 0xFF, got: %s", err.Error())
+	if !strings.Contains(err.Error(), "returned 0xFF") {
+		t.Errorf("error should mention 0xFF, got: %s", err.Error())
 	}
 	if !strings.Contains(err.Error(), "CNVi") {
 		t.Errorf("error should mention CNVi workaround, got: %s", err.Error())
 	}
 	if !strings.Contains(err.Error(), "--from-json") {
 		t.Errorf("error should mention --from-json workaround, got: %s", err.Error())
+	}
+}
+
+func TestValidateBARContents_MixedFF_WiFi(t *testing.T) {
+	c := &Collector{}
+	bar2Data := make([]byte, 4096)
+	bar2Data[0] = 0x10
+
+	ctx := &DeviceContext{
+		Device: pci.PCIDevice{
+			BDF:       pci.BDF{Domain: 0, Bus: 8, Device: 0, Function: 0},
+			ClassCode: 0x028000, // WiFi/CNVi
+			Driver:    "vfio-pci",
+		},
+		BARs: []pci.BAR{
+			{Index: 0, Type: pci.BARTypeMem64, Size: 16384},
+			{Index: 2, Type: pci.BARTypeMem64, Size: 16384},
+		},
+		BARContents: map[int][]byte{
+			0: makeAllFF(4096),
+			2: bar2Data,
+		},
+	}
+
+	err := c.validateBARContents(ctx)
+	if err != nil {
+		t.Errorf("mixed FF/valid BARs should not error on WiFi, got: %v", err)
 	}
 }
 
