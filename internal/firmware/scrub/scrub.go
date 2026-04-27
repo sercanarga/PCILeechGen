@@ -17,7 +17,25 @@ const (
 
 const BRAMSize = 4096
 
-const bar0SizeMask = 0xFFFFF000 // 4 KB aligned
+func ComputeBAR0Size(msixTableSize int, bramLimit int) int {
+	if msixTableSize <= 0 {
+		return 4096
+	}
+	tableBytes := msixTableSize * 16
+	pbaBytes := (msixTableSize + 63) / 64 * 8
+	if pbaBytes < 8 {
+		pbaBytes = 8
+	}
+	required := 0x1000 + tableBytes + pbaBytes
+	size := 4096
+	for size < required {
+		size *= 2
+	}
+	if size > bramLimit {
+		return bramLimit
+	}
+	return size
+}
 
 // min sizes (bytes) for standard PCI caps
 var capMinSize = map[uint8]int{
@@ -148,10 +166,22 @@ func ScrubConfigSpaceWithOverlay(cs *pci.ConfigSpace, b *board.Board) (*pci.Conf
 	scrubbed := cs.Clone()
 	om := overlay.NewMap(scrubbed)
 
+	bramLimit := BRAMSize
+	if b != nil {
+		if bs := b.BRAMSizeOrDefault(); bs > bramLimit {
+			bramLimit = bs
+		}
+	}
+
 	ctx := &ScrubContext{
 		Caps:      pci.ParseCapabilities(scrubbed),
 		ExtCaps:   pci.ParseExtCapabilities(scrubbed),
 		ClassCode: cs.ReadU32(0x08) >> 8, // bytes 0x09-0x0B: ProgIf + SubClass + BaseClass
+		Bar0Size:  4096,
+	}
+
+	if info := pci.ParseMSIXCap(scrubbed); info != nil && info.TableSize > 0 {
+		ctx.Bar0Size = ComputeBAR0Size(info.TableSize, bramLimit)
 	}
 
 	for _, pass := range defaultPipeline() {
@@ -161,8 +191,15 @@ func ScrubConfigSpaceWithOverlay(cs *pci.ConfigSpace, b *board.Board) (*pci.Conf
 	return scrubbed, om
 }
 
-// clampBARsToFPGA shrinks all memory BARs to 4 KB and I/O BARs to 256 bytes.
-func clampBARsToFPGA(cs *pci.ConfigSpace, om *overlay.Map) {
+func barSizeMask(size int) uint32 {
+	return uint32(^(size - 1))
+}
+
+// clampBARsToFPGA shrinks memory BARs to bar0Size and I/O BARs to 256 bytes.
+func clampBARsToFPGA(cs *pci.ConfigSpace, om *overlay.Map, bar0Size int) {
+	mask := barSizeMask(bar0Size)
+	bar0KB := bar0Size / 1024
+
 	for i := 0; i < 6; i++ {
 		barOffset := 0x10 + (i * 4)
 		barVal := cs.BAR(i)
@@ -171,32 +208,24 @@ func clampBARsToFPGA(cs *pci.ConfigSpace, om *overlay.Map) {
 		}
 
 		if barVal&0x01 != 0 {
-			// I/O BAR: clamp to 256 bytes (mask = 0xFFFFFF01)
 			newBar := uint32(0xFFFFFF00) | (barVal & 0x03)
 			om.WriteU32(barOffset, newBar, fmt.Sprintf("clamp I/O BAR%d to 256 bytes", i))
 			continue
 		}
 
-		// Force type bits (2:1) to 0b00 (32-bit). The FPGA serves 4KB regions
-		// regardless of original BAR type; a 64-bit type in a 4KB BAR confuses
-		// the Windows driver during enumeration.
-		newBar := bar0SizeMask | (barVal & 0x09)
-		om.WriteU32(barOffset, newBar, fmt.Sprintf("clamp BAR%d to 4 KB (type=32-bit)", i))
+		newBar := mask | (barVal & 0x09)
+		om.WriteU32(barOffset, newBar, fmt.Sprintf("clamp BAR%d to %d KB (type=32-bit)", i, bar0KB))
 
 		is64bit := (barVal & 0x06) == 0x04
 		if is64bit && i < 5 {
 			om.WriteU32(barOffset+4, 0x00000000, fmt.Sprintf("clear BAR%d upper 32 bits", i+1))
-			i++ // skip upper half
+			i++
 		}
 	}
 
-	// ensure BAR0 is a valid 4KB 32-bit memory BAR.
-	// conventional PCI donors may have BAR0=0 (no memory BAR) or IO-only.
-	// the FPGA always serves a 4KB memory region; if BAR0 is missing or
-	// IO type, Windows can't map the HDA registers and fails with Code 10.
 	bar0 := cs.BAR(0)
 	if bar0 == 0 || (bar0&0x01 != 0) {
-		om.WriteU32(0x10, bar0SizeMask, "create BAR0 as 4KB 32-bit memory (donor had none)")
+		om.WriteU32(0x10, mask, fmt.Sprintf("create BAR0 as %dKB 32-bit memory (donor had none)", bar0KB))
 	}
 }
 

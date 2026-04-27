@@ -11,6 +11,7 @@ type ScrubContext struct {
 	Caps      []pci.Capability
 	ExtCaps   []pci.ExtCapability
 	ClassCode uint32
+	Bar0Size  int
 }
 
 // ScrubPass is one step in the config space scrubbing pipeline.

@@ -1108,7 +1108,7 @@ module pcileech_bar_impl_device #(
 {{ else }}
 // No learned register map - fallback to BRAM-based storage.
 module pcileech_bar_impl_device #(
-    parameter BAR_SIZE = 4096
+    parameter BAR_SIZE = {{ .Bar0Size }}
 )(
     input               rst,
     input               clk,

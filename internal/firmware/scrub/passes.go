@@ -119,7 +119,7 @@ type clampBARsPass struct{}
 
 func (p *clampBARsPass) Name() string { return "clamp BARs to FPGA" }
 func (p *clampBARsPass) Apply(cs *pci.ConfigSpace, b *board.Board, om *overlay.Map, ctx *ScrubContext) {
-	clampBARsToFPGA(cs, om)
+	clampBARsToFPGA(cs, om, ctx.Bar0Size)
 }
 
 type relocateMSIXPass struct{}
