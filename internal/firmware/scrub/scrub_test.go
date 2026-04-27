@@ -623,11 +623,11 @@ func TestClampBARsToFPGA(t *testing.T) {
 	cs.WriteU32(0x18, 0x0000FF01) // IO bar
 
 	om := overlay.NewMap(cs)
-	clampBARsToFPGA(cs, om)
+	clampBARsToFPGA(cs, om, 4096)
 
 	// BAR0 should be clamped to 4KB
 	bar0 := cs.ReadU32(0x10)
-	if bar0&bar0SizeMask != bar0SizeMask {
+	if bar0&barSizeMask(4096) != barSizeMask(4096) {
 		t.Errorf("BAR0 should be clamped to 4KB, got 0x%08x", bar0)
 	}
 	// BAR1 (upper 32 bits) should be zeroed

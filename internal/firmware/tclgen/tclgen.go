@@ -9,6 +9,7 @@ import (
 	"github.com/sercanarga/pcileechgen/internal/board"
 	"github.com/sercanarga/pcileechgen/internal/donor"
 	"github.com/sercanarga/pcileechgen/internal/firmware"
+	"github.com/sercanarga/pcileechgen/internal/firmware/scrub"
 )
 
 // projectTCLData holds template data for Vivado project generation.
@@ -69,19 +70,13 @@ type bar0Config struct {
 	Is64bit bool
 }
 
-// buildBAR0Config returns a fixed 4 KB BAR config for the Xilinx IP core.
-// BAR0 is always enabled as 4 KB 32-bit non-prefetchable memory. The scrubber
-// (clampBARsToFPGA) forces BAR0 to 32-bit memory type regardless of the donor
-// device's original BAR layout. The IP core must always have BAR0 enabled to
-// match the scrubbed shadow config space. Without this, conventional PCI donors
-// with only IO BARs would have BAR0 disabled in the IP core, causing
-// BarTypes mismatch and Code 10 on Windows.
-func buildBAR0Config(ctx *donor.DeviceContext, b *board.Board) bar0Config {
+func buildBAR0Config(bar0Size int) bar0Config {
+	scale, size := barSizeToTCL(uint64(bar0Size))
 	return bar0Config{
 		Enabled: true,
-		Scale:   "Kilobytes",
-		Size:    "4",
-		Is64bit: false, // must match scrubber: always 32-bit
+		Scale:   scale,
+		Size:    size,
+		Is64bit: false,
 	}
 }
 
@@ -96,7 +91,11 @@ func GenerateProjectTCL(ctx *donor.DeviceContext, b *board.Board, libDir string)
 	linkWidth := clampLinkWidth(ids.LinkWidth, b.PCIeLanes)
 	linkSpeed := b.MaxLinkSpeedOrDefault()
 
-	bar0 := buildBAR0Config(ctx, b)
+	bar0Size := 4096
+	if ctx.MSIXData != nil && ctx.MSIXData.TableSize > 0 {
+		bar0Size = scrub.ComputeBAR0Size(ctx.MSIXData.TableSize, b.BRAMSizeOrDefault())
+	}
+	bar0 := buildBAR0Config(bar0Size)
 
 	// Extract MSI vector count from donor capabilities
 	msiVectors := extractMSIVectors(ctx)

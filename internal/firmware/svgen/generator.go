@@ -32,6 +32,7 @@ type SVGeneratorConfig struct {
 	MSIConfig          *MSIConfig         // MSI capability info (nil = no MSI cap or disabled)
 	NVMeIdentify       *nvme.IdentifyData // NVMe Identify Controller/Namespace data (nil = no responder)
 	NVMeDoorbellStride uint32             // CAP.DSTRD - doorbell stride (0 = 4B, default)
+	Bar0Size           int
 }
 
 // NVMeSQ0DoorbellOffset returns the byte offset of the SQ0 tail doorbell.

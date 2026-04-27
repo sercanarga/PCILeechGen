@@ -75,7 +75,7 @@ func (ow *OutputWriter) WriteAll(ctx *donor.DeviceContext, b *board.Board) error
 	}
 
 	if !ow.StockBar {
-		if err := ow.writeSVModules(ctx, scrubbedCS, ids, entropy); err != nil {
+		if err := ow.writeSVModules(ctx, scrubbedCS, ids, entropy, b); err != nil {
 			return fmt.Errorf("SV module generation failed: %w", err)
 		}
 	} else {
@@ -351,8 +351,8 @@ var coreSVArtifacts = []svArtifact{
 }
 
 // writeSVModules generates device-specific SV and HEX init files.
-func (ow *OutputWriter) writeSVModules(ctx *donor.DeviceContext, scrubbedCS *pci.ConfigSpace, ids firmware.DeviceIDs, entropy uint32) error {
-	cfg := ow.buildSVConfig(ctx, scrubbedCS, ids, entropy)
+func (ow *OutputWriter) writeSVModules(ctx *donor.DeviceContext, scrubbedCS *pci.ConfigSpace, ids firmware.DeviceIDs, entropy uint32, b *board.Board) error {
+	cfg := ow.buildSVConfig(ctx, scrubbedCS, ids, entropy, b)
 
 	if err := ow.writeCoreSVArtifacts(cfg, scrubbedCS); err != nil {
 		return err
@@ -409,7 +409,7 @@ func extractMSIInfo(cs *pci.ConfigSpace) *svgen.MSIConfig {
 }
 
 // buildSVConfig assembles the SVGeneratorConfig from donor context.
-func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.ConfigSpace, ids firmware.DeviceIDs, entropy uint32) *svgen.SVGeneratorConfig {
+func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.ConfigSpace, ids firmware.DeviceIDs, entropy uint32, b *board.Board) *svgen.SVGeneratorConfig {
 	// Use the same BAR index for content data and probe profile to avoid
 	// mismatched register maps (e.g. IO BAR0 profile + MMIO BAR2 data).
 	barIdx := firmware.LargestBarIndex(ctx.BARContents)
@@ -439,6 +439,14 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 	}
 	slog.Info("device class resolution", "class", devClass)
 
+	bar0Size := 4096
+	if ctx.MSIXData != nil && ctx.MSIXData.TableSize > 0 {
+		bar0Size = scrub.ComputeBAR0Size(ctx.MSIXData.TableSize, b.BRAMSizeOrDefault())
+	}
+	if bm != nil && bm.Size < bar0Size {
+		bm.Size = bar0Size
+	}
+
 	cfg := &svgen.SVGeneratorConfig{
 		DeviceIDs:     ids,
 		BARModel:      bm,
@@ -448,6 +456,7 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 		BuildEntropy:  entropy,
 		PRNGSeeds:     svgen.BuildPRNGSeeds(ids.VendorID, ids.DeviceID, entropy),
 		DeviceClass:   devClass,
+		Bar0Size:      bar0Size,
 	}
 
 	if devClass == devclass.ClassNVMe {
