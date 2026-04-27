@@ -103,33 +103,37 @@ func (c *Collector) validateBARContents(ctx *DeviceContext) error {
 		return nil
 	}
 
-	hasContent := false
-	allFF := false
+	barsWithData := 0
+	barsWithFF := 0
+	hasValidData := false
 	for _, bar := range eligible {
 		data, ok := ctx.BARContents[bar.Index]
 		if !ok || len(data) == 0 {
 			continue
 		}
-		hasContent = true
+		barsWithData++
 		if isAllFF(data) {
-			allFF = true
+			barsWithFF++
 			if barCriticalClass(ctx.Device.ClassCode) {
 				slog.Warn("BAR content is all 0xFF - device may be inaccessible or in D3 power state",
 					"bar", bar.Index, "bytes", len(data),
 					"class", fmt.Sprintf("0x%06X", ctx.Device.ClassCode),
 				)
 			} else {
-				slog.Info("BAR content is all 0xFF (non-critical for this device class, DMA will work)",
+				slog.Warn("BAR content is all 0xFF DMA will continue with zeroed registers",
 					"bar", bar.Index, "bytes", len(data),
-					"class", fmt.Sprintf("0x%06X", ctx.Device.ClassCode),
 				)
 			}
+		} else {
+			hasValidData = true
 		}
 	}
 
-	if allFF && barCriticalClass(ctx.Device.ClassCode) {
+	allMemoryBARsFF := barsWithData > 0 && barsWithFF == barsWithData
+
+	if allMemoryBARsFF && barCriticalClass(ctx.Device.ClassCode) {
 		return fmt.Errorf(
-			"BAR content for class 0x%06X is all 0xFF (driver %q). "+
+			"All %d eligible memory BAR(s) returned 0xFF for class 0x%06X (driver %q). "+
 				"The device is not responding - possible causes:\n"+
 				"  • device is in D3 (sleep) power state\n"+
 				"  • IOMMU/VT-d not enabled or misconfigured\n"+
@@ -139,11 +143,18 @@ func (c *Collector) validateBARContents(ctx *DeviceContext) error {
 				"Workarounds:\n"+
 				"  1. Try: sudo setpci -s %s COMMAND=0x06\n"+
 				"  2. For CNVi/WiFi: boot with native driver, dump BAR with a tool, then use --from-json",
-			ctx.Device.ClassCode, ctx.Device.Driver, ctx.Device.BDF,
+			barsWithData, ctx.Device.ClassCode, ctx.Device.Driver, ctx.Device.BDF,
 		)
 	}
 
-	if !hasContent {
+	if barsWithFF > 0 && hasValidData && barCriticalClass(ctx.Device.ClassCode) {
+		slog.Warn("some BARs returned 0xFF but valid data exists on other BARs proceeding with valid BAR data",
+			"ff_bars", barsWithFF, "total_bars", barsWithData,
+			"class", fmt.Sprintf("0x%06X", ctx.Device.ClassCode),
+		)
+	}
+
+	if barsWithData == 0 {
 		msg := fmt.Sprintf(
 			"BAR content collection failed for %d eligible BAR(s) (class 0x%06X, driver %q)",
 			len(eligible), ctx.Device.ClassCode, ctx.Device.Driver,
