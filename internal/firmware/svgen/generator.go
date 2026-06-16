@@ -40,9 +40,6 @@ type SVGeneratorConfig struct {
 func (c *SVGeneratorConfig) NVMeSQ0DoorbellOffset() uint32 {
 	stride := uint32(4) << c.NVMeDoorbellStride
 	dbBase := uint32(0x1000)
-	if c.Bar0Size > 0 {
-		dbBase = uint32(0x1000)
-	}
 	return dbBase + 0*stride
 }
 
@@ -51,9 +48,6 @@ func (c *SVGeneratorConfig) NVMeSQ0DoorbellOffset() uint32 {
 func (c *SVGeneratorConfig) NVMeCQ0DoorbellOffset() uint32 {
 	stride := uint32(4) << c.NVMeDoorbellStride
 	dbBase := uint32(0x1000)
-	if c.Bar0Size > 0 {
-		dbBase = uint32(0x1000)
-	}
 	return dbBase + 1*stride
 }
 
