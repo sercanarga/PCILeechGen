@@ -630,9 +630,9 @@ func TestClampBARsToFPGA(t *testing.T) {
 	if bar0&barSizeMask(k) != barSizeMask(k) {
 		t.Errorf("BAR0 should be clamped to 4KB, got 0x%08x", bar0)
 	}
-	// BAR1 (upper 32 bits) should be zeroed
-	if cs.ReadU32(0x14) != 0 {
-		t.Errorf("BAR1 upper bits should be zeroed, got 0x%08x", cs.ReadU32(0x14))
+	// BAR1 upper bits for 64-bit donor BAR are preserved (no longer unconditionally zeroed)
+	if cs.ReadU32(0x14) == 0 {
+		t.Errorf("BAR1 upper bits should be preserved for 64-bit, got zero")
 	}
 	// BAR2 (IO) should be clamped to 256 bytes
 	ioBar := cs.ReadU32(0x18)
