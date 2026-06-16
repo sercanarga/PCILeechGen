@@ -5,6 +5,8 @@ import (
 	"fmt"
 
 	"github.com/sercanarga/pcileechgen/internal/board"
+	"github.com/sercanarga/pcileechgen/internal/firmware"
+	"github.com/sercanarga/pcileechgen/internal/firmware/devclass"
 	"github.com/sercanarga/pcileechgen/internal/firmware/overlay"
 	"github.com/sercanarga/pcileechgen/internal/pci"
 )
@@ -16,26 +18,7 @@ const (
 )
 
 func ComputeBAR0Size(msixTableSize int, bramLimit int) int {
-	if msixTableSize <= 0 {
-		if bramLimit > 0 {
-			return bramLimit
-		}
-		return 4096
-	}
-	tableBytes := msixTableSize * 16
-	pbaBytes := (msixTableSize + 63) / 64 * 8
-	if pbaBytes < 8 {
-		pbaBytes = 8
-	}
-	required := 0x2000 + tableBytes + pbaBytes
-	size := 4096
-	for size < required {
-		size *= 2
-	}
-	if bramLimit > 0 && size > bramLimit {
-		return bramLimit
-	}
-	return size
+	return firmware.ComputeBAR0Size(msixTableSize, bramLimit)
 }
 
 // min sizes (bytes) for standard PCI caps
@@ -156,14 +139,14 @@ func zeroVendorRegisters(cs *pci.ConfigSpace, om *overlay.Map, caps []pci.Capabi
 }
 
 // ScrubConfigSpace shorthand - returns scrubbed copy, discards diff.
-func ScrubConfigSpace(cs *pci.ConfigSpace, b *board.Board) *pci.ConfigSpace {
-	scrubbed, _ := ScrubConfigSpaceWithOverlay(cs, b)
+func ScrubConfigSpace(cs *pci.ConfigSpace, b *board.Board, bar0Size ...int) *pci.ConfigSpace {
+	scrubbed, _ := ScrubConfigSpaceWithOverlay(cs, b, bar0Size...)
 	return scrubbed
 }
 
 // ScrubConfigSpaceWithOverlay scrubs the config space and returns both the
 // scrubbed copy and an overlay map recording every change.
-func ScrubConfigSpaceWithOverlay(cs *pci.ConfigSpace, b *board.Board) (*pci.ConfigSpace, *overlay.Map) {
+func ScrubConfigSpaceWithOverlay(cs *pci.ConfigSpace, b *board.Board, bar0Size ...int) (*pci.ConfigSpace, *overlay.Map) {
 	scrubbed := cs.Clone()
 	om := overlay.NewMap(scrubbed)
 
@@ -172,15 +155,18 @@ func ScrubConfigSpaceWithOverlay(cs *pci.ConfigSpace, b *board.Board) (*pci.Conf
 		bramLimit = b.BRAMSizeOrDefault()
 	}
 
+	bar0 := bramLimit
+	if len(bar0Size) > 0 && bar0Size[0] > 0 {
+		bar0 = bar0Size[0]
+	} else if info := pci.ParseMSIXCap(scrubbed); info != nil && info.TableSize > 0 {
+		bar0 = ComputeBAR0Size(info.TableSize, bramLimit)
+	}
+
 	ctx := &ScrubContext{
 		Caps:      pci.ParseCapabilities(scrubbed),
 		ExtCaps:   pci.ParseExtCapabilities(scrubbed),
 		ClassCode: cs.ReadU32(0x08) >> 8,
-		Bar0Size:  bramLimit,
-	}
-
-	if info := pci.ParseMSIXCap(scrubbed); info != nil && info.TableSize > 0 {
-		ctx.Bar0Size = ComputeBAR0Size(info.TableSize, bramLimit)
+		Bar0Size:  bar0,
 	}
 
 	for _, pass := range defaultPipeline() {
@@ -194,9 +180,9 @@ func barSizeMask(size int) uint32 {
 	return uint32(^(size - 1))
 }
 
-func clampBARsToFPGA(cs *pci.ConfigSpace, om *overlay.Map, bar0Size int) {
-	mask := barSizeMask(bar0Size)
-	bar0KB := bar0Size / 1024
+func clampBARsToFPGA(cs *pci.ConfigSpace, om *overlay.Map, ctx *ScrubContext) {
+	mask := barSizeMask(ctx.Bar0Size)
+	bar0KB := ctx.Bar0Size / 1024
 
 	for i := 0; i < 6; i++ {
 		barOffset := 0x10 + (i * 4)
@@ -216,13 +202,21 @@ func clampBARsToFPGA(cs *pci.ConfigSpace, om *overlay.Map, bar0Size int) {
 
 		is64bit := (barVal & 0x06) == 0x04
 		if is64bit && i < 5 {
+			om.WriteU32(barOffset+4, 0xFFFFFFFF, fmt.Sprintf("set upper dword of 64-bit BAR%d to 0xFFFFFFFF for size probe", i))
 			i++
 		}
 	}
 
 	bar0 := cs.BAR(0)
 	if bar0 == 0 || (bar0&0x01 != 0) {
-		om.WriteU32(0x10, mask, fmt.Sprintf("create BAR0 as %dKB memory (donor had none)", bar0KB))
+		createVal := mask
+		if ctx != nil {
+			if p := devclass.ProfileForClass(ctx.ClassCode); p != nil && p.Uses64BitBAR {
+				createVal = mask | 0x04
+				om.WriteU32(0x14, 0xFFFFFFFF, fmt.Sprintf("create BAR1 upper for 64-bit BAR0 %dKB", bar0KB))
+			}
+		}
+		om.WriteU32(0x10, createVal, fmt.Sprintf("create BAR0 as %dKB memory (donor had none)", bar0KB))
 	}
 }
 
@@ -246,29 +240,15 @@ func relocateMSIXToBRAM(cs *pci.ConfigSpace, om *overlay.Map, caps []pci.Capabil
 			pbaSize = 8
 		}
 
-		newTableOffset := uint32(0x1000)
-		if ctx != nil && ctx.Bar0Size > 0 {
-			newTableOffset = uint32(ctx.Bar0Size/2) &^ 0xF
-			if newTableOffset < 0x2000 {
-				newTableOffset = 0x2000
-			}
-			if newTableOffset >= 0x1000 && newTableOffset < 0x1000+uint32(tableSize) {
-				newTableOffset = 0x2000
-			}
-			if newTableOffset < 0x40 {
-				newTableOffset = 0x1000
-			}
-			if newTableOffset+uint32(tableSize)+16 > uint32(ctx.Bar0Size) {
-				newTableOffset = uint32(ctx.Bar0Size) - uint32(tableSize) - 16
-				newTableOffset &^= 0xF
-				if newTableOffset < 0x1000 {
-					newTableOffset = 0x1000
-				}
-			}
+		dstrd := uint32(0)
+		var newTableOffset, newPBAOffset uint32
+		if ctx != nil {
+			newTableOffset, newPBAOffset, _ = firmware.MSIXPlacement(ctx.Bar0Size, info.TableSize, ctx.ClassCode, dstrd)
+		} else {
+			newTableOffset = 0x1000
+			newPBAOffset = newTableOffset + uint32(tableSize)
+			newPBAOffset = (newPBAOffset + 7) &^ 7
 		}
-		newPBAOffset := newTableOffset + uint32(tableSize)
-		newPBAOffset = (newPBAOffset + 7) &^ 7
-
 		tableReg := newTableOffset & 0xFFFFFFF8
 		pbaReg := newPBAOffset & 0xFFFFFFF8
 
