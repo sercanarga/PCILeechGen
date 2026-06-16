@@ -150,6 +150,7 @@ func GenerateProjectTCL(ctx *donor.DeviceContext, b *board.Board, libDir string)
 		Bar0Size:         bar0.Size,
 		Bar0Scale:        bar0.Scale,
 		Bar064bit:        bar0.Is64bit,
+		Bar0ByteSize:     bar0Size,
 		DSNEnabled:       ids.HasDSN,
 		MSICapVectorsStr: msiVectorsToTCL(msiVectors),
 	}

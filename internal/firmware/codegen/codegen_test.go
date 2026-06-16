@@ -106,7 +106,7 @@ func TestGenerateWritemaskCOE(t *testing.T) {
 }
 
 func TestGenerateBarContentCOE_Empty(t *testing.T) {
-	coe := GenerateBarContentCOE(nil)
+	coe := GenerateBarContentCOE(nil, 4096)
 	if !strings.Contains(coe, "Zero-filled") {
 		t.Error("empty BAR should produce zero-filled header")
 	}
@@ -116,7 +116,7 @@ func TestGenerateBarContentCOE_WithData(t *testing.T) {
 	barContents := map[int][]byte{
 		0: {0x17, 0xFF, 0x40, 0x00, 0x01, 0x00, 0x00, 0x00},
 	}
-	coe := GenerateBarContentCOE(barContents)
+	coe := GenerateBarContentCOE(barContents, 4096)
 	if !strings.Contains(coe, "Populated from donor") {
 		t.Error("populated BAR should mention donor")
 	}

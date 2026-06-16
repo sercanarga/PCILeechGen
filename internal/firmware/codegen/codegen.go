@@ -113,8 +113,12 @@ func GenerateWritemaskCOE(cs *pci.ConfigSpace) string {
 
 // GenerateBarContentCOE outputs BAR shadow COE from the lowest BAR.
 // Note: actual BAR aperture (Bar0Size) may be variable (>4KB on large boards); this seeds 4KB shadow.
-func GenerateBarContentCOE(barContents map[int][]byte) string {
-	words := make([]uint32, shadowCfgSpaceWords)
+func GenerateBarContentCOE(barContents map[int][]byte, size int) string {
+	n := 1024
+	if size > 0 {
+		n = (size + 3) / 4
+	}
+	words := make([]uint32, n)
 
 	data := firmware.LargestBar(barContents)
 	if data != nil {

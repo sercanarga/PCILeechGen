@@ -121,3 +121,14 @@ func ValidateCOEFile(content string) error {
 	}
 	return nil
 }
+
+func ValidateBARSize(bar0Size, boardBRAM int, tableOffset uint32) []string {
+	issues := []string{}
+	if bar0Size > boardBRAM {
+		issues = append(issues, fmt.Sprintf("Bar0Size %d exceeds board BRAM %d", bar0Size, boardBRAM))
+	}
+	if tableOffset > 0 && tableOffset >= uint32(bar0Size) {
+		issues = append(issues, fmt.Sprintf("MSIX table offset 0x%x not within Bar0Size %d", tableOffset, bar0Size))
+	}
+	return issues
+}
