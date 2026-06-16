@@ -533,7 +533,7 @@ func TestFullPipeline_CommandRegister(t *testing.T) {
 	}
 }
 
-// 64-bit BAR must be forced to 32-bit by scrubber.
+// 64-bit BAR from donor is preserved (not forced to 32-bit) for large BAR support.
 func TestFullPipeline_64bitBAR(t *testing.T) {
 	cs := makeCSWithPMAndMSI()
 	// BAR0 = 64-bit memory BAR (type bits [2:1] = 10)
@@ -544,19 +544,19 @@ func TestFullPipeline_64bitBAR(t *testing.T) {
 	scrubbed := ScrubConfigSpace(cs, b)
 
 	bar0 := scrubbed.ReadU32(0x10)
-	// type bits [2:1] must be 00 (32-bit)
-	if bar0&0x06 != 0 {
-		t.Errorf("BAR0 type bits = %d, want 0 (32-bit), got 0x%08X", (bar0>>1)&0x03, bar0)
+	// type bits [2:1] preserved as 64-bit mem (0x04)
+	if (bar0 & 0x06) != 0x04 {
+		t.Errorf("BAR0 type bits = %d, want 0x04 (64-bit mem), got 0x%08X", (bar0>>1)&0x03, bar0)
 	}
-	// BAR1 (upper 32 of old 64-bit) must be cleared
+	// BAR1 (upper) preserved (not cleared)
 	bar1 := scrubbed.ReadU32(0x14)
-	if bar1 != 0 {
-		t.Errorf("BAR1 (upper) = 0x%08X, want 0 (cleared after 64->32 conversion)", bar1)
+	if bar1 == 0 {
+		t.Errorf("BAR1 (upper) = 0x%08X, want preserved (not cleared for 64-bit)", bar1)
 	}
-	// BAR0 size must be 4KB
+	// size mask applied
 	sizeBits := bar0 & 0xFFFFF000
 	if sizeBits != 0xFFFFF000 {
-		t.Errorf("BAR0 size mask = 0x%08X, want 0xFFFFF000 (4KB)", sizeBits)
+		t.Errorf("BAR0 size mask = 0x%08X, want 0xFFFFF000 (4KB example)", sizeBits)
 	}
 }
 
