@@ -63,12 +63,22 @@ Example:
 			fmt.Println()
 		}
 
+		msixTableSize := 0
+		if ctx.MSIXData != nil && ctx.MSIXData.TableSize > 0 {
+			msixTableSize = ctx.MSIXData.TableSize
+		}
+		bar0Size := firmware.CappedBAR0Size(ctx, b, msixTableSize)
 		v := &validator{
 			ctx:       ctx,
 			b:         b,
 			outputDir: validateOutputDir,
-			scrubbed:  scrub.ScrubConfigSpace(ctx.ConfigSpace, b),
+			scrubbed:  scrub.ScrubConfigSpace(ctx.ConfigSpace, b, bar0Size),
 			result:    &output.ValidationResult{},
+		}
+		if b != nil {
+			if err := output.ValidateBARSize(bar0Size, b.BRAMSizeOrDefault(), 0); err != nil {
+				return err
+			}
 		}
 
 		v.validateCOEFiles()

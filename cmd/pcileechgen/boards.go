@@ -17,12 +17,12 @@ var boardsCmd = &cobra.Command{
 		boards := board.All()
 
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "NAME\tFPGA PART\tPCIe\tTOP MODULE")
-		fmt.Fprintln(w, "----\t---------\t----\t----------")
+		fmt.Fprintln(w, "NAME\tFPGA PART\tPCIe\tBRAM\tTOP MODULE")
+		fmt.Fprintln(w, "----\t---------\t----\t----\t----------")
 
 		for _, b := range boards {
-			fmt.Fprintf(w, "%s\t%s\tx%d\t%s\n",
-				b.Name, b.FPGAPart, b.PCIeLanes, b.TopModule)
+			fmt.Fprintf(w, "%s\t%s\tx%d\t%d\t%s\n",
+				b.Name, b.FPGAPart, b.PCIeLanes, b.BRAMSizeOrDefault(), b.TopModule)
 		}
 		w.Flush()
 

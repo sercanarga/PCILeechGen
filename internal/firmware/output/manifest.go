@@ -83,7 +83,7 @@ func GenerateManifest(outputDir, toolVersion, boardName string, vendorID, device
 			})
 		}
 	}
-
+	if err:=ValidateBARSize(4096,4096,0);err!=nil{return nil,err}
 	return m, nil
 }
 

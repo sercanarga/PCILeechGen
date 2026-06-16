@@ -23,6 +23,7 @@ type buildFlags struct {
 	libDir     string
 	fromJSON   string
 	stockBar   bool
+	force      bool
 }
 
 var buildOpts buildFlags
@@ -65,7 +66,10 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		}
 	}
 	if largest > uint64(b.BRAMSizeOrDefault()) {
-		slog.Warn("donor largest BAR exceeds board BRAM", "donor_bar", largest, "board_bram", b.BRAMSizeOrDefault())
+		if !buildOpts.force {
+			return fmt.Errorf("donor largest BAR exceeds board BRAM (%d > %d)", largest, b.BRAMSizeOrDefault())
+		}
+		slog.Warn("donor largest BAR exceeds board BRAM (forced)", "donor_bar", largest, "board_bram", b.BRAMSizeOrDefault())
 	}
 
 	builder := vivado.NewBuilder(b, vivado.BuildOptions{
@@ -76,6 +80,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		Timeout:    buildOpts.timeout,
 		SkipVivado: buildOpts.skipVivado,
 		StockBar:   buildOpts.stockBar,
+		Force:      buildOpts.force,
 	})
 
 	return builder.Build(ctx)
@@ -145,6 +150,7 @@ func init() {
 	buildCmd.Flags().IntVar(&buildOpts.timeout, "timeout", 3600, "Vivado synthesis timeout in seconds")
 	buildCmd.Flags().StringVar(&buildOpts.libDir, "lib-dir", "lib/pcileech-fpga", "path to pcileech-fpga library")
 	buildCmd.Flags().BoolVar(&buildOpts.stockBar, "stock-bar", false, "use stock bar controller (diagnostic: skip custom SV modules)")
+	buildCmd.Flags().BoolVar(&buildOpts.force, "force", false, "ignore donor BAR > board BRAM check")
 
 	_ = buildCmd.MarkFlagRequired("board")
 

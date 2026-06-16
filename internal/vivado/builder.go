@@ -21,6 +21,7 @@ type BuildOptions struct {
 	Timeout    int
 	SkipVivado bool
 	StockBar   bool
+	Force      bool
 }
 
 // WithDefaults returns a copy of opts with zero values replaced by sensible defaults.
@@ -58,6 +59,7 @@ func (b *Builder) Build(ctx *donor.DeviceContext) error {
 	slog.Info("generating firmware artifacts")
 	ow := fwout.NewOutputWriter(b.opts.OutputDir, b.opts.LibDir, b.opts.Jobs, b.opts.Timeout)
 	ow.StockBar = b.opts.StockBar
+	ow.Force = b.opts.Force
 	if err := ow.WriteAll(ctx, b.board); err != nil {
 		return fmt.Errorf("artifact generation failed: %w", err)
 	}
