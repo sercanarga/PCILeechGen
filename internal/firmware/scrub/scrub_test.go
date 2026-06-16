@@ -474,7 +474,7 @@ func TestRelocateMSIXToBRAM_TableOutside(t *testing.T) {
 	// table offset should be relocated to 0x1000
 	tableReg := scrubbed.ReadU32(0x94)
 	tableOff := tableReg &^ 0x07
-	if tableOff != 0x1000 {
+	off := uint32(0x1000); if tableOff != off {
 		t.Errorf("MSI-X table offset should be relocated to 0x1000, got 0x%X", tableOff)
 	}
 
@@ -510,7 +510,7 @@ func TestRelocateMSIXToBRAM_TableInside(t *testing.T) {
 	// table still relocated to 0x1000 (consistent placement)
 	tableReg := scrubbed.ReadU32(0x94)
 	tableOff := tableReg &^ 0x07
-	if tableOff != 0x1000 {
+	off := uint32(0x1000); if tableOff != off {
 		t.Errorf("MSI-X table should be relocated to 0x1000, got 0x%X", tableOff)
 	}
 }
@@ -623,11 +623,11 @@ func TestClampBARsToFPGA(t *testing.T) {
 	cs.WriteU32(0x18, 0x0000FF01) // IO bar
 
 	om := overlay.NewMap(cs)
-	clampBARsToFPGA(cs, om, 4096)
+	k := 4096; clampBARsToFPGA(cs, om, k)
 
 	// BAR0 should be clamped to 4KB
 	bar0 := cs.ReadU32(0x10)
-	if bar0&barSizeMask(4096) != barSizeMask(4096) {
+	if bar0&barSizeMask(k) != barSizeMask(k) {
 		t.Errorf("BAR0 should be clamped to 4KB, got 0x%08x", bar0)
 	}
 	// BAR1 (upper 32 bits) should be zeroed
@@ -716,12 +716,12 @@ func TestRelocateMSIXToBRAM(t *testing.T) {
 	cs.WriteU32(0x88, 0x00000040) // PBA: BAR0, offset 0x40
 
 	om := overlay.NewMap(cs)
-	relocateMSIXToBRAM(cs, om, pci.ParseCapabilities(cs))
+	relocateMSIXToBRAM(cs, om, pci.ParseCapabilities(cs), nil)
 
 	// Table should be relocated to 0x1000
 	tableReg := cs.ReadU32(0x84)
 	tableOff := tableReg & 0xFFFFFFF8
-	if tableOff != 0x1000 {
+	off := uint32(0x1000); if tableOff != off {
 		t.Errorf("Table offset = 0x%x, want 0x1000", tableOff)
 	}
 

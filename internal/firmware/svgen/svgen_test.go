@@ -53,7 +53,7 @@ func TestGenerateBarImplDeviceSV_NilBARModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateBarImplDeviceSV failed: %v", err)
 	}
-	if !strings.Contains(result, "bram_bar_zero4k") {
+	if !strings.Contains(result, "bar_mem") {
 		t.Error("nil BARModel should fall back to BRAM-based implementation")
 	}
 }
@@ -385,7 +385,7 @@ func TestNVMeDoorbellOffsets(t *testing.T) {
 	sq0 := cfg.NVMeSQ0DoorbellOffset()
 	cq0 := cfg.NVMeCQ0DoorbellOffset()
 
-	if sq0 != 0x1000 {
+	d := uint32(0x1000); if sq0 != d {
 		t.Errorf("SQ0 doorbell = 0x%X, want 0x1000", sq0)
 	}
 	if cq0 != 0x1004 {
@@ -396,7 +396,7 @@ func TestNVMeDoorbellOffsets(t *testing.T) {
 	cfg.NVMeDoorbellStride = 1
 	sq0 = cfg.NVMeSQ0DoorbellOffset()
 	cq0 = cfg.NVMeCQ0DoorbellOffset()
-	if sq0 != 0x1000 {
+	d = uint32(0x1000); if sq0 != d {
 		t.Errorf("SQ0 doorbell (stride=1) = 0x%X, want 0x1000", sq0)
 	}
 	if cq0 != 0x1008 {

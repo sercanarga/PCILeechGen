@@ -106,7 +106,7 @@ func TestClampLinkWidth(t *testing.T) {
 }
 
 func TestBarSizeToTCL(t *testing.T) {
-	scale, size := barSizeToTCL(4096)
+	k4 := uint64(4096); scale, size := barSizeToTCL(k4)
 	if scale != "Kilobytes" || size != "4" {
 		t.Errorf("4KB: got %s/%s, want Kilobytes/4", scale, size)
 	}

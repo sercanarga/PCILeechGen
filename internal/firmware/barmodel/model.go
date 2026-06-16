@@ -123,8 +123,12 @@ func buildNVMeBARModel(barData []byte) *BARModel {
 		}
 	}
 
+	sz := len(barData)
+	if sz == 0 {
+		sz = 4096
+	}
 	return &BARModel{
-		Size:      4096,
+		Size:      sz,
 		Registers: regs,
 	}
 }
@@ -179,8 +183,12 @@ func buildXHCIBARModel(barData []byte) *BARModel {
 		}
 	}
 
+	sz := len(barData)
+	if sz == 0 {
+		sz = 4096
+	}
 	return &BARModel{
-		Size:      4096,
+		Size:      sz,
 		Registers: regs,
 	}
 }
@@ -256,8 +264,12 @@ func buildEthernetBARModel(barData []byte) *BARModel {
 		}
 	}
 
+	sz := len(barData)
+	if sz == 0 {
+		sz = 4096
+	}
 	return &BARModel{
-		Size:      4096,
+		Size:      sz,
 		Registers: regs,
 	}
 }
@@ -364,8 +376,12 @@ func buildAudioBARModel(barData []byte) *BARModel {
 		// regs[16] (IC at 0x64) and regs[17] (IR at 0x68) default to 0 - correct.
 	}
 
+	sz := len(barData)
+	if sz == 0 {
+		sz = 4096
+	}
 	return &BARModel{
-		Size:      4096,
+		Size:      sz,
 		Registers: regs,
 	}
 }

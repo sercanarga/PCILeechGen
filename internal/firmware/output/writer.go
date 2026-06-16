@@ -461,7 +461,6 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 
 	if devClass == devclass.ClassNVMe {
 		cfg.NVMeIdentify = nvme.BuildIdentifyData(ids, barData)
-		// CAP_HI at BAR offset 0x04, DSTRD = bits [3:0]
 		if len(barData) >= 0x08 {
 			capHI := util.ReadLE32(barData, 0x04)
 			cfg.NVMeDoorbellStride = capHI & 0x0F
@@ -470,11 +469,31 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 
 	if ctx.MSIXData != nil && ctx.MSIXData.TableSize > 0 {
 		tableSize := ctx.MSIXData.TableSize * 16
-		pbaOffset := uint32(0x1000) + uint32(tableSize)
+		tableOff := uint32(0x1000)
+		if devClass == devclass.ClassNVMe && cfg.Bar0Size > 0 {
+			tableOff = uint32(cfg.Bar0Size/2) &^ 0xF
+			if tableOff < 0x2000 {
+				tableOff = 0x2000
+			}
+			if tableOff >= 0x1000 && tableOff < 0x1000+uint32(tableSize) {
+				tableOff = 0x2000
+			}
+			if tableOff < 0x40 {
+				tableOff = 0x1000
+			}
+			if tableOff+uint32(tableSize)+16 > uint32(cfg.Bar0Size) {
+				tableOff = uint32(cfg.Bar0Size) - uint32(tableSize) - 16
+				tableOff &^= 0xF
+				if tableOff < 0x1000 {
+					tableOff = 0x1000
+				}
+			}
+		}
+		pbaOffset := tableOff + uint32(tableSize)
 		pbaOffset = (pbaOffset + 7) &^ 7
 		cfg.MSIXConfig = &svgen.MSIXConfig{
 			NumVectors:  ctx.MSIXData.TableSize,
-			TableOffset: 0x1000,
+			TableOffset: tableOff,
 			PBAOffset:   pbaOffset,
 		}
 		cfg.HasMSIX = true

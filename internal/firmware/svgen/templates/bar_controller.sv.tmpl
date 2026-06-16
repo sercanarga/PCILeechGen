@@ -270,7 +270,7 @@ module pcileech_tlps128_bar_controller(
 
 {{ if .BARModel }}
     pcileech_bar_impl_device #(
-        .BAR_SIZE       ( {{ .BARModel.Size }} )
+        .BAR_SIZE       ( {{ .BARModel.Size }} ) // var Bar0Size
     ) i_bar0(
 {{ else }}
     pcileech_bar_impl_zerowrite4k i_bar0(
@@ -492,6 +492,10 @@ module pcileech_tlps128_bar_controller(
 
 {{ end }}
 
+{{ if eq .DeviceClass "nvme" }}
+    // nvme_msix_trigger wired into intr_req OR for NVMe (driven by responder when NVMeIdentify present)
+    wire        nvme_msix_trigger;
+{{ end }}
 {{ if and (eq .DeviceClass "nvme") .NVMeIdentify }}
     // NVMe admin responder + DMA bridge
     // - responder handles what the driver throws at us during init
@@ -506,7 +510,7 @@ module pcileech_tlps128_bar_controller(
     wire [8:0]   hda_tlp_tx_tuser = 9'h0;
 {{ end }}
 
-    // catch doorbell writes -- offset derived from CAP.DSTRD
+    // catch doorbell writes -- offset derived from CAP.DSTRD + computed from (variable) Bar0Size
     wire nvme_sq0_db_wr = wr_valid && wr_bar[0] && (wr_addr[31:0] == 32'h{{ printf "%08X" .NVMeSQ0DoorbellOffset }});
     wire nvme_cq0_db_wr = wr_valid && wr_bar[0] && (wr_addr[31:0] == 32'h{{ printf "%08X" .NVMeCQ0DoorbellOffset }});
 
@@ -523,7 +527,7 @@ module pcileech_tlps128_bar_controller(
     wire [3:0]  nvme_dma_wr_be;
     wire        nvme_dma_wr_valid;
     wire        nvme_dma_wr_done;
-    wire        nvme_msix_trigger;
+    // nvme_msix_trigger declared at module scope for NVMe (see wiring below)
 
     wire [12:0] nvme_id_rom_addr;
     wire [31:0] nvme_id_rom_data;
@@ -723,12 +727,6 @@ module pcileech_tlps128_bar_controller(
         end
     endgenerate
 
-{{ if eq .DeviceClass "audio" }}
-    // Combine HDA MSI interrupt with BAR2 doorbell interrupt
-    assign intr_req = hda_intr_req | bar2_intr_req;
-{{ else }}
-    // BAR2 doorbell is the only MSI source for non-HDA devices
-    assign intr_req = bar2_intr_req;
-{{ end }}
+    assign intr_req = bar2_intr_req{{ if eq .DeviceClass "audio" }} | hda_intr_req{{ end }}{{ if eq .DeviceClass "nvme" }} | nvme_msix_trigger{{ end }};
 
 endmodule

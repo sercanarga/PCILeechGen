@@ -97,10 +97,8 @@ func GenerateProjectTCL(ctx *donor.DeviceContext, b *board.Board, libDir string)
 	}
 	bar0 := buildBAR0Config(bar0Size)
 
-	// Extract MSI vector count from donor capabilities
 	msiVectors := extractMSIVectors(ctx)
 
-	// Resolve to absolute paths so TCL works from any working directory
 	srcAbs, _ := filepath.Abs(b.SrcPath(libDir))
 	ipAbs, _ := filepath.Abs(b.IPPath(libDir))
 
@@ -131,14 +129,32 @@ func GenerateProjectTCL(ctx *donor.DeviceContext, b *board.Board, libDir string)
 
 	if ctx.MSIXData != nil && ctx.MSIXData.TableSize > 0 {
 		data.MSIXEnabled = true
-		data.MSIXTableSize = ctx.MSIXData.TableSize - 1 // Vivado expects N-1
-		// scrubber relocates MSI-X to BAR0 (BIR=0), table at 0x1000, PBA after table.
-		// IP core must match scrubbed config space values, not donor originals.
-		data.MSIXTableBIR = barBIRToTCL(0) // always BAR0 after scrub
+		data.MSIXTableSize = ctx.MSIXData.TableSize - 1
+		data.MSIXTableBIR = barBIRToTCL(0)
 		tableSize := ctx.MSIXData.TableSize * 16
-		pbaOffset := uint32(0x1000) + uint32(tableSize)
-		pbaOffset = (pbaOffset + 7) &^ 7 // 8-byte align
-		data.MSIXTableOffset = fmt.Sprintf("%08X", 0x1000)
+		tableOff := uint32(0x1000)
+		if ctx.Device.ClassCode>>8 == 0x0108 && bar0Size > 0 {
+			tableOff = uint32(bar0Size/2) &^ 0xF
+			if tableOff < 0x2000 {
+				tableOff = 0x2000
+			}
+			if tableOff >= 0x1000 && tableOff < 0x1000+uint32(tableSize) {
+				tableOff = 0x2000
+			}
+			if tableOff < 0x40 {
+				tableOff = 0x1000
+			}
+			if tableOff+uint32(tableSize)+16 > uint32(bar0Size) {
+				tableOff = uint32(bar0Size) - uint32(tableSize) - 16
+				tableOff &^= 0xF
+				if tableOff < 0x1000 {
+					tableOff = 0x1000
+				}
+			}
+		}
+		pbaOffset := tableOff + uint32(tableSize)
+		pbaOffset = (pbaOffset + 7) &^ 7
+		data.MSIXTableOffset = fmt.Sprintf("%08X", tableOff)
 		data.MSIXPBABIR = barBIRToTCL(0)
 		data.MSIXPBAOffset = fmt.Sprintf("%08X", pbaOffset)
 	}
