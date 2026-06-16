@@ -51,16 +51,18 @@
 </td><td valign="top">
 
 **BAR Emulation**
-- BAR0 Layout (type, size, 32/64-bit)
-- BAR Content Emulation (donor memory snapshot)
+- BAR0 Layout (type, size, 32/64-bit) — dynamic sizing from actual donor BAR (capped by board `bram_size`)
+- Proper 64-bit BAR preservation (not forced to 32-bit)
+- BAR Content Emulation (sized to donor BAR or board BRAM limit)
+- Smart MSIX table placement (avoids overlap with NVMe doorbells)
 - NVMe CC->CSTS State Machine
 - NVMe Admin Queue Responder (Identify, Set/Get Features, Create IO CQ/SQ)
 - NVMe DMA Bridge (admin queue doorbell + completion)
 - xHCI USBCMD/USBSTS State Machine
 - Auto-bind VFIO on BAR read failure
 - Unreliable probe data detection (0xFF rejection)
-- BAR size power-of-2 rounding
-- Build-time offset validation
+- BAR size power-of-2 rounding (respects donor size + board limit)
+- Build-time offset validation + donor BAR vs board BRAM compatibility check
 
 </td></tr>
 <tr><td valign="top">
@@ -104,6 +106,7 @@
 
 **Diagnostics & Validation**
 - VFIO Diagnostics (power state, BAR accessibility, IOMMU isolation)
+- Donor BAR size vs board `bram_size` compatibility check (warns in `check`/`build` if donor BAR exceeds board BRAM)
 - Fallback Config (class-based defaults for NVMe, xHCI, Ethernet, Audio, GPU, SATA, Wi-Fi, Thunderbolt, Generic)
 - Post-Build Validation (output file existence, SV IDs, HEX/COE format)
 - Vivado Build Report (error categorization, benign warning filter)
@@ -137,6 +140,8 @@ flowchart LR
 ---
 
 ## Supported Boards
+
+Some boards declare higher `bram_size` in their definition (EnigmaX1=8K, CaptainDMA_75T=16K, CaptainDMA_100T/ZDMA/NeTV2_100T/ac701=32K). These support larger BAR0 emulation (dynamic sizing up to the declared BRAM, with proper 64-bit and MSIX handling).
 
 | Board | FPGA | Lanes | Form Factor |
 |:------|:-----|:-----:|:-----------:|
@@ -222,7 +227,7 @@ Total: 16 devices
 
 ### `check` - Verify Donor Device
 
-Runs a full diagnostic on a device to verify donor suitability.
+Runs a full diagnostic on a device to verify donor suitability, including new donor BAR size vs board `bram_size` compatibility (warns if donor largest BAR exceeds selected board's BRAM).
 
 ```bash
 sudo ./bin/pcileechgen check --bdf 0000:02:00.0
@@ -260,6 +265,7 @@ BARs:
 --- Board Compatibility ---
 Donor Link: 2.5 GT/s x1
 Donor DSN:  0x0123456789abcdef
+Donor largest BAR: 16 KiB
 
 Compatible boards:
   PCIeSquirrel           xc7a35tfgg484-2 x1 (exact match)
@@ -399,10 +405,10 @@ pcileech_datastore/
 ├── device_context.json                  # Donor device snapshot
 ├── pcileech_cfgspace.coe                # 4KB config space (scrubbed)
 ├── pcileech_cfgspace_writemask.coe      # Per-register write masks
-├── pcileech_bar_zero4k.coe             # BAR0 content snapshot
-├── pcileech_bar_impl_device.sv         # BAR implementation (register-level)
+├── pcileech_bar_zero4k.coe             # BAR0 content (sized to donor BAR or board BRAM limit; "zero4k" name kept for --stock-bar / stock Vivado template compatibility)
+├── pcileech_bar_impl_device.sv         # BAR implementation (register-level, preferred for large BARs)
 ├── pcileech_tlps128_bar_controller.sv  # TLP BAR controller
-├── pcileech_msix_table.sv              # MSI-X table + PBA emulation
+├── pcileech_msix_table.sv              # MSI-X table + PBA emulation (placed to avoid NVMe doorbell overlap)
 ├── pcileech_nvme_admin_responder.sv    # NVMe admin queue FSM (if NVMe)
 ├── pcileech_nvme_dma_bridge.sv        # NVMe DMA bridge (if NVMe)
 ├── tlp_latency_emulator.sv            # Response latency emulation
@@ -417,6 +423,8 @@ pcileech_datastore/
 ├── src/                                # Patched board SV sources
 └── *.bin                               # Bitstream (after Vivado)
 ```
+
+Note: For boards with higher `bram_size` (e.g. 32K on CaptainDMA_100T / ZDMA) and donors with large BARs, the generator produces sized BAR content/models and uses smart MSIX placement. The legacy "4K zerowrite" path is still available via `--stock-bar`. `check` and `build` now warn if the donor's largest BAR exceeds the selected board's `bram_size`.
 
 ---
 
