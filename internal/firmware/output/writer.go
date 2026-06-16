@@ -145,7 +145,7 @@ func (ow *OutputWriter) writeConfigSpaceArtifacts(ctx *donor.DeviceContext, scru
 
 	scrub.ScrubBarContent(ctx.BARContents, ctx.Device.ClassCode, ctx.Device.VendorID, bar0Size)
 	if err := ow.writeFile("pcileech_bar_zero4k.coe",
-		codegen.GenerateBarContentCOE(ctx.BARContents, bar0Size)); err != nil {
+		codegen.GenerateBarContentCOE(ctx.BARContents, firmware.CappedBAR0Size(ctx, b, msixTableSize))); err != nil {
 		return fmt.Errorf("failed to write bar zero COE: %w", err)
 	}
 	return nil
