@@ -12,18 +12,18 @@ import (
 
 // BARRegister describes a single register inside a BAR.
 type BARRegister struct {
-	Offset uint32 // byte offset in BAR
-	Width  int    // 1, 2, or 4 bytes
-	Reset  uint32 // reset/initial value (from donor snapshot or spec default)
-	RWMask uint32 // writable bits (1 = host can write, 0 = read-only)
-	Name   string // human-readable register name
-	IsRW1C     bool // true if this register uses write-1-to-clear semantics
-	IsFSMDriven bool // true if driven by a dedicated FSM always block (excluded from generic reset/write)
+	Offset      uint32 // byte offset in BAR
+	Width       int    // 1, 2, or 4 bytes
+	Reset       uint32 // reset/initial value (from donor snapshot or spec default)
+	RWMask      uint32 // writable bits (1 = host can write, 0 = read-only)
+	Name        string // human-readable register name
+	IsRW1C      bool   // true if this register uses write-1-to-clear semantics
+	IsFSMDriven bool   // true if driven by a dedicated FSM always block (excluded from generic reset/write)
 }
 
 // BARModel is the complete register map that ends up in the SV template.
 type BARModel struct {
-	Size      int           // BAR size in bytes (typically 4096)
+	Size      int
 	Registers []BARRegister // ordered by Offset
 }
 
@@ -124,9 +124,9 @@ func buildNVMeBARModel(barData []byte) *BARModel {
 	}
 
 	sz := len(barData)
-	if sz == 0 {
-		sz = 4096
-	}
+	// Do not force 4096 here. When donor barData is empty (len==0), Size starts at 0
+	// and is set to the final capped bar0Size by the caller (output/writer.go) if larger.
+	// This ensures Size is never forced to 4096 when donor data or Bar0Size is larger.
 	return &BARModel{
 		Size:      sz,
 		Registers: regs,
@@ -184,9 +184,9 @@ func buildXHCIBARModel(barData []byte) *BARModel {
 	}
 
 	sz := len(barData)
-	if sz == 0 {
-		sz = 4096
-	}
+	// Do not force 4096 here. When donor barData is empty (len==0), Size starts at 0
+	// and is set to the final capped bar0Size by the caller (output/writer.go) if larger.
+	// This ensures Size is never forced to 4096 when donor data or Bar0Size is larger.
 	return &BARModel{
 		Size:      sz,
 		Registers: regs,
@@ -227,10 +227,10 @@ func buildEthernetBARModel(barData []byte) *BARModel {
 		{Offset: 0x48, Width: 4, Name: "TIMER", RWMask: 0xFFFFFFFF},
 		{Offset: 0x50, Width: 4, Name: "RXMAXSIZE", RWMask: 0x00003FFF},
 		{Offset: 0x58, Width: 4, Name: "CPLUSCMD", RWMask: 0x0000FFFF},
-		{Offset: 0x6C, Width: 4, Name: "PHYSTATUS", RWMask: 0x00000000}, // RO
-		{Offset: 0xDC, Width: 4, Name: "PHYAR", RWMask: 0xFFFFFFFF, IsFSMDriven: true},     // bit31 = ready
-		{Offset: 0xE0, Width: 4, Name: "ERIAR", RWMask: 0xFFFFFFFF, IsFSMDriven: true},     // bit31 = done
-		{Offset: 0xFC, Width: 4, Name: "RXMISSED", RWMask: 0x00000000},  // RO
+		{Offset: 0x6C, Width: 4, Name: "PHYSTATUS", RWMask: 0x00000000},                // RO
+		{Offset: 0xDC, Width: 4, Name: "PHYAR", RWMask: 0xFFFFFFFF, IsFSMDriven: true}, // bit31 = ready
+		{Offset: 0xE0, Width: 4, Name: "ERIAR", RWMask: 0xFFFFFFFF, IsFSMDriven: true}, // bit31 = done
+		{Offset: 0xFC, Width: 4, Name: "RXMISSED", RWMask: 0x00000000},                 // RO
 	}
 
 	populateResetValues(regs, barData)
@@ -265,9 +265,9 @@ func buildEthernetBARModel(barData []byte) *BARModel {
 	}
 
 	sz := len(barData)
-	if sz == 0 {
-		sz = 4096
-	}
+	// Do not force 4096 here. When donor barData is empty (len==0), Size starts at 0
+	// and is set to the final capped bar0Size by the caller (output/writer.go) if larger.
+	// This ensures Size is never forced to 4096 when donor data or Bar0Size is larger.
 	return &BARModel{
 		Size:      sz,
 		Registers: regs,
@@ -377,9 +377,9 @@ func buildAudioBARModel(barData []byte) *BARModel {
 	}
 
 	sz := len(barData)
-	if sz == 0 {
-		sz = 4096
-	}
+	// Do not force 4096 here. When donor barData is empty (len==0), Size starts at 0
+	// and is set to the final capped bar0Size by the caller (output/writer.go) if larger.
+	// This ensures Size is never forced to 4096 when donor data or Bar0Size is larger.
 	return &BARModel{
 		Size:      sz,
 		Registers: regs,
