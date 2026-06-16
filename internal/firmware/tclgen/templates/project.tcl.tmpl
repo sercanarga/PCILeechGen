@@ -87,7 +87,7 @@ if {[llength $all_ips] > 0} {
 
 # Point BRAM IPs to the generated COE files (library defaults are all-zero)
 set bar_bram [get_ips -quiet bram_bar_zero4k]
-if { $bar_bram != "" } {
+if { $bar_bram != "" {{if gt .Bar0ByteSize 4096}} && 0{{end}} } {
   set coe_path [file normalize "${origin_dir}/pcileech_bar_zero4k.coe"]
   if {[file exists $coe_path]} {
     set_property -dict [list CONFIG.Coe_File $coe_path] $bar_bram

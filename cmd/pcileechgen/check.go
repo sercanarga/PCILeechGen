@@ -39,12 +39,13 @@ Example:
 
 // checker bundles state for a single device compatibility check.
 type checker struct {
-	bdf    pci.BDF
-	sysfs  *donor.SysfsReader
-	w      io.Writer
-	dev    *pci.PCIDevice
-	cs     *pci.ConfigSpace
-	issues int
+	bdf        pci.BDF
+	sysfs      *donor.SysfsReader
+	w          io.Writer
+	dev        *pci.PCIDevice
+	cs         *pci.ConfigSpace
+	issues     int
+	largestBAR uint64
 }
 
 func (c *checker) run() error {
@@ -205,6 +206,11 @@ func (c *checker) showBARs() {
 	if err != nil {
 		return
 	}
+	for _, bar := range bars {
+		if !bar.IsDisabled() && bar.Size > c.largestBAR {
+			c.largestBAR = bar.Size
+		}
+	}
 
 	fmt.Fprintf(c.w, "\nBARs:\n")
 	for _, bar := range bars {
@@ -251,6 +257,10 @@ func (c *checker) showBoardCompatibility() {
 		}
 		if ids.HasPCIeCap && int(ids.LinkWidth) == b.PCIeLanes {
 			note = color.Dim(" (exact match)")
+		}
+		if c.largestBAR > 0 && uint64(b.BRAMSizeOrDefault()) < c.largestBAR {
+			label = color.Warnf("%-22s %s x%d", b.Name, b.FPGAPart, b.PCIeLanes)
+			note = color.Dim(fmt.Sprintf(" (donor BAR %d > board BRAM %d)", c.largestBAR, b.BRAMSizeOrDefault()))
 		}
 		fmt.Fprintf(c.w, "  %s%s\n", label, note)
 		compatible++

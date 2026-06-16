@@ -6,14 +6,17 @@ import (
 	"github.com/sercanarga/pcileechgen/internal/util"
 )
 
-func ScrubBarContent(barContents map[int][]byte, classCode uint32, vendorID uint16) {
-	ScrubBarContentWithBRAM(barContents, classCode, vendorID, 4096)
+func ScrubBarContent(barContents map[int][]byte, classCode uint32, vendorID uint16, bramSize int) {
+	ScrubBarContentWithBRAM(barContents, classCode, vendorID, bramSize)
 }
 
 func ScrubBarContentWithBRAM(barContents map[int][]byte, classCode uint32, vendorID uint16, bramSize int) {
 	data := firmware.LargestBar(barContents)
 	if data == nil {
 		return
+	}
+	if bramSize > 0 && len(data) > bramSize {
+		data = data[:bramSize]
 	}
 
 	strategy := devclass.StrategyForClassAndVendor(classCode, vendorID)
@@ -23,7 +26,6 @@ func ScrubBarContentWithBRAM(barContents map[int][]byte, classCode uint32, vendo
 
 	strategy.ScrubBAR(data)
 
-	// xHCI also needs BRAM-aware register clamping
 	if strategy.DeviceClass() == devclass.ClassXHCI {
 		scrubXHCIBar0(data, bramSize)
 	}

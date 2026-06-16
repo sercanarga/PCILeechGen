@@ -132,9 +132,13 @@ func (ow *OutputWriter) writeConfigSpaceArtifacts(ctx *donor.DeviceContext, scru
 		return fmt.Errorf("failed to write writemask COE: %w", err)
 	}
 
-	scrub.ScrubBarContent(ctx.BARContents, ctx.Device.ClassCode, ctx.Device.VendorID)
+	bar0Size := 4096
+	if d := firmware.LargestBar(ctx.BARContents); d != nil && len(d) > bar0Size {
+		bar0Size = len(d)
+	}
+	scrub.ScrubBarContent(ctx.BARContents, ctx.Device.ClassCode, ctx.Device.VendorID, bar0Size)
 	if err := ow.writeFile("pcileech_bar_zero4k.coe",
-		codegen.GenerateBarContentCOE(ctx.BARContents)); err != nil {
+		codegen.GenerateBarContentCOE(ctx.BARContents, bar0Size)); err != nil {
 		return fmt.Errorf("failed to write bar zero COE: %w", err)
 	}
 	return nil
@@ -439,12 +443,18 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 	}
 	slog.Info("device class resolution", "class", devClass)
 
-	bar0Size := 4096
+	bar0Size := b.BRAMSizeOrDefault()
 	if ctx.MSIXData != nil && ctx.MSIXData.TableSize > 0 {
 		bar0Size = scrub.ComputeBAR0Size(ctx.MSIXData.TableSize, b.BRAMSizeOrDefault())
 	}
+	if d := firmware.LargestBar(ctx.BARContents); d != nil && len(d) > bar0Size {
+		bar0Size = len(d)
+	}
 	if bm != nil && bm.Size < bar0Size {
 		bm.Size = bar0Size
+	}
+	if bm == nil && bar0Size > 4096 {
+		bm = &barmodel.BARModel{Size: bar0Size}
 	}
 
 	cfg := &svgen.SVGeneratorConfig{
@@ -503,6 +513,16 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 	// MSI is the primary interrupt mechanism for HDA devices.
 	if msiInfo := extractMSIInfo(scrubbedCS); msiInfo != nil {
 		cfg.MSIConfig = msiInfo
+	}
+
+	bram := b.BRAMSizeOrDefault()
+	for _, e := range ValidateBARSize(bar0Size, bram, 0) {
+		slog.Warn(e)
+	}
+	if cfg.MSIXConfig != nil {
+		for _, e := range ValidateBARSize(bar0Size, bram, cfg.MSIXConfig.TableOffset) {
+			slog.Warn(e)
+		}
 	}
 
 	return cfg

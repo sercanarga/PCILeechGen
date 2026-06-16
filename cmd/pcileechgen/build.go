@@ -58,6 +58,16 @@ func runBuild(cmd *cobra.Command, args []string) error {
 
 	printBuildSummary(ctx, b)
 
+	largest := uint64(0)
+	for _, bar := range ctx.BARs {
+		if !bar.IsDisabled() && bar.Size > largest {
+			largest = bar.Size
+		}
+	}
+	if largest > uint64(b.BRAMSizeOrDefault()) {
+		slog.Warn("donor largest BAR exceeds board BRAM", "donor_bar", largest, "board_bram", b.BRAMSizeOrDefault())
+	}
+
 	builder := vivado.NewBuilder(b, vivado.BuildOptions{
 		VivadoPath: buildOpts.vivadoPath,
 		OutputDir:  buildOpts.output,
