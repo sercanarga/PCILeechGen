@@ -115,12 +115,16 @@ func TestScrubConfigSpace_ClampBAR0(t *testing.T) {
 	scrubbed := ScrubConfigSpace(cs, nil)
 
 	bar0 := scrubbed.BAR(0)
-	if bar0 != 0xFFFFF000 {
-		t.Errorf("BAR0 should be clamped to 4 KB (type=32-bit): got 0x%08x, want 0xFFFFF000", bar0)
+	// for 64-bit donor, low bits preserve type (64-bit mem) + size mask; upper not zeroed
+	if (bar0 & 0x0F) != 0x04 {
+		t.Errorf("BAR0 should preserve 64-bit mem type: got 0x%08x", bar0)
+	}
+	if bar0&0xFFFFF000 != 0xFFFFF000 {
+		t.Errorf("BAR0 size mask: got 0x%08x", bar0)
 	}
 	bar1 := scrubbed.BAR(1)
-	if bar1 != 0 {
-		t.Errorf("BAR1 (upper 64-bit) should be zero: got 0x%08x", bar1)
+	if bar1 == 0 {
+		t.Errorf("BAR1 (upper 64-bit) should be preserved (not zeroed): got 0")
 	}
 	bar2 := scrubbed.BAR(2)
 	if bar2 != 0xFFFFF000 {
