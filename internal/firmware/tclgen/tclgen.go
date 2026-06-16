@@ -9,6 +9,7 @@ import (
 	"github.com/sercanarga/pcileechgen/internal/board"
 	"github.com/sercanarga/pcileechgen/internal/donor"
 	"github.com/sercanarga/pcileechgen/internal/firmware"
+	"github.com/sercanarga/pcileechgen/internal/firmware/devclass"
 	"github.com/sercanarga/pcileechgen/internal/firmware/scrub"
 )
 
@@ -37,6 +38,7 @@ type projectTCLData struct {
 	Bar0Size    string
 	Bar0Scale   string
 	Bar064bit   bool
+	Bar0ByteSize int
 
 	DSNEnabled       bool
 	MSICapVectorsStr string
@@ -70,13 +72,35 @@ type bar0Config struct {
 	Is64bit bool
 }
 
-func buildBAR0Config(bar0Size int) bar0Config {
+func buildBAR0Config(bar0Size int, ctx *donor.DeviceContext) bar0Config {
 	scale, size := barSizeToTCL(uint64(bar0Size))
+	is64 := false
+	if ctx != nil {
+		if len(ctx.BARs) > 0 {
+			raw := ctx.BARs[0].RawValue
+			if raw != 0 {
+				is64 = (raw & 0x06) == 0x04
+			} else {
+				p := devclass.ProfileForClass(ctx.Device.ClassCode)
+				if p != nil {
+					is64 = p.Uses64BitBAR
+				}
+			}
+		} else if ctx.ConfigSpace != nil {
+			raw := ctx.ConfigSpace.BAR(0)
+			is64 = (raw & 0x06) == 0x04
+		} else {
+			p := devclass.ProfileForClass(ctx.Device.ClassCode)
+			if p != nil {
+				is64 = p.Uses64BitBAR
+			}
+		}
+	}
 	return bar0Config{
 		Enabled: true,
 		Scale:   scale,
 		Size:    size,
-		Is64bit: false,
+		Is64bit: is64,
 	}
 }
 
@@ -91,11 +115,14 @@ func GenerateProjectTCL(ctx *donor.DeviceContext, b *board.Board, libDir string)
 	linkWidth := clampLinkWidth(ids.LinkWidth, b.PCIeLanes)
 	linkSpeed := b.MaxLinkSpeedOrDefault()
 
-	bar0Size := 4096
+	bar0Size := b.BRAMSizeOrDefault()
 	if ctx.MSIXData != nil && ctx.MSIXData.TableSize > 0 {
 		bar0Size = scrub.ComputeBAR0Size(ctx.MSIXData.TableSize, b.BRAMSizeOrDefault())
 	}
-	bar0 := buildBAR0Config(bar0Size)
+	if d := firmware.LargestBar(ctx.BARContents); d != nil && len(d) > bar0Size {
+		bar0Size = len(d)
+	}
+	bar0 := buildBAR0Config(bar0Size, ctx)
 
 	msiVectors := extractMSIVectors(ctx)
 

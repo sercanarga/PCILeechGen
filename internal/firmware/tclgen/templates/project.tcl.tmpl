@@ -143,7 +143,7 @@ if { $pcie_ip != "" } {
     CONFIG.Bar0_Type            Memory \
     CONFIG.Bar0_Scale           {{.Bar0Scale}} \
     CONFIG.Bar0_Size            {{.Bar0Size}} \
-    CONFIG.Bar0_64bit           {{if .Bar064bit}}true{{else}}false{{end}} \
+    CONFIG.Bar0_64bit {{if .Bar064bit}}true{{else}}false{{end}} \
   ] $pcie_ip
 {{end}}
   # Enable or disable DSN based on donor device

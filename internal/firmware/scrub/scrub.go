@@ -211,12 +211,11 @@ func clampBARsToFPGA(cs *pci.ConfigSpace, om *overlay.Map, bar0Size int) {
 			continue
 		}
 
-		newBar := mask | (barVal & 0x0B)
+		newBar := mask | (barVal & 0x0F)
 		om.WriteU32(barOffset, newBar, fmt.Sprintf("clamp BAR%d to %d KB", i, bar0KB))
 
 		is64bit := (barVal & 0x06) == 0x04
 		if is64bit && i < 5 {
-			om.WriteU32(barOffset+4, 0, "zero upper dword")
 			i++
 		}
 	}
