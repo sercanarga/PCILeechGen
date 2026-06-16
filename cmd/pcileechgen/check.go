@@ -17,6 +17,7 @@ import (
 )
 
 var checkDevice string
+var checkForce bool
 
 var checkCmd = &cobra.Command{
 	Use:   "check",
@@ -259,7 +260,12 @@ func (c *checker) showBoardCompatibility() {
 			note = color.Dim(" (exact match)")
 		}
 		if c.largestBAR > 0 && uint64(b.BRAMSizeOrDefault()) < c.largestBAR {
-			label = color.Warnf("%-22s %s x%d", b.Name, b.FPGAPart, b.PCIeLanes)
+			if !checkForce {
+				c.issues++
+				label = color.Failf("%-22s %s x%d", b.Name, b.FPGAPart, b.PCIeLanes)
+			} else {
+				label = color.Warnf("%-22s %s x%d", b.Name, b.FPGAPart, b.PCIeLanes)
+			}
 			note = color.Dim(fmt.Sprintf(" (donor BAR %d > board BRAM %d)", c.largestBAR, b.BRAMSizeOrDefault()))
 		}
 		fmt.Fprintf(c.w, "  %s%s\n", label, note)
@@ -270,6 +276,7 @@ func (c *checker) showBoardCompatibility() {
 
 func init() {
 	checkCmd.Flags().StringVar(&checkDevice, "bdf", "", "device BDF address to check (required)")
+	checkCmd.Flags().BoolVar(&checkForce, "force", false, "ignore donor BAR > board BRAM check")
 	_ = checkCmd.MarkFlagRequired("bdf")
 	rootCmd.AddCommand(checkCmd)
 }

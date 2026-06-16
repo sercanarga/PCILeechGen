@@ -31,6 +31,7 @@ type OutputWriter struct {
 	Jobs      int
 	Timeout   int
 	StockBar  bool
+	Force     bool
 }
 
 func NewOutputWriter(outputDir, libDir string, jobs, timeout int) *OutputWriter {
@@ -62,7 +63,7 @@ func (ow *OutputWriter) WriteAll(ctx *donor.DeviceContext, b *board.Board) error
 
 	scrubbedCS, entropy, overlayMap := ow.scrubAndVary(ctx, b, ids)
 
-	if err := ow.writeConfigSpaceArtifacts(ctx, scrubbedCS); err != nil {
+	if err := ow.writeConfigSpaceArtifacts(ctx, scrubbedCS, b); err != nil {
 		return err
 	}
 
@@ -107,7 +108,12 @@ func (ow *OutputWriter) writeDeviceContext(ctx *donor.DeviceContext) error {
 
 // scrubAndVary runs config space scrubbing and per-build variance.
 func (ow *OutputWriter) scrubAndVary(ctx *donor.DeviceContext, b *board.Board, ids firmware.DeviceIDs) (*pci.ConfigSpace, uint32, *overlay.Map) {
-	scrubbedCS, overlayMap := scrub.ScrubConfigSpaceWithOverlay(ctx.ConfigSpace, b)
+	msixTableSize := 0
+	if ctx.MSIXData != nil && ctx.MSIXData.TableSize > 0 {
+		msixTableSize = ctx.MSIXData.TableSize
+	}
+	bar0Size := firmware.CappedBAR0Size(ctx, b, msixTableSize)
+	scrubbedCS, overlayMap := scrub.ScrubConfigSpaceWithOverlay(ctx.ConfigSpace, b, bar0Size)
 	if overlayMap.Count() > 0 {
 		slog.Info("config space scrubbed", "modifications", overlayMap.Count())
 	}
@@ -121,8 +127,7 @@ func (ow *OutputWriter) scrubAndVary(ctx *donor.DeviceContext, b *board.Board, i
 	return scrubbedCS, entropy, overlayMap
 }
 
-// writeConfigSpaceArtifacts generates COE files for config space, writemask, and BAR content.
-func (ow *OutputWriter) writeConfigSpaceArtifacts(ctx *donor.DeviceContext, scrubbedCS *pci.ConfigSpace) error {
+func (ow *OutputWriter) writeConfigSpaceArtifacts(ctx *donor.DeviceContext, scrubbedCS *pci.ConfigSpace, b *board.Board) error {
 	if err := ow.writeFile("pcileech_cfgspace.coe",
 		codegen.GenerateConfigSpaceCOE(scrubbedCS)); err != nil {
 		return fmt.Errorf("failed to write cfgspace COE: %w", err)
@@ -132,10 +137,12 @@ func (ow *OutputWriter) writeConfigSpaceArtifacts(ctx *donor.DeviceContext, scru
 		return fmt.Errorf("failed to write writemask COE: %w", err)
 	}
 
-	bar0Size := 4096
-	if d := firmware.LargestBar(ctx.BARContents); d != nil && len(d) > bar0Size {
-		bar0Size = len(d)
+	msixTableSize := 0
+	if ctx.MSIXData != nil && ctx.MSIXData.TableSize > 0 {
+		msixTableSize = ctx.MSIXData.TableSize
 	}
+	bar0Size := firmware.CappedBAR0Size(ctx, b, msixTableSize)
+
 	scrub.ScrubBarContent(ctx.BARContents, ctx.Device.ClassCode, ctx.Device.VendorID, bar0Size)
 	if err := ow.writeFile("pcileech_bar_zero4k.coe",
 		codegen.GenerateBarContentCOE(ctx.BARContents, bar0Size)); err != nil {
@@ -147,7 +154,7 @@ func (ow *OutputWriter) writeConfigSpaceArtifacts(ctx *donor.DeviceContext, scru
 // writeTCLScripts generates Vivado project and build TCL scripts.
 func (ow *OutputWriter) writeTCLScripts(ctx *donor.DeviceContext, b *board.Board) error {
 	if err := ow.writeFile("vivado_generate_project.tcl",
-		tclgen.GenerateProjectTCL(ctx, b, ow.LibDir)); err != nil {
+		tclgen.GenerateProjectTCL(ctx, b, ow.LibDir, ow.StockBar)); err != nil {
 		return fmt.Errorf("failed to write project TCL: %w", err)
 	}
 	if err := ow.writeFile("vivado_build.tcl",
@@ -356,7 +363,10 @@ var coreSVArtifacts = []svArtifact{
 
 // writeSVModules generates device-specific SV and HEX init files.
 func (ow *OutputWriter) writeSVModules(ctx *donor.DeviceContext, scrubbedCS *pci.ConfigSpace, ids firmware.DeviceIDs, entropy uint32, b *board.Board) error {
-	cfg := ow.buildSVConfig(ctx, scrubbedCS, ids, entropy, b)
+	cfg, err := ow.buildSVConfig(ctx, scrubbedCS, ids, entropy, b)
+	if err != nil {
+		return err
+	}
 
 	if err := ow.writeCoreSVArtifacts(cfg, scrubbedCS); err != nil {
 		return err
@@ -413,7 +423,7 @@ func extractMSIInfo(cs *pci.ConfigSpace) *svgen.MSIConfig {
 }
 
 // buildSVConfig assembles the SVGeneratorConfig from donor context.
-func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.ConfigSpace, ids firmware.DeviceIDs, entropy uint32, b *board.Board) *svgen.SVGeneratorConfig {
+func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.ConfigSpace, ids firmware.DeviceIDs, entropy uint32, b *board.Board) (*svgen.SVGeneratorConfig, error) {
 	// Use the same BAR index for content data and probe profile to avoid
 	// mismatched register maps (e.g. IO BAR0 profile + MMIO BAR2 data).
 	barIdx := firmware.LargestBarIndex(ctx.BARContents)
@@ -443,13 +453,11 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 	}
 	slog.Info("device class resolution", "class", devClass)
 
-	bar0Size := b.BRAMSizeOrDefault()
+	msixTableSize := 0
 	if ctx.MSIXData != nil && ctx.MSIXData.TableSize > 0 {
-		bar0Size = scrub.ComputeBAR0Size(ctx.MSIXData.TableSize, b.BRAMSizeOrDefault())
+		msixTableSize = ctx.MSIXData.TableSize
 	}
-	if d := firmware.LargestBar(ctx.BARContents); d != nil && len(d) > bar0Size {
-		bar0Size = len(d)
-	}
+	bar0Size := firmware.CappedBAR0Size(ctx, b, msixTableSize)
 	if bm != nil && bm.Size < bar0Size {
 		bm.Size = bar0Size
 	}
@@ -478,35 +486,22 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 	}
 
 	if ctx.MSIXData != nil && ctx.MSIXData.TableSize > 0 {
-		tableSize := ctx.MSIXData.TableSize * 16
-		tableOff := uint32(0x1000)
-		if devClass == devclass.ClassNVMe && cfg.Bar0Size > 0 {
-			tableOff = uint32(cfg.Bar0Size/2) &^ 0xF
-			if tableOff < 0x2000 {
-				tableOff = 0x2000
-			}
-			if tableOff >= 0x1000 && tableOff < 0x1000+uint32(tableSize) {
-				tableOff = 0x2000
-			}
-			if tableOff < 0x40 {
-				tableOff = 0x1000
-			}
-			if tableOff+uint32(tableSize)+16 > uint32(cfg.Bar0Size) {
-				tableOff = uint32(cfg.Bar0Size) - uint32(tableSize) - 16
-				tableOff &^= 0xF
-				if tableOff < 0x1000 {
-					tableOff = 0x1000
-				}
-			}
+		class := uint32(0)
+		if devClass == devclass.ClassNVMe {
+			class = 0x0108
 		}
-		pbaOffset := tableOff + uint32(tableSize)
-		pbaOffset = (pbaOffset + 7) &^ 7
+		dstrd := cfg.NVMeDoorbellStride
+		tableOff, pbaOffset, _ := firmware.MSIXPlacement(cfg.Bar0Size, ctx.MSIXData.TableSize, class, dstrd)
 		cfg.MSIXConfig = &svgen.MSIXConfig{
 			NumVectors:  ctx.MSIXData.TableSize,
 			TableOffset: tableOff,
 			PBAOffset:   pbaOffset,
 		}
 		cfg.HasMSIX = true
+		if m := pci.ParseMSIXCap(scrubbedCS); m != nil {
+			scrubbedCS.WriteU32(m.CapOffset+4, tableOff&0xFFFFFFF8)
+			scrubbedCS.WriteU32(m.CapOffset+8, pbaOffset&0xFFFFFFF8)
+		}
 	}
 
 	// Extract MSI capability for interrupt generation.
@@ -516,16 +511,16 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 	}
 
 	bram := b.BRAMSizeOrDefault()
-	for _, e := range ValidateBARSize(bar0Size, bram, 0) {
-		slog.Warn(e)
+	if err := ValidateBARSize(bar0Size, bram, 0); err != nil {
+		if !ow.Force { return nil, err }
 	}
 	if cfg.MSIXConfig != nil {
-		for _, e := range ValidateBARSize(bar0Size, bram, cfg.MSIXConfig.TableOffset) {
-			slog.Warn(e)
+		if err := ValidateBARSize(bar0Size, bram, cfg.MSIXConfig.TableOffset); err != nil {
+			if !ow.Force { return nil, err }
 		}
 	}
 
-	return cfg
+	return cfg, nil
 }
 
 // writeCoreSVArtifacts generates core SV modules and config space HEX.
