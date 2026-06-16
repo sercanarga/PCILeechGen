@@ -135,8 +135,8 @@ func TestBuildBARModel_Ethernet(t *testing.T) {
 
 func TestBuildBARModel_Ethernet_4KB(t *testing.T) {
 	model := buildEthernetBARModel(nil)
-	if model.Size != 4096 {
-		t.Errorf("Ethernet BAR size: got %d, want 4096", model.Size)
+	if model.Size != 0 {
+		t.Errorf("Ethernet BAR size: got %d, want 0 (no donor data, no longer forced 4096)", model.Size)
 	}
 }
 
@@ -262,8 +262,8 @@ func TestBuildBARModel_Audio(t *testing.T) {
 	if model == nil {
 		t.Fatal("Audio BuildBARModel returned nil")
 	}
-	if model.Size != 4096 {
-		t.Errorf("Audio BAR size: got %d, want 4096", model.Size)
+	if model.Size != 0 {
+		t.Errorf("Audio BAR size: got %d, want 0 (no donor data, no longer forced 4096)", model.Size)
 	}
 }
 
