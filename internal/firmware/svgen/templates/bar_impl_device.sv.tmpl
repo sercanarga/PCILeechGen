@@ -9,7 +9,7 @@
 `timescale 1ns / 1ps
 {{ if .BARModel }}
 module pcileech_bar_impl_device #(
-    parameter BAR_SIZE = {{ .BARModel.Size }}
+    parameter BAR_SIZE = {{ .BARModel.Size }}  // variable Bar0Size from barmodel/compute
 )(
     input               rst,
     input               clk,
@@ -1106,7 +1106,7 @@ module pcileech_bar_impl_device #(
     end
 
 {{ else }}
-// No learned register map - fallback to BRAM-based storage.
+// No learned register map - fallback to BRAM-based storage (supports variable Bar0Size + computed MSIX).
 module pcileech_bar_impl_device #(
     parameter BAR_SIZE = {{ .Bar0Size }}
 )(
@@ -1139,17 +1139,24 @@ module pcileech_bar_impl_device #(
         rd_rsp_data     <= doutb;
     end
 
-    bram_bar_zero4k i_bram_bar_fallback(
-        .addra  ( wr_addr[11:2]     ),
-        .clka   ( clk               ),
-        .dina   ( wr_data           ),
-        .ena    ( wr_valid          ),
-        .wea    ( wr_be             ),
-        .addrb  ( rd_req_addr[11:2] ),
-        .clkb   ( clk               ),
-        .doutb  ( doutb             ),
-        .enb    ( rd_req_valid      )
-    );
+    localparam BAR_WORDS = (BAR_SIZE > 0) ? (BAR_SIZE / 4) : 1024;
+    reg [31:0] bar_mem [0:BAR_WORDS-1];
+    wire [31:0] bar_addr_mask = BAR_SIZE - 1;
+    wire [31:0] wa = wr_addr & bar_addr_mask;
+    wire [31:0] ra = rd_req_addr & bar_addr_mask;
+    integer i;
+    initial for (i = 0; i < BAR_WORDS; i = i + 1) bar_mem[i] = 32'h00000000;
+    always @(posedge clk) begin
+        if (wr_valid) begin
+            if (wa[1:0] == 2'b00) begin
+                if (wr_be[0]) bar_mem[wa[31:2]][7:0]   <= wr_data[7:0];
+                if (wr_be[1]) bar_mem[wa[31:2]][15:8]  <= wr_data[15:8];
+                if (wr_be[2]) bar_mem[wa[31:2]][23:16] <= wr_data[23:16];
+                if (wr_be[3]) bar_mem[wa[31:2]][31:24] <= wr_data[31:24];
+            end
+        end
+    end
+    assign doutb = bar_mem[ra[31:2]];
 
 {{ end }}
 endmodule

@@ -36,11 +36,11 @@ package device_config;
     localparam CLASS_SUB        = 8'h{{ hex02 (classSub .ClassCode) }};
     localparam CLASS_PROGIF     = 8'h{{ hex02 (classProgIF .ClassCode) }};
 {{ if .BARModel }}
-    // BAR0 is device-specific ({{ .Bar0Size }} bytes, {{ len .BARModel.Registers }} registers)
+    // BAR0 is device-specific ({{ .Bar0Size }} bytes varsize, {{ len .BARModel.Registers }} registers)
     localparam BAR0_SIZE        = {{ .Bar0Size }};
     localparam BAR0_REGS        = {{ len .BARModel.Registers }};
 {{ else }}
-    // BAR0 uses generic zerowrite4k implementation
+    // BAR0 uses generic zerowrite (stock 4KB) or sized impl for computed Bar0Size+MSIX
     localparam BAR0_SIZE        = {{ .Bar0Size }};
     localparam BAR0_REGS        = 0;
 {{ end }}

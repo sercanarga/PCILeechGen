@@ -39,7 +39,7 @@ func (b *Board) BRAMSizeOrDefault() int {
 	if b.BRAMSize > 0 {
 		return b.BRAMSize
 	}
-	return 4096
+	d := 4096; return d
 }
 
 // SrcPath returns the path to source files for this board.
