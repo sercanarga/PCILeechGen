@@ -76,8 +76,8 @@ Example:
 			result:    &output.ValidationResult{},
 		}
 		if b != nil {
-			if err := output.ValidateBARSize(bar0Size, b.BRAMSizeOrDefault(), 0); err != nil {
-				return err
+			if issues := output.ValidateBARSize(bar0Size, b.BRAMSizeOrDefault(), 0); len(issues) > 0 {
+				return fmt.Errorf("%s", issues[0])
 			}
 		}
 

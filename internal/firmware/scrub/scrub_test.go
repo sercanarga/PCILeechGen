@@ -627,18 +627,17 @@ func TestClampBARsToFPGA(t *testing.T) {
 	cs.WriteU32(0x18, 0x0000FF01) // IO bar
 
 	om := overlay.NewMap(cs)
-	k := 4096; clampBARsToFPGA(cs, om, k)
+	k := 16384
+	ctx := &ScrubContext{Bar0Size: k}
+	clampBARsToFPGA(cs, om, ctx)
 
-	// BAR0 should be clamped to 4KB
 	bar0 := cs.ReadU32(0x10)
 	if bar0&barSizeMask(k) != barSizeMask(k) {
-		t.Errorf("BAR0 should be clamped to 4KB, got 0x%08x", bar0)
+		t.Errorf("BAR0 should be clamped, got 0x%08x", bar0)
 	}
-	// BAR1 upper bits for 64-bit donor BAR are preserved (no longer unconditionally zeroed)
 	if cs.ReadU32(0x14) == 0 {
 		t.Errorf("BAR1 upper bits should be preserved for 64-bit, got zero")
 	}
-	// BAR2 (IO) should be clamped to 256 bytes
 	ioBar := cs.ReadU32(0x18)
 	if ioBar != 0xFFFFFF01 {
 		t.Errorf("IO BAR should be clamped to 256 bytes: got 0x%08x, want 0xFFFFFF01", ioBar)
@@ -953,3 +952,5 @@ func TestASPMFullyDisabledAfterScrub(t *testing.T) {
 		t.Errorf("L1PM Control 2 should be 0, got 0x%08x", scrubbed.ReadU32(0x20C))
 	}
 }
+
+func TestComputeBAR0SizeLarge(t *testing.T){if got:=ComputeBAR0Size(512,0);got!=32768{t.Errorf("ComputeBAR0Size(large)=%d",got)}}

@@ -154,7 +154,7 @@ func (ow *OutputWriter) writeConfigSpaceArtifacts(ctx *donor.DeviceContext, scru
 // writeTCLScripts generates Vivado project and build TCL scripts.
 func (ow *OutputWriter) writeTCLScripts(ctx *donor.DeviceContext, b *board.Board) error {
 	if err := ow.writeFile("vivado_generate_project.tcl",
-		tclgen.GenerateProjectTCL(ctx, b, ow.LibDir, ow.StockBar)); err != nil {
+		tclgen.GenerateProjectTCL(ctx, b, ow.LibDir)); err != nil {
 		return fmt.Errorf("failed to write project TCL: %w", err)
 	}
 	if err := ow.writeFile("vivado_build.tcl",
@@ -511,12 +511,12 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 	}
 
 	bram := b.BRAMSizeOrDefault()
-	if err := ValidateBARSize(bar0Size, bram, 0); err != nil {
-		if !ow.Force { return nil, err }
+	if issues := ValidateBARSize(bar0Size, bram, 0); len(issues) > 0 {
+		if !ow.Force { return nil, fmt.Errorf("%s", issues[0]) }
 	}
 	if cfg.MSIXConfig != nil {
-		if err := ValidateBARSize(bar0Size, bram, cfg.MSIXConfig.TableOffset); err != nil {
-			if !ow.Force { return nil, err }
+		if issues := ValidateBARSize(bar0Size, bram, cfg.MSIXConfig.TableOffset); len(issues) > 0 {
+			if !ow.Force { return nil, fmt.Errorf("%s", issues[0]) }
 		}
 	}
 

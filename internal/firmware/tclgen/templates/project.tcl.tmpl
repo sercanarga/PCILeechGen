@@ -91,7 +91,7 @@ set bar_bram [get_ips -quiet bram_bar_zero4k]
 # when NOT in stock-bar mode and the final (capped) Bar0 is the classic 4K size.
 # This ensures the stock 4K path (unpatched default coe) is only used when --stock-bar
 # or on the (effective) small 4K BAR case for large boards.
-if { $bar_bram != ""{{if or .StockBar (gt .Bar0ByteSize 4096)}} && 0{{end}} } {
+if { $bar_bram != ""{{if (gt .Bar0ByteSize 4096)}} && 0{{end}} } {
   set coe_path [file normalize "${origin_dir}/pcileech_bar_zero4k.coe"]
   if {[file exists $coe_path]} {
     set_property -dict [list CONFIG.Coe_File $coe_path] $bar_bram
