@@ -3,6 +3,7 @@ package firmware
 import (
 	"testing"
 
+	"github.com/sercanarga/pcileechgen/internal/board"
 	"github.com/sercanarga/pcileechgen/internal/donor"
 	"github.com/sercanarga/pcileechgen/internal/pci"
 )
@@ -166,4 +167,92 @@ func TestExtractDeviceIDs_SubsystemIDs(t *testing.T) {
 	if ids.SubsysDeviceID != 0x5678 {
 		t.Errorf("SubsysDeviceID: got 0x%04X, want 0x5678", ids.SubsysDeviceID)
 	}
+}
+
+// New positive tests for large/dynamic BAR (donor/BRAM driven, Size not forced 4k)
+func TestCappedBAR0Size_LargeDonorNVMe(t *testing.T) {
+	// default board + no-msix + large donor contents -> capped to board bram (4k default)
+	ctx := &donor.DeviceContext{BARContents: map[int][]byte{0: make([]byte, 65536)}}
+	b := &board.Board{}
+	got := CappedBAR0Size(ctx, b, 0)
+	if got != 4096 {
+		t.Errorf("default+large donor got %d want 4096", got)
+	}
+	// large board + small msix + donor content -> donor size (within board)
+	b = &board.Board{BRAMSize: 32768}
+	ctx = &donor.DeviceContext{BARContents: map[int][]byte{0: make([]byte, 16384)}}
+	got = CappedBAR0Size(ctx, b, 1)
+	if got != 16384 {
+		t.Errorf("donor-override got %d want 16384", got)
+	}
+	// small donor (small contents, no bars, no msix) on large board -> small demand (not expanded to full board)
+	ctxSmall := &donor.DeviceContext{BARContents: map[int][]byte{0: make([]byte, 256)}}
+	bLarge := &board.Board{BRAMSize: 131072}
+	gotSmall := CappedBAR0Size(ctxSmall, bLarge, 0)
+	if gotSmall != 256 {
+		t.Errorf("small donor no-msix large board got %d want 256 (donor demand, not auto-expanded)", gotSmall)
+	}
+}
+
+func TestMSIXPlacement_PostDoorbellNVMe_16k(t *testing.T) {
+	tableOff, pbaOff, _ := MSIXPlacement(16384, 16, 0x010802, 0)
+	if tableOff < 0x1000 {
+		t.Errorf("NVMe tableOff %d not post-doorbell", tableOff)
+	}
+	if tableOff+uint32(16*16+16) > 16384 {
+		t.Error("does not fit")
+	}
+	if pbaOff <= tableOff {
+		t.Error("pba after table")
+	}
+}
+
+func TestMSIXPlacement_LargeBAR_NoClamp(t *testing.T) {
+	tableOff, _, _ := MSIXPlacement(32768, 4, 0, 0)
+	if tableOff == 0 || tableOff < 0x2000 {
+		t.Errorf("large placement %d suspicious", tableOff)
+	}
+}
+
+// TestLargeBAR_DemandAndCapped (local to firmware pkg to avoid import cycles).
+// Exercises DonorBAR0Demand + CappedBAR0Size (the core calls underlying
+// cmd/pcileechgen check/build/validate large-BAR >4k donor vs board BRAM gates,
+// force, Capped for scrub/writer, and tclgen Bar0 reporting). Full repro with
+// ValidateBARSize(donor), tclgen stock/Bar0ByteSize, sim of build/check/validate
+// logic lives in validator_test.go (can import donor/pci/tclgen/output).
+func TestLargeBAR_DemandAndCapped(t *testing.T) {
+	board4k := &board.Board{Name: "SmallBoard", FPGAPart: "xc7a35t", PCIeLanes: 1} // defaults to 4096
+	board16k := &board.Board{Name: "LargeBoard", FPGAPart: "xc7a75t", PCIeLanes: 1, BRAMSize: 16384}
+
+	data16k := make([]byte, 16384)
+	data16k[0] = 0xAB
+	ctx16k := &donor.DeviceContext{
+		Device:      pci.PCIDevice{VendorID: 0x1234, DeviceID: 0x5678, ClassCode: 0x010802},
+		BARs:        []pci.BAR{{Index: 0, Size: 16384, Type: pci.BARTypeMem32}},
+		BARContents: map[int][]byte{0: data16k},
+	}
+
+	demand := DonorBAR0Demand(ctx16k, board4k, 0)
+	capped := CappedBAR0Size(ctx16k, board4k, 0)
+	if demand != 16384 {
+		t.Errorf("Donor demand for 16k ctx on 4k board = %d, want 16384 (to trigger gate)", demand)
+	}
+	if capped != 4096 || capped > board4k.BRAMSizeOrDefault() {
+		t.Errorf("Capped must be 4096 (board BRAM) for oversized donor; got %d", capped)
+	}
+
+	demandFit := DonorBAR0Demand(ctx16k, board16k, 0)
+	cappedFit := CappedBAR0Size(ctx16k, board16k, 0)
+	if demandFit != 16384 || cappedFit != 16384 {
+		t.Errorf("fitting donor on 16k board: demand/capped want 16384 got %d/%d", demandFit, cappedFit)
+	}
+
+	// size consistency: Capped never > board, used for scrub/writer/validate COE etc.
+	for _, tc := range []struct{ dmd, br, want int }{{16384, 4096, 4096}, {8192, 16384, 8192}, {4096, 4096, 4096}, {0, 4096, 4096}} {
+		c := CappedBAR0Size(&donor.DeviceContext{BARContents: map[int][]byte{0: make([]byte, tc.dmd)}}, &board.Board{BRAMSize: tc.br}, 0)
+		if c != tc.want || c > tc.br {
+			t.Errorf("Capped(demand=%d,br=%d)=%d inconsistent (want<=%d)", tc.dmd, tc.br, c, tc.br)
+		}
+	}
+	t.Logf("LargeBAR demand/capped OK: 16k donor on 4k board demand=16384 capped=4096; fits on larger; artifacts size always <=BRAM")
 }

@@ -88,10 +88,12 @@ if {[llength $all_ips] > 0} {
 # Point BRAM IPs to the generated COE files (library defaults are all-zero)
 set bar_bram [get_ips -quiet bram_bar_zero4k]
 # Only patch our generated (donor/capped) pcileech_bar_zero4k.coe into bram_bar_zero4k
-# when NOT in stock-bar mode and the final (capped) Bar0 is the classic 4K size.
-# This ensures the stock 4K path (unpatched default coe) is only used when --stock-bar
-# or on the (effective) small 4K BAR case for large boards.
-if { $bar_bram != ""{{if (gt .Bar0ByteSize 4096)}} && 0{{end}} } {
+# when NOT in stock-bar mode AND the donor-demanded Bar0ByteSize is the classic 4K size.
+# --stock-bar always forces the zerowrite4k (stock default coe, unpatched) path,
+# even for small BARs (while still reporting correct donor Bar0ByteSize for PCIe IP).
+# For >4K (or forced oversized), stock zero path is also used; custom SV (if any)
+# provides BAR content modeling instead.
+if { $bar_bram != ""{{if or (gt .Bar0ByteSize 4096) .StockBar}} && 0{{end}} } {
   set coe_path [file normalize "${origin_dir}/pcileech_bar_zero4k.coe"]
   if {[file exists $coe_path]} {
     set_property -dict [list CONFIG.Coe_File $coe_path] $bar_bram

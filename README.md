@@ -62,7 +62,7 @@
 - Auto-bind VFIO on BAR read failure
 - Unreliable probe data detection (0xFF rejection)
 - BAR size power-of-2 rounding (respects donor size + board limit)
-- Build-time offset validation + donor BAR vs board BRAM compatibility check
+- Build-time offset validation + donor BAR vs board BRAM compatibility (CappedBAR0Size; hard error in build / issues in check unless --force)
 
 </td></tr>
 <tr><td valign="top">
@@ -106,7 +106,7 @@
 
 **Diagnostics & Validation**
 - VFIO Diagnostics (power state, BAR accessibility, IOMMU isolation)
-- Donor BAR size vs board `bram_size` compatibility check (warns in `check`/`build` if donor BAR exceeds board BRAM)
+- Donor BAR size vs board `bram_size` compatibility: errors in `build` (unless `--force`), reports issues/fails boards in `check` (unless `--force`); uses CappedBAR0Size + ValidateBARSize for BAR>BRAM
 - Fallback Config (class-based defaults for NVMe, xHCI, Ethernet, Audio, GPU, SATA, Wi-Fi, Thunderbolt, Generic)
 - Post-Build Validation (output file existence, SV IDs, HEX/COE format)
 - Vivado Build Report (error categorization, benign warning filter)
@@ -141,7 +141,7 @@ flowchart LR
 
 ## Supported Boards
 
-Some boards declare higher `bram_size` in their definition (EnigmaX1=8K, CaptainDMA_75T=16K, CaptainDMA_100T/ZDMA/NeTV2_100T/ac701=32K). These support larger BAR0 emulation (dynamic sizing up to the declared BRAM, with proper 64-bit and MSIX handling).
+Some boards declare higher `bram_size` in their definition (EnigmaX1=8K, CaptainDMA_75T=16K, CaptainDMA_100T/ZDMA/NeTV2_100T/ac701_ft601/acorn/litefury=32K). These support larger BAR0 emulation (dynamic sizing up to the declared BRAM, with proper 64-bit and MSIX handling).
 
 | Board | FPGA | Lanes | Form Factor |
 |:------|:-----|:-----:|:-----------:|
@@ -227,10 +227,11 @@ Total: 16 devices
 
 ### `check` - Verify Donor Device
 
-Runs a full diagnostic on a device to verify donor suitability, including new donor BAR size vs board `bram_size` compatibility (warns if donor largest BAR exceeds selected board's BRAM).
+Runs a full diagnostic on a device to verify donor suitability, including donor BAR size vs board `bram_size` compatibility. Reports issues (marks boards incompatible) if donor largest BAR exceeds selected board's BRAM; use `--force` to override (see CappedBAR0Size + ValidateBARSize).
 
 ```bash
 sudo ./bin/pcileechgen check --bdf 0000:02:00.0
+sudo ./bin/pcileechgen check --bdf 0000:02:00.0 --force   # override BAR>BRAM
 ```
 
 <details>
@@ -278,6 +279,8 @@ Total: 17 boards
 [OK] Device is ready for firmware generation
 ```
 
+(Note: when donor largest BAR > board BRAM, `check` marks the board failed/incompatible and increments issues unless `--force` is passed; `build` returns error "donor largest BAR exceeds board BRAM" unless `--force`.)
+
 </details>
 
 ### `build` - Generate Firmware
@@ -293,6 +296,9 @@ sudo ./bin/pcileechgen build --bdf 0000:03:00.0 --board CaptainDMA_100T --skip-v
 
 # Offline build from saved JSON
 sudo ./bin/pcileechgen build --from-json device_context.json --board CaptainDMA_100T --skip-vivado
+
+# Force large donor BAR (exceeds board.bram_size; uses CappedBAR0Size + may truncate)
+sudo ./bin/pcileechgen build --bdf 0000:03:00.0 --board PCIeSquirrel --force --skip-vivado
 ```
 
 > [!WARNING]
@@ -310,6 +316,7 @@ sudo ./bin/pcileechgen build --from-json device_context.json --board CaptainDMA_
 | `--lib-dir` | `lib/pcileech-fpga` | Path to pcileech-fpga library |
 | `--skip-vivado` | `false` | Only generate artifacts, skip synthesis |
 | `--stock-bar` | `false` | Skip custom BAR module generation (uses stock pcileech-fpga BAR controller) diagnostic flag for isolating detection issues |
+| `--force` | `false` | Ignore donor BAR > board BRAM check (allows oversized BARs, may truncate; see CappedBAR0Size + validation) |
 | `--vivado-path` | auto-detect | Path to Vivado installation |
 | `--jobs` | `4` | Parallel Vivado jobs |
 | `--timeout` | `3600` | Vivado timeout (seconds) |
@@ -351,18 +358,25 @@ Checks that all build artifacts match their SHA256 checksums in the manifest.
 <summary>Example output</summary>
 
 ```
-NAME              FPGA PART          PCIe  TOP MODULE
-----              ---------          ----  ----------
-PCIeSquirrel      xc7a35tfgg484-2    x1    pcileech_squirrel_top
-ScreamerM2        xc7a35tcsg325-2    x1    pcileech_screamer_m2_top
-CaptainDMA_100T   xc7a100tfgg484-2   x1    pcileech_100t484_x1_top
-ZDMA              xc7a100tfgg484-2   x4    pcileech_tbx4_100t_top
+NAME              FPGA PART          PCIe  BRAM   TOP MODULE
+----              ---------          ----  ----   ----------
+PCIeSquirrel      xc7a35tfgg484-2    x1    4096   pcileech_squirrel_top
+ScreamerM2        xc7a35tcsg325-2    x1    4096   pcileech_screamer_m2_top
+CaptainDMA_100T   xc7a100tfgg484-2   x1    32768  pcileech_100t484_x1_top
+ZDMA              xc7a100tfgg484-2   x4    32768  pcileech_tbx4_100t_top
+EnigmaX1          xc7a75tfgg484-2    x1    8192   pcileech_enigma_x1_top
+CaptainDMA_75T    xc7a75tfgg484-2    x1    16384  pcileech_75t484_x1_top
+ac701_ft601       xc7a200tfbg676-2   x4    32768  pcileech_ac701_ft601_top
+acorn             xc7a200tfbg484-3   x4    32768  pcileech_acorn_top
+litefury          xc7a100tfgg484-2   x4    32768  pcileech_acorn_top
 ...
 
 Total: 17 boards
 ```
 
 </details>
+
+The BRAM column reports each board's `bram_size` (DefaultBRAMSize=4096 when omitted in boards.json). This is the cap for dynamic BAR0 sizing via CappedBAR0Size.
 
 ---
 
@@ -424,7 +438,7 @@ pcileech_datastore/
 └── *.bin                               # Bitstream (after Vivado)
 ```
 
-Note: For boards with higher `bram_size` (e.g. 32K on CaptainDMA_100T / ZDMA) and donors with large BARs, the generator produces sized BAR content/models and uses smart MSIX placement. The legacy "4K zerowrite" path is still available via `--stock-bar`. `check` and `build` now warn if the donor's largest BAR exceeds the selected board's `bram_size`.
+Note: For boards with higher `bram_size` (e.g. 32K on CaptainDMA_100T / ZDMA / ac701_ft601 / acorn / litefury, 16K on CaptainDMA_75T, 8K on EnigmaX1) and donors with large BARs, the generator uses CappedBAR0Size (dynamic: donor BAR content size or MSIX-adjusted ComputeBAR0Size, capped at board.bram_size). Produces sized BAR content (pcileech_bar_zero4k.coe name retained for stock template compat) + pcileech_bar_impl_device.sv for >4K. Uses MSIXPlacement (smart post-NVMe-doorbell for NVMe). `check`/`build` error/report issues for donor BAR > board BRAM (bypass with `--force`, which may truncate). No fixed "always 4KB" BAR shadow.
 
 ---
 

@@ -154,7 +154,7 @@ func (ow *OutputWriter) writeConfigSpaceArtifacts(ctx *donor.DeviceContext, scru
 // writeTCLScripts generates Vivado project and build TCL scripts.
 func (ow *OutputWriter) writeTCLScripts(ctx *donor.DeviceContext, b *board.Board) error {
 	if err := ow.writeFile("vivado_generate_project.tcl",
-		tclgen.GenerateProjectTCL(ctx, b, ow.LibDir)); err != nil {
+		tclgen.GenerateProjectTCL(ctx, b, ow.LibDir, ow.StockBar)); err != nil {
 		return fmt.Errorf("failed to write project TCL: %w", err)
 	}
 	if err := ow.writeFile("vivado_build.tcl",
@@ -457,6 +457,7 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 	if ctx.MSIXData != nil && ctx.MSIXData.TableSize > 0 {
 		msixTableSize = ctx.MSIXData.TableSize
 	}
+	donorBar := firmware.DonorBAR0Demand(ctx, b, msixTableSize)
 	bar0Size := firmware.CappedBAR0Size(ctx, b, msixTableSize)
 	if bm != nil && bm.Size < bar0Size {
 		bm.Size = bar0Size
@@ -511,11 +512,13 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 	}
 
 	bram := b.BRAMSizeOrDefault()
-	if issues := ValidateBARSize(bar0Size, bram, 0); len(issues) > 0 {
+	// Validate *donor demand* (may exceed) against board BRAM; error unless --force.
+	// (bar0Size is the Capped value actually used for artifacts/scrub/SV.)
+	if issues := ValidateBARSize(donorBar, bram, 0); len(issues) > 0 {
 		if !ow.Force { return nil, fmt.Errorf("%s", issues[0]) }
 	}
 	if cfg.MSIXConfig != nil {
-		if issues := ValidateBARSize(bar0Size, bram, cfg.MSIXConfig.TableOffset); len(issues) > 0 {
+		if issues := ValidateBARSize(donorBar, bram, cfg.MSIXConfig.TableOffset); len(issues) > 0 {
 			if !ow.Force { return nil, fmt.Errorf("%s", issues[0]) }
 		}
 	}

@@ -67,6 +67,10 @@ Example:
 		if ctx.MSIXData != nil && ctx.MSIXData.TableSize > 0 {
 			msixTableSize = ctx.MSIXData.TableSize
 		}
+		// Use Capped for actual artifact sizes/scrub in validation, but pass
+		// the donor demand (uncapped) to ValidateBARSize so it errors (as required)
+		// when donor BAR > board BRAM. Validate always errors (no --force here).
+		donorBar := firmware.DonorBAR0Demand(ctx, b, msixTableSize)
 		bar0Size := firmware.CappedBAR0Size(ctx, b, msixTableSize)
 		v := &validator{
 			ctx:       ctx,
@@ -76,7 +80,7 @@ Example:
 			result:    &output.ValidationResult{},
 		}
 		if b != nil {
-			if issues := output.ValidateBARSize(bar0Size, b.BRAMSizeOrDefault(), 0); len(issues) > 0 {
+			if issues := output.ValidateBARSize(donorBar, b.BRAMSizeOrDefault(), 0); len(issues) > 0 {
 				return fmt.Errorf("%s", issues[0])
 			}
 		}

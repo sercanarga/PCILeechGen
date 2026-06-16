@@ -31,7 +31,7 @@ func TestGenerateWritemaskCOE(t *testing.T) {
 	cs := pci.NewConfigSpace()
 	cs.Size = pci.ConfigSpaceSize
 	cs.WriteU16(0x00, 0x8086)
-	cs.WriteU32(0x10, 0xFFFFF000) // BAR0: 4KB 32-bit memory BAR (scrubbed)
+	cs.WriteU32(0x10, 0xFFFFF000) // BAR0: 4KB 32-bit memory BAR (scrubbed; dynamic size from CappedBAR0Size)
 
 	wm := GenerateWritemaskCOE(cs)
 
@@ -68,7 +68,7 @@ func TestGenerateWritemaskCOE(t *testing.T) {
 
 	// DWORD 4 (BAR0) must match scrubbed BAR size mask (0xFFFFF000)
 	if dwords[4] != "fffff000" {
-		t.Errorf("BAR0 mask should be fffff000 (4KB size), got %s", dwords[4])
+		t.Errorf("BAR0 mask should be fffff000 (4KB size e.g.), got %s", dwords[4])
 	}
 
 	// DWORD 5 (BAR1) must be 0 (unused after scrubber clamp)
@@ -183,8 +183,8 @@ func TestGenerateMSIXTableHex_Empty(t *testing.T) {
 	}
 }
 
-// writemask for a donor with BAR0=0 that was scrubbed to 4KB memory BAR.
-// this simulates the exact scenario where clampBARsToFPGA creates BAR0.
+// writemask for a donor with BAR0=0 that was scrubbed to 4KB memory BAR (default).
+// this simulates the exact scenario where clampBARsToFPGA creates BAR0 (size from ctx/Capped).
 func TestWritemask_ScrubbedBAR0FromZero(t *testing.T) {
 	cs := pci.NewConfigSpace()
 	cs.Size = pci.ConfigSpaceSize
@@ -197,7 +197,7 @@ func TestWritemask_ScrubbedBAR0FromZero(t *testing.T) {
 
 	// BAR0 writemask should allow sizing writes
 	if dwords[4] != "fffff000" {
-		t.Errorf("BAR0 mask = %s, want fffff000 (4KB size mask)", dwords[4])
+		t.Errorf("BAR0 mask = %s, want fffff000 (4KB size mask e.g.)", dwords[4])
 	}
 }
 
@@ -205,7 +205,7 @@ func TestWritemask_ScrubbedBAR0FromZero(t *testing.T) {
 func TestWritemask_BARSizingSimulation(t *testing.T) {
 	cs := pci.NewConfigSpace()
 	cs.Size = pci.ConfigSpaceSize
-	cs.WriteU32(0x10, 0xFFFFF000) // 4KB 32-bit memory BAR
+	cs.WriteU32(0x10, 0xFFFFF000) // 4KB (default) 32-bit memory BAR
 
 	wm := GenerateWritemaskCOE(cs)
 	dwords := parseCOEDwords(t, wm)
@@ -229,7 +229,7 @@ func TestWritemask_BARSizingSimulation(t *testing.T) {
 	sizeBits := bramResult & ^uint32(0x0F)
 	barSize := ^sizeBits + 1
 	if barSize != 4096 {
-		t.Errorf("decoded BAR size = %d, want 4096", barSize)
+		t.Errorf("decoded BAR size = %d, want 4096 (for this 4k mask test case)", barSize)
 	}
 }
 
@@ -299,7 +299,7 @@ func TestWritemask_CommandStatusWritable(t *testing.T) {
 func TestWritemask_PrefetchableBAR(t *testing.T) {
 	cs := pci.NewConfigSpace()
 	cs.Size = pci.ConfigSpaceSize
-	cs.WriteU32(0x10, 0xFFFFF008) // 4KB prefetchable 32-bit memory
+	cs.WriteU32(0x10, 0xFFFFF008) // 4KB (default) prefetchable 32-bit memory
 
 	wm := GenerateWritemaskCOE(cs)
 	dwords := parseCOEDwords(t, wm)

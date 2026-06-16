@@ -6,6 +6,7 @@ import (
 
 	"github.com/sercanarga/pcileechgen/internal/board"
 	"github.com/sercanarga/pcileechgen/internal/donor"
+	"github.com/sercanarga/pcileechgen/internal/firmware"
 	"github.com/sercanarga/pcileechgen/internal/pci"
 	"github.com/sercanarga/pcileechgen/internal/vivado"
 	"github.com/spf13/cobra"
@@ -59,17 +60,22 @@ func runBuild(cmd *cobra.Command, args []string) error {
 
 	printBuildSummary(ctx, b)
 
-	largest := uint64(0)
-	for _, bar := range ctx.BARs {
-		if !bar.IsDisabled() && bar.Size > largest {
-			largest = bar.Size
-		}
+	// Gate using donor demand (BARs sizes + BARContents lens + uncapped MSIX req)
+	// rather than only ctx.BARs (which may be 0 if resource parse fallback).
+	// This prevents silent 4K cap/override when loading 16KB+ donor ctx via --from-json
+	// against 4K default BRAM board (e.g. most 35T boards). CappedBAR0Size is still
+	// used downstream for actual scrub/COE/SV sizes.
+	msixTableSize := 0
+	if ctx.MSIXData != nil && ctx.MSIXData.TableSize > 0 {
+		msixTableSize = ctx.MSIXData.TableSize
 	}
-	if largest > uint64(b.BRAMSizeOrDefault()) {
+	donorDemand := firmware.DonorBAR0Demand(ctx, b, msixTableSize)
+	boardBRAM := b.BRAMSizeOrDefault()
+	if donorDemand > boardBRAM {
 		if !buildOpts.force {
-			return fmt.Errorf("donor largest BAR exceeds board BRAM (%d > %d)", largest, b.BRAMSizeOrDefault())
+			return fmt.Errorf("donor largest BAR exceeds board BRAM (%d > %d)", donorDemand, boardBRAM)
 		}
-		slog.Warn("donor largest BAR exceeds board BRAM (forced)", "donor_bar", largest, "board_bram", b.BRAMSizeOrDefault())
+		slog.Warn("donor largest BAR exceeds board BRAM (forced)", "donor_bar", donorDemand, "board_bram", boardBRAM)
 	}
 
 	builder := vivado.NewBuilder(b, vivado.BuildOptions{
