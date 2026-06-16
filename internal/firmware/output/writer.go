@@ -461,7 +461,7 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 	if bm != nil && bm.Size < bar0Size {
 		bm.Size = bar0Size
 	}
-	if bm == nil && bar0Size > 4096 {
+	if bm == nil && bar0Size > board.DefaultBRAMSize {
 		bm = &barmodel.BARModel{Size: bar0Size}
 	}
 

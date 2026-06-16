@@ -150,7 +150,7 @@ func ScrubConfigSpaceWithOverlay(cs *pci.ConfigSpace, b *board.Board, bar0Size .
 	scrubbed := cs.Clone()
 	om := overlay.NewMap(scrubbed)
 
-	bramLimit := 4096
+	bramLimit := board.DefaultBRAMSize
 	if b != nil {
 		bramLimit = b.BRAMSizeOrDefault()
 	}
@@ -245,7 +245,7 @@ func relocateMSIXToBRAM(cs *pci.ConfigSpace, om *overlay.Map, caps []pci.Capabil
 		if ctx != nil {
 			newTableOffset, newPBAOffset, _ = firmware.MSIXPlacement(ctx.Bar0Size, info.TableSize, ctx.ClassCode, dstrd)
 		} else {
-			newTableOffset = 0x1000
+			newTableOffset = uint32(board.DefaultBRAMSize)
 			newPBAOffset = newTableOffset + uint32(tableSize)
 			newPBAOffset = (newPBAOffset + 7) &^ 7
 		}
