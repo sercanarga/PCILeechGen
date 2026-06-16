@@ -160,23 +160,23 @@ func GenerateProjectTCL(ctx *donor.DeviceContext, b *board.Board, libDir string)
 		data.MSIXTableSize = ctx.MSIXData.TableSize - 1
 		data.MSIXTableBIR = barBIRToTCL(0)
 		tableSize := ctx.MSIXData.TableSize * 16
-		tableOff := uint32(0x1000)
+		tableOff := uint32(board.DefaultBRAMSize)
 		if ctx.Device.ClassCode>>8 == 0x0108 && bar0Size > 0 {
 			tableOff = uint32(bar0Size/2) &^ 0xF
 			if tableOff < 0x2000 {
 				tableOff = 0x2000
 			}
-			if tableOff >= 0x1000 && tableOff < 0x1000+uint32(tableSize) {
+			if tableOff >= board.DefaultBRAMSize && tableOff < board.DefaultBRAMSize+uint32(tableSize) {
 				tableOff = 0x2000
 			}
 			if tableOff < 0x40 {
-				tableOff = 0x1000
+				tableOff = board.DefaultBRAMSize
 			}
 			if tableOff+uint32(tableSize)+16 > uint32(bar0Size) {
 				tableOff = uint32(bar0Size) - uint32(tableSize) - 16
 				tableOff &^= 0xF
-				if tableOff < 0x1000 {
-					tableOff = 0x1000
+				if tableOff < board.DefaultBRAMSize {
+					tableOff = board.DefaultBRAMSize
 				}
 			}
 		}

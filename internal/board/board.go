@@ -34,12 +34,14 @@ func (b *Board) MaxLinkSpeedOrDefault() uint8 {
 	return 2
 }
 
+const DefaultBRAMSize = 4096
+
 // BRAMSizeOrDefault returns the board's BAR BRAM size, defaulting to 4096.
 func (b *Board) BRAMSizeOrDefault() int {
-	if b.BRAMSize > 0 {
+	if b != nil && b.BRAMSize > 0 {
 		return b.BRAMSize
 	}
-	d := 4096; return d
+	return DefaultBRAMSize
 }
 
 // SrcPath returns the path to source files for this board.

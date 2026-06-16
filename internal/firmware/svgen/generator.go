@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"text/template"
 
+	"github.com/sercanarga/pcileechgen/internal/board"
 	"github.com/sercanarga/pcileechgen/internal/firmware"
 	"github.com/sercanarga/pcileechgen/internal/firmware/barmodel"
 	"github.com/sercanarga/pcileechgen/internal/firmware/nvme"
@@ -39,7 +40,7 @@ type SVGeneratorConfig struct {
 // Doorbell offset computed from Bar0Size (for variable BAR / large board MSIX placement).
 func (c *SVGeneratorConfig) NVMeSQ0DoorbellOffset() uint32 {
 	stride := uint32(4) << c.NVMeDoorbellStride
-	dbBase := uint32(0x1000)
+	dbBase := uint32(board.DefaultBRAMSize)
 	return dbBase + 0*stride
 }
 
@@ -47,7 +48,7 @@ func (c *SVGeneratorConfig) NVMeSQ0DoorbellOffset() uint32 {
 // Doorbell offset computed from Bar0Size (for variable BAR / large board MSIX placement).
 func (c *SVGeneratorConfig) NVMeCQ0DoorbellOffset() uint32 {
 	stride := uint32(4) << c.NVMeDoorbellStride
-	dbBase := uint32(0x1000)
+	dbBase := uint32(board.DefaultBRAMSize)
 	return dbBase + 1*stride
 }
 

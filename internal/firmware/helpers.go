@@ -69,7 +69,7 @@ func ComputeBAR0Size(msixTableSize int, bramLimit int) int {
 		if bramLimit > 0 {
 			return bramLimit
 		}
-		return 4096
+		return board.DefaultBRAMSize
 	}
 	tableBytes := msixTableSize * 16
 	pbaBytes := (msixTableSize + 63) / 64 * 8
@@ -77,7 +77,7 @@ func ComputeBAR0Size(msixTableSize int, bramLimit int) int {
 		pbaBytes = 8
 	}
 	required := 0x2000 + tableBytes + pbaBytes
-	size := 4096
+	size := board.DefaultBRAMSize
 	for size < required {
 		size *= 2
 	}
@@ -88,7 +88,7 @@ func ComputeBAR0Size(msixTableSize int, bramLimit int) int {
 }
 
 func CappedBAR0Size(ctx *donor.DeviceContext, b *board.Board, msixTableSize int) int {
-	bram := 4096
+	bram := board.DefaultBRAMSize
 	if b != nil {
 		bram = b.BRAMSizeOrDefault()
 	}
@@ -110,30 +110,30 @@ func CappedBAR0Size(ctx *donor.DeviceContext, b *board.Board, msixTableSize int)
 func MSIXPlacement(bar0Size int, msixTableSize int, class uint32, dstrd uint32) (uint32, uint32, uint32) {
 	tableBytes := msixTableSize * 16
 	isNVMe := class>>8 == 0x0108
-	dbBase := uint32(0x1000)
-	tableOff := uint32(0x1000)
+	dbBase := uint32(board.DefaultBRAMSize)
+	tableOff := uint32(board.DefaultBRAMSize)
 	if bar0Size > 0 {
 		tableOff = uint32(bar0Size/2) &^ 0xF
 		if tableOff < 0x2000 {
 			tableOff = 0x2000
 		}
-		if tableOff >= 0x1000 && tableOff < 0x1000+uint32(tableBytes) {
+		if tableOff >= board.DefaultBRAMSize && tableOff < board.DefaultBRAMSize+uint32(tableBytes) {
 			tableOff = 0x2000
 		}
 		if tableOff < 0x40 {
-			tableOff = 0x1000
+			tableOff = board.DefaultBRAMSize
 		}
 		if tableOff+uint32(tableBytes)+16 > uint32(bar0Size) {
 			tableOff = uint32(bar0Size) - uint32(tableBytes) - 16
 			tableOff &^= 0xF
-			if tableOff < 0x1000 {
-				tableOff = 0x1000
+			if tableOff < board.DefaultBRAMSize {
+				tableOff = board.DefaultBRAMSize
 			}
 		}
 	}
 	if isNVMe {
 		stride := uint32(4) << dstrd
-		dbEnd := uint32(0x1000) + 2*stride
+		dbEnd := uint32(board.DefaultBRAMSize) + 2*stride
 		if tableOff < dbEnd {
 			tableOff = dbEnd
 		}
@@ -145,8 +145,8 @@ func MSIXPlacement(bar0Size int, msixTableSize int, class uint32, dstrd uint32) 
 				tableOff = dbEnd
 			}
 			tableOff = (tableOff + 0xF) &^ 0xF
-			if tableOff < 0x1000 {
-				tableOff = 0x1000
+			if tableOff < board.DefaultBRAMSize {
+				tableOff = board.DefaultBRAMSize
 			}
 		}
 	}
