@@ -137,7 +137,7 @@ func TestClampBARsPass(t *testing.T) {
 	om := overlay.NewMap(cs)
 	pass := &clampBARsPass{}
 	pass.Apply(cs, nil, om, ctxFor(cs))
-	// should not panic; BAR clamping applies 4KB mask
+	// should not panic; BAR clamping applies ctx Bar0Size mask (4KB default when unset in test ctx)
 }
 
 func TestClampLinkPass_NilBoard(t *testing.T) {

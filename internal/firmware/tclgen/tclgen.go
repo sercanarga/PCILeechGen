@@ -2,6 +2,7 @@ package tclgen
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"path/filepath"
 	"text/template"
@@ -10,7 +11,6 @@ import (
 	"github.com/sercanarga/pcileechgen/internal/donor"
 	"github.com/sercanarga/pcileechgen/internal/firmware"
 	"github.com/sercanarga/pcileechgen/internal/firmware/devclass"
-	"github.com/sercanarga/pcileechgen/internal/firmware/scrub"
 )
 
 // projectTCLData holds template data for Vivado project generation.
@@ -39,6 +39,7 @@ type projectTCLData struct {
 	Bar0Scale   string
 	Bar064bit   bool
 	Bar0ByteSize int
+	StockBar    bool
 
 	DSNEnabled       bool
 	MSICapVectorsStr string
@@ -105,7 +106,11 @@ func buildBAR0Config(bar0Size int, ctx *donor.DeviceContext) bar0Config {
 }
 
 // GenerateProjectTCL generates the Vivado project creation TCL script.
-func GenerateProjectTCL(ctx *donor.DeviceContext, b *board.Board, libDir string) string {
+// stockBar: when true, forces the stock zerowrite4k BRAM COE path in the
+// generated TCL (no donor content patch into bram_bar_zero4k), while still
+// reporting the correct (donor-demanded) Bar0ByteSize for PCIe IP BAR sizing
+// and other config. This matches --stock-bar CLI semantics.
+func GenerateProjectTCL(ctx *donor.DeviceContext, b *board.Board, libDir string, stockBar bool) string {
 	ids := firmware.ExtractDeviceIDs(ctx.ConfigSpace, ctx.ExtCapabilities)
 
 	// Use the board's max link speed for the Xilinx IP core.
@@ -115,13 +120,17 @@ func GenerateProjectTCL(ctx *donor.DeviceContext, b *board.Board, libDir string)
 	linkWidth := clampLinkWidth(ids.LinkWidth, b.PCIeLanes)
 	linkSpeed := b.MaxLinkSpeedOrDefault()
 
-	bar0Size := b.BRAMSizeOrDefault()
+	msixTableSize := 0
 	if ctx.MSIXData != nil && ctx.MSIXData.TableSize > 0 {
-		bar0Size = scrub.ComputeBAR0Size(ctx.MSIXData.TableSize, b.BRAMSizeOrDefault())
+		msixTableSize = ctx.MSIXData.TableSize
 	}
-	if d := firmware.LargestBar(ctx.BARContents); d != nil && len(d) > bar0Size {
-		bar0Size = len(d)
-	}
+	// IMPORTANT: use *DonorBAR0Demand* (uncapped) here, not CappedBAR0Size.
+	// This ensures the PCIe IP gets configured with the donor's actual BAR0
+	// size (Bar0_Size/Scale), and Bar0ByteSize reports the correct value
+	// (used for bram coe patch decision). --stock-bar (and force oversized
+	// on small-BRAM boards) still report the donor size, but force the
+	// zerowrite4k path for the bram IP.
+	bar0Size := firmware.DonorBAR0Demand(ctx, b, msixTableSize)
 	bar0 := buildBAR0Config(bar0Size, ctx)
 
 	msiVectors := extractMSIVectors(ctx)
@@ -151,6 +160,7 @@ func GenerateProjectTCL(ctx *donor.DeviceContext, b *board.Board, libDir string)
 		Bar0Scale:        bar0.Scale,
 		Bar064bit:        bar0.Is64bit,
 		Bar0ByteSize:     bar0Size,
+		StockBar:         stockBar,
 		DSNEnabled:       ids.HasDSN,
 		MSICapVectorsStr: msiVectorsToTCL(msiVectors),
 	}
@@ -159,29 +169,11 @@ func GenerateProjectTCL(ctx *donor.DeviceContext, b *board.Board, libDir string)
 		data.MSIXEnabled = true
 		data.MSIXTableSize = ctx.MSIXData.TableSize - 1
 		data.MSIXTableBIR = barBIRToTCL(0)
-		tableSize := ctx.MSIXData.TableSize * 16
-		tableOff := uint32(board.DefaultBRAMSize)
-		if ctx.Device.ClassCode>>8 == 0x0108 && bar0Size > 0 {
-			tableOff = uint32(bar0Size/2) &^ 0xF
-			if tableOff < 0x2000 {
-				tableOff = 0x2000
-			}
-			if tableOff >= board.DefaultBRAMSize && tableOff < board.DefaultBRAMSize+uint32(tableSize) {
-				tableOff = 0x2000
-			}
-			if tableOff < 0x40 {
-				tableOff = board.DefaultBRAMSize
-			}
-			if tableOff+uint32(tableSize)+16 > uint32(bar0Size) {
-				tableOff = uint32(bar0Size) - uint32(tableSize) - 16
-				tableOff &^= 0xF
-				if tableOff < board.DefaultBRAMSize {
-					tableOff = board.DefaultBRAMSize
-				}
-			}
+		dstrd := uint32(0)
+		if bar0d := firmware.LargestBar(ctx.BARContents); bar0d != nil && len(bar0d) >= 8 {
+			dstrd = binary.LittleEndian.Uint32(bar0d[4:8]) & 0x0F
 		}
-		pbaOffset := tableOff + uint32(tableSize)
-		pbaOffset = (pbaOffset + 7) &^ 7
+		tableOff, pbaOffset, _ := firmware.MSIXPlacement(bar0Size, ctx.MSIXData.TableSize, ctx.Device.ClassCode, dstrd)
 		data.MSIXTableOffset = fmt.Sprintf("%08X", tableOff)
 		data.MSIXPBABIR = barBIRToTCL(0)
 		data.MSIXPBAOffset = fmt.Sprintf("%08X", pbaOffset)

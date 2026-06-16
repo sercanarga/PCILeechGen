@@ -37,7 +37,8 @@ type SVGeneratorConfig struct {
 }
 
 // NVMeSQ0DoorbellOffset returns the byte offset of the SQ0 tail doorbell.
-// Doorbell offset computed from Bar0Size (for variable BAR / large board MSIX placement).
+// Doorbell base uses board.DefaultBRAMSize (0x1000 classic) so it stays correct for
+// variable/large BAR0 (16k+) + post-doorbell MSIX placement on boards like CaptainDMA_75T.
 func (c *SVGeneratorConfig) NVMeSQ0DoorbellOffset() uint32 {
 	stride := uint32(4) << c.NVMeDoorbellStride
 	dbBase := uint32(board.DefaultBRAMSize)
@@ -45,7 +46,7 @@ func (c *SVGeneratorConfig) NVMeSQ0DoorbellOffset() uint32 {
 }
 
 // NVMeCQ0DoorbellOffset returns the byte offset of the CQ0 head doorbell.
-// Doorbell offset computed from Bar0Size (for variable BAR / large board MSIX placement).
+// See NVMeSQ0DoorbellOffset for variable BAR rationale.
 func (c *SVGeneratorConfig) NVMeCQ0DoorbellOffset() uint32 {
 	stride := uint32(4) << c.NVMeDoorbellStride
 	dbBase := uint32(board.DefaultBRAMSize)

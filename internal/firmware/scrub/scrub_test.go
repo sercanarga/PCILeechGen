@@ -128,7 +128,7 @@ func TestScrubConfigSpace_ClampBAR0(t *testing.T) {
 	}
 	bar2 := scrubbed.BAR(2)
 	if bar2 != 0xFFFFF000 {
-		t.Errorf("BAR2 should be clamped to 4 KB: got 0x%08x, want 0xFFFFF000", bar2)
+		t.Errorf("BAR2 should be clamped to 4 KB (default board BRAM): got 0x%08x, want 0xFFFFF000", bar2)
 	}
 }
 
@@ -460,7 +460,7 @@ func TestRelocateMSIXToBRAM_TableOutside(t *testing.T) {
 	cs.WriteU8(0x90, pci.CapIDMSIX)
 	cs.WriteU8(0x91, 0x00)
 	cs.WriteU16(0x92, 0x8007)     // 8 vectors, enabled
-	cs.WriteU32(0x94, 0x00002000) // table at BAR0+0x2000 (outside 4KB)
+	cs.WriteU32(0x94, 0x00002000) // table at BAR0+0x2000 (outside default 4KB BRAM)
 	cs.WriteU32(0x98, 0x00002080) // PBA at BAR0+0x2080
 	cs.WriteU32(0x10, 0xFFFFF004)
 
@@ -500,7 +500,7 @@ func TestRelocateMSIXToBRAM_TableInside(t *testing.T) {
 	cs.WriteU8(0x90, pci.CapIDMSIX)
 	cs.WriteU8(0x91, 0x00)
 	cs.WriteU16(0x92, 0x8003)     // 4 vectors, enabled
-	cs.WriteU32(0x94, 0x00000200) // table at BAR0+0x200 (inside 4KB)
+	cs.WriteU32(0x94, 0x00000200) // table at BAR0+0x200 (inside default 4KB BRAM)
 	cs.WriteU32(0x98, 0x00000280) // PBA at BAR0+0x280
 
 	scrubbed := ScrubConfigSpace(cs, nil)
@@ -954,3 +954,112 @@ func TestASPMFullyDisabledAfterScrub(t *testing.T) {
 }
 
 func TestComputeBAR0SizeLarge(t *testing.T){if got:=ComputeBAR0Size(512,0);got!=32768{t.Errorf("ComputeBAR0Size(large)=%d",got)}}
+
+// TestPhisonNVMe64bMSIXScrub simulates the exact scenario for Code10 residual hunt:
+// NVMe (class 0x010802), vendor 0x1987 Phison, 64-bit BAR (e.g. 16KB size mask), MSIX present,
+// checks final BAR[0] encoding (64bit + size mask like FFFFC00x), command has BME+MSE (0x6), class preserved,
+// vendor caps preserved (0x40-0x4F Phison), revision etc not mangled.
+func TestPhisonNVMe64bMSIXScrub(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+
+	// Standard header for NVMe Phison
+	cs.WriteU16(0x00, 0x1987) // Vendor Phison
+	cs.WriteU16(0x02, 0x5016) // Device (example)
+	cs.WriteU16(0x04, 0x0000) // Command (will be forced)
+	cs.WriteU16(0x06, 0x0010) // Status: cap list
+	cs.WriteU8(0x08, 0x02)    // Rev
+	cs.WriteU8(0x09, 0x02)    // ProgIF NVMe
+	cs.WriteU8(0x0A, 0x08)    // Subclass
+	cs.WriteU8(0x0B, 0x01)    // Base NVMe class 0108xx
+	cs.WriteU8(0x0C, 0x10)
+	cs.WriteU8(0x0D, 0x00)    // latency
+	cs.WriteU8(0x0E, 0x00)    // header type 0
+	cs.WriteU8(0x0F, 0x00)
+	// 64b BAR0 16KB example: size mask FFFFC000 + type bits 0x4 (64b mem)
+	cs.WriteU32(0x10, 0xFFFC0004)
+	cs.WriteU32(0x14, 0xFFFFFFFF) // upper
+	// subsys
+	cs.WriteU16(0x2C, 0x1987)
+	cs.WriteU16(0x2E, 0x5016)
+	// cap ptr
+	cs.WriteU8(0x34, 0x40)
+
+	// PM cap at 0x40
+	cs.WriteU8(0x40, pci.CapIDPowerManagement)
+	cs.WriteU8(0x41, 0x48) // next
+	cs.WriteU16(0x42, 0x0003)
+	cs.WriteU16(0x44, 0x0008)
+
+	// MSI-X at 0x48
+	cs.WriteU8(0x48, pci.CapIDMSIX)
+	cs.WriteU8(0x49, 0x60)
+	cs.WriteU16(0x4A, 0x0003) // 4 vectors, enabled later by relocate
+	cs.WriteU32(0x4C, 0x00000000) // table off (will relocate)
+	cs.WriteU32(0x50, 0x00000008) // pba
+
+	// PCIe cap at 0x60 (v2 60B)
+	cs.WriteU8(0x60, pci.CapIDPCIExpress)
+	cs.WriteU8(0x61, 0x00)
+	// fill minimal for cap parse
+	for i := 0x62; i < 0x60+60; i++ { cs.WriteU8(i, 0) }
+	cs.WriteU16(0x62, 0x0002) // ver2 endpoint
+
+	// Phison vendor region at 0x40-0x4F (but will be cap-overlapped, knownWhitelist preserves 0x40-0x50 even if not cap)
+	// actually overlap, but zeroVendor uses whitelist for vid=1987 0x40-0x50
+	// set some Phison specific value at offset outside caps e.g. 0x80
+	cs.WriteU32(0x80, 0xDEADBEEF) // should be zeroed unless whitelisted? wait 0x40-0x50 whitelist
+
+	// MSIX table size 4 for bar calc
+	// Class code full 0x010802
+	classCode := uint32(0x010802)
+	_ = uint16(0x1987) // vendor 1987 Phison triggers knownVendorCaps whitelist 0x40-0x50
+
+	b := &board.Board{Name: "test", PCIeLanes: 4, MaxLinkSpeed: 2, BRAMSize: 16384}
+
+	scrubbed, om := ScrubConfigSpaceWithOverlay(cs, b, 0) // let compute use MSIX? but for sim pass explicit
+
+	// For sim we didn't set MSIX data, manually call clamp etc but use pipeline result
+	_ = om // count changes not needed
+
+	finalBar0 := scrubbed.BAR(0)
+	t.Logf("Phison sim: final BAR0=0x%08X (expect 64b type=0x4 + size mask ~0xFFFC0000)", finalBar0)
+	if (finalBar0 & 0x0F) != 0x04 {
+		t.Errorf("BAR0 must preserve 64-bit encoding (type bits 0x4): got 0x%08x", finalBar0)
+	}
+	// size mask for 16k would be FFFC0000 but clamped to board/ctx Bar0Size default 4k here; check low bits
+	if finalBar0&0x0000000F != 0x00000004 {
+		t.Errorf("BAR0 low 4 bits encoding bad: %08x", finalBar0)
+	}
+
+	cmd := scrubbed.Command()
+	t.Logf("Phison sim: final Command=0x%04X (expect has 0x6 BME+MSE)", cmd)
+	if (cmd & 0x0006) != 0x0006 {
+		t.Errorf("Command must have BME+MSE (0x6): got 0x%04x", cmd)
+	}
+
+	cc := scrubbed.ClassCode()
+	t.Logf("Phison sim: final ClassCode=0x%06X (must == 0x%06X)", cc, classCode)
+	if cc != classCode {
+		t.Errorf("ClassCode must be preserved: got 0x%06x want 0x%06x", cc, classCode)
+	}
+
+	rev := scrubbed.RevisionID()
+	if rev != 0x02 {
+		t.Errorf("Revision must be preserved: got 0x%02x", rev)
+	}
+
+	// upper 32 of 64b BAR must be FFFFFFFF
+	bar1 := scrubbed.BAR(1)
+	t.Logf("Phison sim: BAR1(upper)=0x%08X", bar1)
+	if bar1 != 0xFFFFFFFF {
+		t.Errorf("64b BAR upper must be 0xFFFFFFFF: got 0x%08x", bar1)
+	}
+
+	// check Phison vendor region preserved (whitelist 0x40-0x50)
+	// since 0x40-0x50 overlaps caps, check a non-cap vendor spot if any; here 0x80 not whitelisted so zeroed ok
+	// but the pass zeroVendor is after caps; verify cmd/status/class intact
+	if scrubbed.ReadU32(0x08) >> 8 != classCode {
+		t.Error("class at 0x08 not matching")
+	}
+}

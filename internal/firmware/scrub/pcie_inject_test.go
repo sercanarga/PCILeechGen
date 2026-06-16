@@ -365,7 +365,7 @@ func TestFullPipeline_NoBARs_NoCaps(t *testing.T) {
 
 	scrubbed := ScrubConfigSpace(cs, b)
 
-	// BAR0 must be a 4KB 32-bit memory BAR
+	// BAR0 must be a 32-bit memory BAR (size from Bar0Size ctx, default 4KB on default board)
 	bar0 := scrubbed.ReadU32(0x10)
 	if bar0 == 0 {
 		t.Fatal("BAR0 should not be 0 after scrub (scrubber must create one)")
@@ -405,7 +405,7 @@ func TestFullPipeline_IOOnlyBAR(t *testing.T) {
 
 	scrubbed := ScrubConfigSpace(cs, b)
 
-	// BAR0 must be a 4KB memory BAR (overwritten by scrubber)
+	// BAR0 must be a memory BAR (overwritten by scrubber to match Capped/BRAM size; default 4KB)
 	bar0 := scrubbed.ReadU32(0x10)
 	if bar0&0x01 != 0 {
 		t.Fatalf("BAR0 should be memory after scrub, got 0x%08X (IO bit set)", bar0)
@@ -556,7 +556,7 @@ func TestFullPipeline_64bitBAR(t *testing.T) {
 	// size mask applied
 	sizeBits := bar0 & 0xFFFFF000
 	if sizeBits != 0xFFFFF000 {
-		t.Errorf("BAR0 size mask = 0x%08X, want 0xFFFFF000 (4KB example)", sizeBits)
+		t.Errorf("BAR0 size mask = 0x%08X, want 0xFFFFF000 (default 4KB example)", sizeBits)
 	}
 }
 
@@ -667,7 +667,7 @@ func TestFullPipeline_FullChainFromScratch(t *testing.T) {
 	}
 }
 
-// BAR0 must have correct 4KB size mask after scrub (for zero-BAR donor).
+// BAR0 must have correct default size mask (4KB on default board) after scrub (for zero-BAR donor).
 func TestFullPipeline_BAR0SizeMask(t *testing.T) {
 	cs := makeCSNoCaps()
 	b := makeBoard(2, 1)
@@ -677,7 +677,7 @@ func TestFullPipeline_BAR0SizeMask(t *testing.T) {
 	bar0 := scrubbed.ReadU32(0x10)
 	expectedMask := uint32(0xFFFFF000)
 	if bar0 != expectedMask {
-		t.Errorf("BAR0 = 0x%08X, want 0x%08X (4KB size mask)", bar0, expectedMask)
+		t.Errorf("BAR0 = 0x%08X, want 0x%08X (default 4KB size mask)", bar0, expectedMask)
 	}
 }
 
@@ -755,7 +755,7 @@ func TestFullPipeline_MixedBARTypes(t *testing.T) {
 		t.Error("BAR0 should be memory type")
 	}
 	if bar0&0xFFFFF000 != 0xFFFFF000 {
-		t.Errorf("BAR0 size mask = 0x%08X, want 4KB", bar0&0xFFFFF000)
+		t.Errorf("BAR0 size mask = 0x%08X, want 4KB (default)", bar0&0xFFFFF000)
 	}
 }
 
