@@ -88,7 +88,7 @@ func TestMSIVectorsToTCL(t *testing.T) {
 func TestBuildBAR0Config_MemoryBAR(t *testing.T) {
 	// Memory BAR - Xilinx IP should be configured with 4 KB to match
 	// the FPGA's BRAM-served region size.
-	cfg := buildBAR0Config(4096)
+	sz := 4096; cfg := buildBAR0Config(sz)
 	if !cfg.Enabled {
 		t.Fatal("BAR0 should be enabled")
 	}
@@ -104,7 +104,7 @@ func TestBuildBAR0Config_MemoryBAR(t *testing.T) {
 func TestBuildBAR0Config_IOBAR(t *testing.T) {
 	// IO BAR donor: BAR0 must still be enabled as memory.
 	// scrubber forces BAR0 to 32-bit memory regardless of donor type.
-	cfg := buildBAR0Config(4096)
+	sz := 4096; cfg := buildBAR0Config(sz)
 	if !cfg.Enabled {
 		t.Fatal("BAR0 should be enabled even with IO-only donor")
 	}
@@ -119,7 +119,7 @@ func TestBuildBAR0Config_IOBAR(t *testing.T) {
 func TestBuildBAR0Config_NoBARs(t *testing.T) {
 	// no donor BARs: BAR0 must still be enabled.
 	// the scrubber creates BAR0 as 4KB 32-bit memory for all devices.
-	cfg := buildBAR0Config(4096)
+	sz := 4096; cfg := buildBAR0Config(sz)
 	if !cfg.Enabled {
 		t.Fatal("BAR0 should always be enabled")
 	}
@@ -137,6 +137,7 @@ func TestGenerateProjectTCL_MSIXConfig(t *testing.T) {
 		FPGAPart:  "xc7a35tfgg484-2",
 		PCIeLanes: 1,
 		TopModule: "test_top",
+		BRAMSize:  16384,
 	}
 	cs := pci.NewConfigSpace()
 	cs.Size = pci.ConfigSpaceSize
@@ -161,7 +162,7 @@ func TestGenerateProjectTCL_MSIXConfig(t *testing.T) {
 		"MSIx_Table_BIR",
 		"BAR_0",
 		"MSIx_PBA_BIR",
-		"00001000",
+		"00002000",
 		"129vec",
 	} {
 		if !strings.Contains(tcl, want) {

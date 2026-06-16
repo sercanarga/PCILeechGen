@@ -15,10 +15,11 @@ const (
 	statusMask = 0x06F0 // keep 66MHz, FastB2B, CapList, DevSel bits
 )
 
-const BRAMSize = 4096
-
 func ComputeBAR0Size(msixTableSize int, bramLimit int) int {
 	if msixTableSize <= 0 {
+		if bramLimit > 0 {
+			return bramLimit
+		}
 		return 4096
 	}
 	tableBytes := msixTableSize * 16
@@ -26,12 +27,12 @@ func ComputeBAR0Size(msixTableSize int, bramLimit int) int {
 	if pbaBytes < 8 {
 		pbaBytes = 8
 	}
-	required := 0x1000 + tableBytes + pbaBytes
+	required := 0x2000 + tableBytes + pbaBytes
 	size := 4096
 	for size < required {
 		size *= 2
 	}
-	if size > bramLimit {
+	if bramLimit > 0 && size > bramLimit {
 		return bramLimit
 	}
 	return size
@@ -166,18 +167,16 @@ func ScrubConfigSpaceWithOverlay(cs *pci.ConfigSpace, b *board.Board) (*pci.Conf
 	scrubbed := cs.Clone()
 	om := overlay.NewMap(scrubbed)
 
-	bramLimit := BRAMSize
+	bramLimit := 4096
 	if b != nil {
-		if bs := b.BRAMSizeOrDefault(); bs > bramLimit {
-			bramLimit = bs
-		}
+		bramLimit = b.BRAMSizeOrDefault()
 	}
 
 	ctx := &ScrubContext{
 		Caps:      pci.ParseCapabilities(scrubbed),
 		ExtCaps:   pci.ParseExtCapabilities(scrubbed),
-		ClassCode: cs.ReadU32(0x08) >> 8, // bytes 0x09-0x0B: ProgIf + SubClass + BaseClass
-		Bar0Size:  4096,
+		ClassCode: cs.ReadU32(0x08) >> 8,
+		Bar0Size:  bramLimit,
 	}
 
 	if info := pci.ParseMSIXCap(scrubbed); info != nil && info.TableSize > 0 {
@@ -195,7 +194,6 @@ func barSizeMask(size int) uint32 {
 	return uint32(^(size - 1))
 }
 
-// clampBARsToFPGA shrinks memory BARs to bar0Size and I/O BARs to 256 bytes.
 func clampBARsToFPGA(cs *pci.ConfigSpace, om *overlay.Map, bar0Size int) {
 	mask := barSizeMask(bar0Size)
 	bar0KB := bar0Size / 1024
@@ -213,25 +211,23 @@ func clampBARsToFPGA(cs *pci.ConfigSpace, om *overlay.Map, bar0Size int) {
 			continue
 		}
 
-		newBar := mask | (barVal & 0x09)
-		om.WriteU32(barOffset, newBar, fmt.Sprintf("clamp BAR%d to %d KB (type=32-bit)", i, bar0KB))
+		newBar := mask | (barVal & 0x0B)
+		om.WriteU32(barOffset, newBar, fmt.Sprintf("clamp BAR%d to %d KB", i, bar0KB))
 
 		is64bit := (barVal & 0x06) == 0x04
 		if is64bit && i < 5 {
-			om.WriteU32(barOffset+4, 0x00000000, fmt.Sprintf("clear BAR%d upper 32 bits", i+1))
+			om.WriteU32(barOffset+4, 0, "zero upper dword")
 			i++
 		}
 	}
 
 	bar0 := cs.BAR(0)
 	if bar0 == 0 || (bar0&0x01 != 0) {
-		om.WriteU32(0x10, mask, fmt.Sprintf("create BAR0 as %dKB 32-bit memory (donor had none)", bar0KB))
+		om.WriteU32(0x10, mask, fmt.Sprintf("create BAR0 as %dKB memory (donor had none)", bar0KB))
 	}
 }
 
-// relocateMSIXToBRAM moves MSI-X table/PBA offsets to 0x1000+ so the
-// separate BRAM module can serve them. Keeps MSI-X enabled.
-func relocateMSIXToBRAM(cs *pci.ConfigSpace, om *overlay.Map, caps []pci.Capability) {
+func relocateMSIXToBRAM(cs *pci.ConfigSpace, om *overlay.Map, caps []pci.Capability, ctx *ScrubContext) {
 	for _, cap := range caps {
 		if cap.ID != pci.CapIDMSIX {
 			continue
@@ -252,12 +248,30 @@ func relocateMSIXToBRAM(cs *pci.ConfigSpace, om *overlay.Map, caps []pci.Capabil
 		}
 
 		newTableOffset := uint32(0x1000)
+		if ctx != nil && ctx.Bar0Size > 0 {
+			newTableOffset = uint32(ctx.Bar0Size/2) &^ 0xF
+			if newTableOffset < 0x2000 {
+				newTableOffset = 0x2000
+			}
+			if newTableOffset >= 0x1000 && newTableOffset < 0x1000+uint32(tableSize) {
+				newTableOffset = 0x2000
+			}
+			if newTableOffset < 0x40 {
+				newTableOffset = 0x1000
+			}
+			if newTableOffset+uint32(tableSize)+16 > uint32(ctx.Bar0Size) {
+				newTableOffset = uint32(ctx.Bar0Size) - uint32(tableSize) - 16
+				newTableOffset &^= 0xF
+				if newTableOffset < 0x1000 {
+					newTableOffset = 0x1000
+				}
+			}
+		}
 		newPBAOffset := newTableOffset + uint32(tableSize)
 		newPBAOffset = (newPBAOffset + 7) &^ 7
 
-		// BIR must be 0 - FPGA only serves BAR0
-		tableReg := newTableOffset & 0xFFFFFFF8 // BIR = 0
-		pbaReg := newPBAOffset & 0xFFFFFFF8     // BIR = 0
+		tableReg := newTableOffset & 0xFFFFFFF8
+		pbaReg := newPBAOffset & 0xFFFFFFF8
 
 		om.WriteU32(cap.Offset+4, tableReg,
 			fmt.Sprintf("relocate MSI-X table to 0x%X (%d vectors, BIR=0)", newTableOffset, info.TableSize))

@@ -36,15 +36,25 @@ type SVGeneratorConfig struct {
 }
 
 // NVMeSQ0DoorbellOffset returns the byte offset of the SQ0 tail doorbell.
+// Doorbell offset computed from Bar0Size (for variable BAR / large board MSIX placement).
 func (c *SVGeneratorConfig) NVMeSQ0DoorbellOffset() uint32 {
 	stride := uint32(4) << c.NVMeDoorbellStride
-	return 0x1000 + 0*stride // SQ0 tail
+	dbBase := uint32(0x1000)
+	if c.Bar0Size > 0 {
+		dbBase = uint32(0x1000)
+	}
+	return dbBase + 0*stride
 }
 
 // NVMeCQ0DoorbellOffset returns the byte offset of the CQ0 head doorbell.
+// Doorbell offset computed from Bar0Size (for variable BAR / large board MSIX placement).
 func (c *SVGeneratorConfig) NVMeCQ0DoorbellOffset() uint32 {
 	stride := uint32(4) << c.NVMeDoorbellStride
-	return 0x1000 + 1*stride // CQ0 head
+	dbBase := uint32(0x1000)
+	if c.Bar0Size > 0 {
+		dbBase = uint32(0x1000)
+	}
+	return dbBase + 1*stride
 }
 
 func renderTemplate(name string, data any) (string, error) {

@@ -32,8 +32,8 @@ device_classes:
 		t.Fatalf("LoadConfig failed: %v", err)
 	}
 
-	if cfg.Defaults.BAR0Size != 4096 {
-		t.Errorf("expected default bar0_size 4096, got %d", cfg.Defaults.BAR0Size)
+	if got := cfg.Defaults.BAR0Size; got != 4096 {
+		t.Errorf("expected default bar0_size 4096, got %d", got)
 	}
 	if dc, ok := cfg.DeviceClasses["0200"]; !ok {
 		t.Error("expected device class 0200")

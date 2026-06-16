@@ -6,12 +6,10 @@ import (
 	"github.com/sercanarga/pcileechgen/internal/util"
 )
 
-// ScrubBarContent patches BAR data with device-class quirks using default BRAM size.
 func ScrubBarContent(barContents map[int][]byte, classCode uint32, vendorID uint16) {
-	ScrubBarContentWithBRAM(barContents, classCode, vendorID, BRAMSize)
+	ScrubBarContentWithBRAM(barContents, classCode, vendorID, 4096)
 }
 
-// ScrubBarContentWithBRAM is like ScrubBarContent but takes a custom BRAM size.
 func ScrubBarContentWithBRAM(barContents map[int][]byte, classCode uint32, vendorID uint16, bramSize int) {
 	data := firmware.LargestBar(barContents)
 	if data == nil {

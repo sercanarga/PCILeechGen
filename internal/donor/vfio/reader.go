@@ -28,7 +28,7 @@ const (
 	vfioRegionFlagRead = 1
 
 	configSpaceMaxSize = 4096
-	barDumpMaxSize     = 4096
+	barDumpMaxSize     = 65536
 )
 
 // vfioRegionInfo matches struct vfio_region_info from linux/vfio.h.
@@ -158,7 +158,7 @@ func Collect(bdf string) (*DeviceDump, error) {
 		})
 
 		if info.Size > 0 && info.Flags&vfioRegionFlagRead != 0 {
-			barData, _, err := readBARRegion(session.deviceFD, vfioPCIBAR0+i, barDumpMaxSize)
+			barData, _, err := readBARRegion(session.deviceFD, vfioPCIBAR0+i, int(info.Size))
 			if err == nil && len(barData) > 0 {
 				dump.BARContents[i] = barData
 			}

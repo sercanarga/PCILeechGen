@@ -16,7 +16,7 @@ const (
 	nativeDriverRetryDelay = 1 * time.Second
 	nativeDriverMaxRetries = 3
 	memSpaceSettleDelay    = 200 * time.Millisecond
-	maxBARReadSize         = 4096
+	maxBARReadSize         = 65536
 )
 
 // Collector gathers donor PCI data from sysfs.
@@ -265,7 +265,7 @@ func (c *Collector) tryNativeDriverRebind(bdf pci.BDF, bars []pci.BAR, current m
 			if _, ok := recovered[bar.Index]; ok {
 				continue // already recovered
 			}
-			data, err := c.sysfs.ReadBARContent(bdf, bar.Index, maxBARReadSize)
+			data, err := c.sysfs.ReadBARContent(bdf, bar.Index, int(bar.Size))
 			if err != nil {
 				slog.Warn("native driver rebind: BAR read failed",
 					"bar", bar.Index, "error", err)
@@ -388,7 +388,7 @@ func (c *Collector) readBARs(bdf pci.BDF, eligible []pci.BAR, contents map[int][
 		if data, ok := contents[bar.Index]; ok && !isAllFF(data) {
 			continue // already have valid data
 		}
-		data, err := c.sysfs.ReadBARContent(bdf, bar.Index, maxBARReadSize)
+		data, err := c.sysfs.ReadBARContent(bdf, bar.Index, int(bar.Size))
 		if err != nil {
 			slog.Warn("could not read BAR via sysfs", "bar", bar.Index, "error", err)
 			continue
@@ -413,7 +413,7 @@ func (c *Collector) collectBARProfiles(bdf pci.BDF, bars []pci.BAR, barContents 
 		}
 
 		resourcePath := fmt.Sprintf("%s/%s/resource%d", c.sysfs.basePath, bdf.String(), bar.Index)
-		profile, err := profiler.ProfileBAR(resourcePath, bar.Index, maxBARReadSize)
+		profile, err := profiler.ProfileBAR(resourcePath, bar.Index, min(int(bar.Size), maxBARReadSize))
 		if err != nil {
 			slog.Info("BAR profiling skipped", "bar", bar.Index, "error", err)
 			continue

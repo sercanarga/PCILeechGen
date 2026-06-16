@@ -20,13 +20,6 @@ type clearMiscPass struct{}
 func (p *clearMiscPass) Name() string { return "clear misc registers" }
 func (p *clearMiscPass) Apply(cs *pci.ConfigSpace, b *board.Board, om *overlay.Map, ctx *ScrubContext) {
 	om.WriteU8(0x0F, 0x00, "clear BIST register")
-	// NOTE: Interrupt Line (0x3C) is NOT cleared. Leave donor value intact so
-	// Windows PnP manager can assign the correct IRQ. Clearing to 0x00 causes
-	// Code 10 ("device cannot start") because hdaudio.sys finds no valid IRQ.
-	// NOTE: Interrupt Pin (0x3D) MUST be non-zero for Windows to load a driver.
-	// Some devices (especially MSI-only) report Interrupt Pin = 0, which causes
-	// Windows PnP manager to skip driver loading entirely (DN_DRIVER_LOADED = NO).
-	// Force to INTA# (1) if donor reports 0.
 	if cs.InterruptPin() == 0 {
 		om.WriteU8(0x3D, 0x01, "set Interrupt Pin to INTA# (was 0, prevents driver load)")
 	}
@@ -126,7 +119,7 @@ type relocateMSIXPass struct{}
 
 func (p *relocateMSIXPass) Name() string { return "relocate MSI-X to BRAM" }
 func (p *relocateMSIXPass) Apply(cs *pci.ConfigSpace, b *board.Board, om *overlay.Map, ctx *ScrubContext) {
-	relocateMSIXToBRAM(cs, om, ctx.Caps)
+	relocateMSIXToBRAM(cs, om, ctx.Caps, ctx)
 }
 
 type clampLinkPass struct{}
