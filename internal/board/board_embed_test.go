@@ -80,8 +80,8 @@ func TestBoard_MaxLinkSpeedOrDefault(t *testing.T) {
 
 func TestBoard_BRAMSizeOrDefault(t *testing.T) {
 	b := &Board{}
-	if b.BRAMSizeOrDefault() != 4096 {
-		t.Errorf("default should be 4096, got %d", b.BRAMSizeOrDefault())
+	if got := b.BRAMSizeOrDefault(); got != 4096 {
+		t.Errorf("default should be 4096, got %d", got)
 	}
 	b.BRAMSize = 8192
 	if b.BRAMSizeOrDefault() != 8192 {

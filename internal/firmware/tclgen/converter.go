@@ -68,7 +68,7 @@ func clampLinkWidth(donorWidth uint8, boardLanes int) uint8 {
 }
 
 // barSizeToTCL converts BAR size in bytes to Vivado TCL scale/size.
-// Rounds up to next power of 2 (Vivado requirement).
+// Rounds up to next power of 2 (Vivado requirement). Used for variable Bar0Size.
 func barSizeToTCL(sizeBytes uint64) (scale string, size string) {
 	if sizeBytes == 0 {
 		return "Kilobytes", "4"

@@ -51,7 +51,7 @@ func GenerateConfigSpaceCOE(cs *pci.ConfigSpace) string {
 // sole source for config space reads. BAR sizing probes (host writes 0xFFFFFFFF
 // then reads back) go through the BRAM, not the IP core. the writemask must
 // limit writable bits to match the BAR size mask so the host reads back the
-// correct size-encoded value (e.g. 0xFFFFF000 for 4KB).
+// correct size-encoded value (e.g. 0xFFFFF000 for 4KB; variable Bar0Size supported via boards).
 //
 // identity registers (VID/DID, ClassCode, SubsysIDs) are read-only to prevent
 // host writes from corrupting device identity.
@@ -112,6 +112,7 @@ func GenerateWritemaskCOE(cs *pci.ConfigSpace) string {
 }
 
 // GenerateBarContentCOE outputs BAR shadow COE from the lowest BAR.
+// Note: actual BAR aperture (Bar0Size) may be variable (>4KB on large boards); this seeds 4KB shadow.
 func GenerateBarContentCOE(barContents map[int][]byte) string {
 	words := make([]uint32, shadowCfgSpaceWords)
 

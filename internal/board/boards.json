@@ -31,6 +31,7 @@
         "fpga_part": "xc7a75tfgg484-2",
         "pcie_lanes": 1,
         "max_link_speed": 2,
+        "bram_size": 8192,
         "top_module": "pcileech_enigma_x1_top",
         "project_dir": "EnigmaX1",
         "tcl_file": "vivado_generate_project.tcl"
@@ -70,6 +71,7 @@
         "fpga_part": "xc7a75tfgg484-2",
         "pcie_lanes": 1,
         "max_link_speed": 2,
+        "bram_size": 16384,
         "top_module": "pcileech_75t484_x1_top",
         "project_dir": "CaptainDMA",
         "sub_dir": "75t484_x1",
@@ -80,6 +82,7 @@
         "fpga_part": "xc7a100tfgg484-2",
         "pcie_lanes": 1,
         "max_link_speed": 2,
+        "bram_size": 32768,
         "top_module": "pcileech_100t484_x1_top",
         "project_dir": "CaptainDMA",
         "sub_dir": "100t484-1",
@@ -90,6 +93,7 @@
         "fpga_part": "xc7a100tfgg484-2",
         "pcie_lanes": 4,
         "max_link_speed": 2,
+        "bram_size": 32768,
         "top_module": "pcileech_tbx4_100t_top",
         "project_dir": "ZDMA",
         "tcl_file": "vivado_generate_project_100t.tcl",
@@ -118,6 +122,7 @@
         "fpga_part": "xc7a100tfgg484-2",
         "pcie_lanes": 1,
         "max_link_speed": 2,
+        "bram_size": 32768,
         "top_module": "pcileech_netv2_top",
         "project_dir": "NeTV2",
         "tcl_file": "vivado_generate_project_100t.tcl"
@@ -127,6 +132,7 @@
         "fpga_part": "xc7a200tfbg676-2",
         "pcie_lanes": 4,
         "max_link_speed": 2,
+        "bram_size": 32768,
         "top_module": "pcileech_ac701_ft601_top",
         "project_dir": "ac701_ft601",
         "tcl_file": "vivado_generate_project.tcl"
@@ -136,6 +142,7 @@
         "fpga_part": "xc7a200tfbg484-3",
         "pcie_lanes": 4,
         "max_link_speed": 2,
+        "bram_size": 32768,
         "top_module": "pcileech_acorn_top",
         "project_dir": "acorn_ft2232h",
         "tcl_file": "vivado_generate_project_acorn.tcl"
@@ -145,6 +152,7 @@
         "fpga_part": "xc7a100tfgg484-2",
         "pcie_lanes": 4,
         "max_link_speed": 2,
+        "bram_size": 32768,
         "top_module": "pcileech_acorn_top",
         "project_dir": "acorn_ft2232h",
         "tcl_file": "vivado_generate_project_litefury.tcl"
