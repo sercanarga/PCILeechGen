@@ -233,3 +233,5 @@ func TestValidationResult_Summary(t *testing.T) {
 		t.Error("Summary should show 1 failed")
 	}
 }
+
+func TestValidateBARSizeExceed(t *testing.T){if e:=ValidateBARSize(8192,4096,0);len(e)==0{t.Error("ValidateBARSize(exceed) should report")}}

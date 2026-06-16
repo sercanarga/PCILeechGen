@@ -1,5 +1,10 @@
 package firmware
 
+import (
+	"github.com/sercanarga/pcileechgen/internal/board"
+	"github.com/sercanarga/pcileechgen/internal/donor"
+)
+
 // LowestBar picks the value with the smallest map key.
 // Returns the zero value of V when the map is nil or empty.
 func LowestBar[V any](m map[int]V) V {
@@ -57,4 +62,95 @@ func LargestBarIndex(m map[int][]byte) int {
 		}
 	}
 	return bestIdx
+}
+
+func ComputeBAR0Size(msixTableSize int, bramLimit int) int {
+	if msixTableSize <= 0 {
+		if bramLimit > 0 {
+			return bramLimit
+		}
+		return 4096
+	}
+	tableBytes := msixTableSize * 16
+	pbaBytes := (msixTableSize + 63) / 64 * 8
+	if pbaBytes < 8 {
+		pbaBytes = 8
+	}
+	required := 0x2000 + tableBytes + pbaBytes
+	size := 4096
+	for size < required {
+		size *= 2
+	}
+	if bramLimit > 0 && size > bramLimit {
+		return bramLimit
+	}
+	return size
+}
+
+func CappedBAR0Size(ctx *donor.DeviceContext, b *board.Board, msixTableSize int) int {
+	bram := 4096
+	if b != nil {
+		bram = b.BRAMSizeOrDefault()
+	}
+	bar0Size := bram
+	if msixTableSize > 0 {
+		bar0Size = ComputeBAR0Size(msixTableSize, bram)
+	}
+	if ctx != nil {
+		if d := LargestBar(ctx.BARContents); d != nil && len(d) > bar0Size {
+			bar0Size = len(d)
+		}
+	}
+	if bar0Size > bram {
+		bar0Size = bram
+	}
+	return bar0Size
+}
+
+func MSIXPlacement(bar0Size int, msixTableSize int, class uint32, dstrd uint32) (uint32, uint32, uint32) {
+	tableBytes := msixTableSize * 16
+	isNVMe := class>>8 == 0x0108
+	dbBase := uint32(0x1000)
+	tableOff := uint32(0x1000)
+	if bar0Size > 0 {
+		tableOff = uint32(bar0Size/2) &^ 0xF
+		if tableOff < 0x2000 {
+			tableOff = 0x2000
+		}
+		if tableOff >= 0x1000 && tableOff < 0x1000+uint32(tableBytes) {
+			tableOff = 0x2000
+		}
+		if tableOff < 0x40 {
+			tableOff = 0x1000
+		}
+		if tableOff+uint32(tableBytes)+16 > uint32(bar0Size) {
+			tableOff = uint32(bar0Size) - uint32(tableBytes) - 16
+			tableOff &^= 0xF
+			if tableOff < 0x1000 {
+				tableOff = 0x1000
+			}
+		}
+	}
+	if isNVMe {
+		stride := uint32(4) << dstrd
+		dbEnd := uint32(0x1000) + 2*stride
+		if tableOff < dbEnd {
+			tableOff = dbEnd
+		}
+		tableOff = (tableOff + 0xF) &^ 0xF
+		if tableOff+uint32(tableBytes)+16 > uint32(bar0Size) {
+			tableOff = uint32(bar0Size) - uint32(tableBytes) - 16
+			tableOff &^= 0xF
+			if tableOff < dbEnd {
+				tableOff = dbEnd
+			}
+			tableOff = (tableOff + 0xF) &^ 0xF
+			if tableOff < 0x1000 {
+				tableOff = 0x1000
+			}
+		}
+	}
+	pbaOff := tableOff + uint32(tableBytes)
+	pbaOff = (pbaOff + 7) &^ 7
+	return tableOff, pbaOff, dbBase
 }
