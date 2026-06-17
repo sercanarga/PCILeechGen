@@ -47,8 +47,12 @@ func msiVectorsToTCL(vectors int) string {
 	}
 }
 
-// barBIRToTCL formats a BAR index for Vivado. All BARs are 32-bit after scrub,
-// so BIR 0 maps to "BAR_0", not "BAR_1:0" (which is the 64-bit format).
-func barBIRToTCL(bir int) string {
+// barBIRToTCL formats a BAR index for Vivado MSI-X parameters.
+// For 32-bit BAR: "BAR_0"
+// For 64-bit BAR0 (BIR=0 and 64-bit): "BAR_1:0" (64-bit format expected by the IP).
+func barBIRToTCL(bir int, is64bit bool) string {
+	if bir == 0 && is64bit {
+		return "BAR_1:0"
+	}
 	return fmt.Sprintf("BAR_%d", bir)
 }

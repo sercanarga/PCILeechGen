@@ -168,14 +168,16 @@ func GenerateProjectTCL(ctx *donor.DeviceContext, b *board.Board, libDir string,
 	if ctx.MSIXData != nil && ctx.MSIXData.TableSize > 0 {
 		data.MSIXEnabled = true
 		data.MSIXTableSize = ctx.MSIXData.TableSize - 1
-		data.MSIXTableBIR = barBIRToTCL(0)
+		bir := ctx.MSIXData.TableBIR
+		is64 := bar0.Is64bit && bir == 0
+		data.MSIXTableBIR = barBIRToTCL(bir, is64)
 		dstrd := uint32(0)
 		if bar0d := firmware.LargestBar(ctx.BARContents); bar0d != nil && len(bar0d) >= 8 {
 			dstrd = binary.LittleEndian.Uint32(bar0d[4:8]) & 0x0F
 		}
 		tableOff, pbaOffset, _ := firmware.MSIXPlacement(bar0Size, ctx.MSIXData.TableSize, ctx.Device.ClassCode, dstrd)
 		data.MSIXTableOffset = fmt.Sprintf("%08X", tableOff)
-		data.MSIXPBABIR = barBIRToTCL(0)
+		data.MSIXPBABIR = barBIRToTCL(bir, is64)
 		data.MSIXPBAOffset = fmt.Sprintf("%08X", pbaOffset)
 	}
 
