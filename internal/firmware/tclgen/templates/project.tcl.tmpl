@@ -17,14 +17,15 @@ set_property -name "part" -value "{{.FPGAPart}}" -objects $obj
 set_property -name "simulator_language" -value "Mixed" -objects $obj
 set_property -name "xpm_libraries" -value "XPM_CDC XPM_MEMORY" -objects $obj
 
-# Source files
+# Source files (board sources prepared in local src/ to ensure generated
+# controller / donor-specific modules take precedence over stock versions)
 if {[string equal [get_filesets -quiet sources_1] ""]} {
   create_fileset -srcset sources_1
 }
 
 set obj [get_filesets sources_1]
-set sv_files [glob -nocomplain "{{.SrcPath}}/*.sv"]
-set svh_files [glob -nocomplain "{{.SrcPath}}/*.svh"]
+set sv_files [glob -nocomplain "${origin_dir}/src/*.sv"]
+set svh_files [glob -nocomplain "${origin_dir}/src/*.svh"]
 set all_src_files [concat $sv_files $svh_files]
 if {[llength $all_src_files] > 0} {
   set imported_files [import_files -fileset sources_1 $all_src_files]
@@ -181,11 +182,11 @@ if { $pcie_ip != "" } {
 set_property -name "top" -value "{{.TopModule}}" -objects [get_filesets sources_1]
 set_property -name "top_auto_set" -value "0" -objects [get_filesets sources_1]
 
-# Constraints
+# Constraints (from locally prepared board sources)
 if {[string equal [get_filesets -quiet constrs_1] ""]} {
   create_fileset -constrset constrs_1
 }
-set xdc_files [glob -nocomplain "{{.SrcPath}}/*.xdc"]
+set xdc_files [glob -nocomplain "${origin_dir}/src/*.xdc"]
 if {[llength $xdc_files] > 0} {
   set imported_xdc [import_files -fileset constrs_1 $xdc_files]
   foreach f $imported_xdc {

@@ -210,9 +210,10 @@ func (ow *OutputWriter) patchSVSources(ctx *donor.DeviceContext, b *board.Board,
 		return fmt.Errorf("board sources not found at %s (is the pcileech-fpga submodule initialized?)", srcDir)
 	}
 
-	// Copy board sources, excluding files replaced by the generator.
-	// This prevents Vivado from importing duplicate module definitions
-	// (same name from both board source and generated file).
+	// Copy board sources to local src/ (excluding the top-level bar controller
+	// when generating custom version). The generated vivado_generate_project.tcl
+	// now globs from this local dir so the donor-custom controller is used
+	// instead of stock, avoiding duplicate module imports.
 	if err := copyDirExcluding(srcDir, dstDir, svFilesReplacedByGenerator); err != nil {
 		return fmt.Errorf("failed to copy SV sources: %w", err)
 	}
