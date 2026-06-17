@@ -160,7 +160,7 @@ func TestGenerateProjectTCL_MSIXConfig(t *testing.T) {
 		"MSIx_Table_Size",
 		"MSIx_Enabled",
 		"MSIx_Table_BIR",
-		"BAR_0",
+		"BAR_1:0",
 		"MSIx_PBA_BIR",
 		"00002000",
 		"129vec",
