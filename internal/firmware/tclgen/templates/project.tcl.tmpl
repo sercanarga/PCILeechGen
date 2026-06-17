@@ -39,6 +39,15 @@ foreach f [get_files -of_objects [get_filesets sources_1] -filter {NAME =~ "*.sv
   set_property -name "file_type" -value "Verilog Header" -objects $f
 }
 
+{{if not .StockBar}}
+# Remove any stock bar controller that might have been imported from board sources.
+# We want the generated donor-specific version (with NVMe/MSIX logic etc.).
+set stock_bar_ctrl [get_files -of_objects [get_filesets sources_1] "*pcileech_tlps128_bar_controller.sv"]
+if { $stock_bar_ctrl != "" } {
+  remove_files $stock_bar_ctrl
+  puts "Removed stock bar controller (will use generated donor-specific version)"
+}
+{{end}}
 
 # Generated SV modules
 set gen_sv_files [glob -nocomplain "${origin_dir}/*.sv"]
