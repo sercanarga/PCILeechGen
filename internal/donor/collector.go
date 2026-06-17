@@ -265,7 +265,11 @@ func (c *Collector) tryNativeDriverRebind(bdf pci.BDF, bars []pci.BAR, current m
 			if _, ok := recovered[bar.Index]; ok {
 				continue // already recovered
 			}
-			data, err := c.sysfs.ReadBARContent(bdf, bar.Index, int(bar.Size))
+			readLen := int(bar.Size)
+			if readLen > maxBARReadSize {
+				readLen = maxBARReadSize
+			}
+			data, err := c.sysfs.ReadBARContent(bdf, bar.Index, readLen)
 			if err != nil {
 				slog.Warn("native driver rebind: BAR read failed",
 					"bar", bar.Index, "error", err)
@@ -383,12 +387,20 @@ func (c *Collector) collectBARMemory(bdf pci.BDF, bars []pci.BAR) map[int][]byte
 }
 
 // readBARs reads eligible BARs via sysfs mmap, skipping already-valid entries.
+// Contents are capped to maxBARReadSize to avoid extremely slow/ hanging reads
+// on devices with large BAR apertures (hundreds of MB+). The low registers
+// needed for emulation are captured; higher areas are not required for the
+// initial snapshot.
 func (c *Collector) readBARs(bdf pci.BDF, eligible []pci.BAR, contents map[int][]byte) {
 	for _, bar := range eligible {
 		if data, ok := contents[bar.Index]; ok && !isAllFF(data) {
 			continue // already have valid data
 		}
-		data, err := c.sysfs.ReadBARContent(bdf, bar.Index, int(bar.Size))
+		readLen := int(bar.Size)
+		if readLen > maxBARReadSize {
+			readLen = maxBARReadSize
+		}
+		data, err := c.sysfs.ReadBARContent(bdf, bar.Index, readLen)
 		if err != nil {
 			slog.Warn("could not read BAR via sysfs", "bar", bar.Index, "error", err)
 			continue

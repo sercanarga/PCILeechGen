@@ -180,6 +180,14 @@ func (sr *SysfsReader) ReadBARContent(bdf pci.BDF, barIndex int, maxSize int) ([
 		readSize = maxSize
 	}
 
+	// Hard safety cap: some devices report very large BAR sizes in sysfs (hundreds
+	// of MB+). Reading the full region via MMIO is extremely slow and makes the
+	// tool appear to freeze. 64KB is sufficient for the register snapshot used by
+	// the emulation models.
+	if readSize > 65536 {
+		readSize = 65536
+	}
+
 	// Try mmap first - works with vfio-pci bound devices
 	data, err := sr.readBARViaMmap(f, readSize)
 	if err == nil {
