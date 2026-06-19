@@ -48,8 +48,13 @@ module pcileech_bar_impl_device #(
     output wire [31:0]  nvme_asq_lo,
     output wire [31:0]  nvme_asq_hi,
     output wire [31:0]  nvme_acq_lo,
-    output wire [31:0]  nvme_acq_hi
+    output wire [31:0]  nvme_acq_hi,
+    output wire [31:0]  nvme_csts
 {{ end }});
+
+    localparam [31:0] BAR_ADDR_MASK = BAR_SIZE - 1;
+    wire [31:0] wr_offset     = wr_addr     & BAR_ADDR_MASK;
+    wire [31:0] rd_req_offset = rd_req_addr & BAR_ADDR_MASK;
 
     // registers
 {{ range .BARModel.Registers }}
@@ -67,10 +72,10 @@ module pcileech_bar_impl_device #(
 
     always @(posedge clk) begin
         if (rst) begin
-            cc_en_prev          <= 1'b1;
+            cc_en_prev          <= 1'b0;
             csts_transition_cnt <= 4'h0;
             csts_rdy_pending    <= 1'b0;
-            reg_0x0000001C      <= 32'h00000001;  // CSTS: RDY=1, SHST=0
+            reg_0x0000001C      <= 32'h00000000;  // CSTS: RDY=0, SHST=0
         end else begin
             cc_en_prev <= reg_0x00000014[0]; // CC.EN
 
@@ -78,11 +83,13 @@ module pcileech_bar_impl_device #(
             if (reg_0x00000014[0] && !cc_en_prev) begin
                 csts_rdy_pending    <= 1'b1;
                 csts_transition_cnt <= 4'h0;
+                reg_0x0000001C[0]   <= 1'b0;  // CSTS.RDY = 0 while enabling
+                reg_0x0000001C[3:2] <= 2'b00; // CSTS.SHST = no shutdown
             end
-            // CC.EN falling edge -> immediate shutdown
+            // CC.EN falling edge -> controller disabled; SHST is only for CC.SHN shutdown
             else if (!reg_0x00000014[0] && cc_en_prev) begin
                 reg_0x0000001C[0]    <= 1'b0;        // CSTS.RDY = 0
-                reg_0x0000001C[3:2]  <= 2'b10;       // CSTS.SHST = shutdown complete
+                reg_0x0000001C[3:2]  <= 2'b00;       // CSTS.SHST = no shutdown
                 csts_rdy_pending     <= 1'b0;
             end
 
@@ -106,6 +113,7 @@ module pcileech_bar_impl_device #(
     assign nvme_asq_hi = reg_0x0000002C;
     assign nvme_acq_lo = reg_0x00000030;
     assign nvme_acq_hi = reg_0x00000034;
+    assign nvme_csts   = reg_0x0000001C;
 {{ end }}
 {{ if eq .DeviceClass "xhci" }}
     // xHCI HCRST auto-clear + R/S-HCH tracking.
@@ -1035,7 +1043,7 @@ module pcileech_bar_impl_device #(
 {{ range .BARModel.Registers }}{{ if not .IsFSMDriven }}            reg_0x{{ hex08 .Offset }} <= {{ mul .Width 8 }}'h{{ hex08 .Reset }};
 {{ end }}{{ end }}        end
         else if (wr_valid) begin
-            case (wr_addr[31:0] & 32'hFFFFFFFC)
+            case (wr_offset & 32'hFFFFFFFC)
 {{ range .BARModel.Registers }}{{ if and (ne .RWMask 0) (not .IsRW1C) (not .IsFSMDriven) }}                32'h{{ hex08 (alignedOffset .Offset) }}: begin
                     if (wr_be[0]) reg_0x{{ hex08 .Offset }}[7:0]   <= (reg_0x{{ hex08 .Offset }}[7:0]   & ~8'h{{ hex02 (index (rwMaskBytes .RWMask) 0) }}) | (wr_data[7:0]   & 8'h{{ hex02 (index (rwMaskBytes .RWMask) 0) }});
                     if (wr_be[1]) reg_0x{{ hex08 .Offset }}[15:8]  <= (reg_0x{{ hex08 .Offset }}[15:8]  & ~8'h{{ hex02 (index (rwMaskBytes .RWMask) 1) }}) | (wr_data[15:8]  & 8'h{{ hex02 (index (rwMaskBytes .RWMask) 1) }});
@@ -1086,7 +1094,7 @@ module pcileech_bar_impl_device #(
         rd_req_valid_d1 <= rd_req_valid;
 
         if (rd_req_valid) begin
-            case (rd_req_addr[31:0] & 32'hFFFFFFFC)
+            case (rd_req_offset & 32'hFFFFFFFC)
 {{ range .BARModel.Registers }}{{ if and (eq .Offset 0x24) (eq $.DeviceClass "audio") }}                32'h{{ hex08 (alignedOffset .Offset) }}: rd_data_d1 <= {reg_0x00000060[0], reg_0x00000060[0], 30'h0};  // INTSTS: GIS=CIS=INTFL
 {{ else if and (eq .Offset 0x48) (eq $.DeviceClass "audio") }}                32'h{{ hex08 (alignedOffset .Offset) }}: rd_data_d1 <= {reg_0x00000048[31:24], reg_0x00000048[23:16], 8'h00, reg_0x00000048[7:0]};  // live CORBRP + CORBWP
 {{ else if and (eq .Offset 0x58) (eq $.DeviceClass "audio") }}                32'h{{ hex08 (alignedOffset .Offset) }}: rd_data_d1 <= {reg_0x00000058[31:16], 8'h00, rirb_wp_count};  // live RIRBWP + RINTCNT

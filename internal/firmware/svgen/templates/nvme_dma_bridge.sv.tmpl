@@ -42,9 +42,11 @@ module pcileech_nvme_dma_bridge(
     output reg          tlp_tx_tvalid,
     output reg          tlp_tx_tlast,
     output reg [8:0]    tlp_tx_tuser,
+    input               tlp_tx_tready,    // backpressure from tlps_out mux
 
     // incoming TLP snoop – we peek at this to catch CplD
     input [127:0]       tlp_rx_tdata,
+    input [3:0]         tlp_rx_tkeepdw,
     input               tlp_rx_tvalid,
     input [8:0]         tlp_rx_tuser
 );
