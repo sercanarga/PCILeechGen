@@ -36,6 +36,17 @@ module pcileech_nvme_admin_responder(
     input               cq0_doorbell_wr,     // BAR0 + 0x1004
     input [15:0]        cq0_doorbell_val,
 
+    // MSI-X interrupt target — vector 0 config (from pcileech_msix_table).
+    // Accepted to match the bar_controller wiring. The current interrupt
+    // path raises a 1-cycle msix_trigger pulse (routed to intr_req ->
+    // cfg_interrupt); per-vector Mask gating can be layered onto the
+    // S_SEND_MSIX state later without changing the validated handshake.
+    input               msix_enable,
+    input               msix_function_mask,
+    input [63:0]        msix_vector0_addr,
+    input [31:0]        msix_vector0_data,
+    input               msix_vector0_masked,
+
     // DMA read – we use this to pull SQEs from host RAM
     output reg          dma_rd_req,
     output reg [63:0]   dma_rd_addr,

@@ -10,7 +10,8 @@ module pcileech_msix_table #(
     parameter NUM_VECTORS    = {{ .MSIXConfig.NumVectors }},
     parameter TABLE_OFFSET   = 32'h{{ printf "%08X" .MSIXConfig.TableOffset }},
     parameter PBA_OFFSET     = 32'h{{ printf "%08X" .MSIXConfig.PBAOffset }},
-    parameter TABLE_ENTRIES  = NUM_VECTORS * 4  // DWORDs
+    parameter TABLE_ENTRIES  = NUM_VECTORS * 4, // DWORDs
+    parameter BAR_SIZE       = {{ .Bar0Size }}
 )(
     input               rst,
     input               clk,
@@ -30,19 +31,27 @@ module pcileech_msix_table #(
     output reg [31:0]   rd_rsp_data,
     output reg          rd_rsp_valid,
 
+    output [63:0]       vector0_addr,
+    output [31:0]       vector0_data,
+    output              vector0_masked,
+
     output              addr_hit  // request targets MSI-X region
 );
 
     // address decode
+    localparam [31:0] BAR_ADDR_MASK = BAR_SIZE - 1;
     localparam TABLE_END = TABLE_OFFSET + NUM_VECTORS * 16;
     localparam PBA_SIZE  = ((NUM_VECTORS + 63) / 64) * 8;
     localparam PBA_END   = PBA_OFFSET + PBA_SIZE;
 
-    wire is_table = (rd_req_addr >= TABLE_OFFSET) && (rd_req_addr < TABLE_END);
-    wire is_pba   = (rd_req_addr >= PBA_OFFSET) && (rd_req_addr < PBA_END);
+    wire [31:0] wr_offset     = wr_addr     & BAR_ADDR_MASK;
+    wire [31:0] rd_req_offset = rd_req_addr & BAR_ADDR_MASK;
+
+    wire is_table = (rd_req_offset >= TABLE_OFFSET) && (rd_req_offset < TABLE_END);
+    wire is_pba   = (rd_req_offset >= PBA_OFFSET) && (rd_req_offset < PBA_END);
     assign addr_hit = rd_req_valid && (is_table || is_pba);
 
-    wire wr_is_table = (wr_addr >= TABLE_OFFSET) && (wr_addr < TABLE_END);
+    wire wr_is_table = (wr_offset >= TABLE_OFFSET) && (wr_offset < TABLE_END);
 
     // table BRAM
     (* ram_style = "block" *)
@@ -51,6 +60,10 @@ module pcileech_msix_table #(
     initial begin
         $readmemh("msix_table_init.hex", msix_table_ram);
     end
+
+    assign vector0_addr   = {msix_table_ram[1], msix_table_ram[0]};
+    assign vector0_data   = msix_table_ram[2];
+    assign vector0_masked = msix_table_ram[3][0];
 
     // PBA - all cleared initially
     reg [31:0] msix_pba [0:((NUM_VECTORS+31)/32)-1];
@@ -64,10 +77,10 @@ module pcileech_msix_table #(
     // write logic - table only (PBA is read-only)
     always @(posedge clk) begin
         if (!rst && wr_valid && wr_is_table) begin
-            if (wr_be[0]) msix_table_ram[(wr_addr - TABLE_OFFSET) >> 2][7:0]   <= wr_data[7:0];
-            if (wr_be[1]) msix_table_ram[(wr_addr - TABLE_OFFSET) >> 2][15:8]  <= wr_data[15:8];
-            if (wr_be[2]) msix_table_ram[(wr_addr - TABLE_OFFSET) >> 2][23:16] <= wr_data[23:16];
-            if (wr_be[3]) msix_table_ram[(wr_addr - TABLE_OFFSET) >> 2][31:24] <= wr_data[31:24];
+            if (wr_be[0]) msix_table_ram[(wr_offset - TABLE_OFFSET) >> 2][7:0]   <= wr_data[7:0];
+            if (wr_be[1]) msix_table_ram[(wr_offset - TABLE_OFFSET) >> 2][15:8]  <= wr_data[15:8];
+            if (wr_be[2]) msix_table_ram[(wr_offset - TABLE_OFFSET) >> 2][23:16] <= wr_data[23:16];
+            if (wr_be[3]) msix_table_ram[(wr_offset - TABLE_OFFSET) >> 2][31:24] <= wr_data[31:24];
         end
     end
 
@@ -82,9 +95,9 @@ module pcileech_msix_table #(
 
         if (addr_hit) begin
             if (is_table)
-                rd_data_d1 <= msix_table_ram[(rd_req_addr - TABLE_OFFSET) >> 2];
+                rd_data_d1 <= msix_table_ram[(rd_req_offset - TABLE_OFFSET) >> 2];
             else if (is_pba)
-                rd_data_d1 <= msix_pba[(rd_req_addr - PBA_OFFSET) >> 2];
+                rd_data_d1 <= msix_pba[(rd_req_offset - PBA_OFFSET) >> 2];
             else
                 rd_data_d1 <= 32'h0;
         end else begin
