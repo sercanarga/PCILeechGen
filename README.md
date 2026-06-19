@@ -478,6 +478,7 @@ make check            # Run vet + lint + test (all checks)
 
 ## Special Thanks
 
+- **[TrueTuring](https://github.com/TrueTuring)** - for project sponsorship and NVMe, xHCI fixes ⭐
 - **[pcileech-fpga](https://github.com/ufrisk/pcileech-fpga)** by Ulf Frisk - the FPGA framework this project builds upon
 - **[CaptainDMA](https://captaindma.com)** - for best FPGA DMA hardware
 
