@@ -1,0 +1,206 @@
+PCILeechGen
+
+Custom firmware generator for PCILeech FPGA boards. Reads a real PCI/PCIe
+donor device through VFIO, clones its identity (config space, BARs,
+capabilities), and builds a ready-to-flash .bin bitstream via Vivado.
+
+Help / Discord: https://discord.gg/kcWVCAhNSg
+
+******************************************************************************
+* WARNING: FOR EDUCATIONAL AND RESEARCH USE ONLY                             *
+*                                                                            *
+* This tool is provided for educational and research purposes only. The      *
+* authors do not condone cheating, anti-cheat circumvention, or any use that *
+* violates terms of service. Users are responsible for compliance with all   *
+* applicable laws and agreements.                                            *
+******************************************************************************
+
+
+PREREQUISITES
+-------------
+  - Go 1.26+
+  - Linux with IOMMU/VFIO enabled
+  - Vivado 2023.2+ (for synthesis)
+
+  VFIO needs IOMMU enabled in BIOS and in the kernel parameters
+  (intel_iommu=on or amd_iommu=on).
+
+
+HOW IT WORKS
+------------
+  scan  ->  check  ->  build  ->  flash
+
+  scan     enumerate PCI devices, detect VFIO status
+  check    validate the donor device, read config space and BARs
+  build    clone identity -> generate SV/COE/TCL -> Vivado synthesis -> .bin
+  flash    write the bitstream to the FPGA board
+
+The donor device is read through VFIO; its config space, BARs and
+capabilities are cloned, scrubbed, and compiled into ready-to-flash
+firmware. Run the stages in order.
+
+
+QUICK START
+-----------
+  git clone --recurse-submodules https://github.com/sercanarga/PCILeechGen.git
+  cd PCILeechGen && make build
+
+  sudo ./bin/pcileechgen scan
+  sudo ./bin/pcileechgen check --bdf 0000:02:00.0
+  sudo ./bin/pcileechgen build --bdf 0000:02:00.0 --board CaptainDMA_100T
+
+  Run "check" before "build" to verify donor and board compatibility.
+  Full synthesis takes 30-60 minutes; add --skip-vivado for artifacts only.
+
+
+COMMANDS
+--------
+  scan             list PCI devices with VFIO status
+  check            validate a donor device (BAR size vs board BRAM)
+  build            generate firmware artifacts (+ Vivado)
+  validate         verify artifacts match the donor context
+  verify-manifest  check SHA256 integrity of build output
+  boards           list supported FPGA boards
+  version          print version
+
+  Common build flags:
+    --bdf <addr>       donor device BDF (required)
+    --board <name>     target board (required)
+    --skip-vivado      artifacts only, no synthesis
+    --force            allow donor BAR > board BRAM (may truncate)
+    --from-json <f>    offline build from saved device_context.json
+    --output <dir>     output directory (default: pcileech_datastore)
+
+
+FEATURES
+--------
+  Device identity
+    - VID/DID/REV, subsystem IDs, class code
+    - Device Serial Number (stripped when the donor has none)
+
+  BAR emulation
+    - dynamic BAR0 sizing from the donor (capped by board bram_size)
+    - 64-bit BAR preservation, power-of-2 rounding
+    - MSI-X table placement that avoids NVMe doorbell overlap
+
+  NVMe
+    - CC.EN -> CSTS.RDY handshake
+    - admin queue responder (Identify, Features, Create IO CQ/SQ)
+    - DMA bridge (doorbell + completion)
+
+  Config space
+    - 4KB shadow + 17-pass scrubbing pipeline
+    - per-register write masks, capability filtering/pruning
+    - PCIe cap injection, power-management lock, vendor quirks
+
+  Stealth and timing
+    - TLP latency emulation (xorshift128+ CDF reproduction)
+    - write-completion emulation, completion timeout
+    - ASPM clamping, AER mask normalization, DSN jitter
+    - per-build placement randomization, VSEC entropy embed
+
+  Diagnostics
+    - VFIO diagnostics, BAR vs BRAM compatibility checks
+    - post-build validation, build manifest, config-space diff report
+
+
+SUPPORTED BOARDS
+----------------
+  Board             FPGA           Lanes  Form factor
+  --------------    -----------    -----  -----------
+  CaptainDMA_M2_x1  XC7A35T-325    x1     M.2
+  CaptainDMA_M2_x4  XC7A35T-325    x4     M.2
+  CaptainDMA_35T    XC7A35T-484    x1     PCIe
+  CaptainDMA_75T    XC7A75T-484    x1     PCIe
+  CaptainDMA_100T   XC7A100T-484   x1     PCIe
+  ScreamerM2        XC7A35T-325    x1     M.2
+  pciescreamer      XC7A35T-484    x1     PCIe
+  NeTV2_35T         XC7A35T-484    x1     M.2
+  NeTV2_100T        XC7A100T-484   x1     M.2
+  PCIeSquirrel      XC7A35T-484    x1     PCIe
+  EnigmaX1          XC7A75T-484    x1     M.2
+  ZDMA              XC7A100T-484   x4     PCIe
+  GBOX              XC7A35T-484    x1     Mini PCIe
+  ac701_ft601       XC7A200T-676   x4     Dev Board
+  acorn             XC7A200T-484   x4     M.2
+  litefury          XC7A100T-484   x4     M.2
+  sp605_ft601       XC6SLX45T-484  x1     Dev Board
+
+  Boards with larger bram_size (EnigmaX1=8K, CaptainDMA_75T=16K,
+  CaptainDMA_100T / ZDMA / NeTV2_100T / ac701_ft601 / acorn / litefury=32K)
+  support larger BAR0 emulation. Run "boards" for the full list.
+
+
+OUTPUT
+------
+  pcileech_datastore/
+    device_context.json                 donor snapshot
+    pcileech_cfgspace.coe               4KB scrubbed config space
+    pcileech_cfgspace_writemask.coe     per-register write masks
+    pcileech_bar_zero4k.coe             BAR0 content (sized to donor/BRAM)
+    pcileech_bar_impl_device.sv         register-level BAR implementation
+    pcileech_tlps128_bar_controller.sv  TLP BAR controller
+    pcileech_msix_table.sv              MSI-X table + PBA
+    pcileech_nvme_admin_responder.sv    (if NVMe)
+    pcileech_nvme_dma_bridge.sv         (if NVMe)
+    tlp_latency_emulator.sv             response latency emulation
+    device_config.sv                    identity + feature flags
+    config_space_init.hex               config space init ($readmemh)
+    msix_table_init.hex                 MSI-X table init ($readmemh)
+    identify_init.hex                   NVMe Identify ROM (if NVMe)
+    vivado_generate_project.tcl         project creation
+    vivado_build.tcl                    synthesis script
+    build_manifest.json                 checksums + metadata
+    src/                                patched board SV sources
+    *.bin                               bitstream (after Vivado)
+
+
+DEVELOPMENT
+-----------
+  make test           run all tests
+  make test-coverage  tests with coverage report
+  make lint           run linter
+  make check          vet + lint + test
+
+
+UTILITIES
+---------
+Windows device-history cleanup
+
+  After flashing and testing, Windows caches device metadata in the
+  registry. Stale entries from earlier builds can cause conflicts, Code 10
+  errors, or driver misidentification. The tools/ directory has an
+  interactive cleanup utility:
+
+    cleanup_device_history.bat      double-click launcher (runs as Admin)
+    cleanup_device_history.ps1      PowerShell script with arrow-key menu
+
+  Usage:
+    double-click cleanup_device_history.bat and confirm the UAC prompt, or
+    open PowerShell as Administrator and run: .\cleanup_device_history.ps1
+
+  Features:
+    - scans PCI and USB device history across all ControlSets
+    - deduplicates by hardware ID and instance ID
+    - interactive arrow-key menu with driver info and type tags
+    - automatic registry backup to the desktop before any change
+    - cleans setupapi logs, DeviceMetadataStore, PnP event logs
+
+  Requires Administrator privileges. Reboot after cleanup before reconnecting
+  the device.
+
+
+SPECIAL THANKS
+--------------
+  TrueTuring     sponsorship, NVMe and xHCI fixes
+                 https://github.com/TrueTuring
+  pcileech-fpga  the FPGA framework this project builds upon
+                 https://github.com/ufrisk/pcileech-fpga
+  CaptainDMA     for best FPGA DMA hardware
+                 https://captaindma.com
+
+
+LICENSE
+-------
+  Creative Commons Zero v1.0 Universal (CC0-1.0)
+  https://github.com/sercanarga/PCILeechGen/blob/main/LICENSE
