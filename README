@@ -196,11 +196,10 @@ SPECIAL THANKS
                  https://ftwdma.com
   TrueTuring     Sponsorship, NVMe and xHCI fixes
                  https://github.com/TrueTuring
+  CaptainDMA     Sponsorship
+                 https://captaindma.com
   pcileech-fpga  The FPGA framework this project builds upon
                  https://github.com/ufrisk/pcileech-fpga
-  CaptainDMA     For best FPGA DMA hardware
-                 https://captaindma.com
-
 
 LICENSE
 -------
