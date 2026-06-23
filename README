@@ -192,11 +192,13 @@ Windows device-history cleanup
 
 SPECIAL THANKS
 --------------
-  TrueTuring     sponsorship, NVMe and xHCI fixes
+  FTWDMA         Sponsorship
+                 https://ftwdma.com
+  TrueTuring     Sponsorship, NVMe and xHCI fixes
                  https://github.com/TrueTuring
-  pcileech-fpga  the FPGA framework this project builds upon
+  pcileech-fpga  The FPGA framework this project builds upon
                  https://github.com/ufrisk/pcileech-fpga
-  CaptainDMA     for best FPGA DMA hardware
+  CaptainDMA     For best FPGA DMA hardware
                  https://captaindma.com
 
 
