@@ -9,6 +9,7 @@ import (
 
 	"github.com/sercanarga/pcileechgen/internal/board"
 	"github.com/sercanarga/pcileechgen/internal/donor"
+	"github.com/sercanarga/pcileechgen/internal/donor/mmio"
 	"github.com/sercanarga/pcileechgen/internal/firmware"
 	"github.com/sercanarga/pcileechgen/internal/pci"
 )
@@ -89,7 +90,10 @@ func TestBuildSVConfig(t *testing.T) {
 			ow := NewOutputWriter(t.TempDir(), "", 0, 0)
 			ids := firmware.ExtractDeviceIDs(ctx.ConfigSpace, ctx.ExtCapabilities)
 
-			cfg, err := ow.buildSVConfig(ctx, ctx.ConfigSpace, ids, 0xDEAD, &board.Board{}); if err != nil { t.Fatal(err) }
+			cfg, err := ow.buildSVConfig(ctx, ctx.ConfigSpace, ids, 0xDEAD, &board.Board{})
+			if err != nil {
+				t.Fatal(err)
+			}
 			if cfg == nil {
 				t.Fatal("config should not be nil")
 			}
@@ -108,9 +112,38 @@ func TestBuildSVConfig_NVMeHasIdentify(t *testing.T) {
 	ow := NewOutputWriter(t.TempDir(), "", 0, 0)
 	ids := firmware.ExtractDeviceIDs(ctx.ConfigSpace, ctx.ExtCapabilities)
 
-	cfg, err := ow.buildSVConfig(ctx, ctx.ConfigSpace, ids, 0xBEEF, &board.Board{}); if err != nil { t.Fatal(err) }
+	cfg, err := ow.buildSVConfig(ctx, ctx.ConfigSpace, ids, 0xBEEF, &board.Board{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if cfg.NVMeIdentify == nil {
 		t.Error("NVMe class should have Identify data")
+	}
+}
+
+func TestBuildSVConfig_NVMeTraceInfersDoorbellStride(t *testing.T) {
+	ctx := makeDonorContext(0x144D, 0xA808, 0x010802)
+	ctx.BARContents = nil
+	ctx.BARs = []pci.BAR{{Index: 0, Type: pci.BARTypeMem32, Size: 8192}}
+	ctx.MMIOTraces = map[int]*mmio.TraceResult{
+		0: {
+			BARIndex: 0,
+			BARSize:  8192,
+			Records: []mmio.AccessRecord{
+				{Offset: 0x1000, Type: mmio.AccessWrite, Value: 1},
+				{Offset: 0x1008, Type: mmio.AccessWrite, Value: 1},
+			},
+		},
+	}
+	ow := NewOutputWriter(t.TempDir(), "", 0, 0)
+	ids := firmware.ExtractDeviceIDs(ctx.ConfigSpace, ctx.ExtCapabilities)
+
+	cfg, err := ow.buildSVConfig(ctx, ctx.ConfigSpace, ids, 0xBEEF, &board.Board{BRAMSize: 8192})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.NVMeTraceEvidence == nil || cfg.NVMeDoorbellStride != 1 || cfg.NVMeCQ0DoorbellOffset() != 0x1008 {
+		t.Fatalf("trace doorbell evidence not wired into config: %#v", cfg.NVMeTraceEvidence)
 	}
 }
 
@@ -139,7 +172,10 @@ func TestWriteCoreSVArtifacts(t *testing.T) {
 	ow := NewOutputWriter(dir, "", 0, 0)
 	ids := firmware.ExtractDeviceIDs(ctx.ConfigSpace, ctx.ExtCapabilities)
 
-	cfg, err := ow.buildSVConfig(ctx, ctx.ConfigSpace, ids, 0x42, &board.Board{}); if err != nil { t.Fatal(err) }
+	cfg, err := ow.buildSVConfig(ctx, ctx.ConfigSpace, ids, 0x42, &board.Board{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	scrubbed := ctx.ConfigSpace.Clone()
 
 	if err := ow.writeCoreSVArtifacts(cfg, scrubbed); err != nil {
@@ -172,7 +208,10 @@ func TestWriteConditionalArtifacts_NVMe(t *testing.T) {
 	ow := NewOutputWriter(dir, "", 0, 0)
 	ids := firmware.ExtractDeviceIDs(ctx.ConfigSpace, ctx.ExtCapabilities)
 
-	cfg, err := ow.buildSVConfig(ctx, ctx.ConfigSpace, ids, 0x42, &board.Board{}); if err != nil { t.Fatal(err) }
+	cfg, err := ow.buildSVConfig(ctx, ctx.ConfigSpace, ids, 0x42, &board.Board{})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if err := ow.writeConditionalArtifacts(cfg, ctx); err != nil {
 		t.Fatalf("writeConditionalArtifacts failed: %v", err)
@@ -201,7 +240,10 @@ func TestWriteConditionalArtifacts_MSIXDonor(t *testing.T) {
 	ow := NewOutputWriter(dir, "", 0, 0)
 	ids := firmware.ExtractDeviceIDs(ctx.ConfigSpace, ctx.ExtCapabilities)
 
-	cfg, err := ow.buildSVConfig(ctx, ctx.ConfigSpace, ids, 0x42, &board.Board{BRAMSize: 32768}); if err != nil { t.Fatal(err) }
+	cfg, err := ow.buildSVConfig(ctx, ctx.ConfigSpace, ids, 0x42, &board.Board{BRAMSize: 32768})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if err := ow.writeConditionalArtifacts(cfg, ctx); err != nil {
 		t.Fatalf("writeConditionalArtifacts failed: %v", err)
@@ -222,7 +264,10 @@ func TestLogSVSummary(t *testing.T) {
 	ow := NewOutputWriter(t.TempDir(), "", 0, 0)
 	ids := firmware.ExtractDeviceIDs(ctx.ConfigSpace, ctx.ExtCapabilities)
 
-	cfg, err := ow.buildSVConfig(ctx, ctx.ConfigSpace, ids, 0x42, &board.Board{}); if err != nil { t.Fatal(err) }
+	cfg, err := ow.buildSVConfig(ctx, ctx.ConfigSpace, ids, 0x42, &board.Board{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	// should not panic
 	ow.logSVSummary(cfg)
 }

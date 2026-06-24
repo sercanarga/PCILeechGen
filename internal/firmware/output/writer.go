@@ -2,14 +2,17 @@
 package output
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/sercanarga/pcileechgen/internal/board"
 	"github.com/sercanarga/pcileechgen/internal/donor"
+	"github.com/sercanarga/pcileechgen/internal/donor/mmio"
 	"github.com/sercanarga/pcileechgen/internal/firmware"
 	"github.com/sercanarga/pcileechgen/internal/firmware/barmodel"
 	"github.com/sercanarga/pcileechgen/internal/firmware/codegen"
@@ -64,6 +67,10 @@ func (ow *OutputWriter) WriteAll(ctx *donor.DeviceContext, b *board.Board) error
 	scrubbedCS, entropy, overlayMap := ow.scrubAndVary(ctx, b, ids)
 
 	if err := ow.writeConfigSpaceArtifacts(ctx, scrubbedCS, b); err != nil {
+		return err
+	}
+
+	if err := ow.writeTraceReportArtifact(ctx); err != nil {
 		return err
 	}
 
@@ -144,9 +151,71 @@ func (ow *OutputWriter) writeConfigSpaceArtifacts(ctx *donor.DeviceContext, scru
 	bar0Size := firmware.CappedBAR0Size(ctx, b, msixTableSize)
 
 	scrub.ScrubBarContent(ctx.BARContents, ctx.Device.ClassCode, ctx.Device.VendorID, bar0Size)
+	if err := ow.writeBARContentArtifacts(ctx, bar0Size); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (ow *OutputWriter) writeBARContentArtifacts(ctx *donor.DeviceContext, fallbackSize int) error {
+	if ctx != nil && len(ctx.BARContents) > 0 {
+		indices := make([]int, 0, len(ctx.BARContents))
+		for idx := range ctx.BARContents {
+			indices = append(indices, idx)
+		}
+		sort.Ints(indices)
+
+		for _, idx := range indices {
+			data := ctx.BARContents[idx]
+			size := len(data)
+			if size == 0 {
+				size = fallbackSize
+			}
+			name := fmt.Sprintf("pcileech_bar%d.coe", idx)
+			if err := ow.writeFile(name, codegen.GenerateSingleBarContentCOE(idx, data, size)); err != nil {
+				return fmt.Errorf("failed to write BAR%d COE: %w", idx, err)
+			}
+		}
+	}
+
+	var barContents map[int][]byte
+	if ctx != nil {
+		barContents = ctx.BARContents
+	}
 	if err := ow.writeFile("pcileech_bar_zero4k.coe",
-		codegen.GenerateBarContentCOE(ctx.BARContents, firmware.CappedBAR0Size(ctx, b, msixTableSize))); err != nil {
-		return fmt.Errorf("failed to write bar zero COE: %w", err)
+		codegen.GenerateBarContentCOE(barContents, fallbackSize)); err != nil {
+		return fmt.Errorf("failed to write legacy BAR COE: %w", err)
+	}
+	return nil
+}
+
+type traceReportArtifact struct {
+	Reports []*mmio.TraceReport `json:"reports"`
+}
+
+func (ow *OutputWriter) writeTraceReportArtifact(ctx *donor.DeviceContext) error {
+	if ctx == nil || len(ctx.MMIOTraces) == 0 {
+		return nil
+	}
+	indices := make([]int, 0, len(ctx.MMIOTraces))
+	for idx := range ctx.MMIOTraces {
+		indices = append(indices, idx)
+	}
+	sort.Ints(indices)
+
+	artifact := traceReportArtifact{
+		Reports: make([]*mmio.TraceReport, 0, len(indices)),
+	}
+	for _, idx := range indices {
+		artifact.Reports = append(artifact.Reports, mmio.BuildReport(ctx.MMIOTraces[idx]))
+	}
+
+	data, err := json.MarshalIndent(artifact, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal BAR model report: %w", err)
+	}
+	if err := ow.writeFile("bar_model_report.json", string(data)+"\n"); err != nil {
+		return fmt.Errorf("failed to write BAR model report: %w", err)
 	}
 	return nil
 }
@@ -329,6 +398,8 @@ func ListOutputFiles() []string {
 		"pcileech_cfgspace.coe",
 		"pcileech_cfgspace_writemask.coe",
 		"pcileech_bar_zero4k.coe",
+		"pcileech_bar<N>.coe",
+		"bar_model_report.json",
 		"vivado_generate_project.tcl",
 		"vivado_build.tcl",
 		"src/",
@@ -435,6 +506,7 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 			barProfile = p
 		}
 	}
+	trace := ctx.MMIOTraces[barIdx]
 	slog.Info("BAR selection for SV codegen",
 		"bar_index", barIdx,
 		"bar_size", len(barData),
@@ -442,9 +514,17 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 		"class_code", fmt.Sprintf("0x%06X", ctx.Device.ClassCode),
 	)
 	bm := barmodel.BuildBARModel(barData, ctx.Device.ClassCode, barProfile)
+	if trace != nil {
+		bm = barmodel.ApplyTraceReport(bm, mmio.BuildReport(trace))
+	}
 	slog.Info("BAR model built",
 		"model_nil", bm == nil,
-		"reg_count", func() int { if bm != nil { return len(bm.Registers) }; return 0 }(),
+		"reg_count", func() int {
+			if bm != nil {
+				return len(bm.Registers)
+			}
+			return 0
+		}(),
 	)
 
 	strategy := devclass.StrategyForClassAndVendor(ctx.Device.ClassCode, ids.VendorID)
@@ -481,9 +561,12 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 
 	if devClass == devclass.ClassNVMe {
 		cfg.NVMeIdentify = nvme.BuildIdentifyData(ids, barData)
+		cfg.NVMeTraceEvidence = nvme.BuildTraceEvidence(trace)
 		if len(barData) >= 0x08 {
 			capHI := util.ReadLE32(barData, 0x04)
 			cfg.NVMeDoorbellStride = capHI & 0x0F
+		} else if cfg.NVMeTraceEvidence != nil && cfg.NVMeTraceEvidence.HasDoorbellStride {
+			cfg.NVMeDoorbellStride = cfg.NVMeTraceEvidence.DoorbellStride
 		}
 	}
 
@@ -516,11 +599,15 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 	// Validate *donor demand* (may exceed) against board BRAM; error unless --force.
 	// (bar0Size is the Capped value actually used for artifacts/scrub/SV.)
 	if issues := ValidateBARSize(donorBar, bram, 0); len(issues) > 0 {
-		if !ow.Force { return nil, fmt.Errorf("%s", issues[0]) }
+		if !ow.Force {
+			return nil, fmt.Errorf("%s", issues[0])
+		}
 	}
 	if cfg.MSIXConfig != nil {
 		if issues := ValidateBARSize(donorBar, bram, cfg.MSIXConfig.TableOffset); len(issues) > 0 {
-			if !ow.Force { return nil, fmt.Errorf("%s", issues[0]) }
+			if !ow.Force {
+				return nil, fmt.Errorf("%s", issues[0])
+			}
 		}
 	}
 

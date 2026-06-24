@@ -24,15 +24,16 @@ type SVGeneratorConfig struct {
 	DeviceIDs          firmware.DeviceIDs
 	BARModel           *barmodel.BARModel // nil = generic fallback (uses BRAM-based zerowrite4k)
 	ClassCode          uint32
-	LatencyConfig      *LatencyConfig     // TLP response timing (nil = no latency emulator)
-	HasMSIX            bool               // generate MSI-X interrupt controller logic
-	BuildEntropy       uint32             // seed for PRNG uniqueness per build
-	PRNGSeeds          [4]uint32          // computed PRNG seeds for latency emulator
-	DeviceClass        string             // "nvme", "xhci", "audio", "ethernet", or ""
-	MSIXConfig         *MSIXConfig        // MSI-X table replication (nil = no MSI-X table)
-	MSIConfig          *MSIConfig         // MSI capability info (nil = no MSI cap or disabled)
-	NVMeIdentify       *nvme.IdentifyData // NVMe Identify Controller/Namespace data (nil = no responder)
-	NVMeDoorbellStride uint32             // CAP.DSTRD - doorbell stride (0 = 4B, default)
+	LatencyConfig      *LatencyConfig      // TLP response timing (nil = no latency emulator)
+	HasMSIX            bool                // generate MSI-X interrupt controller logic
+	BuildEntropy       uint32              // seed for PRNG uniqueness per build
+	PRNGSeeds          [4]uint32           // computed PRNG seeds for latency emulator
+	DeviceClass        string              // "nvme", "xhci", "audio", "ethernet", or ""
+	MSIXConfig         *MSIXConfig         // MSI-X table replication (nil = no MSI-X table)
+	MSIConfig          *MSIConfig          // MSI capability info (nil = no MSI cap or disabled)
+	NVMeIdentify       *nvme.IdentifyData  // NVMe Identify Controller/Namespace data (nil = no responder)
+	NVMeDoorbellStride uint32              // CAP.DSTRD - doorbell stride (0 = 4B, default)
+	NVMeTraceEvidence  *nvme.TraceEvidence // observed queue/doorbell writes from MMIO traces (nil = none)
 	Bar0Size           int
 }
 

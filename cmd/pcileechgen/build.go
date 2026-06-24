@@ -3,9 +3,13 @@ package main
 import (
 	"fmt"
 	"log/slog"
+	"os"
+	"strconv"
+	"strings"
 
 	"github.com/sercanarga/pcileechgen/internal/board"
 	"github.com/sercanarga/pcileechgen/internal/donor"
+	"github.com/sercanarga/pcileechgen/internal/donor/mmio"
 	"github.com/sercanarga/pcileechgen/internal/firmware"
 	"github.com/sercanarga/pcileechgen/internal/pci"
 	"github.com/sercanarga/pcileechgen/internal/vivado"
@@ -25,6 +29,7 @@ type buildFlags struct {
 	fromJSON   string
 	stockBar   bool
 	force      bool
+	traces     []string
 }
 
 var buildOpts buildFlags
@@ -55,6 +60,10 @@ func runBuild(cmd *cobra.Command, args []string) error {
 
 	ctx, err := loadDonorContext()
 	if err != nil {
+		return err
+	}
+
+	if err := applyBuildTraceSpecs(ctx, buildOpts.traces); err != nil {
 		return err
 	}
 
@@ -119,6 +128,75 @@ func loadDonorContext() (*donor.DeviceContext, error) {
 	return ctx, nil
 }
 
+func parseBuildTraceSpec(spec string) (int, string, error) {
+	barText, path, ok := strings.Cut(spec, "=")
+	if !ok || barText == "" || path == "" {
+		return 0, "", fmt.Errorf("invalid trace spec %q (want BAR=path, e.g. 2=trace.log)", spec)
+	}
+	bar, err := strconv.Atoi(barText)
+	if err != nil || bar < 0 || bar > 5 {
+		return 0, "", fmt.Errorf("invalid trace BAR %q in %q", barText, spec)
+	}
+	return bar, path, nil
+}
+
+func applyBuildTraceSpecs(ctx *donor.DeviceContext, specs []string) error {
+	if len(specs) == 0 {
+		return nil
+	}
+	if ctx.MMIOTraces == nil {
+		ctx.MMIOTraces = make(map[int]*mmio.TraceResult)
+	}
+	for _, spec := range specs {
+		bar, path, err := parseBuildTraceSpec(spec)
+		if err != nil {
+			return err
+		}
+		f, err := os.Open(path)
+		if err != nil {
+			return fmt.Errorf("open BAR%d trace %q: %w", bar, path, err)
+		}
+		barSize := buildTraceBARSize(ctx, bar)
+		barBase := buildTraceBARBase(ctx, bar)
+		trace, parseErr := mmio.ParseTraceReader(f, mmio.TraceImportOptions{
+			BDF:      ctx.Device.BDF.String(),
+			BARIndex: bar,
+			BARSize:  barSize,
+			BARBase:  barBase,
+		})
+		closeErr := f.Close()
+		if parseErr != nil {
+			return fmt.Errorf("parse BAR%d trace %q: %w", bar, path, parseErr)
+		}
+		if closeErr != nil {
+			return fmt.Errorf("close BAR%d trace %q: %w", bar, path, closeErr)
+		}
+		ctx.MMIOTraces[bar] = trace
+	}
+	return nil
+}
+
+func buildTraceBARSize(ctx *donor.DeviceContext, barIndex int) int {
+	for _, bar := range ctx.BARs {
+		if bar.Index == barIndex && bar.Size > 0 {
+			return int(bar.Size)
+		}
+	}
+	if data := ctx.BARContents[barIndex]; len(data) > 0 {
+		return len(data)
+	}
+	return 4096
+}
+
+func buildTraceBARBase(ctx *donor.DeviceContext, barIndex int) uint64 {
+	for _, bar := range ctx.BARs {
+		if bar.Index == barIndex {
+			return bar.Address
+		}
+	}
+	return 0
+}
+
 func printBuildSummary(ctx *donor.DeviceContext, b *board.Board) {
 	slog.Info("build target",
 		"board", b.Name,
@@ -157,6 +235,7 @@ func init() {
 	buildCmd.Flags().StringVar(&buildOpts.libDir, "lib-dir", "lib/pcileech-fpga", "path to pcileech-fpga library")
 	buildCmd.Flags().BoolVar(&buildOpts.stockBar, "stock-bar", false, "use stock bar controller (diagnostic: skip custom SV modules)")
 	buildCmd.Flags().BoolVar(&buildOpts.force, "force", false, "ignore donor BAR > board BRAM check")
+	buildCmd.Flags().StringArrayVar(&buildOpts.traces, "trace", nil, "import MMIO trace into build context as BAR=path (repeatable, e.g. --trace 2=trace.log)")
 
 	_ = buildCmd.MarkFlagRequired("board")
 

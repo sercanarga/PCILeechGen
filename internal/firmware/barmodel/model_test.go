@@ -4,7 +4,53 @@ import (
 	"testing"
 
 	"github.com/sercanarga/pcileechgen/internal/donor"
+	"github.com/sercanarga/pcileechgen/internal/donor/mmio"
 )
+
+func TestBARRegisterAccessKind(t *testing.T) {
+	tests := []struct {
+		name string
+		reg  BARRegister
+		want RegisterAccessKind
+	}{
+		{name: "read-only", reg: BARRegister{RWMask: 0}, want: RegisterReadOnly},
+		{name: "read-write", reg: BARRegister{RWMask: 0xFFFFFFFF}, want: RegisterReadWrite},
+		{name: "rw1c", reg: BARRegister{RWMask: 0x0000000F, IsRW1C: true}, want: RegisterRW1C},
+		{name: "fsm", reg: BARRegister{RWMask: 0xFFFFFFFF, IsFSMDriven: true}, want: RegisterFSMDriven},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.reg.AccessKind(); got != tt.want {
+				t.Fatalf("AccessKind() = %s, want %s", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestApplyTraceReport_AddsObservedRegisters(t *testing.T) {
+	model := &BARModel{Size: 4096}
+	report := &mmio.TraceReport{
+		BARSize: 4096,
+		Registers: []mmio.RegisterSummary{
+			{Offset: 0x80, LastValue: 0xA5A50001, ReadCount: 3, Classification: mmio.RegisterStaticRead},
+			{Offset: 0x84, LastValue: 0x00000002, WriteCount: 1, Classification: mmio.RegisterWriteOnly},
+		},
+	}
+
+	model = ApplyTraceReport(model, report)
+
+	regs := map[uint32]BARRegister{}
+	for _, reg := range model.Registers {
+		regs[reg.Offset] = reg
+	}
+	if regs[0x80].Reset != 0xA5A50001 || regs[0x80].RWMask != 0 {
+		t.Fatalf("static trace register mismatch: %#v", regs[0x80])
+	}
+	if regs[0x84].Reset != 0x00000002 || regs[0x84].RWMask != 0xFFFFFFFF {
+		t.Fatalf("write trace register mismatch: %#v", regs[0x84])
+	}
+}
 
 func TestBuildBARModel_NVMe(t *testing.T) {
 	barData := make([]byte, 4096)

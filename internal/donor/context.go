@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/sercanarga/pcileechgen/internal/donor/mmio"
 	"github.com/sercanarga/pcileechgen/internal/pci"
 )
 
@@ -28,30 +29,32 @@ type DeviceContext struct {
 	ToolVersion string    `json:"tool_version"`
 	Hostname    string    `json:"hostname"`
 
-	Device          pci.PCIDevice       `json:"device"`
-	ConfigSpace     *pci.ConfigSpace    `json:"config_space"`
-	BARs            []pci.BAR           `json:"bars"`
-	BARContents     map[int][]byte      `json:"-"` // BAR memory contents, keyed by BAR index
-	BARProfiles     map[int]*BARProfile `json:"-"` // probing results, keyed by BAR index
-	Capabilities    []pci.Capability    `json:"capabilities"`
-	ExtCapabilities []pci.ExtCapability `json:"ext_capabilities,omitempty"`
-	MSIXData        *MSIXData           `json:"msix_data,omitempty"`
+	Device          pci.PCIDevice             `json:"device"`
+	ConfigSpace     *pci.ConfigSpace          `json:"config_space"`
+	BARs            []pci.BAR                 `json:"bars"`
+	BARContents     map[int][]byte            `json:"-"` // BAR memory contents, keyed by BAR index
+	BARProfiles     map[int]*BARProfile       `json:"-"` // probing results, keyed by BAR index
+	MMIOTraces      map[int]*mmio.TraceResult `json:"-"` // optional MMIO traces, keyed by BAR index
+	Capabilities    []pci.Capability          `json:"capabilities"`
+	ExtCapabilities []pci.ExtCapability       `json:"ext_capabilities,omitempty"`
+	MSIXData        *MSIXData                 `json:"msix_data,omitempty"`
 }
 
 // JSON wire format - config space as hex words, BARs as base64.
 type deviceContextJSON struct {
-	CollectedAt     time.Time              `json:"collected_at"`
-	ToolVersion     string                 `json:"tool_version"`
-	Hostname        string                 `json:"hostname"`
-	Device          pci.PCIDevice          `json:"device"`
-	ConfigSpaceHex  []string               `json:"config_space_hex"`
-	ConfigSpaceSize int                    `json:"config_space_size"`
-	BARs            []pci.BAR              `json:"bars"`
-	BARContents     map[string]string      `json:"bar_contents,omitempty"` // key: BAR index, value: base64
-	BARProfiles     map[string]*BARProfile `json:"bar_profiles,omitempty"`
-	Capabilities    []pci.Capability       `json:"capabilities"`
-	ExtCapabilities []pci.ExtCapability    `json:"ext_capabilities,omitempty"`
-	MSIXData        *MSIXData              `json:"msix_data,omitempty"`
+	CollectedAt     time.Time                    `json:"collected_at"`
+	ToolVersion     string                       `json:"tool_version"`
+	Hostname        string                       `json:"hostname"`
+	Device          pci.PCIDevice                `json:"device"`
+	ConfigSpaceHex  []string                     `json:"config_space_hex"`
+	ConfigSpaceSize int                          `json:"config_space_size"`
+	BARs            []pci.BAR                    `json:"bars"`
+	BARContents     map[string]string            `json:"bar_contents,omitempty"` // key: BAR index, value: base64
+	BARProfiles     map[string]*BARProfile       `json:"bar_profiles,omitempty"`
+	MMIOTraces      map[string]*mmio.TraceResult `json:"mmio_traces,omitempty"`
+	Capabilities    []pci.Capability             `json:"capabilities"`
+	ExtCapabilities []pci.ExtCapability          `json:"ext_capabilities,omitempty"`
+	MSIXData        *MSIXData                    `json:"msix_data,omitempty"`
 }
 
 func (dc *DeviceContext) MarshalJSON() ([]byte, error) {
@@ -85,6 +88,13 @@ func (dc *DeviceContext) MarshalJSON() ([]byte, error) {
 		j.BARProfiles = make(map[string]*BARProfile)
 		for idx, profile := range dc.BARProfiles {
 			j.BARProfiles[strconv.Itoa(idx)] = profile
+		}
+	}
+
+	if len(dc.MMIOTraces) > 0 {
+		j.MMIOTraces = make(map[string]*mmio.TraceResult)
+		for idx, trace := range dc.MMIOTraces {
+			j.MMIOTraces[strconv.Itoa(idx)] = trace
 		}
 	}
 
@@ -150,6 +160,18 @@ func (dc *DeviceContext) UnmarshalJSON(data []byte) error {
 				return fmt.Errorf("invalid BAR profile index %q: %w", idxStr, err)
 			}
 			dc.BARProfiles[idx] = profile
+		}
+	}
+
+	// Reconstruct MMIO traces
+	if len(j.MMIOTraces) > 0 {
+		dc.MMIOTraces = make(map[int]*mmio.TraceResult)
+		for idxStr, trace := range j.MMIOTraces {
+			idx, err := strconv.Atoi(idxStr)
+			if err != nil {
+				return fmt.Errorf("invalid MMIO trace BAR index %q: %w", idxStr, err)
+			}
+			dc.MMIOTraces[idx] = trace
 		}
 	}
 

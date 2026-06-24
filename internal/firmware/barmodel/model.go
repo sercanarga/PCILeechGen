@@ -4,27 +4,51 @@ package barmodel
 import (
 	"fmt"
 	"log/slog"
+	"sort"
 
 	"github.com/sercanarga/pcileechgen/internal/donor"
+	"github.com/sercanarga/pcileechgen/internal/donor/mmio"
 	"github.com/sercanarga/pcileechgen/internal/firmware/devclass"
 	"github.com/sercanarga/pcileechgen/internal/util"
 )
 
+type RegisterAccessKind string
+
+const (
+	RegisterReadOnly  RegisterAccessKind = "read_only"
+	RegisterReadWrite RegisterAccessKind = "read_write"
+	RegisterRW1C      RegisterAccessKind = "rw1c"
+	RegisterFSMDriven RegisterAccessKind = "fsm"
+)
+
 // BARRegister describes a single register inside a BAR.
 type BARRegister struct {
-	Offset      uint32 // byte offset in BAR
-	Width       int    // 1, 2, or 4 bytes
-	Reset       uint32 // reset/initial value (from donor snapshot or spec default)
-	RWMask      uint32 // writable bits (1 = host can write, 0 = read-only)
-	Name        string // human-readable register name
-	IsRW1C      bool   // true if this register uses write-1-to-clear semantics
-	IsFSMDriven bool   // true if driven by a dedicated FSM always block (excluded from generic reset/write)
+	Offset      uint32 `json:"offset"`  // byte offset in BAR
+	Width       int    `json:"width"`   // 1, 2, or 4 bytes
+	Reset       uint32 `json:"reset"`   // reset/initial value (from donor snapshot or spec default)
+	RWMask      uint32 `json:"rw_mask"` // writable bits (1 = host can write, 0 = read-only)
+	Name        string `json:"name"`    // human-readable register name
+	IsRW1C      bool   `json:"is_rw1c"` // true if this register uses write-1-to-clear semantics
+	IsFSMDriven bool   `json:"is_fsm"`  // true if driven by a dedicated FSM always block (excluded from generic reset/write)
+}
+
+func (r BARRegister) AccessKind() RegisterAccessKind {
+	if r.IsFSMDriven {
+		return RegisterFSMDriven
+	}
+	if r.IsRW1C {
+		return RegisterRW1C
+	}
+	if r.RWMask == 0 {
+		return RegisterReadOnly
+	}
+	return RegisterReadWrite
 }
 
 // BARModel is the complete register map that ends up in the SV template.
 type BARModel struct {
-	Size      int
-	Registers []BARRegister // ordered by Offset
+	Size      int           `json:"size"`
+	Registers []BARRegister `json:"registers"` // ordered by Offset
 }
 
 // BuildBARModel returns a register map from probe data or spec tables.
@@ -65,6 +89,52 @@ func BuildBARModel(barData []byte, classCode uint32, profile *donor.BARProfile) 
 		validateModel(model)
 	}
 	return model
+}
+
+// ApplyTraceReport adds trace-observed registers that the class/profile model does not already cover.
+// Existing class registers win; traces are evidence, not a replacement for protocol semantics.
+func ApplyTraceReport(model *BARModel, report *mmio.TraceReport) *BARModel {
+	if report == nil || len(report.Registers) == 0 {
+		return model
+	}
+	if model == nil {
+		model = &BARModel{Size: report.BARSize}
+	}
+	if model.Size < report.BARSize {
+		model.Size = report.BARSize
+	}
+
+	seen := make(map[uint32]bool, len(model.Registers))
+	for _, reg := range model.Registers {
+		seen[reg.Offset] = true
+	}
+	for _, summary := range report.Registers {
+		if seen[summary.Offset] {
+			continue
+		}
+		model.Registers = append(model.Registers, BARRegister{
+			Offset: summary.Offset,
+			Width:  4,
+			Reset:  summary.LastValue,
+			RWMask: traceRWMask(summary.Classification),
+			Name:   fmt.Sprintf("TRACE_0x%03X", summary.Offset),
+		})
+		seen[summary.Offset] = true
+	}
+	sort.Slice(model.Registers, func(i, j int) bool {
+		return model.Registers[i].Offset < model.Registers[j].Offset
+	})
+	validateModel(model)
+	return model
+}
+
+func traceRWMask(class mmio.RegisterClassification) uint32 {
+	switch class {
+	case mmio.RegisterWriteOnly, mmio.RegisterReadWrite:
+		return 0xFFFFFFFF
+	default:
+		return 0
+	}
 }
 
 // validateModel checks for misaligned or duplicate offsets.

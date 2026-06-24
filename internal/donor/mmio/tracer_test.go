@@ -28,6 +28,52 @@ func sampleTrace() *TraceResult {
 	}
 }
 
+func TestParseTraceReader_ParsesMMIOTraceLines(t *testing.T) {
+	input := strings.NewReader(`
+ignored line
+R 4 0.001 0xfebf001c 0x00000000
+W 4 0.002 0xfebf0024 0x001f001f
+`)
+
+	trace, err := ParseTraceReader(input, TraceImportOptions{
+		BDF:      "0000:03:00.0",
+		BARIndex: 2,
+		BARSize:  4096,
+	})
+	if err != nil {
+		t.Fatalf("ParseTraceReader failed: %v", err)
+	}
+	if trace.BDF != "0000:03:00.0" || trace.BARIndex != 2 || trace.BARSize != 4096 {
+		t.Fatalf("trace identity mismatch: %#v", trace)
+	}
+	if len(trace.Records) != 2 {
+		t.Fatalf("records = %d, want 2", len(trace.Records))
+	}
+	if trace.Records[0].Offset != 0x1C || trace.Records[0].Type != AccessRead {
+		t.Fatalf("first record mismatch: %#v", trace.Records[0])
+	}
+	if trace.Records[1].Offset != 0x24 || trace.Records[1].Type != AccessWrite {
+		t.Fatalf("second record mismatch: %#v", trace.Records[1])
+	}
+}
+
+func TestParseTraceReader_UsesBARBaseForLargeBAROffsets(t *testing.T) {
+	input := strings.NewReader("W 4 0.001 0xfebf1008 0x00000007\n")
+
+	trace, err := ParseTraceReader(input, TraceImportOptions{
+		BDF:      "0000:03:00.0",
+		BARIndex: 0,
+		BARSize:  8192,
+		BARBase:  0xfebf0000,
+	})
+	if err != nil {
+		t.Fatalf("ParseTraceReader failed: %v", err)
+	}
+	if len(trace.Records) != 1 || trace.Records[0].Offset != 0x1008 {
+		t.Fatalf("trace offset mismatch: %#v", trace.Records)
+	}
+}
+
 func TestAnalyze_Basic(t *testing.T) {
 	p := Analyze(sampleTrace())
 	if p.TotalAccesses != 8 {
@@ -82,6 +128,30 @@ func TestAnalyze_InitSequence(t *testing.T) {
 	// First write should be CC at 0x14
 	if p.InitSequence[0].Offset != 0x14 {
 		t.Errorf("first init write: got 0x%X, want 0x14", p.InitSequence[0].Offset)
+	}
+}
+
+func TestBuildReport_ClassifiesRegisters(t *testing.T) {
+	report := BuildReport(sampleTrace())
+	if report.BDF != "0000:03:00.0" || report.BARIndex != 0 {
+		t.Fatalf("report identity mismatch: %#v", report)
+	}
+	if report.TotalReads != 5 || report.TotalWrites != 3 {
+		t.Fatalf("report totals = R:%d W:%d, want R:5 W:3", report.TotalReads, report.TotalWrites)
+	}
+
+	byOffset := make(map[uint32]RegisterSummary)
+	for _, reg := range report.Registers {
+		byOffset[reg.Offset] = reg
+	}
+	if got := byOffset[0x1C].Classification; got != RegisterPolled {
+		t.Fatalf("CSTS classification = %s, want %s", got, RegisterPolled)
+	}
+	if got := byOffset[0x14].Classification; got != RegisterWriteOnly {
+		t.Fatalf("CC classification = %s, want %s", got, RegisterWriteOnly)
+	}
+	if got := byOffset[0x00].Classification; got != RegisterStaticRead {
+		t.Fatalf("CAP classification = %s, want %s", got, RegisterStaticRead)
 	}
 }
 
