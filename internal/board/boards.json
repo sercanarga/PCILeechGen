@@ -97,7 +97,8 @@
         "top_module": "pcileech_tbx4_100t_top",
         "project_dir": "ZDMA",
         "tcl_file": "vivado_generate_project_100t.tcl",
-        "build_tcl": "vivado_build_100t.tcl"
+        "build_tcl": "vivado_build_100t.tcl",
+        "source_sub_dir": "100T"
     },
     {
         "name": "GBOX",

@@ -19,6 +19,8 @@ type Board struct {
 	TopModule    string `json:"top_module"`
 	ProjectDir   string `json:"project_dir"`
 	SubDir       string `json:"sub_dir"`
+	// SourceSubDir is mutually exclusive with SubDir; it only overrides source/IP paths.
+	SourceSubDir string `json:"source_sub_dir"`
 	TCLFile      string `json:"tcl_file"`
 	BuildTCL     string `json:"build_tcl"`
 }
@@ -44,20 +46,22 @@ func (b *Board) BRAMSizeOrDefault() int {
 	return DefaultBRAMSize
 }
 
+// SourceBasePath returns the directory that contains source and IP folders.
+func (b *Board) SourceBasePath(libDir string) string {
+	if b.SourceSubDir != "" {
+		return filepath.Join(libDir, b.ProjectDir, b.SourceSubDir)
+	}
+	return b.LibPath(libDir)
+}
+
 // SrcPath returns the path to source files for this board.
 func (b *Board) SrcPath(libDir string) string {
-	if b.SubDir != "" {
-		return filepath.Join(libDir, b.ProjectDir, b.SubDir, "src")
-	}
-	return filepath.Join(libDir, b.ProjectDir, "src")
+	return filepath.Join(b.SourceBasePath(libDir), "src")
 }
 
 // IPPath returns the path to IP cores for this board.
 func (b *Board) IPPath(libDir string) string {
-	if b.SubDir != "" {
-		return filepath.Join(libDir, b.ProjectDir, b.SubDir, "ip")
-	}
-	return filepath.Join(libDir, b.ProjectDir, "ip")
+	return filepath.Join(b.SourceBasePath(libDir), "ip")
 }
 
 // TCLPath returns the full path to the Vivado project generation TCL script.
