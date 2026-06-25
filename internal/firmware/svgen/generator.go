@@ -130,8 +130,8 @@ func svFuncMap() template.FuncMap {
 				uint8((mask >> 24) & 0xFF),
 			}
 		},
-		"rwWriteMaskBytes": func(rwMask, rw1cMask uint32) [4]uint8 {
-			rwWrite := rwMask &^ rw1cMask
+		"rwWriteMaskBytes": func(rwMask, rw1cMask, rw0cMask uint32) [4]uint8 {
+			rwWrite := rwMask &^ rw1cMask &^ rw0cMask
 			return [4]uint8{
 				uint8(rwWrite & 0xFF),
 				uint8((rwWrite >> 8) & 0xFF),
@@ -140,6 +140,14 @@ func svFuncMap() template.FuncMap {
 			}
 		},
 		"rw1CMaskBytes": func(mask uint32) [4]uint8 {
+			return [4]uint8{
+				uint8(mask & 0xFF),
+				uint8((mask >> 8) & 0xFF),
+				uint8((mask >> 16) & 0xFF),
+				uint8((mask >> 24) & 0xFF),
+			}
+		},
+		"rw0CMaskBytes": func(mask uint32) [4]uint8 {
 			return [4]uint8{
 				uint8(mask & 0xFF),
 				uint8((mask >> 8) & 0xFF),

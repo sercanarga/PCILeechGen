@@ -17,6 +17,7 @@ type BARRegister struct {
 	Reset       uint32 // reset/initial value (from donor snapshot or spec default)
 	RWMask      uint32 // writable bits (1 = host can write, 0 = read-only)
 	RW1CMask    uint32
+	RW0CMask    uint32
 	Name        string // human-readable register name
 	IsRW1C      bool   // true if this register uses write-1-to-clear semantics
 	IsFSMDriven bool   // true if driven by a dedicated FSM always block (excluded from generic reset/write)
@@ -411,12 +412,13 @@ func SynthesizeBARModel(profile *donor.BARProfile, classCode uint32) *BARModel {
 		rw1CMask := probe.RW1CMask & rwMask
 
 		regs = append(regs, BARRegister{
-			Offset:   probe.Offset,
-			Width:    4,
-			Reset:    probe.Original,
-			RWMask:   rwMask,
-			RW1CMask: rw1CMask,
-			Name:     name,
+			Offset:    probe.Offset,
+			Width:     4,
+			Reset:     probe.Original,
+			RWMask:    rwMask,
+			RW1CMask:  rw1CMask,
+			RW0CMask:  probe.RW0CMask & rwMask,
+			Name:      name,
 		})
 	}
 

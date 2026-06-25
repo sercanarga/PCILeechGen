@@ -13,7 +13,9 @@ type BARProbeResult struct {
 	Original  uint32 `json:"original"`
 	RWMask    uint32 `json:"rw_mask"`    // 1 = writable bit
 	RW1CMask  uint32 `json:"rw1c_mask"`  // bits that clear when written as 1
+	RW0CMask  uint32 `json:"rw0c_mask"`
 	MaybeRW1C bool   `json:"maybe_rw1c"` // write-1-to-clear suspect
+	MaybeRW0C bool   `json:"maybe_rw0c"`
 }
 
 // BARProfile is the full probe output for one BAR.
@@ -119,16 +121,25 @@ func probeOneRegister(mem []byte, offset uint32) BARProbeResult {
 
 	// RW1C check: write 1s to writable bits, see if they self-clear
 	maybeRW1C := false
+	maybeRW0C := false
+	rw0CMask := uint32(0)
 	if rwMask != 0 {
 		testVal := original | rwMask
 		binary.LittleEndian.PutUint32(mem[off:off+4], testVal)
 		afterWrite := binary.LittleEndian.Uint32(mem[off : off+4])
 		rw1CMask = testVal & ^afterWrite & rwMask
-		cleared := rw1CMask
-		if cleared != 0 {
+		if rw1CMask != 0 {
 			maybeRW1C = true
 		}
-		// Restore again
+
+		binary.LittleEndian.PutUint32(mem[off:off+4], original)
+		testVal = original &^ rwMask
+		binary.LittleEndian.PutUint32(mem[off:off+4], testVal)
+		afterWrite = binary.LittleEndian.Uint32(mem[off : off+4])
+		rw0CMask = original &^ afterWrite & rwMask
+		if rw0CMask != 0 {
+			maybeRW0C = true
+		}
 		binary.LittleEndian.PutUint32(mem[off:off+4], original)
 	}
 
@@ -137,6 +148,8 @@ func probeOneRegister(mem []byte, offset uint32) BARProbeResult {
 		Original:  original,
 		RWMask:    rwMask,
 		RW1CMask:  rw1CMask,
+		RW0CMask:  rw0CMask,
 		MaybeRW1C: maybeRW1C,
+		MaybeRW0C: maybeRW0C,
 	}
 }

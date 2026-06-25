@@ -485,6 +485,26 @@ func TestSynthesizeBARModel_RW1C(t *testing.T) {
 	}
 }
 
+func TestSynthesizeBARModel_RW0C(t *testing.T) {
+	profile := &donor.BARProfile{
+		BarIndex: 0,
+		Size:     4096,
+		Probes: []donor.BARProbeResult{
+			{Offset: 0x00, Original: 0x12345678, RWMask: 0x0000F0F0, RW0CMask: 0x0000A0A0},
+		},
+	}
+	model := SynthesizeBARModel(profile, 0x010802)
+	if model == nil {
+		t.Fatal("SynthesizeBARModel returned nil")
+	}
+	if model.Registers[0].RWMask != 0x0000F0F0 {
+		t.Errorf("RWMask should preserve writable bits, got 0x%08X", model.Registers[0].RWMask)
+	}
+	if model.Registers[0].RW0CMask != 0x0000A0A0 {
+		t.Errorf("RW0CMask should preserve detected RW0C bits, got 0x%08X", model.Registers[0].RW0CMask)
+	}
+}
+
 func TestSynthesizeBARModel_Nil(t *testing.T) {
 	if SynthesizeBARModel(nil, 0x010802) != nil {
 		t.Error("nil profile should return nil")
