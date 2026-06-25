@@ -30,6 +30,7 @@ type BARDefault struct {
 	Name        string
 	Reset       uint32
 	RWMask      uint32
+	W1CMask     uint32 // write-1-to-clear bits
 	IsRW1C      bool
 	IsFSMDriven bool // driven by dedicated FSM, excluded from generic reset/write
 }

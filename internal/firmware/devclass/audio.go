@@ -73,14 +73,14 @@ func audioProfile() *DeviceProfile {
 			{Offset: 0x40, Width: 4, Name: "CORBLBASE", Reset: 0x00000000, RWMask: 0xFFFFFF80},
 			{Offset: 0x44, Width: 4, Name: "CORBUBASE", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
 			{Offset: 0x48, Width: 4, Name: "CORBWP_CORBRP", Reset: 0x00000000, RWMask: 0x0000FFFF, IsFSMDriven: true},
-			{Offset: 0x4C, Width: 4, Name: "CORBCTL_STS_SIZE", Reset: 0x00820000, RWMask: 0x00030003, IsRW1C: true},
+			{Offset: 0x4C, Width: 4, Name: "CORBCTL_STS_SIZE", Reset: 0x00820000, RWMask: 0x00030003, W1CMask: 0x00000100, IsRW1C: true},
 			// RIRB base addresses and control
 			{Offset: 0x50, Width: 4, Name: "RIRBLBASE", Reset: 0x00000000, RWMask: 0xFFFFFF80},
 			{Offset: 0x54, Width: 4, Name: "RIRBUBASE", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
 			{Offset: 0x58, Width: 4, Name: "RIRBWP_RINTCNT", Reset: 0x00000000, RWMask: 0x0000FFFF, IsFSMDriven: true},
-			{Offset: 0x5C, Width: 4, Name: "RIRBCTL_STS_SIZE", Reset: 0x00820000, RWMask: 0x00000307, IsRW1C: true, IsFSMDriven: true},
+			{Offset: 0x5C, Width: 4, Name: "RIRBCTL_STS_SIZE", Reset: 0x00820000, RWMask: 0x00000007, W1CMask: 0x00000700, IsRW1C: true, IsFSMDriven: true},
 			// RIRBINTSTS - RIRB interrupt status (RW1C: bit 0 INTFL)
-			{Offset: 0x60, Width: 4, Name: "RIRBINTSTS", Reset: 0x00000000, RWMask: 0x00000001, IsRW1C: true, IsFSMDriven: true},
+			{Offset: 0x60, Width: 4, Name: "RIRBINTSTS", Reset: 0x00000000, RWMask: 0x00000000, W1CMask: 0x00000001, IsRW1C: true, IsFSMDriven: true},
 			// IC (Immediate Command) - driver writes codec command
 			{Offset: 0x64, Width: 4, Name: "IC", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
 			// IR (Immediate Response) - driver reads codec response (RO, returns 0)

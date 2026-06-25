@@ -161,6 +161,14 @@ func svFuncMap() template.FuncMap {
 				uint8((mask >> 24) & 0xFF),
 			}
 		},
+		"w1cMaskBytes": func(mask uint32) [4]uint8 {
+			return [4]uint8{
+				uint8(mask & 0xFF),
+				uint8((mask >> 8) & 0xFF),
+				uint8((mask >> 16) & 0xFF),
+				uint8((mask >> 24) & 0xFF),
+			}
+		},
 		"cdfVal": func(cdf [16]uint8, i int) uint8 {
 			if i < 0 || i > 15 {
 				return 0
