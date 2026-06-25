@@ -12,6 +12,14 @@ const (
 	ClassGeneric     = "generic"
 )
 
+// AllClasses returns all supported device class strings.
+func AllClasses() []string {
+	return []string{
+		ClassNVMe, ClassXHCI, ClassEthernet, ClassAudio, ClassGPU,
+		ClassSATA, ClassWiFi, ClassThunderbolt, ClassGeneric,
+	}
+}
+
 // DeviceStrategy centralizes device-class-specific behavior.
 type DeviceStrategy interface {
 	ClassName() string
