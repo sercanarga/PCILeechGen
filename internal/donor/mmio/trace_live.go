@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"strconv"
-	"strings"
 	"time"
 )
 
@@ -98,44 +96,5 @@ func LiveTrace(bdf string, duration time.Duration) (*TraceResult, error) {
 
 // parseMMIOTraceLine parses one mmiotrace line (R/W <width> <ts> <addr> <val>).
 func parseMMIOTraceLine(line string) (AccessRecord, bool) {
-	line = strings.TrimSpace(line)
-	// mmiotrace lines typically look like:
-	// R 4 1234567.890 0xfee00000 0x00000001 ...
-	// W 4 1234567.890 0xfee00000 0x00000001 ...
-	fields := strings.Fields(line)
-	if len(fields) < 5 {
-		return AccessRecord{}, false
-	}
-
-	var rec AccessRecord
-
-	switch fields[0] {
-	case "R":
-		rec.Type = AccessRead
-	case "W":
-		rec.Type = AccessWrite
-	default:
-		return AccessRecord{}, false
-	}
-
-	// lower 12 bits = offset within 4K BAR page
-	addr, err := strconv.ParseUint(strings.TrimPrefix(fields[3], "0x"), 16, 64)
-	if err != nil {
-		return AccessRecord{}, false
-	}
-	rec.Offset = uint32(addr & 0xFFF) // BAR offset within 4K page
-
-	// Parse value
-	val, err := strconv.ParseUint(strings.TrimPrefix(fields[4], "0x"), 16, 32)
-	if err != nil {
-		return AccessRecord{}, false
-	}
-	rec.Value = uint32(val)
-
-	// Parse timestamp if available
-	if ts, err := strconv.ParseFloat(fields[2], 64); err == nil {
-		rec.Timestamp = time.Duration(ts * float64(time.Second))
-	}
-
-	return rec, true
+	return parseTextTraceLine(line, 0)
 }
