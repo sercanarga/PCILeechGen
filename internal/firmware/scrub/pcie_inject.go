@@ -160,8 +160,7 @@ func injectPCIeCapIfMissing(cs *pci.ConfigSpace, b *board.Board, om *overlay.Map
 		om.WriteU16(0x06, status|0x0010, "set Capabilities List bit in Status")
 	}
 
-	// ensure CapPtr is valid when there are no existing caps
-	if len(ctx.Caps) == 0 && cs.CapabilityPointer() == 0 {
+	if len(ctx.Caps) == 0 {
 		slog.Info("donor has no capability chain, creating minimal PM + MSI + PCIe chain")
 		injectFullCapChain(cs, b, om, ctx)
 		return

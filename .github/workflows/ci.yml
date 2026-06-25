@@ -44,3 +44,29 @@ jobs:
           valColorRange: ${{ steps.coverage.outputs.percentage }}
           maxColorRange: 100
           minColorRange: 0
+
+  hdl-lint:
+    name: HDL Lint (Verilator)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Install Verilator
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y verilator
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Build pcileechgen
+        run: make build
+
+      - name: Run HDL lint
+        run: make hdl-lint

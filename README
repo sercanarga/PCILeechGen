@@ -4,7 +4,7 @@ Custom firmware generator for PCILeech FPGA boards. Reads a real PCI/PCIe
 donor device through VFIO, clones its identity (config space, BARs,
 capabilities), and builds a ready-to-flash .bin bitstream via Vivado.
 
-Help / Discord: https://discord.gg/kcWVCAhNSg
+Discord Community: https://discord.gg/kcWVCAhNSg
 
 ******************************************************************************
 * WARNING: FOR EDUCATIONAL AND RESEARCH USE ONLY                             *
@@ -24,6 +24,18 @@ PREREQUISITES
 
   VFIO needs IOMMU enabled in BIOS and in the kernel parameters
   (intel_iommu=on or amd_iommu=on).
+
+
+SPECIAL THANKS
+--------------
+  FTWDMA         Sponsorship
+                 https://ftwdma.com
+  TrueTuring     Sponsorship, NVMe and xHCI fixes
+                 https://github.com/TrueTuring
+  CaptainDMA     Sponsorship
+                 https://captaindma.com
+  pcileech-fpga  The FPGA framework this project builds upon
+                 https://github.com/ufrisk/pcileech-fpga
 
 
 HOW IT WORKS
@@ -189,17 +201,6 @@ Windows device-history cleanup
   Requires Administrator privileges. Reboot after cleanup before reconnecting
   the device.
 
-
-SPECIAL THANKS
---------------
-  FTWDMA         Sponsorship
-                 https://ftwdma.com
-  TrueTuring     Sponsorship, NVMe and xHCI fixes
-                 https://github.com/TrueTuring
-  CaptainDMA     Sponsorship
-                 https://captaindma.com
-  pcileech-fpga  The FPGA framework this project builds upon
-                 https://github.com/ufrisk/pcileech-fpga
 
 LICENSE
 -------

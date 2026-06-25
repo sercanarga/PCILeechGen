@@ -1,0 +1,8 @@
+`verilator_config`
+
+/* verilator lint_off DECLFILENAME */
+/* verilator lint_off UNUSED */
+/* verilator lint_off CASEINCOMPLETE */
+/* verilator lint_off PINMISSING */
+/* verilator lint_off BLKSEQ */
+/* verilator lint_off WIDTH */
