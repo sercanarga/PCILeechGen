@@ -119,6 +119,31 @@ func TestBoard_Paths(t *testing.T) {
 	}
 }
 
+func TestBoard_SourceSubDirPaths(t *testing.T) {
+	b := &Board{
+		ProjectDir:   "ZDMA",
+		SourceSubDir: "100T",
+		TCLFile:      "vivado_generate_project_100t.tcl",
+		BuildTCL:     "vivado_build_100t.tcl",
+	}
+
+	if got := b.SourceBasePath("/fpga"); got != "/fpga/ZDMA/100T" {
+		t.Errorf("SourceBasePath = %q", got)
+	}
+	if got := b.SrcPath("/fpga"); got != "/fpga/ZDMA/100T/src" {
+		t.Errorf("SrcPath = %q", got)
+	}
+	if got := b.IPPath("/fpga"); got != "/fpga/ZDMA/100T/ip" {
+		t.Errorf("IPPath = %q", got)
+	}
+	if got := b.TCLPath("/fpga"); got != "/fpga/ZDMA/vivado_generate_project_100t.tcl" {
+		t.Errorf("TCLPath = %q", got)
+	}
+	if got := b.BuildTCLPath("/fpga"); got != "/fpga/ZDMA/vivado_build_100t.tcl" {
+		t.Errorf("BuildTCLPath = %q", got)
+	}
+}
+
 func TestBoard_PathsNoSubDir(t *testing.T) {
 	b := &Board{
 		ProjectDir: "PCIeSquirrel",

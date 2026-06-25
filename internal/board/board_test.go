@@ -70,10 +70,16 @@ func TestBoardPaths(t *testing.T) {
 		t.Errorf("CaptainDMA_100T TCLPath() = %q", cdma.TCLPath(libDir))
 	}
 
-	// Board with custom BuildTCL (ZDMA)
+	// Board with source tree nested below project TCL scripts (ZDMA)
 	zdma, _ := Find("ZDMA")
 	if zdma.BuildTCLPath(libDir) != libDir+"/ZDMA/vivado_build_100t.tcl" {
 		t.Errorf("ZDMA BuildTCLPath() = %q", zdma.BuildTCLPath(libDir))
+	}
+	if zdma.SrcPath(libDir) != libDir+"/ZDMA/100T/src" {
+		t.Errorf("ZDMA SrcPath() = %q", zdma.SrcPath(libDir))
+	}
+	if zdma.IPPath(libDir) != libDir+"/ZDMA/100T/ip" {
+		t.Errorf("ZDMA IPPath() = %q", zdma.IPPath(libDir))
 	}
 }
 
