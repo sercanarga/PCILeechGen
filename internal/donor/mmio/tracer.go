@@ -135,7 +135,7 @@ func BuildLegacyTraceReport(trace *TraceResult) *TraceReport {
 			TotalCount:     hot.TotalCount,
 			LastValue:      hot.LastValue,
 			Values:         append([]uint32(nil), hot.Values...),
-			Classification: classifyRegister(hot, polled[hot.Offset]),
+			Classification: classifyRegisterLegacy(hot, polled[hot.Offset]),
 		})
 	}
 	sort.Slice(report.Registers, func(i, j int) bool {
@@ -144,7 +144,7 @@ func BuildLegacyTraceReport(trace *TraceResult) *TraceReport {
 	return report
 }
 
-func classifyRegister(reg HotRegister, polled bool) RegisterClassification {
+func classifyRegisterLegacy(reg HotRegister, polled bool) RegisterClassification {
 	if reg.ReadCount > 0 && reg.WriteCount > 0 {
 		return RegisterReadWrite
 	}
