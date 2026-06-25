@@ -567,6 +567,8 @@ module pcileech_tlps128_bar_controller(
     // catch doorbell writes -- offset derived from CAP.DSTRD + computed from (variable) Bar0Size
     wire nvme_sq0_db_wr = wr_valid && wr_bar[0] && (wr_addr_bar0 == 32'h{{ printf "%08X" .NVMeSQ0DoorbellOffset }});
     wire nvme_cq0_db_wr = wr_valid && wr_bar[0] && (wr_addr_bar0 == 32'h{{ printf "%08X" .NVMeCQ0DoorbellOffset }});
+    wire nvme_sq1_db_wr = wr_valid && wr_bar[0] && (wr_addr_bar0 == 32'h{{ printf "%08X" .NVMeSQ1DoorbellOffset }});
+    wire nvme_cq1_db_wr = wr_valid && wr_bar[0] && (wr_addr_bar0 == 32'h{{ printf "%08X" .NVMeCQ1DoorbellOffset }});
 
     // plumbing between the responder and the DMA bridge
     wire        nvme_dma_rd_req;
@@ -607,6 +609,10 @@ module pcileech_tlps128_bar_controller(
         .sq0_doorbell_val   ( wr_data[15:0]                 ),
         .cq0_doorbell_wr    ( nvme_cq0_db_wr                ),
         .cq0_doorbell_val   ( wr_data[15:0]                 ),
+        .sq1_doorbell_wr    ( nvme_sq1_db_wr                ),
+        .sq1_doorbell_val   ( wr_data[15:0]                 ),
+        .cq1_doorbell_wr    ( nvme_cq1_db_wr                ),
+        .cq1_doorbell_val   ( wr_data[15:0]                 ),
         .msix_enable        ( msix_enable                   ),
         .msix_function_mask ( msix_function_mask            ),
         .msix_vector0_addr  ( msix_vector0_addr             ),

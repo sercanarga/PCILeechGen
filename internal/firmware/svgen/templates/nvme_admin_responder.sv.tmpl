@@ -13,7 +13,8 @@
 //   0x09  Set Features  – temperature, error recovery, queues, VWC, etc.
 //   0x0A  Get Features  – number of queues, interrupt coalescing
 //   0x0C  AER           – queued silently, never completed (that's legal)
-//   rest  Create IO CQ/SQ, whatever – blanket success
+//   0x80  Format NVM   – accept format requests
+//   IO Q1 Flush/Write/Read/Write Zeroes/Dataset Mgmt – minimal disk emulation
 
 `timescale 1ns / 1ps
 
@@ -35,6 +36,10 @@ module pcileech_nvme_admin_responder(
     input [15:0]        sq0_doorbell_val,
     input               cq0_doorbell_wr,     // BAR0 + 0x1004
     input [15:0]        cq0_doorbell_val,
+    input               sq1_doorbell_wr,     // BAR0 + 0x1008 (DSTRD=0)
+    input [15:0]        sq1_doorbell_val,
+    input               cq1_doorbell_wr,     // BAR0 + 0x100C (DSTRD=0)
+    input [15:0]        cq1_doorbell_val,
 
     // MSI-X interrupt target — vector 0 config (from pcileech_msix_table).
     // Accepted to match the bar_controller wiring. The current interrupt
@@ -84,6 +89,7 @@ module pcileech_nvme_admin_responder(
     localparam [3:0] S_EXEC_NSLIST  = 4'h9;
     localparam [3:0] S_EXEC_LOGPAGE = 4'hA;
     localparam [3:0] S_SHUTDOWN     = 4'hB;
+    localparam [3:0] S_EXEC_READ_ZERO = 4'hC;
 
     reg [3:0]   state;
     reg [3:0]   return_state;       // where to go after DMA wait completes
@@ -93,6 +99,11 @@ module pcileech_nvme_admin_responder(
     reg [15:0]  sq_head;
     reg [15:0]  cq_head;
     reg         cq_phase;           // flips each time CQ wraps around
+    reg [15:0]  iosq_tail;
+    reg [15:0]  iosq_head;
+    reg [15:0]  iocq_head;
+    reg         iocq_phase;
+    reg         active_io_cmd;
 
     wire [11:0] asqs = aqa[11:0];
     wire [11:0] acqs = aqa[27:16];
@@ -109,6 +120,7 @@ module pcileech_nvme_admin_responder(
     wire [63:0] cmd_prp2     = {sqe[9], sqe[8]};
     wire [31:0] cmd_cdw10    = sqe[10];
     wire [31:0] cmd_cdw11    = sqe[11];
+    wire [31:0] cmd_cdw12    = sqe[12];
     wire [7:0]  identify_cns = cmd_cdw10[7:0];
 
     function [63:0] cmd_prp_addr;
@@ -129,6 +141,7 @@ module pcileech_nvme_admin_responder(
 
     // transfer progress
     reg [10:0]  data_dw_cnt;
+    reg [10:0]  io_zero_dw_limit;
     reg [12:0]  id_rom_offset;
 
     // edge detect for CC.EN so we can do a clean shutdown
@@ -137,6 +150,15 @@ module pcileech_nvme_admin_responder(
     // masking low bits – NVMe spec says queue bases are page-aligned
     wire [63:0] asq_base = {asq_hi, asq_lo & 32'hFFFFF000};
     wire [63:0] acq_base = {acq_hi, acq_lo & 32'hFFFFF000};
+    reg [63:0]  iosq_base;
+    reg [63:0]  iocq_base;
+    reg [15:0]  iosq_size;
+    reg [15:0]  iocq_size;
+    reg         iosq_enabled;
+    reg         iocq_enabled;
+    wire [63:0] active_cq_base = active_io_cmd ? iocq_base : acq_base;
+    wire [15:0] active_cq_head = active_io_cmd ? iocq_head : cq_head;
+    wire        active_cq_phase = active_io_cmd ? iocq_phase : cq_phase;
 
     // the spec says AER commands just sit around until something happens,
     // and nothing ever happens on our fake controller, so we count and ignore
@@ -153,6 +175,11 @@ module pcileech_nvme_admin_responder(
             sq_head         <= 16'h0;
             cq_head         <= 16'h0;
             cq_phase        <= 1'b1;
+            iosq_tail       <= 16'h0;
+            iosq_head       <= 16'h0;
+            iocq_head       <= 16'h0;
+            iocq_phase      <= 1'b1;
+            active_io_cmd   <= 1'b0;
             dma_rd_req      <= 1'b0;
             dma_wr_req      <= 1'b0;
             dma_wr_valid    <= 1'b0;
@@ -160,11 +187,18 @@ module pcileech_nvme_admin_responder(
             sqe_dw_idx      <= 4'h0;
             cqe_dw_idx      <= 2'h0;
             data_dw_cnt     <= 11'h0;
+            io_zero_dw_limit <= 11'h0;
             id_rom_offset   <= 13'h0;
             id_rom_addr     <= 13'h0;
             cc_en_prev      <= 1'b0;
             aer_pending     <= 4'h0;
             num_queues_granted <= 32'h00010001;  // default: 1 SQ + 1 CQ
+            iosq_base       <= 64'h0;
+            iocq_base       <= 64'h0;
+            iosq_size       <= 16'h0;
+            iocq_size       <= 16'h0;
+            iosq_enabled    <= 1'b0;
+            iocq_enabled    <= 1'b0;
         end else begin
             // pulse signals – cleared every cycle, only set when needed
             dma_rd_req      <= 1'b0;
@@ -195,11 +229,23 @@ module pcileech_nvme_admin_responder(
                         // host consumed some CQEs, update our copy of the head
                         if (cq0_doorbell_wr)
                             cq_head <= cq0_doorbell_val;
+                        if (sq1_doorbell_wr)
+                            iosq_tail <= sq1_doorbell_val;
+                        if (cq1_doorbell_wr)
+                            iocq_head <= cq1_doorbell_val;
 
                         // anything new? go fetch it
                         if (sq_tail != sq_head) begin
+                            active_io_cmd <= 1'b0;
                             dma_rd_req  <= 1'b1;
                             dma_rd_addr <= asq_base + {48'h0, sq_head} * 64;
+                            dma_rd_len  <= 10'd16;
+                            sqe_dw_idx  <= 4'h0;
+                            state       <= S_FETCH_SQE;
+                        end else if (iosq_enabled && iocq_enabled && iosq_tail != iosq_head) begin
+                            active_io_cmd <= 1'b1;
+                            dma_rd_req  <= 1'b1;
+                            dma_rd_addr <= iosq_base + {42'h0, iosq_head, 6'h0};
                             dma_rd_len  <= 10'd16;
                             sqe_dw_idx  <= 4'h0;
                             state       <= S_FETCH_SQE;
@@ -218,12 +264,96 @@ module pcileech_nvme_admin_responder(
 
                     // ---- figure out what the driver wants --------------------
                     S_DECODE_CMD: begin
+                        if (active_io_cmd) begin
+                            case (cmd_opcode)
+                                8'h02: begin
+                                    data_dw_cnt <= 11'h0;
+                                    if (cmd_cdw12[15:0] >= 16'd7)
+                                        io_zero_dw_limit <= 11'd1024;
+                                    else
+                                        io_zero_dw_limit <= ({8'h0, cmd_cdw12[2:0]} + 11'd1) << 7;
+                                    state <= S_EXEC_READ_ZERO;
+                                end
+                                8'h00, 8'h01, 8'h08, 8'h09: begin
+                                    cqe[0] <= 32'h0;
+                                    cqe[1] <= 32'h0;
+                                    cqe[2] <= {cmd_cid, iosq_head};
+                                    cqe[3] <= {31'h0, iocq_phase};
+                                    cqe_dw_idx <= 2'h0;
+                                    state <= S_POST_CQE;
+                                end
+                                default: begin
+                                    cqe[0] <= 32'h0;
+                                    cqe[1] <= 32'h0;
+                                    cqe[2] <= {cmd_cid, iosq_head};
+                                    cqe[3] <= {31'h0, iocq_phase};
+                                    cqe_dw_idx <= 2'h0;
+                                    state <= S_POST_CQE;
+                                end
+                            endcase
+                        end else begin
                         case (cmd_opcode)
+
+                            // Delete IO Submission Queue
+                            8'h00: begin
+                                iosq_enabled <= 1'b0;
+                                iosq_tail    <= 16'h0;
+                                iosq_head    <= 16'h0;
+                                cqe[0] <= 32'h0;
+                                cqe[1] <= 32'h0;
+                                cqe[2] <= {cmd_cid, sq_head};
+                                cqe[3] <= {31'h0, cq_phase};
+                                cqe_dw_idx <= 2'h0;
+                                state <= S_POST_CQE;
+                            end
+
+                            // Create IO Submission Queue
+                            8'h01: begin
+                                iosq_base    <= {cmd_prp1[63:12], 12'h000};
+                                iosq_size    <= cmd_cdw10[31:16];
+                                iosq_enabled <= 1'b1;
+                                iosq_tail    <= 16'h0;
+                                iosq_head    <= 16'h0;
+                                cqe[0] <= 32'h0;
+                                cqe[1] <= 32'h0;
+                                cqe[2] <= {cmd_cid, sq_head};
+                                cqe[3] <= {31'h0, cq_phase};
+                                cqe_dw_idx <= 2'h0;
+                                state <= S_POST_CQE;
+                            end
 
                             // Get Log Page
                             8'h02: begin
                                 data_dw_cnt <= 11'h0;
                                 state       <= S_EXEC_LOGPAGE;
+                            end
+
+                            // Delete IO Completion Queue
+                            8'h04: begin
+                                iocq_enabled <= 1'b0;
+                                iocq_head    <= 16'h0;
+                                iocq_phase   <= 1'b1;
+                                cqe[0] <= 32'h0;
+                                cqe[1] <= 32'h0;
+                                cqe[2] <= {cmd_cid, sq_head};
+                                cqe[3] <= {31'h0, cq_phase};
+                                cqe_dw_idx <= 2'h0;
+                                state <= S_POST_CQE;
+                            end
+
+                            // Create IO Completion Queue
+                            8'h05: begin
+                                iocq_base    <= {cmd_prp1[63:12], 12'h000};
+                                iocq_size    <= cmd_cdw10[31:16];
+                                iocq_enabled <= 1'b1;
+                                iocq_head    <= 16'h0;
+                                iocq_phase   <= 1'b1;
+                                cqe[0] <= 32'h0;
+                                cqe[1] <= 32'h0;
+                                cqe[2] <= {cmd_cid, sq_head};
+                                cqe[3] <= {31'h0, cq_phase};
+                                cqe_dw_idx <= 2'h0;
+                                state <= S_POST_CQE;
                             end
 
                             // Identify
@@ -315,6 +445,17 @@ module pcileech_nvme_admin_responder(
                                 state <= S_IDLE;
                             end
 
+                            // Format NVM – accept the host format request.  The
+                            // minimal emulation reports an empty zeroed namespace.
+                            8'h80: begin
+                                cqe[0] <= 32'h0;
+                                cqe[1] <= 32'h0;
+                                cqe[2] <= {cmd_cid, sq_head};
+                                cqe[3] <= {31'h0, cq_phase};
+                                cqe_dw_idx <= 2'h0;
+                                state  <= S_POST_CQE;
+                            end
+
                             // everything else (Create IO CQ/SQ, etc.) – just say yes
                             default: begin
                                 cqe[0] <= 32'h0;
@@ -325,6 +466,7 @@ module pcileech_nvme_admin_responder(
                                 state  <= S_POST_CQE;
                             end
                         endcase
+                        end
                     end
 
                     // ---- stream 4KB of identify data from ROM to host -------
@@ -395,12 +537,29 @@ module pcileech_nvme_admin_responder(
                         state <= S_WAIT_DMA_WR;
                     end
 
+                    // ---- IO read: return zeroed sectors for an empty disk ----
+                    S_EXEC_READ_ZERO: begin
+                        dma_wr_req   <= 1'b1;
+                        dma_wr_valid <= 1'b1;
+                        dma_wr_addr  <= cmd_prp_addr({data_dw_cnt, 2'b00});
+                        dma_wr_data  <= 32'h00000000;
+                        dma_wr_be    <= 4'hF;
+
+                        if (data_dw_cnt >= io_zero_dw_limit - 11'd1) begin
+                            return_state <= S_WRITE_DATA;
+                        end else begin
+                            data_dw_cnt  <= data_dw_cnt + 1'b1;
+                            return_state <= S_EXEC_READ_ZERO;
+                        end
+                        state <= S_WAIT_DMA_WR;
+                    end
+
                     // ---- all data has been sent, pack a success CQE ---------
                     S_WRITE_DATA: begin
                         cqe[0] <= 32'h0;
                         cqe[1] <= 32'h0;
-                        cqe[2] <= {cmd_cid, sq_head};
-                        cqe[3] <= {31'h0, cq_phase};
+                        cqe[2] <= active_io_cmd ? {cmd_cid, iosq_head} : {cmd_cid, sq_head};
+                        cqe[3] <= {31'h0, active_cq_phase};
                         cqe_dw_idx <= 2'h0;
                         state  <= S_POST_CQE;
                     end
@@ -409,7 +568,7 @@ module pcileech_nvme_admin_responder(
                     S_POST_CQE: begin
                         dma_wr_req   <= 1'b1;
                         dma_wr_valid <= 1'b1;
-                        dma_wr_addr  <= acq_base + {44'h0, cq_head, 4'h0}
+                        dma_wr_addr  <= active_cq_base + {44'h0, active_cq_head, 4'h0}
                                         + {60'h0, cqe_dw_idx, 2'b00};
                         dma_wr_data  <= cqe[cqe_dw_idx];
                         dma_wr_be    <= 4'hF;
@@ -434,18 +593,32 @@ module pcileech_nvme_admin_responder(
                     S_SEND_MSIX: begin
                         msix_trigger <= 1'b1;
 
-                        // wrap SQ head
-                        if (sq_head >= {4'h0, asqs})
-                            sq_head <= 16'h0;
-                        else
-                            sq_head <= sq_head + 1'b1;
+                        if (active_io_cmd) begin
+                            if (iosq_head >= iosq_size)
+                                iosq_head <= 16'h0;
+                            else
+                                iosq_head <= iosq_head + 1'b1;
 
-                        // wrap CQ head and flip the phase bit
-                        if (cq_head >= {4'h0, acqs}) begin
-                            cq_head  <= 16'h0;
-                            cq_phase <= ~cq_phase;
+                            if (iocq_head >= iocq_size) begin
+                                iocq_head  <= 16'h0;
+                                iocq_phase <= ~iocq_phase;
+                            end else begin
+                                iocq_head <= iocq_head + 1'b1;
+                            end
                         end else begin
-                            cq_head <= cq_head + 1'b1;
+                            // wrap SQ head
+                            if (sq_head >= {4'h0, asqs})
+                                sq_head <= 16'h0;
+                            else
+                                sq_head <= sq_head + 1'b1;
+
+                            // wrap CQ head and flip the phase bit
+                            if (cq_head >= {4'h0, acqs}) begin
+                                cq_head  <= 16'h0;
+                                cq_phase <= ~cq_phase;
+                            end else begin
+                                cq_head <= cq_head + 1'b1;
+                            end
                         end
 
                         state <= S_IDLE;
@@ -457,6 +630,11 @@ module pcileech_nvme_admin_responder(
                         sq_head     <= 16'h0;
                         cq_head     <= 16'h0;
                         cq_phase    <= 1'b1;
+                        iosq_tail   <= 16'h0;
+                        iosq_head   <= 16'h0;
+                        iocq_head   <= 16'h0;
+                        iocq_phase  <= 1'b1;
+                        active_io_cmd <= 1'b0;
                         aer_pending <= 4'h0;
                         state       <= S_IDLE;
                     end

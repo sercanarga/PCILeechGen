@@ -84,6 +84,18 @@ func (c *SVGeneratorConfig) NVMeCQ0DoorbellOffset() uint32 {
 	return dbBase + 1*stride
 }
 
+func (c *SVGeneratorConfig) NVMeSQ1DoorbellOffset() uint32 {
+	stride := uint32(4) << c.NVMeDoorbellStride
+	dbBase := uint32(board.DefaultBRAMSize)
+	return dbBase + 2*stride
+}
+
+func (c *SVGeneratorConfig) NVMeCQ1DoorbellOffset() uint32 {
+	stride := uint32(4) << c.NVMeDoorbellStride
+	dbBase := uint32(board.DefaultBRAMSize)
+	return dbBase + 3*stride
+}
+
 func renderTemplate(name string, data any) (string, error) {
 	tmplStr := mustReadTemplate(name + ".sv.tmpl")
 	tmpl, err := template.New(name).Funcs(svFuncMap()).Parse(tmplStr)
