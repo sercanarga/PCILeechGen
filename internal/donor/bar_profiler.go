@@ -12,6 +12,7 @@ type BARProbeResult struct {
 	Offset    uint32 `json:"offset"`
 	Original  uint32 `json:"original"`
 	RWMask    uint32 `json:"rw_mask"`    // 1 = writable bit
+	RW1CMask  uint32 `json:"rw1c_mask"`  // bits that clear when written as 1
 	MaybeRW1C bool   `json:"maybe_rw1c"` // write-1-to-clear suspect
 }
 
@@ -114,6 +115,7 @@ func probeOneRegister(mem []byte, offset uint32) BARProbeResult {
 
 	// RW mask: bits that flipped between all-ones and all-zeros
 	rwMask := allOnes ^ allZeros
+	rw1CMask := uint32(0)
 
 	// RW1C check: write 1s to writable bits, see if they self-clear
 	maybeRW1C := false
@@ -121,7 +123,8 @@ func probeOneRegister(mem []byte, offset uint32) BARProbeResult {
 		testVal := original | rwMask
 		binary.LittleEndian.PutUint32(mem[off:off+4], testVal)
 		afterWrite := binary.LittleEndian.Uint32(mem[off : off+4])
-		cleared := testVal & ^afterWrite & rwMask
+		rw1CMask = testVal & ^afterWrite & rwMask
+		cleared := rw1CMask
 		if cleared != 0 {
 			maybeRW1C = true
 		}
@@ -133,6 +136,7 @@ func probeOneRegister(mem []byte, offset uint32) BARProbeResult {
 		Offset:    offset,
 		Original:  original,
 		RWMask:    rwMask,
+		RW1CMask:  rw1CMask,
 		MaybeRW1C: maybeRW1C,
 	}
 }

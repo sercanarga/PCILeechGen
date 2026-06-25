@@ -1045,10 +1045,10 @@ module pcileech_bar_impl_device #(
         else if (wr_valid) begin
             case (wr_offset & 32'hFFFFFFFC)
 {{ range .BARModel.Registers }}{{ if and (ne .RWMask 0) (not .IsRW1C) (not .IsFSMDriven) }}                32'h{{ hex08 (alignedOffset .Offset) }}: begin
-                    if (wr_be[0]) reg_0x{{ hex08 .Offset }}[7:0]   <= (reg_0x{{ hex08 .Offset }}[7:0]   & ~8'h{{ hex02 (index (rwMaskBytes .RWMask) 0) }}) | (wr_data[7:0]   & 8'h{{ hex02 (index (rwMaskBytes .RWMask) 0) }});
-                    if (wr_be[1]) reg_0x{{ hex08 .Offset }}[15:8]  <= (reg_0x{{ hex08 .Offset }}[15:8]  & ~8'h{{ hex02 (index (rwMaskBytes .RWMask) 1) }}) | (wr_data[15:8]  & 8'h{{ hex02 (index (rwMaskBytes .RWMask) 1) }});
-                    if (wr_be[2]) reg_0x{{ hex08 .Offset }}[23:16] <= (reg_0x{{ hex08 .Offset }}[23:16] & ~8'h{{ hex02 (index (rwMaskBytes .RWMask) 2) }}) | (wr_data[23:16] & 8'h{{ hex02 (index (rwMaskBytes .RWMask) 2) }});
-                    if (wr_be[3]) reg_0x{{ hex08 .Offset }}[31:24] <= (reg_0x{{ hex08 .Offset }}[31:24] & ~8'h{{ hex02 (index (rwMaskBytes .RWMask) 3) }}) | (wr_data[31:24] & 8'h{{ hex02 (index (rwMaskBytes .RWMask) 3) }});
+                    if (wr_be[0]) reg_0x{{ hex08 .Offset }}[7:0]   <= (((reg_0x{{ hex08 .Offset }}[7:0]   & ~8'h{{ hex02 (index (rwWriteMaskBytes .RWMask .RW1CMask) 0) }}) | (wr_data[7:0]   & 8'h{{ hex02 (index (rwWriteMaskBytes .RWMask .RW1CMask) 0) }}) ) & ~(8'h{{ hex02 (index (rw1CMaskBytes .RW1CMask) 0) }} & wr_data[7:0]));
+                    if (wr_be[1]) reg_0x{{ hex08 .Offset }}[15:8]  <= (((reg_0x{{ hex08 .Offset }}[15:8]  & ~8'h{{ hex02 (index (rwWriteMaskBytes .RWMask .RW1CMask) 1) }}) | (wr_data[15:8]  & 8'h{{ hex02 (index (rwWriteMaskBytes .RWMask .RW1CMask) 1) }}) ) & ~(8'h{{ hex02 (index (rw1CMaskBytes .RW1CMask) 1) }} & wr_data[15:8]));
+                    if (wr_be[2]) reg_0x{{ hex08 .Offset }}[23:16] <= (((reg_0x{{ hex08 .Offset }}[23:16] & ~8'h{{ hex02 (index (rwWriteMaskBytes .RWMask .RW1CMask) 2) }}) | (wr_data[23:16] & 8'h{{ hex02 (index (rwWriteMaskBytes .RWMask .RW1CMask) 2) }}) ) & ~(8'h{{ hex02 (index (rw1CMaskBytes .RW1CMask) 2) }} & wr_data[23:16]));
+                    if (wr_be[3]) reg_0x{{ hex08 .Offset }}[31:24] <= (((reg_0x{{ hex08 .Offset }}[31:24] & ~8'h{{ hex02 (index (rwWriteMaskBytes .RWMask .RW1CMask) 3) }}) | (wr_data[31:24] & 8'h{{ hex02 (index (rwWriteMaskBytes .RWMask .RW1CMask) 3) }}) ) & ~(8'h{{ hex02 (index (rw1CMaskBytes .RW1CMask) 3) }} & wr_data[31:24]));
                 end
 {{ end }}{{ end }}                default: begin
                     // unregistered offset - ignore write

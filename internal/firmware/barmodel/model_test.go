@@ -470,15 +470,18 @@ func TestSynthesizeBARModel_RW1C(t *testing.T) {
 		BarIndex: 0,
 		Size:     4096,
 		Probes: []donor.BARProbeResult{
-			{Offset: 0x00, Original: 0xDEADBEEF, RWMask: 0xFF00FF00, MaybeRW1C: true},
+			{Offset: 0x00, Original: 0xDEADBEEF, RWMask: 0xFF00FF00, RW1CMask: 0x00FF0000, MaybeRW1C: true},
 		},
 	}
 	model := SynthesizeBARModel(profile, 0x010802)
 	if model == nil {
 		t.Fatal("SynthesizeBARModel returned nil")
 	}
-	if model.Registers[0].RWMask != 0 {
-		t.Error("RW1C register should have RWMask=0 (conservative)")
+	if model.Registers[0].RWMask != 0xFF00FF00 {
+		t.Errorf("RWMask should preserve writable bits, got 0x%08X", model.Registers[0].RWMask)
+	}
+	if model.Registers[0].RW1CMask != 0x00FF0000 {
+		t.Errorf("RW1CMask should preserve detected RW1C bits, got 0x%08X", model.Registers[0].RW1CMask)
 	}
 }
 

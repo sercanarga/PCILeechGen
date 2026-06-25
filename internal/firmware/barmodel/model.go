@@ -16,6 +16,7 @@ type BARRegister struct {
 	Width       int    // 1, 2, or 4 bytes
 	Reset       uint32 // reset/initial value (from donor snapshot or spec default)
 	RWMask      uint32 // writable bits (1 = host can write, 0 = read-only)
+	RW1CMask    uint32
 	Name        string // human-readable register name
 	IsRW1C      bool   // true if this register uses write-1-to-clear semantics
 	IsFSMDriven bool   // true if driven by a dedicated FSM always block (excluded from generic reset/write)
@@ -387,7 +388,6 @@ func buildAudioBARModel(barData []byte) *BARModel {
 }
 
 // SynthesizeBARModel builds a model from probe data.
-// Drops dead regs and treats RW1C as RO.
 func SynthesizeBARModel(profile *donor.BARProfile, classCode uint32) *BARModel {
 	if profile == nil || len(profile.Probes) == 0 {
 		return nil
@@ -408,16 +408,15 @@ func SynthesizeBARModel(profile *donor.BARProfile, classCode uint32) *BARModel {
 		}
 
 		rwMask := probe.RWMask
-		if probe.MaybeRW1C {
-			rwMask = 0 // RW1C -> force RO
-		}
+		rw1CMask := probe.RW1CMask & rwMask
 
 		regs = append(regs, BARRegister{
-			Offset: probe.Offset,
-			Width:  4,
-			Reset:  probe.Original,
-			RWMask: rwMask,
-			Name:   name,
+			Offset:   probe.Offset,
+			Width:    4,
+			Reset:    probe.Original,
+			RWMask:   rwMask,
+			RW1CMask: rw1CMask,
+			Name:     name,
 		})
 	}
 
