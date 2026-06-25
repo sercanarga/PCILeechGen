@@ -71,7 +71,9 @@ synth_design completed successfully
 route_design completed successfully
 write_bitstream completed successfully`
 
-	os.WriteFile(logPath, []byte(content), 0644)
+	if err := os.WriteFile(logPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	report, err := ParseLogFile(logPath)
 	if err != nil {

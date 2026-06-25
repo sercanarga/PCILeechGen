@@ -395,7 +395,7 @@ func SynthesizeBARModel(profile *donor.BARProfile, classCode uint32) *BARModel {
 
 	nameHints := classRegisterNames(classCode)
 
-	var regs []BARRegister
+	regs := make([]BARRegister, 0, len(profile.Probes))
 	for _, probe := range profile.Probes {
 		// skip dead regs
 		if probe.Original == 0 && probe.RWMask == 0 {

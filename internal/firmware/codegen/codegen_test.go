@@ -41,7 +41,7 @@ func TestGenerateWritemaskCOE(t *testing.T) {
 
 	// parse data lines into DWORD array
 	lines := strings.Split(wm, "\n")
-	var dwords []string
+	dwords := make([]string, 0, len(lines))
 	for _, l := range lines {
 		l = strings.TrimSpace(l)
 		if l == "" || strings.HasPrefix(l, ";") || strings.HasPrefix(l, "memory") {
@@ -86,13 +86,9 @@ func TestGenerateWritemaskCOE(t *testing.T) {
 		t.Errorf("IntLine/IntPin mask should be 000000ff, got %s", dwords[15])
 	}
 
-	// capability region (0x40-0xFF) must be fully writable.
-	// the writemask only controls shadow BRAM; the Xilinx IP core
-	// processes config writes independently. locking here would create
-	// a dangerous BRAM/IP-core state mismatch.
 	for i := 0x40 / 4; i < 0x100/4; i++ {
-		if dwords[i] != "ffffffff" {
-			t.Errorf("cap region DWORD[%d] should be ffffffff, got %s", i, dwords[i])
+		if dwords[i] != "00000000" {
+			t.Errorf("cap region DWORD[%d] should be 00000000, got %s", i, dwords[i])
 		}
 	}
 
@@ -102,6 +98,39 @@ func TestGenerateWritemaskCOE(t *testing.T) {
 			t.Errorf("ext cap DWORD[%d] should be 00000000, got %s", i, dwords[i])
 			break
 		}
+	}
+}
+
+func TestGenerateWritemaskCOE_KnownCapabilities(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	cs.WriteU16(0x06, 0x0010)
+	cs.WriteU8(0x34, 0x40)
+
+	cs.WriteU8(0x40, pci.CapIDPowerManagement)
+	cs.WriteU8(0x41, 0x50)
+	cs.WriteU8(0x50, pci.CapIDMSIX)
+	cs.WriteU8(0x51, 0x60)
+	cs.WriteU8(0x60, pci.CapIDPCIExpress)
+	cs.WriteU8(0x61, 0x00)
+
+	wm := GenerateWritemaskCOE(cs)
+	dwords := parseCOEDwords(t, wm)
+
+	if dwords[16] != "00000000" {
+		t.Errorf("PM header DWORD should be read-only, got %s", dwords[16])
+	}
+	if dwords[17] != "00000103" {
+		t.Errorf("PMCSR DWORD should be 00000103, got %s", dwords[17])
+	}
+	if dwords[20] != "c0000000" {
+		t.Errorf("MSI-X control DWORD should expose only enable/mask bits, got %s", dwords[20])
+	}
+	if dwords[24] != "00000000" {
+		t.Errorf("PCIe header DWORD should be read-only, got %s", dwords[24])
+	}
+	if dwords[26] != "0000ffff" {
+		t.Errorf("PCIe Device Control/Status DWORD should be writable, got %s", dwords[26])
 	}
 }
 
@@ -188,7 +217,7 @@ func TestGenerateMSIXTableHex_Empty(t *testing.T) {
 func TestWritemask_ScrubbedBAR0FromZero(t *testing.T) {
 	cs := pci.NewConfigSpace()
 	cs.Size = pci.ConfigSpaceSize
-	cs.WriteU16(0x00, 0x1102)     // Creative Labs
+	cs.WriteU16(0x00, 0x1102) // Creative Labs
 	cs.WriteU16(0x02, 0x0012)
 	cs.WriteU32(0x10, 0xFFFFF000) // BAR0 = 4KB mem (from scrubber)
 
@@ -255,11 +284,11 @@ func TestWritemask_IOBAROverwrittenToMemory(t *testing.T) {
 func TestWritemask_IdentityRegistersReadOnly(t *testing.T) {
 	cs := pci.NewConfigSpace()
 	cs.Size = pci.ConfigSpaceSize
-	cs.WriteU16(0x00, 0x1102) // VID
-	cs.WriteU16(0x02, 0x0012) // DID
+	cs.WriteU16(0x00, 0x1102)     // VID
+	cs.WriteU16(0x02, 0x0012)     // DID
 	cs.WriteU32(0x08, 0x04030000) // ClassCode + RevID
-	cs.WriteU16(0x2C, 0x1102) // SubsysVID
-	cs.WriteU16(0x2E, 0x0012) // SubsysDID
+	cs.WriteU16(0x2C, 0x1102)     // SubsysVID
+	cs.WriteU16(0x2E, 0x0012)     // SubsysDID
 	cs.WriteU32(0x10, 0xFFFFF000) // BAR0
 
 	wm := GenerateWritemaskCOE(cs)
@@ -337,8 +366,8 @@ func TestWritemask_MultipleBARs(t *testing.T) {
 func TestConfigSpaceCOE_ScrubbedDeviceIdentity(t *testing.T) {
 	cs := pci.NewConfigSpace()
 	cs.Size = pci.ConfigSpaceSize
-	cs.WriteU16(0x00, 0x1102) // VID
-	cs.WriteU16(0x02, 0x0012) // DID
+	cs.WriteU16(0x00, 0x1102)     // VID
+	cs.WriteU16(0x02, 0x0012)     // DID
 	cs.WriteU32(0x08, 0x04030000) // ClassCode 04:03:00
 
 	coe := GenerateConfigSpaceCOE(cs)
@@ -370,7 +399,7 @@ func TestConfigSpaceHex_DWORDFormat(t *testing.T) {
 func parseCOEDwords(t *testing.T, coe string) []string {
 	t.Helper()
 	lines := strings.Split(coe, "\n")
-	var dwords []string
+	dwords := make([]string, 0, len(lines))
 	for _, l := range lines {
 		l = strings.TrimSpace(l)
 		if l == "" || strings.HasPrefix(l, ";") || strings.HasPrefix(l, "memory") {
@@ -385,4 +414,3 @@ func parseCOEDwords(t *testing.T, coe string) []string {
 	}
 	return dwords
 }
-

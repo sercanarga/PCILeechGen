@@ -114,7 +114,7 @@ func (e *LogEntry) IsBenign() bool {
 
 // ActionableEntries filters out INFO and known-benign entries.
 func (r *Report) ActionableEntries() []LogEntry {
-	var result []LogEntry
+	result := make([]LogEntry, 0, len(r.Entries))
 	for _, e := range r.Entries {
 		if e.Severity == SeverityInfo {
 			continue

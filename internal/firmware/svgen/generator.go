@@ -22,6 +22,7 @@ type MSIConfig struct {
 // SVGeneratorConfig is the input data for all SV template renders.
 type SVGeneratorConfig struct {
 	DeviceIDs          firmware.DeviceIDs
+	DonorCapabilities  DonorCapabilities  // donor capability summary for donor-emulation visibility
 	BARModel           *barmodel.BARModel // nil = generic fallback (uses BRAM-based zerowrite4k)
 	ClassCode          uint32
 	LatencyConfig      *LatencyConfig     // TLP response timing (nil = no latency emulator)
@@ -34,6 +35,28 @@ type SVGeneratorConfig struct {
 	NVMeIdentify       *nvme.IdentifyData // NVMe Identify Controller/Namespace data (nil = no responder)
 	NVMeDoorbellStride uint32             // CAP.DSTRD - doorbell stride (0 = 4B, default)
 	Bar0Size           int
+}
+
+// DonorCapabilities summarizes parsed capabilities from donor config space.
+// Values are best-effort snapshots used by generated SV for optional emulation
+// behavior and debugging visibility.
+type DonorCapabilities struct {
+	HasPMCap         bool
+	HasMSICap        bool
+	HasMSIXCap       bool
+	HasPCIeCap       bool
+	PMESupportMask   uint8
+	PMEDefault       bool
+	MSIDisable64Bit  bool
+	MSIMultipleMsg   uint8
+	PCIELinkSpeed    uint8
+	PCIELinkWidth    uint8
+	PCIeASPMCap      uint8
+	PCIeASPMEnable   uint8
+	HasLTRCap        bool
+	HasL1PMSubstates bool
+	HasAERCap        bool
+	HasDSNCap        bool
 }
 
 // NVMeSQ0DoorbellOffset returns the byte offset of the SQ0 tail doorbell.

@@ -58,7 +58,11 @@ func (p *BARProfiler) ProfileBAR(resourcePath string, barIndex, maxSize int) (*B
 	if err != nil {
 		return nil, fmt.Errorf("mmap R/W failed for BAR%d: %w", barIndex, err)
 	}
-	defer syscall.Munmap(mapped)
+	defer func() {
+		if unmapErr := syscall.Munmap(mapped); unmapErr != nil {
+			_ = unmapErr
+		}
+	}()
 
 	profile := &BARProfile{
 		BarIndex: barIndex,

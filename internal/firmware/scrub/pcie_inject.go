@@ -61,7 +61,7 @@ func findFreeCapSpace(cs *pci.ConfigSpace, caps []pci.Capability, needed int) in
 func buildPCIeCapData(b *board.Board) [pcieCapSize]byte {
 	var data [pcieCapSize]byte
 
-	maxSpeed := uint8(firmware.LinkSpeedGen2)
+	maxSpeed := firmware.LinkSpeedGen2
 	maxWidth := uint8(1)
 	if b != nil {
 		maxSpeed = b.MaxLinkSpeedOrDefault()
@@ -97,7 +97,7 @@ func buildPCIeCapData(b *board.Board) [pcieCapSize]byte {
 	linkCap := uint32(maxSpeed) |
 		(uint32(maxWidth) << 4) |
 		(6 << 12) | // L0s exit latency
-		(6 << 15)   // L1 exit latency
+		(6 << 15) // L1 exit latency
 	binary.LittleEndian.PutUint32(data[0x0C:], linkCap)
 
 	// Link Control (cap+0x10) = 0x0000 (no ASPM)

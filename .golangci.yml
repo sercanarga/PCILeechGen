@@ -9,7 +9,6 @@ linters:
     - bodyclose
     - durationcheck
     - errorlint
-    - exportloopref
     - nilerr
     - prealloc
     - unconvert

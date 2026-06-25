@@ -330,7 +330,7 @@ func (c *Collector) collectConfigSpace(bdf pci.BDF) (*pci.ConfigSpace, error) {
 	if err != nil {
 		slog.Info("sysfs config read failed, trying VFIO", "error", err)
 		if bindErr := vfio.BindToVFIO(bdf.String()); bindErr != nil {
-			return nil, fmt.Errorf("config space read failed for %s (sysfs: %v, VFIO: %v)", bdf, err, bindErr)
+			return nil, fmt.Errorf("config space read failed for %s (sysfs: %w, VFIO: %w)", bdf, err, bindErr)
 		}
 		cs, err = c.sysfs.ReadConfigSpace(bdf)
 		if err != nil {

@@ -32,7 +32,7 @@ func ListIOMMUGroupDevices(bdf string) ([]string, error) {
 		return nil, fmt.Errorf("cannot list IOMMU group devices: %w", err)
 	}
 
-	var devices []string
+	devices := make([]string, 0, len(entries))
 	for _, e := range entries {
 		devices = append(devices, e.Name())
 	}

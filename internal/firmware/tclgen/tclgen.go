@@ -34,12 +34,12 @@ type projectTCLData struct {
 	LinkWidth     string
 	TrgtLinkSpeed string
 
-	Bar0Enabled bool
-	Bar0Size    string
-	Bar0Scale   string
-	Bar064bit   bool
+	Bar0Enabled  bool
+	Bar0Size     string
+	Bar0Scale    string
+	Bar064bit    bool
 	Bar0ByteSize int
-	StockBar    bool
+	StockBar     bool
 
 	DSNEnabled       bool
 	MSICapVectorsStr string
@@ -172,7 +172,7 @@ func GenerateProjectTCL(ctx *donor.DeviceContext, b *board.Board, libDir string,
 		is64 := bar0.Is64bit && bir == 0
 		data.MSIXTableBIR = barBIRToTCL(bir, is64)
 		dstrd := uint32(0)
-		if bar0d := firmware.LargestBar(ctx.BARContents); bar0d != nil && len(bar0d) >= 8 {
+		if bar0d := firmware.LargestBar(ctx.BARContents); len(bar0d) >= 8 {
 			dstrd = binary.LittleEndian.Uint32(bar0d[4:8]) & 0x0F
 		}
 		tableOff, pbaOffset, _ := firmware.MSIXPlacement(bar0Size, ctx.MSIXData.TableSize, ctx.Device.ClassCode, dstrd)

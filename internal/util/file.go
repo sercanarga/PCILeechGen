@@ -36,8 +36,8 @@ func CopyDir(src, dst string) error {
 		return err
 	}
 
-	if err := os.MkdirAll(dst, srcInfo.Mode()); err != nil {
-		return err
+	if mkdirErr := os.MkdirAll(dst, srcInfo.Mode()); mkdirErr != nil {
+		return mkdirErr
 	}
 
 	entries, err := os.ReadDir(src)

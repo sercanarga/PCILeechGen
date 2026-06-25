@@ -126,9 +126,8 @@ func printMMIOTraceReport(out io.Writer, trace *mmio.TraceResult, pattern *mmio.
 
 	fmt.Fprintln(out, color.Header("MMIO Trace Capture"))
 	fmt.Fprintf(out, "BDF: %s\n", trace.BDF)
-	fprintf := fmt.Fprintf
-	fprintf(out, "BAR index: %d | bar size: %d\n", trace.BARIndex, trace.BARSize)
-	fprintf(out, "Duration: %s | records: %d\n\n", trace.Duration, len(trace.Records))
+	fmt.Fprintf(out, "BAR index: %d | bar size: %d\n", trace.BARIndex, trace.BARSize)
+	fmt.Fprintf(out, "Duration: %s | records: %d\n\n", trace.Duration, len(trace.Records))
 
 	if len(trace.Records) == 0 {
 		fmt.Fprintln(out, color.Warn("No MMIO records were captured.\n"))
@@ -138,13 +137,13 @@ func printMMIOTraceReport(out io.Writer, trace *mmio.TraceResult, pattern *mmio.
 	fmt.Fprintln(out, mmio.FormatReport(pattern))
 
 	fmt.Fprintln(out, color.Header("Behavior Profile"))
-	fprintf(out, "%s\n", behavior.FormatReport(profile))
+	fmt.Fprintf(out, "%s\n", behavior.FormatReport(profile))
 
-	fprintf(out, color.Header("Timing Histogram")+"\n")
-	fprintf(out, "Samples: %d\n", timing.SampleCount)
-	fprintf(out, "Min cycles: %d\n", timing.MinCycles)
-	fprintf(out, "Median cycles: %d\n", timing.MedianCycles)
-	fprintf(out, "Max cycles: %d\n", timing.MaxCycles)
+	fmt.Fprintln(out, color.Header("Timing Histogram"))
+	fmt.Fprintf(out, "Samples: %d\n", timing.SampleCount)
+	fmt.Fprintf(out, "Min cycles: %d\n", timing.MinCycles)
+	fmt.Fprintf(out, "Median cycles: %d\n", timing.MedianCycles)
+	fmt.Fprintf(out, "Max cycles: %d\n", timing.MaxCycles)
 }
 
 func init() {

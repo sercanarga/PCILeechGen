@@ -192,7 +192,9 @@ func TestIntegration_LatencyConfigWriteFields(t *testing.T) {
 func TestIntegration_OutputManifest(t *testing.T) {
 	dir := t.TempDir()
 	testFile := filepath.Join(dir, "pcileech_cfgspace.coe")
-	os.WriteFile(testFile, []byte("memory_initialization_radix=16;\nmemory_initialization_vector=00;"), 0644)
+	if err := os.WriteFile(testFile, []byte("memory_initialization_radix=16;\nmemory_initialization_vector=00;"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	manifest, err := GenerateManifest(dir, "test-version", "", 0x144D, 0xA808)
 	if err != nil {
@@ -206,7 +208,9 @@ func TestIntegration_OutputManifest(t *testing.T) {
 func TestIntegration_OutputValidator(t *testing.T) {
 	dir := t.TempDir()
 	coe := "memory_initialization_radix=16;\nmemory_initialization_vector=\n00000000\n00000000\n00000000\n00000000;"
-	os.WriteFile(filepath.Join(dir, "pcileech_cfgspace.coe"), []byte(coe), 0644)
+	if err := os.WriteFile(filepath.Join(dir, "pcileech_cfgspace.coe"), []byte(coe), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	result := ValidateOutputDir(dir)
 	// not all files exist so some will fail, but should not panic
