@@ -114,7 +114,6 @@ func TestRunTCL_NonExistent(t *testing.T) {
 }
 
 func TestRunTCL_ReturnsError_whenVivadoStartupFails(t *testing.T) {
-	// Given
 	installDir := t.TempDir()
 	binDir := filepath.Join(installDir, "bin")
 	if err := os.MkdirAll(binDir, 0755); err != nil {
@@ -130,11 +129,8 @@ exit 0
 	}
 
 	v := &Vivado{Path: installDir, Version: filepath.Base(installDir)}
-
-	// When
 	err := v.RunTCL("vivado_generate_project.tcl", t.TempDir(), 5*time.Second)
 
-	// Then
 	if err == nil {
 		t.Fatal("RunTCL should fail when Vivado reports a startup failure")
 	}
