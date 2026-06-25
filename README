@@ -72,6 +72,7 @@ COMMANDS
   build            generate firmware artifacts (+ Vivado)
   validate         verify artifacts match the donor context
   verify-manifest  check SHA256 integrity of build output
+  mmio-trace       capture live BAR MMIO access trace from donor
   boards           list supported FPGA boards
   version          print version
 
