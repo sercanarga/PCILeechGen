@@ -58,9 +58,17 @@ func GenerateConfigSpaceCOE(cs *pci.ConfigSpace) string {
 func GenerateWritemaskCOE(cs *pci.ConfigSpace) string {
 	masks := make([]uint32, shadowCfgSpaceWords)
 
-	if cs != nil {
-		applyCapabilityMasks(masks, cs)
+	// standard config space capabilities (0x40-0xFF): fully writable.
+	// the writemask only controls what goes into shadow BRAM; the Xilinx
+	// IP core processes config writes independently. locking fields here
+	// would create a BRAM/IP-core mismatch (e.g. BRAM shows D0 while IP
+	// core is in D3), confusing the OS and causing completion timeouts.
+	for i := 0x40 / 4; i < 0x100/4; i++ {
+		masks[i] = 0xFFFFFFFF
 	}
+
+	// extended config space (0x100-0xFFF): read-only.
+	// scrubber already neutralized all writable extended cap fields.
 
 	// header type 0 registers (DWORD index = byte offset / 4)
 	masks[0] = 0x00000000 // 0x00: VID:DID (read-only identity)
@@ -101,48 +109,6 @@ func GenerateWritemaskCOE(cs *pci.ConfigSpace) string {
 			";\n",
 		masks,
 	)
-}
-
-func applyCapabilityMasks(masks []uint32, cs *pci.ConfigSpace) {
-	for _, cap := range pci.ParseCapabilities(cs) {
-		switch cap.ID {
-		case pci.CapIDPowerManagement:
-			setMaskWord(masks, cap.Offset+4, 0x00000103)
-		case pci.CapIDMSI:
-			setMaskBytes(masks, cap.Offset+2, 14)
-		case pci.CapIDMSIX:
-			setMaskWord(masks, cap.Offset, 0xC0000000)
-		case pci.CapIDPCIExpress:
-			setMaskWord(masks, cap.Offset+8, 0x0000FFFF)
-			setMaskWord(masks, cap.Offset+0x10, 0x0000FFFF)
-			setMaskWord(masks, cap.Offset+0x20, 0x0000FFFF)
-		}
-	}
-}
-
-func setMaskWord(masks []uint32, off int, mask uint32) {
-	if off < 0 || off%4 != 0 {
-		return
-	}
-	idx := off / 4
-	if idx >= 0 && idx < len(masks) {
-		masks[idx] |= mask
-	}
-}
-
-func setMaskBytes(masks []uint32, off int, length int) {
-	if off < 0 || length <= 0 {
-		return
-	}
-	for i := 0; i < length; i++ {
-		byteOff := off + i
-		idx := byteOff / 4
-		if idx < 0 || idx >= len(masks) {
-			continue
-		}
-		shift := uint((byteOff % 4) * 8)
-		masks[idx] |= uint32(0xFF) << shift
-	}
 }
 
 // GenerateBarContentCOE outputs BAR shadow COE from the lowest BAR.
