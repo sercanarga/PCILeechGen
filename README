@@ -16,16 +16,6 @@ Discord Community: https://discord.gg/kcWVCAhNSg
 ******************************************************************************
 
 
-PREREQUISITES
--------------
-  - Go 1.26+
-  - Linux with IOMMU/VFIO enabled
-  - Vivado 2023.2+ (for synthesis)
-
-  VFIO needs IOMMU enabled in BIOS and in the kernel parameters
-  (intel_iommu=on or amd_iommu=on).
-
-
 SPECIAL THANKS
 --------------
   FTWDMA         Sponsorship
@@ -36,6 +26,16 @@ SPECIAL THANKS
                  https://captaindma.com
   pcileech-fpga  The FPGA framework this project builds upon
                  https://github.com/ufrisk/pcileech-fpga
+
+
+PREREQUISITES
+-------------
+  - Go 1.26+
+  - Linux with IOMMU/VFIO enabled
+  - Vivado 2023.2+ (for synthesis)
+
+  VFIO needs IOMMU enabled in BIOS and in the kernel parameters
+  (intel_iommu=on or amd_iommu=on).
 
 
 HOW IT WORKS
