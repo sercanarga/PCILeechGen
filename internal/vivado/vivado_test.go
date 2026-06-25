@@ -112,3 +112,36 @@ func TestRunTCL_NonExistent(t *testing.T) {
 		t.Error("RunTCL should fail with non-existent vivado")
 	}
 }
+
+func TestRunTCL_ReturnsError_whenVivadoStartupFails(t *testing.T) {
+	// Given
+	installDir := t.TempDir()
+	binDir := filepath.Join(installDir, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	vivadoPath := filepath.Join(binDir, "vivado")
+	script := `#!/bin/sh
+echo 'application-specific initialization failed: couldn'\''t load file "librdi_commontasks.so": libtinfo.so.5: cannot open shared object file: No such file or directory' >&2
+exit 0
+`
+	if err := os.WriteFile(vivadoPath, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	v := &Vivado{Path: installDir, Version: filepath.Base(installDir)}
+
+	// When
+	err := v.RunTCL("vivado_generate_project.tcl", t.TempDir(), 5*time.Second)
+
+	// Then
+	if err == nil {
+		t.Fatal("RunTCL should fail when Vivado reports a startup failure")
+	}
+	if !strings.Contains(err.Error(), "Vivado startup failed") {
+		t.Fatalf("RunTCL error = %q, want startup failure", err.Error())
+	}
+	if !strings.Contains(err.Error(), "libtinfo.so.5") {
+		t.Fatalf("RunTCL error = %q, want loader detail", err.Error())
+	}
+}
