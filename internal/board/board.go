@@ -19,6 +19,7 @@ type Board struct {
 	TopModule    string `json:"top_module"`
 	ProjectDir   string `json:"project_dir"`
 	SubDir       string `json:"sub_dir"`
+	// SourceSubDir is mutually exclusive with SubDir; it only overrides source/IP paths.
 	SourceSubDir string `json:"source_sub_dir"`
 	TCLFile      string `json:"tcl_file"`
 	BuildTCL     string `json:"build_tcl"`
