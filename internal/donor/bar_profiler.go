@@ -12,7 +12,8 @@ type BARProbeResult struct {
 	Offset    uint32 `json:"offset"`
 	Original  uint32 `json:"original"`
 	RWMask    uint32 `json:"rw_mask"`    // 1 = writable bit
-	MaybeRW1C bool   `json:"maybe_rw1c"` // write-1-to-clear suspect
+	W1CMask   uint32 `json:"w1c_mask"`   // bits that self-cleared on write-of-1
+	MaybeRW1C bool   `json:"maybe_rw1c"` // true if W1CMask != 0
 }
 
 // BARProfile is the full probe output for one BAR.
@@ -94,6 +95,16 @@ func probeRegisters(mem []byte, size int) []BARProbeResult {
 	return probes
 }
 
+// classifyRegisterBits derives the RW mask and the W1C-suspect mask from probe
+// readbacks. Split out from probeOneRegister so it can be tested without a device.
+func classifyRegisterBits(allOnes, allZeros, testVal, afterWrite uint32) (rwMask, w1cMask uint32) {
+	rwMask = allOnes ^ allZeros
+	if rwMask != 0 {
+		w1cMask = testVal & ^afterWrite & rwMask
+	}
+	return
+}
+
 // probeOneRegister does the write-readback dance on one DWORD.
 func probeOneRegister(mem []byte, offset uint32) BARProbeResult {
 	off := int(offset)
@@ -109,30 +120,25 @@ func probeOneRegister(mem []byte, offset uint32) BARProbeResult {
 	binary.LittleEndian.PutUint32(mem[off:off+4], 0x00000000)
 	allZeros := binary.LittleEndian.Uint32(mem[off : off+4])
 
+	// W1C probe: write 1s to writable bits and read back, to see which self-clear.
+	rwMask := allOnes ^ allZeros
+	var testVal, afterWrite uint32
+	if rwMask != 0 {
+		testVal = original | rwMask
+		binary.LittleEndian.PutUint32(mem[off:off+4], testVal)
+		afterWrite = binary.LittleEndian.Uint32(mem[off : off+4])
+	}
+
 	// put it back
 	binary.LittleEndian.PutUint32(mem[off:off+4], original)
 
-	// RW mask: bits that flipped between all-ones and all-zeros
-	rwMask := allOnes ^ allZeros
-
-	// RW1C check: write 1s to writable bits, see if they self-clear
-	maybeRW1C := false
-	if rwMask != 0 {
-		testVal := original | rwMask
-		binary.LittleEndian.PutUint32(mem[off:off+4], testVal)
-		afterWrite := binary.LittleEndian.Uint32(mem[off : off+4])
-		cleared := testVal & ^afterWrite & rwMask
-		if cleared != 0 {
-			maybeRW1C = true
-		}
-		// Restore again
-		binary.LittleEndian.PutUint32(mem[off:off+4], original)
-	}
+	_, w1cMask := classifyRegisterBits(allOnes, allZeros, testVal, afterWrite)
 
 	return BARProbeResult{
 		Offset:    offset,
 		Original:  original,
 		RWMask:    rwMask,
-		MaybeRW1C: maybeRW1C,
+		W1CMask:   w1cMask,
+		MaybeRW1C: w1cMask != 0,
 	}
 }

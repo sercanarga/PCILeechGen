@@ -16,8 +16,9 @@ type BARRegister struct {
 	Width       int    // 1, 2, or 4 bytes
 	Reset       uint32 // reset/initial value (from donor snapshot or spec default)
 	RWMask      uint32 // writable bits (1 = host can write, 0 = read-only)
+	W1CMask     uint32 // write-1-to-clear bits (1 = host writes 1 to clear, 0 = untouched)
 	Name        string // human-readable register name
-	IsRW1C      bool   // true if this register uses write-1-to-clear semantics
+	IsRW1C      bool   // true if any W1C bits are present
 	IsFSMDriven bool   // true if driven by a dedicated FSM always block (excluded from generic reset/write)
 }
 
@@ -45,26 +46,55 @@ func BuildBARModel(barData []byte, classCode uint32, profile *donor.BARProfile) 
 	}
 
 	// fall back to hardcoded spec tables
-	baseClass := (classCode >> 16) & 0xFF
-	subClass := (classCode >> 8) & 0xFF
-	progIF := classCode & 0xFF
-
-	var model *BARModel
-	switch {
-	case baseClass == 0x01 && subClass == 0x08 && progIF == 0x02:
-		model = buildNVMeBARModel(barData)
-	case baseClass == 0x0C && subClass == 0x03 && progIF == 0x30:
-		model = buildXHCIBARModel(barData)
-	case baseClass == 0x02:
-		model = buildEthernetBARModel(barData)
-	case baseClass == 0x04 && subClass == 0x03:
-		model = buildAudioBARModel(barData)
-	}
-
+	model := specBARModelForClass(classCode, barData)
 	if model != nil {
 		validateModel(model)
 	}
 	return model
+}
+
+// specBARModelForClass returns the hardcoded spec model for a class, or nil.
+func specBARModelForClass(classCode uint32, barData []byte) *BARModel {
+	baseClass := (classCode >> 16) & 0xFF
+	subClass := (classCode >> 8) & 0xFF
+	progIF := classCode & 0xFF
+	switch {
+	case baseClass == 0x01 && subClass == 0x08 && progIF == 0x02:
+		return buildNVMeBARModel(barData)
+	case baseClass == 0x0C && subClass == 0x03 && progIF == 0x30:
+		return buildXHCIBARModel(barData)
+	case baseClass == 0x02:
+		return buildEthernetBARModel(barData)
+	case baseClass == 0x04 && subClass == 0x03:
+		return buildAudioBARModel(barData)
+	}
+	return nil
+}
+
+// specRegAttr carries the W1CMask and IsFSMDriven flags the spec assigns to a
+// known offset, so a probe-synthesized model stays consistent with the spec.
+type specRegAttr struct {
+	W1CMask     uint32
+	IsFSMDriven bool
+}
+
+// specRegisterAttrs returns the spec attributes for every offset the spec model
+// marks as W1C or device-driven.
+func specRegisterAttrs(classCode uint32) map[uint32]specRegAttr {
+	spec := specBARModelForClass(classCode, nil)
+	if spec == nil {
+		return nil
+	}
+	var out map[uint32]specRegAttr
+	for _, r := range spec.Registers {
+		if r.W1CMask != 0 || r.IsFSMDriven {
+			if out == nil {
+				out = make(map[uint32]specRegAttr)
+			}
+			out[r.Offset] = specRegAttr{W1CMask: r.W1CMask, IsFSMDriven: r.IsFSMDriven}
+		}
+	}
+	return out
 }
 
 // validateModel checks for misaligned or duplicate offsets.
@@ -80,6 +110,22 @@ func validateModel(m *BARModel) {
 		}
 		if prev, ok := seen[r.Offset]; ok {
 			panic(fmt.Sprintf("barmodel: %s and %s share offset 0x%X", prev, r.Name, r.Offset))
+		}
+		// RW and W1C masks must be disjoint: a bit can't be both plain-writable
+		// and write-1-to-clear.
+		if r.W1CMask&r.RWMask != 0 {
+			panic(fmt.Sprintf("barmodel: register %s at offset 0x%X has overlapping W1C/RW masks (W1CMask=0x%08X & RWMask=0x%08X = 0x%08X) — they must be disjoint",
+				r.Name, r.Offset, r.W1CMask, r.RWMask, r.W1CMask&r.RWMask))
+		}
+		if r.Width > 0 {
+			var widthMask uint32 = 0xFFFFFFFF
+			if bits := r.Width * 8; bits < 32 {
+				widthMask = (1 << bits) - 1
+			}
+			if r.W1CMask&^widthMask != 0 || r.RWMask&^widthMask != 0 {
+				panic(fmt.Sprintf("barmodel: register %s at offset 0x%X has mask bits beyond Width %d (W1CMask=0x%08X, RWMask=0x%08X, valid=0x%08X)",
+					r.Name, r.Offset, r.Width, r.W1CMask, r.RWMask, widthMask))
+			}
 		}
 		seen[r.Offset] = r.Name
 	}
@@ -156,7 +202,7 @@ func buildXHCIBARModel(barData []byte) *BARModel {
 		// operational regs
 		{Offset: 0x20, Width: 4, Name: "USBCMD", RWMask: 0x00002F0E, IsFSMDriven: true},
 		// USBSTS (mostly RW1C)
-		{Offset: 0x24, Width: 4, Name: "USBSTS", RWMask: 0x00000000, IsFSMDriven: true},
+		{Offset: 0x24, Width: 4, Name: "USBSTS", RWMask: 0x00000000, W1CMask: 0x0000041C, IsFSMDriven: true},
 		// Page Size (read-only)
 		{Offset: 0x28, Width: 4, Name: "PAGESIZE", RWMask: 0x00000000},
 		// Device Notification Control
@@ -302,7 +348,7 @@ func buildAudioBARModel(barData []byte) *BARModel {
 		{Offset: 0x48, Width: 4, Name: "CORBWP_CORBRP", RWMask: 0x0000FFFF, IsFSMDriven: true},
 		// CORBCTL(8) + CORBSTS(8) + CORBSIZE(8) packed
 		// CORBCTL: bit 1 (CORBRUN), bit 0 (CMEIE) writable; CORBSTS: bit 0 -> DWORD bit 8 (RPWP) RW1C; CORBSIZE: RO
-		{Offset: 0x4C, Width: 4, Name: "CORBCTL_STS_SIZE", RWMask: 0x00030003, IsRW1C: true},
+		{Offset: 0x4C, Width: 4, Name: "CORBCTL_STS_SIZE", RWMask: 0x00030003, W1CMask: 0x00000100, IsRW1C: true},
 		// RIRB lower base address
 		{Offset: 0x50, Width: 4, Name: "RIRBLBASE", RWMask: 0xFFFFFF80},
 		// RIRB upper base address
@@ -312,9 +358,9 @@ func buildAudioBARModel(barData []byte) *BARModel {
 		// RIRBCTL(8) + RIRBSTS(8) + RIRBSIZE(8)
 		// RIRBCTL: bit 0 (RINTCTL), bit 1 (RIRBDMAEN), bit 2 (OIC) writable
 		// RIRBSTS: bit 8 (RINTFL) RW1C, bit 9 (OIS) RW1C
-		{Offset: 0x5C, Width: 4, Name: "RIRBCTL_STS_SIZE", RWMask: 0x00000007, IsRW1C: true, IsFSMDriven: true},
+		{Offset: 0x5C, Width: 4, Name: "RIRBCTL_STS_SIZE", RWMask: 0x00000007, W1CMask: 0x00000700, IsRW1C: true, IsFSMDriven: true},
 		// RIRBINTSTS - RIRB interrupt status (RW1C: bit 0 INTFL)
-		{Offset: 0x60, Width: 4, Name: "RIRBINTSTS", RWMask: 0x00000001, IsRW1C: true, IsFSMDriven: true},
+		{Offset: 0x60, Width: 4, Name: "RIRBINTSTS", RWMask: 0x00000000, W1CMask: 0x00000001, IsRW1C: true, IsFSMDriven: true},
 		// IC (Immediate Command) - driver writes codec command
 		{Offset: 0x64, Width: 4, Name: "IC", RWMask: 0xFFFFFFFF},
 		// IR (Immediate Response) - driver reads codec response (RO)
@@ -386,19 +432,24 @@ func buildAudioBARModel(barData []byte) *BARModel {
 	}
 }
 
-// SynthesizeBARModel builds a model from probe data.
-// Drops dead regs and treats RW1C as RO.
+// SynthesizeBARModel builds a model from probe data, reconciling it with the spec.
+// Spec-known W1C bits win over the probe and are emitted as real W1C; bits the
+// probe flagged as W1C at unknown offsets are clamped to read-only (the probe is
+// not trustworthy enough to emit live W1C hardware for them).
 func SynthesizeBARModel(profile *donor.BARProfile, classCode uint32) *BARModel {
 	if profile == nil || len(profile.Probes) == 0 {
 		return nil
 	}
 
 	nameHints := classRegisterNames(classCode)
+	attrs := specRegisterAttrs(classCode)
 
 	var regs []BARRegister
 	for _, probe := range profile.Probes {
-		// skip dead regs
-		if probe.Original == 0 && probe.RWMask == 0 {
+		attr := attrs[probe.Offset]
+		// Drop dead regs, but keep ones the spec knows about — a status register
+		// legitimately reads 0 when idle.
+		if probe.Original == 0 && probe.RWMask == 0 && attr.W1CMask == 0 && !attr.IsFSMDriven {
 			continue
 		}
 
@@ -408,16 +459,32 @@ func SynthesizeBARModel(profile *donor.BARProfile, classCode uint32) *BARModel {
 		}
 
 		rwMask := probe.RWMask
-		if probe.MaybeRW1C {
-			rwMask = 0 // RW1C -> force RO
+		var w1cMask uint32
+		isRW1C := false
+
+		// Spec W1C bits are authoritative.
+		if attr.W1CMask != 0 {
+			w1cMask = attr.W1CMask
+			isRW1C = true
+			rwMask &^= attr.W1CMask
+		}
+
+		// Probe-suspected W1C bits are forced read-only, not emitted as W1C.
+		if probe.W1CMask != 0 {
+			rwMask &^= probe.W1CMask
+		} else if probe.MaybeRW1C {
+			rwMask = 0
 		}
 
 		regs = append(regs, BARRegister{
-			Offset: probe.Offset,
-			Width:  4,
-			Reset:  probe.Original,
-			RWMask: rwMask,
-			Name:   name,
+			Offset:      probe.Offset,
+			Width:       4,
+			Reset:       probe.Original,
+			RWMask:      rwMask,
+			W1CMask:     w1cMask,
+			Name:        name,
+			IsRW1C:      isRW1C,
+			IsFSMDriven: attr.IsFSMDriven,
 		})
 	}
 

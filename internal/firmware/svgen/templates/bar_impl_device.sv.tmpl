@@ -1044,7 +1044,14 @@ module pcileech_bar_impl_device #(
 {{ end }}{{ end }}        end
         else if (wr_valid) begin
             case (wr_offset & 32'hFFFFFFFC)
-{{ range .BARModel.Registers }}{{ if and (ne .RWMask 0) (not .IsRW1C) (not .IsFSMDriven) }}                32'h{{ hex08 (alignedOffset .Offset) }}: begin
+{{ range .BARModel.Registers }}{{ if and (ne .W1CMask 0) (not .IsRW1C) (not .IsFSMDriven) }}                32'h{{ hex08 (alignedOffset .Offset) }}: begin
+                    // W1C bits clear where wr_data is 1; RW bits take wr_data; RO bits hold.
+                    if (wr_be[0]) reg_0x{{ hex08 .Offset }}[7:0]   <= ((reg_0x{{ hex08 .Offset }}[7:0]   & ~(8'h{{ hex02 (index (rwMaskBytes .RWMask) 0) }} | 8'h{{ hex02 (index (w1cMaskBytes .W1CMask) 0) }})) | (wr_data[7:0]   & 8'h{{ hex02 (index (rwMaskBytes .RWMask) 0) }}) | (reg_0x{{ hex08 .Offset }}[7:0]   & ~wr_data[7:0]   & 8'h{{ hex02 (index (w1cMaskBytes .W1CMask) 0) }}));
+                    if (wr_be[1]) reg_0x{{ hex08 .Offset }}[15:8]  <= ((reg_0x{{ hex08 .Offset }}[15:8]  & ~(8'h{{ hex02 (index (rwMaskBytes .RWMask) 1) }} | 8'h{{ hex02 (index (w1cMaskBytes .W1CMask) 1) }})) | (wr_data[15:8]  & 8'h{{ hex02 (index (rwMaskBytes .RWMask) 1) }}) | (reg_0x{{ hex08 .Offset }}[15:8]  & ~wr_data[15:8]  & 8'h{{ hex02 (index (w1cMaskBytes .W1CMask) 1) }}));
+                    if (wr_be[2]) reg_0x{{ hex08 .Offset }}[23:16] <= ((reg_0x{{ hex08 .Offset }}[23:16] & ~(8'h{{ hex02 (index (rwMaskBytes .RWMask) 2) }} | 8'h{{ hex02 (index (w1cMaskBytes .W1CMask) 2) }})) | (wr_data[23:16] & 8'h{{ hex02 (index (rwMaskBytes .RWMask) 2) }}) | (reg_0x{{ hex08 .Offset }}[23:16] & ~wr_data[23:16] & 8'h{{ hex02 (index (w1cMaskBytes .W1CMask) 2) }}));
+                    if (wr_be[3]) reg_0x{{ hex08 .Offset }}[31:24] <= ((reg_0x{{ hex08 .Offset }}[31:24] & ~(8'h{{ hex02 (index (rwMaskBytes .RWMask) 3) }} | 8'h{{ hex02 (index (w1cMaskBytes .W1CMask) 3) }})) | (wr_data[31:24] & 8'h{{ hex02 (index (rwMaskBytes .RWMask) 3) }}) | (reg_0x{{ hex08 .Offset }}[31:24] & ~wr_data[31:24] & 8'h{{ hex02 (index (w1cMaskBytes .W1CMask) 3) }}));
+                end
+{{ else if and (ne .RWMask 0) (not .IsRW1C) (not .IsFSMDriven) }}                32'h{{ hex08 (alignedOffset .Offset) }}: begin
                     if (wr_be[0]) reg_0x{{ hex08 .Offset }}[7:0]   <= (reg_0x{{ hex08 .Offset }}[7:0]   & ~8'h{{ hex02 (index (rwMaskBytes .RWMask) 0) }}) | (wr_data[7:0]   & 8'h{{ hex02 (index (rwMaskBytes .RWMask) 0) }});
                     if (wr_be[1]) reg_0x{{ hex08 .Offset }}[15:8]  <= (reg_0x{{ hex08 .Offset }}[15:8]  & ~8'h{{ hex02 (index (rwMaskBytes .RWMask) 1) }}) | (wr_data[15:8]  & 8'h{{ hex02 (index (rwMaskBytes .RWMask) 1) }});
                     if (wr_be[2]) reg_0x{{ hex08 .Offset }}[23:16] <= (reg_0x{{ hex08 .Offset }}[23:16] & ~8'h{{ hex02 (index (rwMaskBytes .RWMask) 2) }}) | (wr_data[23:16] & 8'h{{ hex02 (index (rwMaskBytes .RWMask) 2) }});

@@ -84,8 +84,8 @@ func xhciProfile() *DeviceProfile {
 			// Operational registers (at CAPLENGTH offset 0x20)
 			// USBCMD - R/S=1 (running)
 			{Offset: 0x20, Width: 4, Name: "USBCMD", Reset: 0x00000001, RWMask: 0x00001F0F},
-			// USBSTS - HCH=0 (not halted)
-			{Offset: 0x24, Width: 4, Name: "USBSTS", Reset: 0x00000000, RWMask: 0x0000041C},
+			// USBSTS - HCH=0 (not halted); status bits 2,3,4,10 are write-1-to-clear
+			{Offset: 0x24, Width: 4, Name: "USBSTS", Reset: 0x00000000, RWMask: 0x00000000, W1CMask: 0x0000041C},
 			// PAGESIZE - 4KB pages
 			{Offset: 0x28, Width: 4, Name: "PAGESIZE", Reset: 0x00000001, RWMask: 0x00000000},
 			// DNCTRL - device notification control

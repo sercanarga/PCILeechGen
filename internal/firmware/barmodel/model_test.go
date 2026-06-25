@@ -674,3 +674,157 @@ func TestIsProbeDataReliable_AllRW(t *testing.T) {
 		t.Error("all-RW probes should be considered unreliable")
 	}
 }
+
+func TestAudioModel_W1CMasks(t *testing.T) {
+	model := buildAudioBARModel(nil)
+	got := map[uint32]uint32{}
+	for _, r := range model.Registers {
+		got[r.Offset] = r.W1CMask
+	}
+	if got[0x4C] != 0x00000100 {
+		t.Errorf("0x4C W1CMask: got 0x%08X, want 0x00000100", got[0x4C])
+	}
+	if got[0x5C] != 0x00000700 {
+		t.Errorf("0x5C W1CMask: got 0x%08X, want 0x00000700", got[0x5C])
+	}
+	if got[0x60] != 0x00000001 {
+		t.Errorf("0x60 W1CMask: got 0x%08X, want 0x00000001", got[0x60])
+	}
+}
+
+func TestAudioModel_RIRBINTSTS_RWMaskCleared(t *testing.T) {
+	model := buildAudioBARModel(nil)
+	for _, r := range model.Registers {
+		if r.Offset == 0x60 {
+			if r.RWMask != 0 {
+				t.Errorf("0x60 RWMask: got 0x%08X, want 0 (bit0 is W1C)", r.RWMask)
+			}
+			return
+		}
+	}
+	t.Error("0x60 not found")
+}
+
+func TestAudioModel_W1CMasksDisjointFromRW(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("audio model has overlapping W1C/RW masks: %v", r)
+		}
+	}()
+	model := BuildBARModel(nil, 0x040300, nil)
+	if model == nil {
+		t.Fatal("audio model nil")
+	}
+	for _, r := range model.Registers {
+		if r.W1CMask&r.RWMask != 0 {
+			t.Errorf("register %s @ 0x%X: W1CMask 0x%08X overlaps RWMask 0x%08X", r.Name, r.Offset, r.W1CMask, r.RWMask)
+		}
+	}
+}
+
+func TestXHCIModel_USBSTS_W1CMask(t *testing.T) {
+	model := BuildBARModel(nil, 0x0C0330, nil)
+	for _, r := range model.Registers {
+		if r.Name == "USBSTS" {
+			if r.W1CMask != 0x0000041C {
+				t.Errorf("USBSTS W1CMask: got 0x%08X, want 0x0000041C", r.W1CMask)
+			}
+			if r.RWMask != 0 {
+				t.Errorf("USBSTS RWMask: got 0x%08X, want 0", r.RWMask)
+			}
+			return
+		}
+	}
+	t.Error("USBSTS not found")
+}
+
+func TestSynthesizeBARModel_SpecW1C_EmitsRealW1C(t *testing.T) {
+	profile := &donor.BARProfile{Size: 4096, Probes: []donor.BARProbeResult{
+		{Offset: 0x4C, Original: 0x00820000, RWMask: 0x00030003},
+	}}
+	model := SynthesizeBARModel(profile, 0x040300)
+	if model == nil {
+		t.Fatal("model nil")
+	}
+	r := model.Registers[0]
+	if r.W1CMask != 0x00000100 {
+		t.Errorf("spec W1C at 0x4C: W1CMask got 0x%08X, want 0x00000100", r.W1CMask)
+	}
+	if !r.IsRW1C {
+		t.Error("spec W1C at 0x4C: IsRW1C should be true")
+	}
+	if r.RWMask&0x100 != 0 {
+		t.Error("spec W1C bit8 must be cleared from RWMask")
+	}
+}
+
+func TestSynthesizeBARModel_ProbeSuspected_BitwiseRO(t *testing.T) {
+	profile := &donor.BARProfile{Size: 4096, Probes: []donor.BARProbeResult{
+		{Offset: 0x80, Original: 0x000000FF, RWMask: 0x000000FF, W1CMask: 0x00000010},
+	}}
+	model := SynthesizeBARModel(profile, 0x040300)
+	if model == nil {
+		t.Fatal("model nil")
+	}
+	r := model.Registers[0]
+	if r.W1CMask != 0 {
+		t.Errorf("probe-suspected W1C must not be emitted: got 0x%08X", r.W1CMask)
+	}
+	if r.IsRW1C {
+		t.Error("probe-suspected must not be IsRW1C")
+	}
+	if r.RWMask != 0x000000EF {
+		t.Errorf("probe-suspected bit4 should be cleared from RWMask: got 0x%08X, want 0x000000EF", r.RWMask)
+	}
+}
+
+func TestSynthesizeBARModel_SpecWinsOverProbe(t *testing.T) {
+	profile := &donor.BARProfile{Size: 4096, Probes: []donor.BARProbeResult{
+		{Offset: 0x4C, Original: 0x00820100, RWMask: 0x00030103, W1CMask: 0x00000100},
+	}}
+	model := SynthesizeBARModel(profile, 0x040300)
+	if model == nil {
+		t.Fatal("model nil")
+	}
+	if model.Registers[0].W1CMask != 0x00000100 {
+		t.Errorf("spec>probe: W1CMask got 0x%08X, want 0x00000100", model.Registers[0].W1CMask)
+	}
+}
+
+func TestSynthesizeBARModel_PropagatesIsFSMDriven(t *testing.T) {
+	profile := &donor.BARProfile{Size: 4096, Probes: []donor.BARProbeResult{
+		{Offset: 0x20, Original: 0x00000001, RWMask: 0x00002F0E},
+	}}
+	model := SynthesizeBARModel(profile, 0x0C0330)
+	if model == nil {
+		t.Fatal("model nil")
+	}
+	for _, r := range model.Registers {
+		if r.Offset == 0x20 {
+			if !r.IsFSMDriven {
+				t.Error("synthesized USBCMD must keep IsFSMDriven")
+			}
+			return
+		}
+	}
+	t.Error("USBCMD not found")
+}
+
+func TestSynthesizeBARModel_KeepsSpecW1COnQuiescentRegister(t *testing.T) {
+	profile := &donor.BARProfile{Size: 4096, Probes: []donor.BARProbeResult{
+		{Offset: 0x24, Original: 0x00000000, RWMask: 0x00000000},
+	}}
+	model := SynthesizeBARModel(profile, 0x0C0330)
+	if model == nil {
+		t.Fatal("model nil")
+	}
+	for _, r := range model.Registers {
+		if r.Offset == 0x24 {
+			if r.W1CMask != 0x0000041C {
+				t.Errorf("quiescent USBSTS W1CMask: got 0x%08X, want 0x0000041C", r.W1CMask)
+			}
+			return
+		}
+	}
+	t.Error("quiescent USBSTS was dropped")
+}
