@@ -67,6 +67,10 @@ func (ow *OutputWriter) WriteAll(ctx *donor.DeviceContext, b *board.Board) error
 		return err
 	}
 
+	if err := ow.writeBARBehaviorProfile(ctx); err != nil {
+		return err
+	}
+
 	if err := ow.writeTCLScripts(ctx, b); err != nil {
 		return err
 	}
@@ -331,6 +335,7 @@ func ListOutputFiles() []string {
 		"pcileech_cfgspace.coe",
 		"pcileech_cfgspace_writemask.coe",
 		"pcileech_bar_zero4k.coe",
+		"bar_behavior_profile.json",
 		"vivado_generate_project.tcl",
 		"vivado_build.tcl",
 		"src/",
