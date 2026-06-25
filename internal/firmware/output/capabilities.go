@@ -15,6 +15,7 @@ func extractDonorCapabilities(cs *pci.ConfigSpace) svgen.DonorCapabilities {
 		switch cap.ID {
 		case pci.CapIDPowerManagement:
 			caps.HasPMCap = true
+			caps.PMCapOffset = uint16(cap.Offset)
 			if legacyFieldFits(cap.Offset+2, 2) {
 				pmc := cs.ReadU16(cap.Offset + 2)
 				caps.PMESupportMask = uint8((pmc >> 11) & 0x1F)
@@ -24,6 +25,7 @@ func extractDonorCapabilities(cs *pci.ConfigSpace) svgen.DonorCapabilities {
 			}
 		case pci.CapIDMSI:
 			caps.HasMSICap = true
+			caps.MSICapOffset = uint16(cap.Offset)
 			if legacyFieldFits(cap.Offset+2, 2) {
 				msgCtl := cs.ReadU16(cap.Offset + 2)
 				caps.MSIDisable64Bit = msgCtl&0x0080 == 0
@@ -31,8 +33,10 @@ func extractDonorCapabilities(cs *pci.ConfigSpace) svgen.DonorCapabilities {
 			}
 		case pci.CapIDMSIX:
 			caps.HasMSIXCap = true
+			caps.MSIXCapOffset = uint16(cap.Offset)
 		case pci.CapIDPCIExpress:
 			caps.HasPCIeCap = true
+			caps.PCIeCapOffset = uint16(cap.Offset)
 			if legacyFieldFits(cap.Offset+0x0C, 4) {
 				linkCap := cs.ReadU32(cap.Offset + 0x0C)
 				caps.PCIELinkSpeed = uint8(linkCap & 0x0F)
@@ -50,12 +54,16 @@ func extractDonorCapabilities(cs *pci.ConfigSpace) svgen.DonorCapabilities {
 		switch cap.ID {
 		case pci.ExtCapIDAER:
 			caps.HasAERCap = true
+			caps.AERCapOffset = uint16(cap.Offset)
 		case pci.ExtCapIDLTR:
 			caps.HasLTRCap = true
+			caps.LTRCapOffset = uint16(cap.Offset)
 		case pci.ExtCapIDL1PMSubstates:
 			caps.HasL1PMSubstates = true
+			caps.L1PMCapOffset = uint16(cap.Offset)
 		case pci.ExtCapIDDeviceSerialNumber:
 			caps.HasDSNCap = true
+			caps.DSNCapOffset = uint16(cap.Offset)
 		}
 	}
 

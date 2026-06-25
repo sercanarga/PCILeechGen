@@ -45,6 +45,10 @@ type DonorCapabilities struct {
 	HasMSICap        bool
 	HasMSIXCap       bool
 	HasPCIeCap       bool
+	PMCapOffset      uint16
+	MSICapOffset     uint16
+	MSIXCapOffset    uint16
+	PCIeCapOffset    uint16
 	PMESupportMask   uint8
 	PMEDefault       bool
 	MSIDisable64Bit  bool
@@ -57,6 +61,10 @@ type DonorCapabilities struct {
 	HasL1PMSubstates bool
 	HasAERCap        bool
 	HasDSNCap        bool
+	AERCapOffset     uint16
+	LTRCapOffset     uint16
+	L1PMCapOffset    uint16
+	DSNCapOffset     uint16
 }
 
 // NVMeSQ0DoorbellOffset returns the byte offset of the SQ0 tail doorbell.

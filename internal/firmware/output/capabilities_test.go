@@ -39,6 +39,9 @@ func TestExtractDonorCapabilities_FromStandardAndExtendedCaps(t *testing.T) {
 	if !caps.HasPMCap {
 		t.Fatal("PM capability should be detected")
 	}
+	if caps.PMCapOffset != 0x40 {
+		t.Errorf("PMCapOffset = 0x%03x, want 0x040", caps.PMCapOffset)
+	}
 	if caps.PMESupportMask != 0x15 {
 		t.Errorf("PMESupportMask = 0x%02x, want 0x15", caps.PMESupportMask)
 	}
@@ -47,6 +50,9 @@ func TestExtractDonorCapabilities_FromStandardAndExtendedCaps(t *testing.T) {
 	}
 	if !caps.HasMSICap {
 		t.Fatal("MSI capability should be detected")
+	}
+	if caps.MSICapOffset != 0x50 {
+		t.Errorf("MSICapOffset = 0x%03x, want 0x050", caps.MSICapOffset)
 	}
 	if caps.MSIDisable64Bit {
 		t.Error("MSIDisable64Bit should be false")
@@ -57,8 +63,14 @@ func TestExtractDonorCapabilities_FromStandardAndExtendedCaps(t *testing.T) {
 	if !caps.HasMSIXCap {
 		t.Error("MSI-X capability should be detected")
 	}
+	if caps.MSIXCapOffset != 0x60 {
+		t.Errorf("MSIXCapOffset = 0x%03x, want 0x060", caps.MSIXCapOffset)
+	}
 	if !caps.HasPCIeCap {
 		t.Fatal("PCIe capability should be detected")
+	}
+	if caps.PCIeCapOffset != 0x70 {
+		t.Errorf("PCIeCapOffset = 0x%03x, want 0x070", caps.PCIeCapOffset)
 	}
 	if caps.PCIELinkSpeed != 0x03 {
 		t.Errorf("PCIELinkSpeed = 0x%02x, want 0x03", caps.PCIELinkSpeed)
@@ -74,6 +86,10 @@ func TestExtractDonorCapabilities_FromStandardAndExtendedCaps(t *testing.T) {
 	}
 	if !caps.HasAERCap || !caps.HasLTRCap || !caps.HasL1PMSubstates || !caps.HasDSNCap {
 		t.Errorf("extended caps missing: %+v", caps)
+	}
+	if caps.AERCapOffset != 0x100 || caps.LTRCapOffset != 0x140 ||
+		caps.L1PMCapOffset != 0x180 || caps.DSNCapOffset != 0x1C0 {
+		t.Errorf("extended cap offsets missing: %+v", caps)
 	}
 }
 
