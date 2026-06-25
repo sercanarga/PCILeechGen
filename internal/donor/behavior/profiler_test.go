@@ -25,6 +25,24 @@ func nvmeTrace() *mmio.TraceResult {
 	}
 }
 
+func nvmeTraceWithWrites() *mmio.TraceResult {
+	return &mmio.TraceResult{
+		BDF:      "0000:03:00.0",
+		BARIndex: 0,
+		BARSize:  4096,
+		Duration: 4 * time.Second,
+		Records: []mmio.AccessRecord{
+			{Offset: 0x14, Type: mmio.AccessWrite, Value: 0x00460001, Timestamp: 1 * time.Millisecond},
+			{Offset: 0x24, Type: mmio.AccessWrite, Value: 0x001F001F, Timestamp: 2 * time.Millisecond},
+			{Offset: 0x14, Type: mmio.AccessWrite, Value: 0x00460001, Timestamp: 3 * time.Millisecond},
+			{Offset: 0x24, Type: mmio.AccessWrite, Value: 0x001F001F, Timestamp: 4 * time.Millisecond},
+			{Offset: 0x1C, Type: mmio.AccessRead, Value: 0x00000000, Timestamp: 20 * time.Millisecond},
+			{Offset: 0x1C, Type: mmio.AccessRead, Value: 0x00000001, Timestamp: 21 * time.Millisecond},
+			{Offset: 0x1C, Type: mmio.AccessRead, Value: 0x00000002, Timestamp: 22 * time.Millisecond},
+		},
+	}
+}
+
 func TestFromMMIOTrace_NVMe(t *testing.T) {
 	profile := FromMMIOTrace(nvmeTrace(), 0x010802)
 	if profile.DeviceBDF != "0000:03:00.0" {
@@ -87,5 +105,21 @@ func TestFormatReport_Nil(t *testing.T) {
 	report := FormatReport(nil)
 	if !strings.Contains(report, "No behavior profile") {
 		t.Error("nil profile should say no data")
+	}
+}
+
+func TestFromMMIOTrace_WithWriteLatencyProfile(t *testing.T) {
+	profile := FromMMIOTrace(nvmeTraceWithWrites(), 0x010802)
+	if profile.WriteLatency == nil {
+		t.Fatal("write latency histogram should be captured")
+	}
+	if profile.WriteLatency.SampleCount == 0 {
+		t.Errorf("write latency sample count: got 0, want >0")
+	}
+	if len(profile.PollingLoops) == 0 {
+		t.Fatal("expected polling loop from repeated reads")
+	}
+	if len(profile.AccessStats.HotWrites) == 0 {
+		t.Fatal("expected hot writes from repeated write offsets")
 	}
 }

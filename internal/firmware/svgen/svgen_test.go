@@ -450,6 +450,88 @@ func TestLatencyConfigFromHistogram(t *testing.T) {
 	}
 }
 
+func TestLatencyConfigFromProfile_WithWriteHistogramAndHotWrites(t *testing.T) {
+	readBuckets := [16]uint8{}
+	for i := 0; i < 16; i++ {
+		readBuckets[i] = 16
+	}
+	writeBuckets := [16]uint8{}
+	for i := 0; i < 16; i++ {
+		writeBuckets[i] = 32
+	}
+
+	profile := &behavior.Profile{
+		ReadLatency: &behavior.TimingHistogram{
+			SampleCount:  20,
+			MinCycles:    3,
+			MaxCycles:    15,
+			MedianCycles: 7,
+			Buckets:      readBuckets,
+			CDF:          [16]uint8{16, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176, 192, 208, 224, 240, 255},
+		},
+		WriteLatency: &behavior.TimingHistogram{
+			SampleCount:  12,
+			MinCycles:    2,
+			MaxCycles:    9,
+			MedianCycles: 4,
+			Buckets:      writeBuckets,
+			CDF:          [16]uint8{32, 64, 96, 128, 160, 192, 208, 224, 236, 242, 248, 252, 254, 255, 255, 255},
+		},
+		AccessStats: behavior.AccessStats{
+			HotWrites: []behavior.OffsetCount{{Offset: 0x14, Count: 42}},
+		},
+	}
+
+	cfg := LatencyConfigFromProfile(profile, 0x010802)
+	if !cfg.WrHasHistogram {
+		t.Error("write histogram should be enabled from profile")
+	}
+	if cfg.WrMinCycles != 2 || cfg.WrMaxCycles != 9 {
+		t.Errorf("write range: got %d/%d, want 2/9", cfg.WrMinCycles, cfg.WrMaxCycles)
+	}
+	if cfg.WrHotEnable != 1 {
+		t.Error("hot write tuning should be enabled")
+	}
+	if cfg.WrHotMin > cfg.WrHotMax {
+		t.Errorf("hot write min/max reversed: %d/%d", cfg.WrHotMin, cfg.WrHotMax)
+	}
+}
+
+func TestLatencyConfigFromProfile_HotTuningRequiresSignal(t *testing.T) {
+	profile := &behavior.Profile{
+		ReadLatency: &behavior.TimingHistogram{
+			SampleCount:  64,
+			MinCycles:    2,
+			MaxCycles:    10,
+			MedianCycles: 4,
+			Buckets:      [16]uint8{16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16},
+			CDF:          [16]uint8{16, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176, 192, 208, 224, 240, 255},
+		},
+		WriteLatency: &behavior.TimingHistogram{
+			SampleCount:  64,
+			MinCycles:    1,
+			MaxCycles:    6,
+			MedianCycles: 3,
+			Buckets:      [16]uint8{16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16},
+			CDF:          [16]uint8{16, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176, 192, 208, 224, 240, 255},
+		},
+		AccessStats: behavior.AccessStats{
+			TotalReads:  100,
+			TotalWrites: 100,
+			HotReads:    []behavior.OffsetCount{{Offset: 0x14, Count: 3}},
+			HotWrites:   []behavior.OffsetCount{{Offset: 0x14, Count: 3}},
+		},
+	}
+
+	cfg := LatencyConfigFromProfile(profile, 0x010802)
+	if cfg.HotReadEnable != 0 {
+		t.Error("hot read tuning should require >=10% read concentration")
+	}
+	if cfg.WrHotEnable != 0 {
+		t.Error("hot write tuning should require >=10% write concentration")
+	}
+}
+
 func TestLatencyConfigFromHistogram_Nil(t *testing.T) {
 	cfg := LatencyConfigFromHistogram(nil, 0x010802)
 	if cfg.MinCycles != 3 {

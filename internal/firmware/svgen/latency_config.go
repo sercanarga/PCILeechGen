@@ -16,16 +16,36 @@ type LatencyConfig struct {
 	Histogram        [16]uint8 // 16-bucket weights (0-255)
 	CDF              [16]uint8 // cumulative distribution for SV lookup
 	HasHistogram     bool      // true = donor profiled
+	WrHasHistogram   bool
+	WrHistogram      [16]uint8
+	WrCDF            [16]uint8
 
 	// Write TLP timing - determines how long write acknowledges are delayed.
 	// Posted writes (MWr) don't need completions per PCIe spec, but the
 	// internal pipeline still has a write-accept latency visible in timing analysis.
 	WrMinCycles int
 	WrMaxCycles int
+	WrHotEnable int
+	WrHotOffset uint32
+	WrHotMask   uint32
+	WrHotMin    int
+	WrHotMax    int
 
 	// Completion timeout - cycles before an unserviced read returns UR.
 	// 0 = disabled (no timeout). Reasonable default: 65536 (~0.5ms @125MHz).
 	CplTimeoutCycles int
+
+	HotReadEnable  int
+	HotReadOffset  uint32
+	HotReadMask    uint32
+	HotReadMin     int
+	HotReadMax     int
+
+	PollReadEnable int
+	PollReadOffset uint32
+	PollReadMask   uint32
+	PollReadMin    int
+	PollReadMax    int
 }
 
 // DefaultLatencyConfig returns class-appropriate latency defaults.
@@ -108,10 +128,121 @@ func LatencyConfigFromHistogram(h *behavior.TimingHistogram, classCode uint32) *
 		Histogram:        h.Buckets,
 		CDF:              h.CDF,
 		HasHistogram:     true,
+		WrHasHistogram:   false,
+		WrHistogram:      defCfg.WrHistogram,
+		WrCDF:            defCfg.WrCDF,
 		WrMinCycles:      defCfg.WrMinCycles,
 		WrMaxCycles:      defCfg.WrMaxCycles,
 		CplTimeoutCycles: defCfg.CplTimeoutCycles,
 	}
+}
+
+func LatencyConfigFromProfile(profile *behavior.Profile, classCode uint32) *LatencyConfig {
+	if profile == nil {
+		return DefaultLatencyConfig(classCode)
+	}
+
+	cfg := LatencyConfigFromHistogram(profile.ReadLatency, classCode)
+	cfg = applyWriteLatency(cfg, profile.WriteLatency, classCode)
+	cfg = applyWriteHotTuning(cfg, profile)
+	cfg = applyHotReadTuning(cfg, profile)
+	cfg = applyPollReadTuning(cfg, profile)
+	return cfg
+}
+
+func applyWriteLatency(cfg *LatencyConfig, h *behavior.TimingHistogram, classCode uint32) *LatencyConfig {
+	if cfg == nil {
+		return DefaultLatencyConfig(classCode)
+	}
+	if h == nil || h.SampleCount == 0 {
+		return cfg
+	}
+	cfg.WrHasHistogram = true
+	cfg.WrHistogram = h.Buckets
+	cfg.WrCDF = h.CDF
+	cfg.WrMinCycles = h.MinCycles
+	cfg.WrMaxCycles = h.MaxCycles
+	cfg.WrMinCycles = clampLatency(cfg.WrMinCycles, 1, cfg.WrMaxCycles)
+	cfg.WrMaxCycles = clampLatency(cfg.WrMaxCycles, cfg.WrMinCycles, 255)
+	return cfg
+}
+
+func applyWriteHotTuning(cfg *LatencyConfig, profile *behavior.Profile) *LatencyConfig {
+	if cfg == nil || profile == nil || len(profile.AccessStats.HotWrites) == 0 {
+		return cfg
+	}
+	hot := profile.AccessStats.HotWrites[0]
+	if !isSignificantHotSpot(hot.Count, profile.AccessStats.TotalWrites) {
+		return cfg
+	}
+	cfg.WrHotEnable = 1
+	cfg.WrHotOffset = hot.Offset & 0xFFF
+	cfg.WrHotMask = 0x00000FFF
+	cfg.WrHotMin = clampLatency(cfg.WrMinCycles, 1, cfg.WrMaxCycles)
+	cfg.WrHotMax = clampLatency(cfg.WrMaxCycles, cfg.WrMinCycles, 255)
+	return cfg
+}
+
+func applyHotReadTuning(cfg *LatencyConfig, profile *behavior.Profile) *LatencyConfig {
+	if cfg == nil || profile == nil || len(profile.AccessStats.HotReads) == 0 {
+		return cfg
+	}
+	hot := profile.AccessStats.HotReads[0]
+	if !isSignificantHotSpot(hot.Count, profile.AccessStats.TotalReads) {
+		return cfg
+	}
+	cfg.HotReadEnable = 1
+	cfg.HotReadOffset = hot.Offset & 0xFFF
+	cfg.HotReadMask = 0x00000FFF
+	cfg.HotReadMin = clampLatency(cfg.MinCycles-1, 1, cfg.MaxCycles)
+	cfg.HotReadMax = clampLatency(cfg.MinCycles, cfg.HotReadMin, cfg.MaxCycles)
+	return cfg
+}
+
+func applyPollReadTuning(cfg *LatencyConfig, profile *behavior.Profile) *LatencyConfig {
+	if cfg == nil || profile == nil {
+		return cfg
+	}
+	if len(profile.PollingLoops) == 0 {
+		return cfg
+	}
+	poll := profile.PollingLoops[0]
+	if poll.Count < 4 || poll.IntervalNs <= 0 {
+		return cfg
+	}
+	if profile.AccessStats.TotalReads == 0 {
+		return cfg
+	}
+	cfg.PollReadEnable = 1
+	cfg.PollReadOffset = poll.Offset & 0xFFF
+	cfg.PollReadMask = 0x00000FFF
+	baseMin := cfg.MinCycles
+	if cfg.HotReadEnable != 0 && cfg.HotReadMin > 0 {
+		baseMin = cfg.HotReadMin
+	}
+	cfg.PollReadMin = clampLatency(baseMin-1, 1, cfg.MaxCycles)
+	cfg.PollReadMax = clampLatency(baseMin, cfg.PollReadMin, cfg.MaxCycles)
+	return cfg
+}
+
+func isSignificantHotSpot(count, total int) bool {
+	if total <= 0 {
+		return false
+	}
+	if count < 2 {
+		return false
+	}
+	return count*10 >= total
+}
+
+func clampLatency(v, min, max int) int {
+	if v < min {
+		return min
+	}
+	if v > max {
+		return max
+	}
+	return v
 }
 
 func withUniformCDF(cfg *LatencyConfig) *LatencyConfig {
@@ -120,6 +251,12 @@ func withUniformCDF(cfg *LatencyConfig) *LatencyConfig {
 	}
 	for i := range cfg.Histogram {
 		cfg.Histogram[i] = 16
+	}
+	for i := range cfg.WrCDF {
+		cfg.WrCDF[i] = uint8(((i + 1) * 255) / 16)
+	}
+	for i := range cfg.WrHistogram {
+		cfg.WrHistogram[i] = 16
 	}
 	return cfg
 }

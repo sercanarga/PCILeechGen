@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/sercanarga/pcileechgen/internal/donor/behavior"
 	"github.com/sercanarga/pcileechgen/internal/color"
 	"github.com/sercanarga/pcileechgen/internal/donor"
 	"github.com/sercanarga/pcileechgen/internal/pci"
@@ -186,8 +187,69 @@ func compareContextDiff(left, right *donor.DeviceContext) *contextDiffReport {
 		report.addMatch(fmt.Sprintf("MSI-X table size: %d", left.MSIXData.TableSize))
 	}
 
+	if left.BehaviorProfile == nil && right.BehaviorProfile == nil {
+		report.addMatch("behavior profile: both absent")
+	} else if left.BehaviorProfile == nil {
+		report.addDiff("behavior profile missing on left")
+	} else if right.BehaviorProfile == nil {
+		report.addDiff("behavior profile missing on right")
+	} else {
+		compareBehaviorProfiles(report, left.BehaviorProfile, right.BehaviorProfile)
+	}
+
 	report.Equal = len(report.Differences) == 0
 	return report
+}
+
+func compareBehaviorProfiles(report *contextDiffReport, left, right *behavior.Profile) {
+	if left == nil && right == nil {
+		return
+	}
+	if left == nil {
+		report.addDiff("behavior profile missing on left")
+		return
+	}
+	if right == nil {
+		report.addDiff("behavior profile missing on right")
+		return
+	}
+	reportProfileFieldInt(report, "behavior total reads", left.AccessStats.TotalReads, right.AccessStats.TotalReads)
+	reportProfileFieldInt(report, "behavior total writes", left.AccessStats.TotalWrites, right.AccessStats.TotalWrites)
+	if left.ReadLatency == nil && right.ReadLatency == nil {
+		report.addMatch("behavior read latency: both absent")
+	} else if left.ReadLatency == nil {
+		report.addDiff("behavior read latency missing on left")
+	} else if right.ReadLatency == nil {
+		report.addDiff("behavior read latency missing on right")
+	} else {
+		reportProfileFieldInt(report, "behavior read latency samples", left.ReadLatency.SampleCount, right.ReadLatency.SampleCount)
+		reportProfileFieldInt(report, "behavior read latency min cycles", left.ReadLatency.MinCycles, right.ReadLatency.MinCycles)
+		reportProfileFieldInt(report, "behavior read latency max cycles", left.ReadLatency.MaxCycles, right.ReadLatency.MaxCycles)
+	}
+
+	if left.WriteLatency == nil && right.WriteLatency == nil {
+		report.addMatch("behavior write latency: both absent")
+	} else if left.WriteLatency == nil {
+		report.addDiff("behavior write latency missing on left")
+	} else if right.WriteLatency == nil {
+		report.addDiff("behavior write latency missing on right")
+	} else {
+		reportProfileFieldInt(report, "behavior write latency samples", left.WriteLatency.SampleCount, right.WriteLatency.SampleCount)
+		reportProfileFieldInt(report, "behavior write latency min cycles", left.WriteLatency.MinCycles, right.WriteLatency.MinCycles)
+		reportProfileFieldInt(report, "behavior write latency max cycles", left.WriteLatency.MaxCycles, right.WriteLatency.MaxCycles)
+	}
+
+	reportProfileFieldInt(report, "polling profile entries", len(left.PollingLoops), len(right.PollingLoops))
+	reportProfileFieldInt(report, "hot read profile entries", len(left.AccessStats.HotReads), len(right.AccessStats.HotReads))
+	reportProfileFieldInt(report, "hot write profile entries", len(left.AccessStats.HotWrites), len(right.AccessStats.HotWrites))
+}
+
+func reportProfileFieldInt(report *contextDiffReport, label string, leftValue, rightValue int) {
+	if leftValue != rightValue {
+		report.addDiff(fmt.Sprintf("%s: %d vs %d", label, leftValue, rightValue))
+	} else {
+		report.addMatch(fmt.Sprintf("%s: %d", label, leftValue))
+	}
 }
 
 func (r *contextDiffReport) addDiff(msg string) {
@@ -275,4 +337,3 @@ func init() {
 	_ = contextDiffCmd.MarkFlagRequired("right")
 	rootCmd.AddCommand(contextDiffCmd)
 }
-

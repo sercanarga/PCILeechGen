@@ -471,7 +471,7 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 		DeviceIDs:     ids,
 		BARModel:      bm,
 		ClassCode:     ctx.Device.ClassCode,
-		LatencyConfig: svgen.DefaultLatencyConfig(ctx.Device.ClassCode),
+		LatencyConfig: latencyConfigFromContext(ctx),
 		HasMSIX:       bm != nil,
 		BuildEntropy:  entropy,
 		PRNGSeeds:     svgen.BuildPRNGSeeds(ids.VendorID, ids.DeviceID, entropy),
@@ -525,6 +525,16 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 	}
 
 	return cfg, nil
+}
+
+func latencyConfigFromContext(ctx *donor.DeviceContext) *svgen.LatencyConfig {
+	if ctx == nil {
+		return svgen.DefaultLatencyConfig(0)
+	}
+	if ctx.BehaviorProfile != nil {
+		return svgen.LatencyConfigFromProfile(ctx.BehaviorProfile, ctx.Device.ClassCode)
+	}
+	return svgen.DefaultLatencyConfig(ctx.Device.ClassCode)
 }
 
 // writeCoreSVArtifacts generates core SV modules and config space HEX.

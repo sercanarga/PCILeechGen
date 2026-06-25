@@ -61,6 +61,33 @@ func TestExtractTimingHistogram_CDF(t *testing.T) {
 	}
 }
 
+func TestExtractTimingHistogramByAccessByType(t *testing.T) {
+	trace := &mmio.TraceResult{
+		Records: []mmio.AccessRecord{
+			{Offset: 0x00, Type: mmio.AccessRead, Timestamp: 10 * time.Nanosecond},
+			{Offset: 0x00, Type: mmio.AccessWrite, Timestamp: 20 * time.Nanosecond},
+			{Offset: 0x00, Type: mmio.AccessRead, Timestamp: 100 * time.Nanosecond},
+			{Offset: 0x00, Type: mmio.AccessWrite, Timestamp: 120 * time.Nanosecond},
+			{Offset: 0x00, Type: mmio.AccessRead, Timestamp: 210 * time.Nanosecond},
+			{Offset: 0x00, Type: mmio.AccessWrite, Timestamp: 240 * time.Nanosecond},
+			{Offset: 0x00, Type: mmio.AccessRead, Timestamp: 340 * time.Nanosecond},
+			{Offset: 0x00, Type: mmio.AccessWrite, Timestamp: 360 * time.Nanosecond},
+		},
+	}
+
+	readHist := ExtractTimingHistogramByAccess(trace, mmio.AccessRead)
+	if readHist.SampleCount == 0 {
+		t.Fatal("read access history should have timing samples")
+	}
+	writeHist := ExtractTimingHistogramByAccess(trace, mmio.AccessWrite)
+	if writeHist.SampleCount == 0 {
+		t.Fatal("write access history should have timing samples")
+	}
+	if readHist.MinCycles <= 0 || writeHist.MinCycles <= 0 {
+		t.Error("both histograms should report positive min cycles")
+	}
+}
+
 func TestExtractTimingHistogram_Nil(t *testing.T) {
 	h := ExtractTimingHistogram(nil)
 	if h == nil {

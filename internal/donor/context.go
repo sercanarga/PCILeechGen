@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/sercanarga/pcileechgen/internal/donor/behavior"
 	"github.com/sercanarga/pcileechgen/internal/pci"
 )
 
@@ -36,6 +37,7 @@ type DeviceContext struct {
 	Capabilities    []pci.Capability    `json:"capabilities"`
 	ExtCapabilities []pci.ExtCapability `json:"ext_capabilities,omitempty"`
 	MSIXData        *MSIXData           `json:"msix_data,omitempty"`
+	BehaviorProfile *behavior.Profile    `json:"behavior_profile,omitempty"`
 }
 
 // JSON wire format - config space as hex words, BARs as base64.
@@ -52,6 +54,7 @@ type deviceContextJSON struct {
 	Capabilities    []pci.Capability       `json:"capabilities"`
 	ExtCapabilities []pci.ExtCapability    `json:"ext_capabilities,omitempty"`
 	MSIXData        *MSIXData              `json:"msix_data,omitempty"`
+	BehaviorProfile *behavior.Profile       `json:"behavior_profile,omitempty"`
 }
 
 func (dc *DeviceContext) MarshalJSON() ([]byte, error) {
@@ -64,6 +67,7 @@ func (dc *DeviceContext) MarshalJSON() ([]byte, error) {
 		Capabilities:    dc.Capabilities,
 		ExtCapabilities: dc.ExtCapabilities,
 		MSIXData:        dc.MSIXData,
+		BehaviorProfile: dc.BehaviorProfile,
 	}
 
 	if dc.ConfigSpace != nil {
@@ -87,6 +91,7 @@ func (dc *DeviceContext) MarshalJSON() ([]byte, error) {
 			j.BARProfiles[strconv.Itoa(idx)] = profile
 		}
 	}
+	j.BehaviorProfile = dc.BehaviorProfile
 
 	return json.Marshal(j)
 }
@@ -111,6 +116,7 @@ func (dc *DeviceContext) UnmarshalJSON(data []byte) error {
 	dc.Capabilities = j.Capabilities
 	dc.ExtCapabilities = j.ExtCapabilities
 	dc.MSIXData = j.MSIXData
+	dc.BehaviorProfile = j.BehaviorProfile
 
 	// Reconstruct config space from hex words
 	if len(j.ConfigSpaceHex) > 0 {

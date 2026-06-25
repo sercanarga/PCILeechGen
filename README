@@ -59,6 +59,8 @@ QUICK START
 
   sudo ./bin/pcileechgen scan
   sudo ./bin/pcileechgen check --bdf 0000:02:00.0
+  sudo ./bin/pcileechgen capture-behavior --bdf 0000:02:00.0 --seconds 20 --out donor_behavior.json
+  sudo ./bin/pcileechgen build --from-json donor_behavior.json --board CaptainDMA_100T
   sudo ./bin/pcileechgen build --bdf 0000:02:00.0 --board CaptainDMA_100T
 
   Run "check" before "build" to verify donor and board compatibility.
@@ -70,6 +72,7 @@ COMMANDS
   scan             list PCI devices with VFIO status
   check            validate a donor device (BAR size vs board BRAM)
   build            generate firmware artifacts (+ Vivado)
+  capture-behavior capture live MMIO timing and poll/write profile
   validate         verify artifacts match the donor context
   verify-manifest  check SHA256 integrity of build output
   context-diff     compare two donor context JSON snapshots
@@ -108,6 +111,7 @@ FEATURES
 
   Stealth and timing
     - TLP latency emulation (xorshift128+ CDF reproduction)
+    - read/write histograms with hotspot-aware tuning
     - write-completion emulation, completion timeout
     - ASPM clamping, AER mask normalization, DSN jitter
     - per-build placement randomization, VSEC entropy embed

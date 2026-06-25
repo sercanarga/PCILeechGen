@@ -21,7 +21,11 @@
 {{ end }}{{ if eq .DeviceClass "audio" }}//   - HD Audio GCTL.CRST handshake
 {{ end }}{{ if .HasMSIX }}//   - MSI-X interrupt controller
 {{ end }}{{ if .LatencyConfig }}//   - TLP latency emulation (min={{ .LatencyConfig.MinCycles }}, max={{ .LatencyConfig.MaxCycles }}, avg={{ .LatencyConfig.AvgCycles }})
-{{ end }}
+{{ if ne .LatencyConfig.HotReadEnable 0 }}//   - Hot read register emulation
+{{ end }}{{ if ne .LatencyConfig.PollReadEnable 0 }}//   - Polling read latency profile
+{{ end }}{{ if ne .LatencyConfig.WrHotEnable 0 }}//   - Hot write register emulation
+{{ end }}{{ if ne .LatencyConfig.WrHasHistogram 0 }}//   - Write latency histogram emulation
+{{ end }}{{ end }}
 
 `ifndef DEVICE_CONFIG_SV
 `define DEVICE_CONFIG_SV
@@ -49,6 +53,22 @@ package device_config;
     localparam LATENCY_MIN      = {{ .LatencyConfig.MinCycles }};
     localparam LATENCY_MAX      = {{ .LatencyConfig.MaxCycles }};
     localparam LATENCY_AVG      = {{ .LatencyConfig.AvgCycles }};
+    localparam HOT_READ_ENABLE  = {{ .LatencyConfig.HotReadEnable }};
+    localparam [31:0] HOT_READ_OFFSET = 32'h{{ printf "%08X" .LatencyConfig.HotReadOffset }};
+    localparam [11:0] HOT_READ_MASK   = 12'h{{ printf "%03X" .LatencyConfig.HotReadMask }};
+    localparam [7:0] HOT_READ_MIN     = 8'd{{ .LatencyConfig.HotReadMin }};
+    localparam [7:0] HOT_READ_MAX     = 8'd{{ .LatencyConfig.HotReadMax }};
+    localparam POLL_READ_ENABLE = {{ .LatencyConfig.PollReadEnable }};
+    localparam [31:0] POLL_READ_OFFSET = 32'h{{ printf "%08X" .LatencyConfig.PollReadOffset }};
+    localparam [11:0] POLL_READ_MASK   = 12'h{{ printf "%03X" .LatencyConfig.PollReadMask }};
+    localparam [7:0] POLL_READ_MIN    = 8'd{{ .LatencyConfig.PollReadMin }};
+    localparam [7:0] POLL_READ_MAX    = 8'd{{ .LatencyConfig.PollReadMax }};
+    localparam WR_HIST_HAS = {{ .LatencyConfig.WrHasHistogram }};
+    localparam WR_HOT_ENABLE = {{ .LatencyConfig.WrHotEnable }};
+    localparam [31:0] WR_HOT_OFFSET = 32'h{{ printf "%08X" .LatencyConfig.WrHotOffset }};
+    localparam [11:0] WR_HOT_MASK   = 12'h{{ printf "%03X" .LatencyConfig.WrHotMask }};
+    localparam [7:0] WR_HOT_MIN    = 8'd{{ .LatencyConfig.WrHotMin }};
+    localparam [7:0] WR_HOT_MAX    = 8'd{{ .LatencyConfig.WrHotMax }};
 {{ end }}{{ if .MSIXConfig }}
     // MSI-X Table Replication
     localparam MSIX_NUM_VECTORS = {{ .MSIXConfig.NumVectors }};

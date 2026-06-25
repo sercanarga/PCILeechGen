@@ -21,6 +21,10 @@ const fpgaClockPeriodNs = 8 // 125MHz
 
 // ExtractTimingHistogram builds a 16-bucket histogram from inter-read intervals.
 func ExtractTimingHistogram(trace *mmio.TraceResult) *TimingHistogram {
+	return ExtractTimingHistogramByAccess(trace, mmio.AccessRead)
+}
+
+func ExtractTimingHistogramByAccess(trace *mmio.TraceResult, accessType mmio.AccessType) *TimingHistogram {
 	if trace == nil || len(trace.Records) < 2 {
 		return defaultHistogram()
 	}
@@ -29,7 +33,7 @@ func ExtractTimingHistogram(trace *mmio.TraceResult) *TimingHistogram {
 	var lastReadNs int64 = -1
 
 	for _, rec := range trace.Records {
-		if rec.Type != mmio.AccessRead {
+		if rec.Type != accessType {
 			continue
 		}
 		ns := rec.Timestamp.Nanoseconds()

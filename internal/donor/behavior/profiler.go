@@ -16,7 +16,16 @@ type Profile struct {
 	Duration     time.Duration `json:"duration"`
 	InitSequence []InitStep    `json:"init_sequence"`
 	AccessStats  AccessStats   `json:"access_stats"`
+	PollingLoops []PollingLoop `json:"polling_loops"`
+	ReadLatency  *TimingHistogram `json:"read_latency,omitempty"`
+	WriteLatency *TimingHistogram `json:"write_latency,omitempty"`
 	Timestamp    time.Time     `json:"timestamp"`
+}
+
+type PollingLoop struct {
+	Offset      uint32        `json:"offset"`
+	Count       int           `json:"count"`
+	IntervalNs  int64         `json:"interval_ns"`
 }
 
 // InitStep is one reg access during driver init (first unique touch per offset).
@@ -57,6 +66,8 @@ func FromMMIOTrace(trace *mmio.TraceResult, classCode uint32) *Profile {
 		DeviceBDF: trace.BDF,
 		ClassCode: classCode,
 		Duration:  trace.Duration,
+		ReadLatency:  ExtractTimingHistogramByAccess(trace, mmio.AccessRead),
+		WriteLatency: ExtractTimingHistogramByAccess(trace, mmio.AccessWrite),
 		Timestamp: time.Now(),
 	}
 
@@ -110,6 +121,20 @@ func FromMMIOTrace(trace *mmio.TraceResult, classCode uint32) *Profile {
 	}
 	if len(profile.AccessStats.HotWrites) > 10 {
 		profile.AccessStats.HotWrites = profile.AccessStats.HotWrites[:10]
+	}
+
+	for _, loop := range pattern.PollingLoops {
+		if len(profile.PollingLoops) > 8 {
+			break
+		}
+		if loop.Count < 3 {
+			continue
+		}
+		profile.PollingLoops = append(profile.PollingLoops, PollingLoop{
+			Offset:     loop.Offset,
+			Count:      loop.Count,
+			IntervalNs: loop.Interval.Nanoseconds(),
+		})
 	}
 
 	return profile
