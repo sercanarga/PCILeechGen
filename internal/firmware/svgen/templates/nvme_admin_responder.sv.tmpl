@@ -247,7 +247,7 @@ module pcileech_nvme_admin_responder(
                                         cqe[0] <= 32'h0;
                                         cqe[1] <= 32'h0;
                                         cqe[2] <= {cmd_cid, sq_head};
-                                        cqe[3] <= {15'h0, cq_phase};
+                                        cqe[3] <= {31'h0, cq_phase};
                                         cqe_dw_idx <= 2'h0;
                                         state  <= S_POST_CQE;
                                     end
@@ -259,7 +259,7 @@ module pcileech_nvme_admin_responder(
                                 cqe[0] <= 32'h0;
                                 cqe[1] <= 32'h0;
                                 cqe[2] <= {cmd_cid, sq_head};
-                                cqe[3] <= {15'h0, cq_phase};
+                                cqe[3] <= {31'h0, cq_phase};
                                 cqe_dw_idx <= 2'h0;
                                 state  <= S_POST_CQE;
                             end
@@ -283,7 +283,7 @@ module pcileech_nvme_admin_responder(
                                 endcase
                                 cqe[1] <= 32'h0;
                                 cqe[2] <= {cmd_cid, sq_head};
-                                cqe[3] <= {15'h0, cq_phase};
+                                cqe[3] <= {31'h0, cq_phase};
                                 cqe_dw_idx <= 2'h0;
                                 state  <= S_POST_CQE;
                             end
@@ -297,7 +297,7 @@ module pcileech_nvme_admin_responder(
                                 endcase
                                 cqe[1] <= 32'h0;
                                 cqe[2] <= {cmd_cid, sq_head};
-                                cqe[3] <= {15'h0, cq_phase};
+                                cqe[3] <= {31'h0, cq_phase};
                                 cqe_dw_idx <= 2'h0;
                                 state  <= S_POST_CQE;
                             end
@@ -308,7 +308,7 @@ module pcileech_nvme_admin_responder(
                                 if (aer_pending < 4'hF)
                                     aer_pending <= aer_pending + 1'b1;
                                 // move the SQ head along but don't post any CQE
-                                if (sq_head >= asqs)
+                                if (sq_head >= {4'h0, asqs})
                                     sq_head <= 16'h0;
                                 else
                                     sq_head <= sq_head + 1'b1;
@@ -320,7 +320,7 @@ module pcileech_nvme_admin_responder(
                                 cqe[0] <= 32'h0;
                                 cqe[1] <= 32'h0;
                                 cqe[2] <= {cmd_cid, sq_head};
-                                cqe[3] <= {15'h0, cq_phase};
+                                cqe[3] <= {31'h0, cq_phase};
                                 cqe_dw_idx <= 2'h0;
                                 state  <= S_POST_CQE;
                             end
@@ -400,7 +400,7 @@ module pcileech_nvme_admin_responder(
                         cqe[0] <= 32'h0;
                         cqe[1] <= 32'h0;
                         cqe[2] <= {cmd_cid, sq_head};
-                        cqe[3] <= {15'h0, cq_phase};
+                        cqe[3] <= {31'h0, cq_phase};
                         cqe_dw_idx <= 2'h0;
                         state  <= S_POST_CQE;
                     end
@@ -409,8 +409,8 @@ module pcileech_nvme_admin_responder(
                     S_POST_CQE: begin
                         dma_wr_req   <= 1'b1;
                         dma_wr_valid <= 1'b1;
-                        dma_wr_addr  <= acq_base + {48'h0, cq_head} * 16
-                                        + {62'h0, cqe_dw_idx, 2'b00};
+                        dma_wr_addr  <= acq_base + {44'h0, cq_head, 4'h0}
+                                        + {60'h0, cqe_dw_idx, 2'b00};
                         dma_wr_data  <= cqe[cqe_dw_idx];
                         dma_wr_be    <= 4'hF;
 
@@ -435,13 +435,13 @@ module pcileech_nvme_admin_responder(
                         msix_trigger <= 1'b1;
 
                         // wrap SQ head
-                        if (sq_head >= asqs)
+                        if (sq_head >= {4'h0, asqs})
                             sq_head <= 16'h0;
                         else
                             sq_head <= sq_head + 1'b1;
 
                         // wrap CQ head and flip the phase bit
-                        if (cq_head >= acqs) begin
+                        if (cq_head >= {4'h0, acqs}) begin
                             cq_head  <= 16'h0;
                             cq_phase <= ~cq_phase;
                         end else begin

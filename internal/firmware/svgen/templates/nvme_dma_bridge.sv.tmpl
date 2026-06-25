@@ -73,7 +73,7 @@ module pcileech_nvme_dma_bridge(
     // CplD receive buffer: hold up to 4 DWORDs from one 128-bit beat
     reg [31:0] rx_buf [0:3];
     reg [2:0]  rx_buf_cnt;          // how many DWORDs in buffer (0-4)
-    reg [2:0]  rx_buf_idx;          // current emit index
+    reg [1:0]  rx_buf_idx;          // current emit index
 
     always @(posedge clk) begin
         if (rst) begin
@@ -87,7 +87,7 @@ module pcileech_nvme_dma_bridge(
             rd_remaining    <= 10'h0;
             rd_tag          <= 8'h80;
             rx_buf_cnt      <= 3'h0;
-            rx_buf_idx      <= 3'h0;
+            rx_buf_idx      <= 2'h0;
         end else begin
             dma_wr_done   <= 1'b0;
             dma_rd_valid  <= 1'b0;
@@ -216,7 +216,7 @@ module pcileech_nvme_dma_bridge(
                                 // payload starts at [127:96] = 1 DWORD
                                 rx_buf[0]  <= tlp_rx_tdata[127:96];
                                 rx_buf_cnt <= 3'd1;
-                                rx_buf_idx <= 3'd0;
+                                rx_buf_idx <= 2'd0;
                                 bstate     <= B_RD_EMIT;
                             end
                         end
@@ -232,11 +232,11 @@ module pcileech_nvme_dma_bridge(
                     if (rd_remaining <= 10'd1) begin
                         dma_rd_done <= 1'b1;
                         bstate      <= B_IDLE;
-                    end else if (rx_buf_cnt == 3'd0 || rx_buf_idx >= (rx_buf_cnt - 3'd1)) begin
+                    end else if (rx_buf_cnt == 3'd0 || {1'b0, rx_buf_idx} >= (rx_buf_cnt - 3'd1)) begin
                         // buffer emptied (or was never filled), need more data from bus
                         bstate <= B_RD_DRAIN;
                     end else begin
-                        rx_buf_idx <= rx_buf_idx + 3'd1;
+                        rx_buf_idx <= rx_buf_idx + 2'd1;
                     end
                 end
 
@@ -254,7 +254,7 @@ module pcileech_nvme_dma_bridge(
                         else
                             rx_buf_cnt <= rd_remaining[2:0];
 
-                        rx_buf_idx <= 3'd0;
+                        rx_buf_idx <= 2'd0;
                         bstate     <= B_RD_EMIT;
                     end
                 end
