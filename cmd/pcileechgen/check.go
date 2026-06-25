@@ -12,6 +12,7 @@ import (
 	"github.com/sercanarga/pcileechgen/internal/donor"
 	"github.com/sercanarga/pcileechgen/internal/donor/vfio"
 	"github.com/sercanarga/pcileechgen/internal/firmware"
+	"github.com/sercanarga/pcileechgen/internal/firmware/devclass"
 	"github.com/sercanarga/pcileechgen/internal/pci"
 	"github.com/spf13/cobra"
 )
@@ -45,6 +46,7 @@ type checker struct {
 	w          io.Writer
 	dev        *pci.PCIDevice
 	cs         *pci.ConfigSpace
+	bars       []pci.BAR
 	issues     int
 	largestBAR uint64
 }
@@ -60,6 +62,7 @@ func (c *checker) run() error {
 	c.checkDriver()
 	c.showCapabilities()
 	c.showBARs()
+	c.showProfileExpectation()
 	c.showBoardCompatibility()
 
 	fmt.Fprintf(c.w, "\n%s\n", color.Header("Summary"))
@@ -178,6 +181,10 @@ func (c *checker) checkDriver() {
 	} else {
 		fmt.Fprintln(c.w, color.Warnf("Currently bound to %q (will need unbinding)", c.dev.Driver))
 	}
+	if reason := unsafeLiveDonorReason(c.dev); reason != "" {
+		fmt.Fprintln(c.w, color.Warnf("Live mmiotrace profiling blocked: %s", reason))
+		fmt.Fprintln(c.w, color.Dim("  Normal read-only builds can proceed; mmiotrace needs an offline donor dump via --from-json"))
+	}
 }
 
 func (c *checker) showCapabilities() {
@@ -207,6 +214,7 @@ func (c *checker) showBARs() {
 	if err != nil {
 		return
 	}
+	c.bars = bars
 	for _, bar := range bars {
 		if !bar.IsDisabled() && bar.Size > c.largestBAR {
 			c.largestBAR = bar.Size
@@ -225,6 +233,25 @@ func (c *checker) showBARs() {
 		if !bs.Accessible {
 			fmt.Fprintln(c.w, color.Warnf("  BAR%d: not accessible (%s)", bs.Index, bs.Error))
 		}
+	}
+}
+
+// showProfileExpectation runs the warning-only devclass profile validator and
+// prints any findings. It never increments c.issues: profile mismatches are
+// advisory and must not block a build or a check.
+func (c *checker) showProfileExpectation() {
+	if c.dev == nil || c.cs == nil {
+		return
+	}
+	ctx := &donor.DeviceContext{
+		Device:          *c.dev,
+		ConfigSpace:     c.cs,
+		BARs:            c.bars,
+		Capabilities:    pci.ParseCapabilities(c.cs),
+		ExtCapabilities: pci.ParseExtCapabilities(c.cs),
+	}
+	for _, w := range devclass.Validate(ctx) {
+		fmt.Fprintln(c.w, color.Warnf("Profile: %s", w.String()))
 	}
 }
 

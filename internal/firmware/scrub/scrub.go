@@ -61,46 +61,55 @@ func capSizeAt(cs *pci.ConfigSpace, id uint8, offset int) int {
 
 // vendorCapRange defines a known vendor-specific register region worth preserving.
 type vendorCapRange struct {
-	VendorID uint16
-	Start    int
-	End      int // exclusive
-	Name     string
+	VendorID  uint16
+	Start     int
+	End       int // exclusive
+	Name      string
+	ClassCode uint32
+	DeviceID  uint16
 }
 
 // knownVendorCaps lists vendor-specific register regions that should NOT be zeroed.
 // Zeroing these can trigger driver errors or detection (e.g. missing firmware status).
 var knownVendorCaps = []vendorCapRange{
-	{0x8086, 0x40, 0x60, "Intel PCIe advanced error"},
-	{0x8086, 0xE0, 0x100, "Intel device-specific config"},
-	{0x10EC, 0x40, 0x60, "Realtek PHY control"},
-	{0x10EC, 0x80, 0xA0, "Realtek LED/WOL config"},
-	{0x14E4, 0x48, 0x60, "Broadcom device control"},
-	{0x144D, 0x40, 0x50, "Samsung NVMe PM region"},
-	{0x168C, 0x40, 0x70, "Qualcomm Atheros radio config"},
-	{0x1912, 0xF0, 0x100, "Renesas firmware status"},
-	{0x1B21, 0x40, 0x60, "ASMedia link training"},
-	{0x1B73, 0xA0, 0xC0, "Fresco Logic xHCI quirks"},
-	{0x11AB, 0x40, 0x60, "Marvell device control"},
-	{0x11AB, 0x70, 0x90, "Marvell PHY/LED config"},
-	{0x15B3, 0x60, 0x80, "Mellanox device-specific"},
-	{0x1D6A, 0x40, 0x60, "Aquantia PHY control"},
-	{0x14C3, 0x40, 0x60, "MediaTek Wi-Fi config"},
-	{0x1987, 0x40, 0x50, "Phison NVMe device config"},
-	{0x1C5C, 0x40, 0x50, "SK Hynix NVMe config"},
-	{0x1344, 0x40, 0x50, "Micron NVMe config"},
-	{0x15B7, 0x40, 0x50, "SanDisk/WD NVMe config"},
-	{0x1E0F, 0x40, 0x50, "KIOXIA NVMe config"},
+	{0x8086, 0x40, 0x60, "Intel PCIe advanced error", 0, 0},
+	{0x8086, 0xE0, 0x100, "Intel device-specific config", 0, 0},
+	{VendorID: 0x10EC, Start: 0x40, End: 0x60, Name: "Realtek RTL8188EE PHY control", ClassCode: 0x028000, DeviceID: 0x8179},
+	{VendorID: 0x10EC, Start: 0x80, End: 0xA0, Name: "Realtek RTL8188EE LED/WOL config", ClassCode: 0x028000, DeviceID: 0x8179},
+	{0x14E4, 0x48, 0x60, "Broadcom device control", 0, 0},
+	{0x144D, 0x40, 0x50, "Samsung NVMe PM region", 0, 0},
+	{0x168C, 0x40, 0x70, "Qualcomm Atheros radio config", 0, 0},
+	{0x1912, 0xF0, 0x100, "Renesas firmware status", 0, 0},
+	{0x1B21, 0x40, 0x60, "ASMedia link training", 0, 0},
+	{0x1B73, 0xA0, 0xC0, "Fresco Logic xHCI quirks", 0, 0},
+	{0x11AB, 0x40, 0x60, "Marvell device control", 0, 0},
+	{0x11AB, 0x70, 0x90, "Marvell PHY/LED config", 0, 0},
+	{0x15B3, 0x60, 0x80, "Mellanox device-specific", 0, 0},
+	{0x1D6A, 0x40, 0x60, "Aquantia PHY control", 0, 0},
+	{0x14C3, 0x40, 0x60, "MediaTek Wi-Fi config", 0, 0},
+	{0x1987, 0x40, 0x50, "Phison NVMe device config", 0, 0},
+	{0x1C5C, 0x40, 0x50, "SK Hynix NVMe config", 0, 0},
+	{0x1344, 0x40, 0x50, "Micron NVMe config", 0, 0},
+	{0x15B7, 0x40, 0x50, "SanDisk/WD NVMe config", 0, 0},
+	{0x1E0F, 0x40, 0x50, "KIOXIA NVMe config", 0, 0},
 }
 
 // vendorWhitelist returns a coverage bitmap for vendor-specific register regions
-// that should be preserved for the given vendor ID.
-func vendorWhitelist(vid uint16) []bool {
+// that should be preserved for the given device identity.
+func vendorWhitelist(vid, did uint16, classCode uint32) []bool {
 	covered := make([]bool, pci.ConfigSpaceLegacySize)
 	for _, vc := range knownVendorCaps {
-		if vc.VendorID == vid {
-			for i := vc.Start; i < vc.End && i < pci.ConfigSpaceLegacySize; i++ {
-				covered[i] = true
-			}
+		if vc.VendorID != vid {
+			continue
+		}
+		if vc.DeviceID != 0 && vc.DeviceID != did {
+			continue
+		}
+		if vc.ClassCode != 0 && vc.ClassCode != classCode {
+			continue
+		}
+		for i := vc.Start; i < vc.End && i < pci.ConfigSpaceLegacySize; i++ {
+			covered[i] = true
 		}
 	}
 	return covered
@@ -123,8 +132,7 @@ func zeroVendorRegisters(cs *pci.ConfigSpace, om *overlay.Map, caps []pci.Capabi
 	}
 
 	// preserve known vendor-specific register regions
-	vid := cs.VendorID()
-	whitelist := vendorWhitelist(vid)
+	whitelist := vendorWhitelist(cs.VendorID(), cs.DeviceID(), cs.ClassCode())
 	for i := 0x40; i < pci.ConfigSpaceLegacySize; i++ {
 		if whitelist[i] {
 			covered[i] = true
@@ -166,6 +174,8 @@ func ScrubConfigSpaceWithOverlay(cs *pci.ConfigSpace, b *board.Board, bar0Size .
 		Caps:      pci.ParseCapabilities(scrubbed),
 		ExtCaps:   pci.ParseExtCapabilities(scrubbed),
 		ClassCode: cs.ReadU32(0x08) >> 8,
+		VendorID:  cs.VendorID(),
+		DeviceID:  cs.DeviceID(),
 		Bar0Size:  bar0,
 	}
 
@@ -211,7 +221,7 @@ func clampBARsToFPGA(cs *pci.ConfigSpace, om *overlay.Map, ctx *ScrubContext) {
 	if bar0 == 0 || (bar0&0x01 != 0) {
 		createVal := mask
 		if ctx != nil {
-			if p := devclass.ProfileForClass(ctx.ClassCode); p != nil && p.Uses64BitBAR {
+			if p := devclass.ProfileForDevice(ctx.ClassCode, ctx.VendorID, ctx.DeviceID); p != nil && p.Uses64BitBAR {
 				createVal = mask | 0x04
 				om.WriteU32(0x14, 0xFFFFFFFF, fmt.Sprintf("create BAR1 upper for 64-bit BAR0 %dKB", bar0KB))
 			}

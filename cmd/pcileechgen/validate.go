@@ -11,6 +11,7 @@ import (
 	"github.com/sercanarga/pcileechgen/internal/donor"
 	"github.com/sercanarga/pcileechgen/internal/firmware"
 	"github.com/sercanarga/pcileechgen/internal/firmware/codegen"
+	"github.com/sercanarga/pcileechgen/internal/firmware/devclass"
 	"github.com/sercanarga/pcileechgen/internal/firmware/output"
 	"github.com/sercanarga/pcileechgen/internal/firmware/scrub"
 	"github.com/sercanarga/pcileechgen/internal/pci"
@@ -79,6 +80,13 @@ Example:
 			scrubbed:  scrub.ScrubConfigSpace(ctx.ConfigSpace, b, bar0Size),
 			result:    &output.ValidationResult{},
 		}
+		// Profile expectations are warning-only: they advise on donor/profile
+		// fit but never block a build. Collected before the board BAR-size
+		// gate so a hard BAR failure still surfaces profile context.
+		for _, w := range devclass.Validate(ctx) {
+			v.result.Warnings = append(v.result.Warnings, w.String())
+		}
+
 		if b != nil {
 			if issues := output.ValidateBARSize(donorBar, b.BRAMSizeOrDefault(), 0); len(issues) > 0 {
 				return fmt.Errorf("%s", issues[0])

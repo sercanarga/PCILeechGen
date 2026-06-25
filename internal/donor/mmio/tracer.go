@@ -26,6 +26,7 @@ func (a AccessType) String() string {
 // AccessRecord is one captured BAR read or write.
 type AccessRecord struct {
 	Offset    uint32        // byte offset within the BAR
+	Address   uint64        `json:"address,omitempty"` // physical MMIO address when available
 	Type      AccessType    // read or write
 	Value     uint32        // value read or written
 	Timestamp time.Duration // time since trace started
@@ -66,6 +67,97 @@ type PollingLoop struct {
 	Offset   uint32
 	Count    int           // number of polls
 	Interval time.Duration // avg interval between reads
+}
+
+type RegisterClassification string
+
+const (
+	RegisterStaticRead   RegisterClassification = "static_read"
+	RegisterVolatileRead RegisterClassification = "volatile_read"
+	RegisterPolled       RegisterClassification = "polled"
+	RegisterWriteOnly    RegisterClassification = "write_only"
+	RegisterReadWrite    RegisterClassification = "read_write"
+)
+
+// RegisterSummary is the stable report form for one observed BAR register.
+type RegisterSummary struct {
+	Offset         uint32                 `json:"offset"`
+	ReadCount      int                    `json:"read_count"`
+	WriteCount     int                    `json:"write_count"`
+	TotalCount     int                    `json:"total_count"`
+	LastValue      uint32                 `json:"last_value"`
+	Values         []uint32               `json:"values"`
+	Classification RegisterClassification `json:"classification"`
+}
+
+// TraceReport is a deterministic, JSON-friendly summary of one MMIO trace.
+type TraceReport struct {
+	BDF           string            `json:"bdf"`
+	BARIndex      int               `json:"bar_index"`
+	BARSize       int               `json:"bar_size"`
+	DurationMS    int64             `json:"duration_ms"`
+	TotalAccesses int               `json:"total_accesses"`
+	TotalReads    int               `json:"total_reads"`
+	TotalWrites   int               `json:"total_writes"`
+	Registers     []RegisterSummary `json:"registers"`
+	PollingLoops  []PollingLoop     `json:"polling_loops"`
+	InitSequence  []AccessRecord    `json:"init_sequence"`
+}
+
+// BuildLegacyTraceReport is a deterministic, JSON-friendly summary of one MMIO
+// trace. It reflects raw access patterns only and is used by import/report
+// flows that intentionally emit the legacy trace schema.
+func BuildLegacyTraceReport(trace *TraceResult) *TraceReport {
+	pattern := Analyze(trace)
+	report := &TraceReport{
+		TotalAccesses: pattern.TotalAccesses,
+		TotalReads:    pattern.TotalReads,
+		TotalWrites:   pattern.TotalWrites,
+		PollingLoops:  append([]PollingLoop(nil), pattern.PollingLoops...),
+		InitSequence:  append([]AccessRecord(nil), pattern.InitSequence...),
+	}
+	if trace != nil {
+		report.BDF = trace.BDF
+		report.BARIndex = trace.BARIndex
+		report.BARSize = trace.BARSize
+		report.DurationMS = trace.Duration.Milliseconds()
+	}
+
+	polled := make(map[uint32]bool, len(pattern.PollingLoops))
+	for _, loop := range pattern.PollingLoops {
+		polled[loop.Offset] = true
+	}
+	for _, hot := range pattern.HotRegisters {
+		report.Registers = append(report.Registers, RegisterSummary{
+			Offset:         hot.Offset,
+			ReadCount:      hot.ReadCount,
+			WriteCount:     hot.WriteCount,
+			TotalCount:     hot.TotalCount,
+			LastValue:      hot.LastValue,
+			Values:         append([]uint32(nil), hot.Values...),
+			Classification: classifyRegister(hot, polled[hot.Offset]),
+		})
+	}
+	sort.Slice(report.Registers, func(i, j int) bool {
+		return report.Registers[i].Offset < report.Registers[j].Offset
+	})
+	return report
+}
+
+func classifyRegister(reg HotRegister, polled bool) RegisterClassification {
+	if reg.ReadCount > 0 && reg.WriteCount > 0 {
+		return RegisterReadWrite
+	}
+	if polled {
+		return RegisterPolled
+	}
+	if reg.WriteCount > 0 {
+		return RegisterWriteOnly
+	}
+	if len(reg.Values) > 1 {
+		return RegisterVolatileRead
+	}
+	return RegisterStaticRead
 }
 
 // --- analysis ---

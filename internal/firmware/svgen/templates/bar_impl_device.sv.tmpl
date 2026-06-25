@@ -62,46 +62,99 @@ module pcileech_bar_impl_device #(
 {{ end }}
 {{ if eq .DeviceClass "nvme" }}
     // ========================================================================
-    // NVMe CC -> CSTS State Machine
-    // stornvme.sys polls CSTS.RDY after writing CC.EN - this is the #1 cause
-    // of Code 10. Static CSTS values do NOT work; real transition is required.
+    // NVMe CC.EN -> CSTS.RDY handshake (5-state timed FSM)
+    //
+    // stornvme.sys polls CSTS.RDY after writing CC.EN; a static value or a
+    // couple-cycle blip does not satisfy it. This mirrors a real controller:
+    //   DISABLED --CC.EN 0->1--> ENABLING (~100 clk) --> READY
+    //   READY    --CC.EN 1->0--> DISABLING (~50 clk) --> DISABLED
+    // CC.SHN drives CSTS.SHST: 01 = processing, 10 = shutdown complete.
+    // AQA/ASQ/ACQ are writable ONLY while disabled (CC.EN=0) — see write gate
+    // in the Reset/Write Logic block below.
     // ========================================================================
-    reg        cc_en_prev;
-    reg [3:0]  csts_transition_cnt;
-    reg        csts_rdy_pending;
+    localparam [2:0] CST_DISABLED  = 3'd0;
+    localparam [2:0] CST_ENABLING  = 3'd1;
+    localparam [2:0] CST_READY     = 3'd2;
+    localparam [2:0] CST_DISABLING = 3'd3;
+
+    reg [2:0]  csts_state;
+    reg [6:0] csts_timer;       // 0..127 cycles
+    reg [1:0] shn_prev;
+
+    // A short nonzero enable delay reads as far more realistic
+    // than an instantaneous RDY; 100 cycles is well below the driver's polling
+    // timeout but above any plausible glitch window.
+    localparam [6:0] ENABLING_TICKS  = 7'd100;
+    localparam [6:0] DISABLING_TICKS = 7'd50;
+
+    wire cc_en  = reg_0x00000014[0];
+    wire [1:0] cc_shn = reg_0x00000014[15:14];
 
     always @(posedge clk) begin
         if (rst) begin
-            cc_en_prev          <= 1'b0;
-            csts_transition_cnt <= 4'h0;
-            csts_rdy_pending    <= 1'b0;
-            reg_0x0000001C      <= 32'h00000000;  // CSTS: RDY=0, SHST=0
+            csts_state        <= CST_DISABLED;
+            csts_timer        <= 7'h0;
+            shn_prev          <= 2'b00;
+            reg_0x0000001C    <= 32'h00000000;  // CSTS: RDY=0, SHST=00
         end else begin
-            cc_en_prev <= reg_0x00000014[0]; // CC.EN
+            shn_prev <= cc_shn;
 
-            // CC.EN rising edge -> start RDY transition (2-8 cycle delay)
-            if (reg_0x00000014[0] && !cc_en_prev) begin
-                csts_rdy_pending    <= 1'b1;
-                csts_transition_cnt <= 4'h0;
-                reg_0x0000001C[0]   <= 1'b0;  // CSTS.RDY = 0 while enabling
-                reg_0x0000001C[3:2] <= 2'b00; // CSTS.SHST = no shutdown
-            end
-            // CC.EN falling edge -> controller disabled; SHST is only for CC.SHN shutdown
-            else if (!reg_0x00000014[0] && cc_en_prev) begin
-                reg_0x0000001C[0]    <= 1'b0;        // CSTS.RDY = 0
-                reg_0x0000001C[3:2]  <= 2'b00;       // CSTS.SHST = no shutdown
-                csts_rdy_pending     <= 1'b0;
-            end
+            // ---- shutdown sub-FSM (independent of enable state) ---------
+            // CC.SHN 00->01 : start shutdown        -> CSTS.SHST = 01
+            // CC.SHN 01->10 : shutdown complete     -> CSTS.SHST = 10
+            // CC.SHN ->00      : exit shutdown       -> CSTS.SHST = 00
+            if (cc_shn == 2'b01 && shn_prev != 2'b01)
+                reg_0x0000001C[3:2] <= 2'b01;
+            else if (cc_shn == 2'b10)
+                reg_0x0000001C[3:2] <= 2'b10;
+            else if (cc_shn == 2'b00)
+                reg_0x0000001C[3:2] <= 2'b00;
 
-            // Pending RDY transition: count up then set RDY
-            if (csts_rdy_pending) begin
-                csts_transition_cnt <= csts_transition_cnt + 1'b1;
-                if (csts_transition_cnt >= 4'h4) begin
-                    reg_0x0000001C[0]   <= 1'b1;  // CSTS.RDY = 1
-                    reg_0x0000001C[3:2] <= 2'b00;  // CSTS.SHST = no shutdown
-                    csts_rdy_pending    <= 1'b0;
+            // ---- enable/disable main FSM ---------------------------------
+            case (csts_state)
+                CST_DISABLED: begin
+                    reg_0x0000001C[0] <= 1'b0;   // RDY = 0
+                    if (cc_en) begin
+                        csts_state <= CST_ENABLING;
+                        csts_timer <= 7'h0;
+                    end
                 end
-            end
+                CST_ENABLING: begin
+                    reg_0x0000001C[0] <= 1'b0;   // RDY stays 0 while enabling
+                    if (!cc_en) begin
+                        // driver backed out before we were ready
+                        csts_state <= CST_DISABLED;
+                        csts_timer <= 7'h0;
+                    end else if (csts_timer >= ENABLING_TICKS) begin
+                        reg_0x0000001C[0] <= 1'b1;   // RDY = 1
+                        csts_state <= CST_READY;
+                        csts_timer <= 7'h0;
+                    end else begin
+                        csts_timer <= csts_timer + 1'b1;
+                    end
+                end
+                CST_READY: begin
+                    reg_0x0000001C[0] <= 1'b1;   // RDY = 1
+                    if (!cc_en) begin
+                        csts_state <= CST_DISABLING;
+                        csts_timer <= 7'h0;
+                    end
+                end
+                CST_DISABLING: begin
+                    reg_0x0000001C[0] <= 1'b0;   // RDY = 0 immediately
+                    if (cc_en) begin
+                        // driver re-enabled during teardown; restart enable
+                        csts_state <= CST_ENABLING;
+                        csts_timer <= 7'h0;
+                    end else if (csts_timer >= DISABLING_TICKS) begin
+                        csts_state <= CST_DISABLED;
+                        csts_timer <= 7'h0;
+                    end else begin
+                        csts_timer <= csts_timer + 1'b1;
+                    end
+                end
+                default: csts_state <= CST_DISABLED;
+            endcase
         end
     end
 {{ end }}
@@ -131,6 +184,9 @@ module pcileech_bar_impl_device #(
             rs_prev        <= 1'b0;
             reg_0x00000020 <= 32'h00000001;  // USBCMD: R/S=1 (running)
             reg_0x00000024 <= 32'h00000000;  // USBSTS: HCH=0 (not halted)
+            reg_0x00000220 <= 32'h00000000;  // IMAN0: IP=0, IE=0
+            reg_0x00000420 <= 32'h000002A0;  // PORTSC1 reset value
+            reg_0x00000430 <= 32'h000002A0;  // PORTSC2 reset value
         end else begin
             rs_prev <= reg_0x00000020[0]; // USBCMD.R/S
 
@@ -162,6 +218,131 @@ module pcileech_bar_impl_device #(
             // R/S falling edge -> set HCH (controller halted)
             if (!reg_0x00000020[0] && rs_prev && !hcrst_pending) begin
                 reg_0x00000024[0] <= 1'b1;  // USBSTS.HCH = 1
+            end
+
+            // USBSTS W1C: host writes 1 to clear status bits 2 (HSE),
+            // 3 (INTR), 4 (PCD), 10 (HCE). HCH (bit 0) is NOT host-writable
+            // (FSM-only). Writes of 0 preserve; writes of 1 clear.
+            if (wr_valid && (wr_addr[31:0] & 32'hFFFFFFFC) == 32'h00000024) begin
+                if (wr_be[0]) begin
+                    if (wr_data[2])  reg_0x00000024[2]  <= 1'b0;  // HSE
+                    if (wr_data[3])  reg_0x00000024[3]  <= 1'b0;  // INTR
+                    if (wr_data[4])  reg_0x00000024[4]  <= 1'b0;  // PCD
+                end
+                if (wr_be[1]) begin
+                    if (wr_data[10]) reg_0x00000024[10] <= 1'b0;  // HCE
+                end
+            end
+
+            // IMAN0: bit0 Interrupt Pending (RW1C), bit1 Interrupt Enable.
+            if (wr_valid && (wr_addr[31:0] & 32'hFFFFFFFC) == 32'h00000220) begin
+                if (wr_be[0]) begin
+                    reg_0x00000220[1] <= wr_data[1];
+                    if (wr_data[0]) begin
+                        reg_0x00000220[0] <= 1'b0;
+                        reg_0x00000024[3] <= 1'b0;  // USBSTS.INTR cleared with IP ack
+                    end
+                end
+            end
+
+            // PORTSC1/2 forwarding + minimal interrupter realism. Port-reset writes
+            // complete locally: PR self-clears, PRC is raised, USBSTS.PCD is set,
+            // and interrupter 0 sees a pending event (USBSTS.INTR + IMAN0.IP).
+            if (wr_valid && (wr_addr[31:0] & 32'hFFFFFFFC) == 32'h00000420) begin
+                if (wr_be[0]) reg_0x00000420[7:0]   <= (reg_0x00000420[7:0]   & ~8'hF2) | (wr_data[7:0]   & 8'hF2);
+                if (wr_be[1]) reg_0x00000420[15:8]  <= (reg_0x00000420[15:8]  & ~8'hC3) | (wr_data[15:8]  & 8'hC3);
+                if (wr_be[2]) reg_0x00000420[23:16] <= (reg_0x00000420[23:16] & ~8'h01) | (wr_data[23:16] & 8'h01);
+                if (wr_be[3]) reg_0x00000420[31:24] <= (reg_0x00000420[31:24] & ~8'h8E) | (wr_data[31:24] & 8'h8E);
+                if (wr_be[2]) begin
+                    if (wr_data[17]) reg_0x00000420[17] <= 1'b0;
+                    if (wr_data[18]) reg_0x00000420[18] <= 1'b0;
+                    if (wr_data[19]) reg_0x00000420[19] <= 1'b0;
+                    if (wr_data[20]) reg_0x00000420[20] <= 1'b0;
+                    if (wr_data[21]) reg_0x00000420[21] <= 1'b0;
+                    if (wr_data[22]) reg_0x00000420[22] <= 1'b0;
+                    if (wr_data[23]) reg_0x00000420[23] <= 1'b0;
+                end
+                if (wr_be[0] && wr_data[4]) begin
+                    reg_0x00000420[4]   <= 1'b0;
+                    reg_0x00000420[21]  <= 1'b1;
+                    reg_0x00000024[4]   <= 1'b1;
+                    reg_0x00000024[3]   <= 1'b1;
+                    reg_0x00000220[0]   <= 1'b1;
+                end
+            end
+            if (wr_valid && (wr_addr[31:0] & 32'hFFFFFFFC) == 32'h00000430) begin
+                if (wr_be[0]) reg_0x00000430[7:0]   <= (reg_0x00000430[7:0]   & ~8'hF2) | (wr_data[7:0]   & 8'hF2);
+                if (wr_be[1]) reg_0x00000430[15:8]  <= (reg_0x00000430[15:8]  & ~8'hC3) | (wr_data[15:8]  & 8'hC3);
+                if (wr_be[2]) reg_0x00000430[23:16] <= (reg_0x00000430[23:16] & ~8'h01) | (wr_data[23:16] & 8'h01);
+                if (wr_be[3]) reg_0x00000430[31:24] <= (reg_0x00000430[31:24] & ~8'h8E) | (wr_data[31:24] & 8'h8E);
+                if (wr_be[2]) begin
+                    if (wr_data[17]) reg_0x00000430[17] <= 1'b0;
+                    if (wr_data[18]) reg_0x00000430[18] <= 1'b0;
+                    if (wr_data[19]) reg_0x00000430[19] <= 1'b0;
+                    if (wr_data[20]) reg_0x00000430[20] <= 1'b0;
+                    if (wr_data[21]) reg_0x00000430[21] <= 1'b0;
+                    if (wr_data[22]) reg_0x00000430[22] <= 1'b0;
+                    if (wr_data[23]) reg_0x00000430[23] <= 1'b0;
+                end
+                if (wr_be[0] && wr_data[4]) begin
+                    reg_0x00000430[4]   <= 1'b0;
+                    reg_0x00000430[21]  <= 1'b1;
+                    reg_0x00000024[4]   <= 1'b1;
+                    reg_0x00000024[3]   <= 1'b1;
+                    reg_0x00000220[0]   <= 1'b1;
+                end
+            end
+        end
+    end
+{{ end }}
+{{ if eq .DeviceClass "cardreader" }}
+    // ========================================================================
+    // RTS522A card reader HAIMR indirect-register emulation
+    //
+    // Linux rtsx_pci uses BAR0+0x10 (RTSX_HAIMR) to read/write internal regs:
+    //   14'h3F78 -> RTS522A_PME_FORCE_CTL
+    //   14'h3F7C -> RTS522A_AUTOLOAD_CFG1
+    //   14'h3F7E -> RTS522A_PM_CTRL3
+    //
+    // Completion semantics are minimal but driver-friendly: bit31 clears
+    // immediately and the low byte returns the resulting register value.
+    reg [7:0] cardreader_pme_force_ctl;
+    reg [7:0] cardreader_autoload_cfg1;
+    reg [7:0] cardreader_pm_ctrl3;
+
+    always @(posedge clk) begin
+        if (rst) begin
+            cardreader_pme_force_ctl <= 8'h20;
+            cardreader_autoload_cfg1 <= 8'h00;
+            cardreader_pm_ctrl3      <= 8'h00;
+            reg_0x00000010           <= 32'h00000000;
+            reg_0x00000014           <= 32'h00010000;
+        end else begin
+            if (wr_valid && (wr_addr[31:0] & 32'hFFFFFFFC) == 32'h00000014) begin
+                if (wr_be[3] && wr_data[31]) reg_0x00000014[31] <= 1'b0;
+            end
+            if (wr_valid && (wr_addr[31:0] & 32'hFFFFFFFC) == 32'h00000010 && wr_data[31]) begin
+                case (wr_data[29:16])
+                    14'h3F78: begin
+                        if (wr_data[30])
+                            cardreader_pme_force_ctl <= (cardreader_pme_force_ctl & ~wr_data[15:8]) | (wr_data[7:0] & wr_data[15:8]);
+                        reg_0x00000010 <= {2'b00, 14'h3F78, 8'h00, (wr_data[30] ? ((cardreader_pme_force_ctl & ~wr_data[15:8]) | (wr_data[7:0] & wr_data[15:8])) : cardreader_pme_force_ctl)};
+                    end
+                    14'h3F7C: begin
+                        if (wr_data[30])
+                            cardreader_autoload_cfg1 <= (cardreader_autoload_cfg1 & ~wr_data[15:8]) | (wr_data[7:0] & wr_data[15:8]);
+                        reg_0x00000010 <= {2'b00, 14'h3F7C, 8'h00, (wr_data[30] ? ((cardreader_autoload_cfg1 & ~wr_data[15:8]) | (wr_data[7:0] & wr_data[15:8])) : cardreader_autoload_cfg1)};
+                    end
+                    14'h3F7E: begin
+                        if (wr_data[30])
+                            cardreader_pm_ctrl3 <= (cardreader_pm_ctrl3 & ~wr_data[15:8]) | (wr_data[7:0] & wr_data[15:8]);
+                        reg_0x00000010 <= {2'b00, 14'h3F7E, 8'h00, (wr_data[30] ? ((cardreader_pm_ctrl3 & ~wr_data[15:8]) | (wr_data[7:0] & wr_data[15:8])) : cardreader_pm_ctrl3)};
+                    end
+                    default: begin
+                        reg_0x00000010 <= {2'b00, wr_data[29:16], 8'h00, 8'h00};
+                    end
+                endcase
+                reg_0x00000014[31] <= 1'b1; // CMD_DONE_INT
             end
         end
     end
@@ -1044,13 +1225,54 @@ module pcileech_bar_impl_device #(
 {{ end }}{{ end }}        end
         else if (wr_valid) begin
             case (wr_offset & 32'hFFFFFFFC)
-{{ range .BARModel.Registers }}{{ if and (ne .RWMask 0) (not .IsRW1C) (not .IsFSMDriven) }}                32'h{{ hex08 (alignedOffset .Offset) }}: begin
+{{ range .BARModel.Registers }}{{ if and (ne .RWMask 0) .IsRW1C (not .IsFSMDriven) (not (and (eq $.DeviceClass "nvme") (or (eq .Offset 0x24) (eq .Offset 0x28) (eq .Offset 0x2C) (eq .Offset 0x30) (eq .Offset 0x34)))) }}                32'h{{ hex08 (alignedOffset .Offset) }}: begin
+                    if (wr_be[0]) reg_0x{{ hex08 .Offset }}[7:0]   <= (reg_0x{{ hex08 .Offset }}[7:0]   & ~(8'h{{ hex02 (index (rw1CMaskBytes .RW1CMask) 0 }} & wr_data[7:0])) | (wr_data[7:0] & 8'h{{ hex02 (index (rwSetBytes .RWMask .RW1CMask) 0) }});
+                    if (wr_be[1]) reg_0x{{ hex08 .Offset }}[15:8]  <= (reg_0x{{ hex08 .Offset }}[15:8]  & ~(8'h{{ hex02 (index (rw1CMaskBytes .RW1CMask) 1 }} & wr_data[15:8])) | (wr_data[15:8] & 8'h{{ hex02 (index (rwSetBytes .RWMask .RW1CMask) 1) }});
+                    if (wr_be[2]) reg_0x{{ hex08 .Offset }}[23:16] <= (reg_0x{{ hex08 .Offset }}[23:16] & ~(8'h{{ hex02 (index (rw1CMaskBytes .RW1CMask) 2 }} & wr_data[23:16])) | (wr_data[23:16] & 8'h{{ hex02 (index (rwSetBytes .RWMask .RW1CMask) 2) }});
+                    if (wr_be[3]) reg_0x{{ hex08 .Offset }}[31:24] <= (reg_0x{{ hex08 .Offset }}[31:24] & ~(8'h{{ hex02 (index (rw1CMaskBytes .RW1CMask) 3 }} & wr_data[31:24])) | (wr_data[31:24] & 8'h{{ hex02 (index (rwSetBytes .RWMask .RW1CMask) 3) }});
+                end
+{{ end }}{{ end }}{{ range .BARModel.Registers }}{{ if and (ne .RWMask 0) (not .IsRW1C) (not .IsFSMDriven) (not (and (eq $.DeviceClass "nvme") (or (eq .Offset 0x24) (eq .Offset 0x28) (eq .Offset 0x2C) (eq .Offset 0x30) (eq .Offset 0x34)))) }}                32'h{{ hex08 (alignedOffset .Offset) }}: begin
                     if (wr_be[0]) reg_0x{{ hex08 .Offset }}[7:0]   <= (reg_0x{{ hex08 .Offset }}[7:0]   & ~8'h{{ hex02 (index (rwMaskBytes .RWMask) 0) }}) | (wr_data[7:0]   & 8'h{{ hex02 (index (rwMaskBytes .RWMask) 0) }});
                     if (wr_be[1]) reg_0x{{ hex08 .Offset }}[15:8]  <= (reg_0x{{ hex08 .Offset }}[15:8]  & ~8'h{{ hex02 (index (rwMaskBytes .RWMask) 1) }}) | (wr_data[15:8]  & 8'h{{ hex02 (index (rwMaskBytes .RWMask) 1) }});
                     if (wr_be[2]) reg_0x{{ hex08 .Offset }}[23:16] <= (reg_0x{{ hex08 .Offset }}[23:16] & ~8'h{{ hex02 (index (rwMaskBytes .RWMask) 2) }}) | (wr_data[23:16] & 8'h{{ hex02 (index (rwMaskBytes .RWMask) 2) }});
                     if (wr_be[3]) reg_0x{{ hex08 .Offset }}[31:24] <= (reg_0x{{ hex08 .Offset }}[31:24] & ~8'h{{ hex02 (index (rwMaskBytes .RWMask) 3) }}) | (wr_data[31:24] & 8'h{{ hex02 (index (rwMaskBytes .RWMask) 3) }});
                 end
-{{ end }}{{ end }}                default: begin
+{{ end }}{{ end }}{{ if eq .DeviceClass "nvme" }}
+                // Admin-queue registers (AQA/ASQ/ACQ) are writable ONLY while the
+                // controller is disabled (CC.EN=0). A real NVMe controller ignores
+                // writes to these once enabled; some drivers re-probe them and a
+                // silent accept here corrupts the queue pointers mid-operation.
+                32'h00000024: if (!reg_0x00000014[0]) begin
+                    if (wr_be[0]) reg_0x00000024[7:0]   <= (reg_0x00000024[7:0]   & ~8'h0F) | (wr_data[7:0]   & 8'h0F);
+                    if (wr_be[1]) reg_0x00000024[15:8]  <= (reg_0x00000024[15:8]  & ~8'h0F) | (wr_data[15:8]  & 8'h0F);
+                    if (wr_be[2]) reg_0x00000024[23:16] <= (reg_0x00000024[23:16] & ~8'h0F) | (wr_data[23:16] & 8'h0F);
+                    if (wr_be[3]) reg_0x00000024[31:24] <= (reg_0x00000024[31:24] & ~8'h0F) | (wr_data[31:24] & 8'h0F);
+                end
+                32'h00000028: if (!reg_0x00000014[0]) begin
+                    if (wr_be[0]) reg_0x00000028[7:0]   <= (reg_0x00000028[7:0]   & ~8'h00) | (wr_data[7:0]   & 8'h00);
+                    if (wr_be[1]) reg_0x00000028[15:8]  <= (reg_0x00000028[15:8]  & ~8'h00) | (wr_data[15:8]  & 8'h00);
+                    if (wr_be[2]) reg_0x00000028[23:16] <= (reg_0x00000028[23:16] & ~8'hF0) | (wr_data[23:16] & 8'hF0);
+                    if (wr_be[3]) reg_0x00000028[31:24] <= (reg_0x00000028[31:24] & ~8'hFF) | (wr_data[31:24] & 8'hFF);
+                end
+                32'h0000002C: if (!reg_0x00000014[0]) begin
+                    if (wr_be[0]) reg_0x0000002C[7:0]   <= wr_data[7:0];
+                    if (wr_be[1]) reg_0x0000002C[15:8]  <= wr_data[15:8];
+                    if (wr_be[2]) reg_0x0000002C[23:16] <= wr_data[23:16];
+                    if (wr_be[3]) reg_0x0000002C[31:24] <= wr_data[31:24];
+                end
+                32'h00000030: if (!reg_0x00000014[0]) begin
+                    if (wr_be[0]) reg_0x00000030[7:0]   <= (reg_0x00000030[7:0]   & ~8'h00) | (wr_data[7:0]   & 8'h00);
+                    if (wr_be[1]) reg_0x00000030[15:8]  <= (reg_0x00000030[15:8]  & ~8'h00) | (wr_data[15:8]  & 8'h00);
+                    if (wr_be[2]) reg_0x00000030[23:16] <= (reg_0x00000030[23:16] & ~8'hF0) | (wr_data[23:16] & 8'hF0);
+                    if (wr_be[3]) reg_0x00000030[31:24] <= (reg_0x00000030[31:24] & ~8'hFF) | (wr_data[31:24] & 8'hFF);
+                end
+                32'h00000034: if (!reg_0x00000014[0]) begin
+                    if (wr_be[0]) reg_0x00000034[7:0]   <= wr_data[7:0];
+                    if (wr_be[1]) reg_0x00000034[15:8]  <= wr_data[15:8];
+                    if (wr_be[2]) reg_0x00000034[23:16] <= wr_data[23:16];
+                    if (wr_be[3]) reg_0x00000034[31:24] <= wr_data[31:24];
+                end
+{{ end }}                default: begin
                     // unregistered offset - ignore write
                 end
             endcase
@@ -1088,18 +1310,40 @@ module pcileech_bar_impl_device #(
     reg [87:0] rd_req_ctx_d1;
     reg        rd_req_valid_d1;
     reg [31:0] rd_data_d1;
-
+{{ range .BARModel.Registers }}{{ if .SequentialRead }}{{ $reg := . }}    // sequential-read state for {{ $reg.Name }} (0x{{ hex08 $reg.Offset }})
+    reg [7:0] seqcnt_0x{{ hex08 $reg.Offset }};
+{{ if $reg.SequentialValues }}    reg [31:0] seqrom_0x{{ hex08 $reg.Offset }} [0:{{ sub (len $reg.SequentialValues) 1 }}];
+{{ range $i, $v := $reg.SequentialValues }}    initial seqrom_0x{{ hex08 $reg.Offset }}[{{ $i }}] = 32'h{{ printf "%08X" $v }};
+{{ end }}{{ end }}{{ end }}{{ end }}
     always @(posedge clk) begin
         rd_req_ctx_d1   <= rd_req_ctx;
         rd_req_valid_d1 <= rd_req_valid;
-
+{{ range .BARModel.Registers }}{{ if .SequentialRead }}        if (rst) seqcnt_0x{{ hex08 .Offset }} <= 8'd0;
+{{ end }}{{ end }}
         if (rd_req_valid) begin
             case (rd_req_offset & 32'hFFFFFFFC)
 {{ range .BARModel.Registers }}{{ if and (eq .Offset 0x24) (eq $.DeviceClass "audio") }}                32'h{{ hex08 (alignedOffset .Offset) }}: rd_data_d1 <= {reg_0x00000060[0], reg_0x00000060[0], 30'h0};  // INTSTS: GIS=CIS=INTFL
 {{ else if and (eq .Offset 0x48) (eq $.DeviceClass "audio") }}                32'h{{ hex08 (alignedOffset .Offset) }}: rd_data_d1 <= {reg_0x00000048[31:24], reg_0x00000048[23:16], 8'h00, reg_0x00000048[7:0]};  // live CORBRP + CORBWP
 {{ else if and (eq .Offset 0x58) (eq $.DeviceClass "audio") }}                32'h{{ hex08 (alignedOffset .Offset) }}: rd_data_d1 <= {reg_0x00000058[31:16], 8'h00, rirb_wp_count};  // live RIRBWP + RINTCNT
+{{ else if .SequentialRead }}                32'h{{ hex08 (alignedOffset .Offset) }}: begin
+{{ if .SequentialValues }}                    rd_data_d1 <= seqrom_0x{{ hex08 .Offset }}[seqcnt_0x{{ hex08 .Offset }}];
+                    if (seqcnt_0x{{ hex08 .Offset }} >= 8'd{{ sub (len .SequentialValues) 1 }}) seqcnt_0x{{ hex08 .Offset }} <= 8'd0;
+                    else seqcnt_0x{{ hex08 .Offset }} <= seqcnt_0x{{ hex08 .Offset }} + 8'd1;
+{{ else }}                    // Sequential read fallback: value advances by 1 on each read.
+                    rd_data_d1 <= reg_0x{{ hex08 .Offset }} + {30'h0, seqcnt_0x{{ hex08 .Offset }}[1:0]};
+                    seqcnt_0x{{ hex08 .Offset }} <= seqcnt_0x{{ hex08 .Offset }} + 8'd1;
+{{ end }}                end
 {{ else }}                32'h{{ hex08 (alignedOffset .Offset) }}: rd_data_d1 <= reg_0x{{ hex08 .Offset }};
-{{ end }}{{ end }}                default: rd_data_d1 <= 32'h00000000;
+{{ end }}{{ end }}{{ if .BARModel.StaticShadow }}                // Static shadow: donor-derived read-only words for offsets the
+                // dynamic register file does not cover, so the full BAR0
+                // mirrors the donor for static registers.
+{{ range .BARModel.StaticShadow }}                32'h{{ hex08 .Offset }}: rd_data_d1 <= 32'h{{ printf "%08X" .Value }};
+{{ end }}{{ end }}                // Unmapped read: return a recognizable offset-echo fill
+                // (0xFFFFF0xx) instead of zero. Real devices rarely read back
+                // pure 0 for unmapped offsets; a deterministic signature aids
+                // debugging and avoids some heuristic scanners that flag
+                // all-zero BARs as suspicious.
+                default: rd_data_d1 <= {24'hFFFFF0, rd_req_offset[7:0]};
             endcase
         end
         else begin

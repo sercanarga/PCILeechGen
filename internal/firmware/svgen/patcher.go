@@ -141,6 +141,13 @@ func (p *SVPatcher) patchFile(filename string, patches []svRegexPatch) error {
 // patchCfgSV patches pcileech_pcie_cfg_a7.sv with DSN and power management
 // settings. In addition to DSN, it forces the IP core to reject ASPM L0s/L1
 // transitions so the link stays in L0 even if the root complex requests it.
+//
+// NOTE on legacy INTx: full INTx wiring (routing cfg_interrupt /
+// cfg_interrupt_assert / cfg_pciecap_interrupt_msgnum from pcileech_intx_gen.sv
+// into the board cfg module's IP ports) is a board-top integration that requires
+// the pcileech-fpga submodule source to anchor the regex. It is therefore NOT
+// applied here, and the output writer does not auto-emit/advertise INTx until
+// that board integration exists.
 func (p *SVPatcher) patchCfgSV() error {
 	var patches []svRegexPatch
 

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/sercanarga/pcileechgen/internal/donor/mmio"
 	"github.com/sercanarga/pcileechgen/internal/pci"
 )
 
@@ -302,6 +303,44 @@ func TestDeviceContextJSONWithBARContents(t *testing.T) {
 	}
 }
 
+func TestDeviceContextJSONWithTraceOverlay(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = 256
+
+	ctx := &DeviceContext{
+		ConfigSpace: cs,
+		BARTraceOverlays: map[int]*mmio.TraceBAROverlay{
+			0: {
+				Sequential: map[uint32][]uint32{0x10: {0xDEADBEEF, 0x2, 0x1}},
+				Static:     map[uint32]uint32{0x20: 0xCAFEBABE},
+			},
+		},
+	}
+
+	jsonData, err := ctx.ToJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := FromJSON(jsonData)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if loaded.BARTraceOverlays[0].Static[0x20] != 0xCAFEBABE {
+		t.Fatalf("static overlay lost in roundtrip")
+	}
+}
+
+func TestDeviceContextJSONRejectsShortNVMeIdentify(t *testing.T) {
+	if _, err := FromJSON([]byte(`{"nvme_identify_ctrl":"AAAA"}`)); err == nil {
+		t.Fatal("expected short NVMe identify controller page to fail")
+	}
+	if _, err := FromJSON([]byte(`{"nvme_identify_ns":"AAAA"}`)); err == nil {
+		t.Fatal("expected short NVMe identify namespace page to fail")
+	}
+}
+
 func TestSaveAndLoadContext(t *testing.T) {
 	cs := pci.NewConfigSpace()
 	cs.Size = 256
@@ -422,5 +461,44 @@ func TestBarCriticalClass(t *testing.T) {
 	}
 	if barCriticalClass(0xFF0000) {
 		t.Error("Unknown class should not be BAR-critical")
+	}
+}
+
+func TestDeviceContextJSONWithNVMeIdentify(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = 256
+	cs.WriteU16(0x00, 0x144D)
+	cs.WriteU16(0x02, 0xA808)
+
+	ctx := &DeviceContext{
+		Device: pci.PCIDevice{
+			BDF:      pci.BDF{Domain: 0, Bus: 3, Device: 0, Function: 0},
+			VendorID: 0x144D,
+			DeviceID: 0xA808,
+		},
+		ConfigSpace:  cs,
+		NVMeIdentify: &NVMeIdentifyCapture{HasController: true, HasNamespace: true},
+	}
+	ctx.NVMeIdentify.Controller[0] = 0x4E
+	ctx.NVMeIdentify.Controller[4095] = 0x01
+	ctx.NVMeIdentify.Namespace[0] = 0x99
+
+	jsonData, err := ctx.ToJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := FromJSON(jsonData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.NVMeIdentify == nil || !loaded.NVMeIdentify.HasController || !loaded.NVMeIdentify.HasNamespace {
+		t.Fatal("NVMeIdentify flags not roundtripped")
+	}
+	if loaded.NVMeIdentify.Controller[0] != 0x4E || loaded.NVMeIdentify.Controller[4095] != 0x01 {
+		t.Errorf("controller page bytes not roundtripped: 0x%02X 0x%02X", loaded.NVMeIdentify.Controller[0], loaded.NVMeIdentify.Controller[4095])
+	}
+	if loaded.NVMeIdentify.Namespace[0] != 0x99 {
+		t.Errorf("namespace page byte not roundtripped: 0x%02X", loaded.NVMeIdentify.Namespace[0])
 	}
 }

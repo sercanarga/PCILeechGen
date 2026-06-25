@@ -88,7 +88,8 @@ func TestMSIVectorsToTCL(t *testing.T) {
 func TestBuildBAR0Config_MemoryBAR(t *testing.T) {
 	// Memory BAR - Xilinx IP should be configured with provided size (e.g. 4 KB default) to match
 	// the FPGA's BRAM-served region size (CappedBAR0Size may be larger on big-BRAM boards or large donor).
-	sz := 4096; cfg := buildBAR0Config(sz, nil)
+	sz := 4096
+	cfg := buildBAR0Config(sz, nil)
 	if !cfg.Enabled {
 		t.Fatal("BAR0 should be enabled")
 	}
@@ -104,7 +105,8 @@ func TestBuildBAR0Config_MemoryBAR(t *testing.T) {
 func TestBuildBAR0Config_IOBAR(t *testing.T) {
 	// IO BAR donor: BAR0 must still be enabled as memory.
 	// (dynamic Capped +) scrubber forces BAR0 to 32-bit memory regardless of donor type.
-	sz := 4096; cfg := buildBAR0Config(sz, nil)
+	sz := 4096
+	cfg := buildBAR0Config(sz, nil)
 	if !cfg.Enabled {
 		t.Fatal("BAR0 should be enabled even with IO-only donor")
 	}
@@ -119,7 +121,8 @@ func TestBuildBAR0Config_IOBAR(t *testing.T) {
 func TestBuildBAR0Config_NoBARs(t *testing.T) {
 	// no donor BARs: BAR0 must still be enabled.
 	// the (CappedBAR0Size + scrub) determines BAR0 size (4KB default on standard boards) 32-bit memory for all devices.
-	sz := 4096; cfg := buildBAR0Config(sz, nil)
+	sz := 4096
+	cfg := buildBAR0Config(sz, nil)
 	if !cfg.Enabled {
 		t.Fatal("BAR0 should always be enabled")
 	}
@@ -128,6 +131,69 @@ func TestBuildBAR0Config_NoBARs(t *testing.T) {
 	}
 	if cfg.Is64bit {
 		t.Error("BAR0 should be 32-bit")
+	}
+}
+
+func TestBuildBAR0Config_RealtekWiFiUsesVendorProfile(t *testing.T) {
+	ctx := &donor.DeviceContext{
+		Device: pci.PCIDevice{
+			VendorID:  0x10EC,
+			DeviceID:  0x8179,
+			ClassCode: 0x028000,
+		},
+	}
+	cfg := buildBAR0Config(4096, ctx)
+	if cfg.Is64bit {
+		t.Fatal("Realtek RTL8188EE fallback BAR0 should be 32-bit")
+	}
+}
+
+func TestBuildBAR0Config_UnknownRealtekWiFiUsesGenericProfile(t *testing.T) {
+	ctx := &donor.DeviceContext{
+		Device: pci.PCIDevice{
+			VendorID:  0x10EC,
+			DeviceID:  0xFFFF,
+			ClassCode: 0x028000,
+		},
+	}
+	cfg := buildBAR0Config(4096, ctx)
+	if !cfg.Is64bit {
+		t.Fatal("unknown Realtek Wi-Fi should use generic 64-bit Wi-Fi fallback")
+	}
+}
+
+func TestBuildBAR0Config_ProfileFallbackWhenConfigBARZero(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	ctx := &donor.DeviceContext{
+		Device: pci.PCIDevice{
+			VendorID:  0x168C,
+			ClassCode: 0x028000,
+		},
+		ConfigSpace: cs,
+	}
+	cfg := buildBAR0Config(8192, ctx)
+	if !cfg.Is64bit {
+		t.Fatal("Atheros profile fallback should keep a 64-bit BAR0 when config BAR0 is zero")
+	}
+}
+
+func TestBuildBAR0Config_PrefersConfigBARWhenSysfsRawZero(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	cs.WriteU32(0x10, 0x00000004) // 64-bit memory BAR type
+	ctx := &donor.DeviceContext{
+		Device: pci.PCIDevice{
+			VendorID:  0x10EC,
+			DeviceID:  0x8179,
+			ClassCode: 0x028000,
+		},
+		BARs:        []pci.BAR{{Index: 0, RawValue: 0}},
+		ConfigSpace: cs,
+	}
+	cfg := buildBAR0Config(4096, ctx)
+	if !cfg.Is64bit {
+		t.Fatal("config-space BAR0 type should win when sysfs RawValue is zero")
 	}
 }
 

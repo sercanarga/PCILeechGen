@@ -240,3 +240,78 @@ func TestIdentifyController_DifferentVendors(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildIdentifyDataFromCapture_PreferCaptured(t *testing.T) {
+	ids := sampleIDs()
+	// Build a synthetic capture with a distinctive model string.
+	var cap Capture
+	cap.HasController = true
+	cap.HasNamespace = true
+	// Mark controller captured page so it is not all-zero.
+	cap.Controller[0x018] = 'D' // MN start
+	cap.Controller[0x019] = 'O'
+	cap.Controller[0x01A] = 'N'
+	cap.Controller[0x01B] = 'O'
+	cap.Controller[0x01C] = 'R'
+	// Namespace captured marker.
+	cap.Namespace[0x000] = 0xAA
+	cap.Namespace[0x001] = 0xBB
+
+	id := BuildIdentifyDataFromCapture(ids, nil, &cap)
+	if string(id.Controller[0x018:0x01D]) != "DONOR" {
+		t.Errorf("captured MN not preserved: got %q", id.Controller[0x018:0x01D])
+	}
+	if id.Namespace[0x000] != 0xAA || id.Namespace[0x001] != 0xBB {
+		t.Errorf("captured namespace not preserved verbatim")
+	}
+}
+
+func TestBuildIdentifyDataFromCapture_MergeIdentity(t *testing.T) {
+	ids := sampleIDs()
+	ids.VendorID = 0x8086
+	ids.SubsysVendorID = 0x8086
+	barData := make([]byte, 0x10)
+	binary.LittleEndian.PutUint32(barData[0x08:0x0C], 0x00010300) // NVMe 1.3
+
+	var cap Capture
+	cap.HasController = true
+	// Captured page with a *wrong* VID and VER to confirm merge overrides them.
+	binary.LittleEndian.PutUint16(cap.Controller[0x000:], 0xDEAD)
+	binary.LittleEndian.PutUint16(cap.Controller[0x002:], 0xBEEF)
+	binary.LittleEndian.PutUint32(cap.Controller[0x050:], 0x00020000) // wrong VER
+	// Non-zero MN so the page isn't treated as all-zero.
+	cap.Controller[0x018] = 'X'
+	cap.HasNamespace = false
+
+	id := BuildIdentifyDataFromCapture(ids, barData, &cap)
+	if got := binary.LittleEndian.Uint16(id.Controller[0x000:]); got != 0x8086 {
+		t.Errorf("VID merge: got 0x%04X, want 0x8086", got)
+	}
+	if got := binary.LittleEndian.Uint16(id.Controller[0x002:]); got != 0x8086 {
+		t.Errorf("SSVID merge: got 0x%04X, want 0x8086", got)
+	}
+	if got := binary.LittleEndian.Uint32(id.Controller[0x050:]); got != 0x00010300 {
+		t.Errorf("VER merge: got 0x%08X, want 0x00010300", got)
+	}
+	// Namespace falls back to synthesis.
+	if id.Namespace[0x000] == 0 && id.Namespace[0x008] == 0 {
+		t.Errorf("namespace should be synthesized (non-zero NSZE)")
+	}
+}
+
+func TestBuildIdentifyDataFromCapture_FallbackWhenEmpty(t *testing.T) {
+	ids := sampleIDs()
+	// No capture at all -> pure synthesis.
+	id := BuildIdentifyDataFromCapture(ids, nil, nil)
+	if id == nil || id.Controller[0x000] == 0 {
+		t.Errorf("nil capture should synthesize")
+	}
+	// All-zero captured controller falls back to synthesis (keeps merged VID).
+	var cap Capture
+	cap.HasController = true
+	cap.HasNamespace = true
+	id2 := BuildIdentifyDataFromCapture(ids, nil, &cap)
+	if got := binary.LittleEndian.Uint16(id2.Controller[0x000:]); got != ids.VendorID {
+		t.Errorf("zero-page fallback VID: got 0x%04X, want 0x%04X", got, ids.VendorID)
+	}
+}

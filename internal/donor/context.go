@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/sercanarga/pcileechgen/internal/donor/mmio"
 	"github.com/sercanarga/pcileechgen/internal/pci"
 )
 
@@ -28,30 +29,53 @@ type DeviceContext struct {
 	ToolVersion string    `json:"tool_version"`
 	Hostname    string    `json:"hostname"`
 
-	Device          pci.PCIDevice       `json:"device"`
-	ConfigSpace     *pci.ConfigSpace    `json:"config_space"`
-	BARs            []pci.BAR           `json:"bars"`
-	BARContents     map[int][]byte      `json:"-"` // BAR memory contents, keyed by BAR index
-	BARProfiles     map[int]*BARProfile `json:"-"` // probing results, keyed by BAR index
-	Capabilities    []pci.Capability    `json:"capabilities"`
-	ExtCapabilities []pci.ExtCapability `json:"ext_capabilities,omitempty"`
-	MSIXData        *MSIXData           `json:"msix_data,omitempty"`
+	Device      pci.PCIDevice       `json:"device"`
+	ConfigSpace *pci.ConfigSpace    `json:"config_space"`
+	BARs        []pci.BAR           `json:"bars"`
+	BARContents map[int][]byte      `json:"-"` // BAR memory contents, keyed by BAR index
+	BARProfiles map[int]*BARProfile `json:"-"` // probing results, keyed by BAR index
+	// BARTraceOverlays holds conservative trace-derived readback overlays keyed
+	// by BAR index.
+	BARTraceOverlays map[int]*mmio.TraceBAROverlay `json:"-"`
+	MMIOTraces       map[int]*mmio.TraceResult     `json:"-"`
+	Capabilities     []pci.Capability              `json:"capabilities"`
+	ExtCapabilities  []pci.ExtCapability           `json:"ext_capabilities,omitempty"`
+	MSIXData         *MSIXData                     `json:"msix_data,omitempty"`
+
+	// NVMeIdentify holds donor-captured Identify Controller/Namespace data.
+	// When present and valid, the generated firmware mirrors the donor's real
+	// model/serial/FRU/VER fields instead of synthesized defaults.
+	NVMeIdentify *NVMeIdentifyCapture `json:"-"`
+}
+
+// NVMeIdentifyCapture holds donor-captured NVMe Identify responses. Each
+// field is a full 4096-byte page (CNS=1 Controller, CNS=0 NSID=1 Namespace).
+// Zero-value arrays are treated as "not captured" and fall back to synthesis.
+type NVMeIdentifyCapture struct {
+	Controller    [4096]byte
+	Namespace     [4096]byte
+	HasController bool
+	HasNamespace  bool
 }
 
 // JSON wire format - config space as hex words, BARs as base64.
 type deviceContextJSON struct {
-	CollectedAt     time.Time              `json:"collected_at"`
-	ToolVersion     string                 `json:"tool_version"`
-	Hostname        string                 `json:"hostname"`
-	Device          pci.PCIDevice          `json:"device"`
-	ConfigSpaceHex  []string               `json:"config_space_hex"`
-	ConfigSpaceSize int                    `json:"config_space_size"`
-	BARs            []pci.BAR              `json:"bars"`
-	BARContents     map[string]string      `json:"bar_contents,omitempty"` // key: BAR index, value: base64
-	BARProfiles     map[string]*BARProfile `json:"bar_profiles,omitempty"`
-	Capabilities    []pci.Capability       `json:"capabilities"`
-	ExtCapabilities []pci.ExtCapability    `json:"ext_capabilities,omitempty"`
-	MSIXData        *MSIXData              `json:"msix_data,omitempty"`
+	CollectedAt      time.Time                        `json:"collected_at"`
+	ToolVersion      string                           `json:"tool_version"`
+	Hostname         string                           `json:"hostname"`
+	Device           pci.PCIDevice                    `json:"device"`
+	ConfigSpaceHex   []string                         `json:"config_space_hex"`
+	ConfigSpaceSize  int                              `json:"config_space_size"`
+	BARs             []pci.BAR                        `json:"bars"`
+	BARContents      map[string]string                `json:"bar_contents,omitempty"` // key: BAR index, value: base64
+	BARProfiles      map[string]*BARProfile           `json:"bar_profiles,omitempty"`
+	BARTraceOverlays map[string]*mmio.TraceBAROverlay `json:"bar_trace_overlays,omitempty"`
+	MMIOTraces       map[string]*mmio.TraceResult     `json:"mmio_traces,omitempty"`
+	Capabilities     []pci.Capability                 `json:"capabilities"`
+	ExtCapabilities  []pci.ExtCapability              `json:"ext_capabilities,omitempty"`
+	MSIXData         *MSIXData                        `json:"msix_data,omitempty"`
+	NVMeIdentifyCtrl string                           `json:"nvme_identify_ctrl,omitempty"` // base64 4KB
+	NVMeIdentifyNS   string                           `json:"nvme_identify_ns,omitempty"`   // base64 4KB
 }
 
 func (dc *DeviceContext) MarshalJSON() ([]byte, error) {
@@ -85,6 +109,28 @@ func (dc *DeviceContext) MarshalJSON() ([]byte, error) {
 		j.BARProfiles = make(map[string]*BARProfile)
 		for idx, profile := range dc.BARProfiles {
 			j.BARProfiles[strconv.Itoa(idx)] = profile
+		}
+	}
+
+	if len(dc.BARTraceOverlays) > 0 {
+		j.BARTraceOverlays = make(map[string]*mmio.TraceBAROverlay)
+		for idx, overlay := range dc.BARTraceOverlays {
+			j.BARTraceOverlays[strconv.Itoa(idx)] = overlay
+		}
+	}
+	if len(dc.MMIOTraces) > 0 {
+		j.MMIOTraces = make(map[string]*mmio.TraceResult)
+		for idx, trace := range dc.MMIOTraces {
+			j.MMIOTraces[strconv.Itoa(idx)] = trace
+		}
+	}
+
+	if dc.NVMeIdentify != nil {
+		if dc.NVMeIdentify.HasController {
+			j.NVMeIdentifyCtrl = base64.StdEncoding.EncodeToString(dc.NVMeIdentify.Controller[:])
+		}
+		if dc.NVMeIdentify.HasNamespace {
+			j.NVMeIdentifyNS = base64.StdEncoding.EncodeToString(dc.NVMeIdentify.Namespace[:])
 		}
 	}
 
@@ -151,6 +197,56 @@ func (dc *DeviceContext) UnmarshalJSON(data []byte) error {
 			}
 			dc.BARProfiles[idx] = profile
 		}
+	}
+
+	// Reconstruct BAR trace overlays
+	if len(j.BARTraceOverlays) > 0 {
+		dc.BARTraceOverlays = make(map[int]*mmio.TraceBAROverlay)
+		for idxStr, overlay := range j.BARTraceOverlays {
+			idx, err := strconv.Atoi(idxStr)
+			if err != nil {
+				return fmt.Errorf("invalid BAR trace overlay index %q: %w", idxStr, err)
+			}
+			dc.BARTraceOverlays[idx] = overlay
+		}
+	}
+
+	if len(j.MMIOTraces) > 0 {
+		dc.MMIOTraces = make(map[int]*mmio.TraceResult)
+		for idxStr, trace := range j.MMIOTraces {
+			idx, err := strconv.Atoi(idxStr)
+			if err != nil {
+				return fmt.Errorf("invalid MMIO trace BAR index %q: %w", idxStr, err)
+			}
+			dc.MMIOTraces[idx] = trace
+		}
+	}
+
+	if j.NVMeIdentifyCtrl != "" || j.NVMeIdentifyNS != "" {
+		cap := &NVMeIdentifyCapture{}
+		if j.NVMeIdentifyCtrl != "" {
+			dec, err := base64.StdEncoding.DecodeString(j.NVMeIdentifyCtrl)
+			if err != nil {
+				return fmt.Errorf("failed to decode NVMe identify controller: %w", err)
+			}
+			if len(dec) != 4096 {
+				return fmt.Errorf("NVMe identify controller must decode to 4096 bytes, got %d", len(dec))
+			}
+			copy(cap.Controller[:], dec)
+			cap.HasController = true
+		}
+		if j.NVMeIdentifyNS != "" {
+			dec, err := base64.StdEncoding.DecodeString(j.NVMeIdentifyNS)
+			if err != nil {
+				return fmt.Errorf("failed to decode NVMe identify namespace: %w", err)
+			}
+			if len(dec) != 4096 {
+				return fmt.Errorf("NVMe identify namespace must decode to 4096 bytes, got %d", len(dec))
+			}
+			copy(cap.Namespace[:], dec)
+			cap.HasNamespace = true
+		}
+		dc.NVMeIdentify = cap
 	}
 
 	return nil

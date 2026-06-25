@@ -1,6 +1,7 @@
 package board
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -74,6 +75,50 @@ func TestBoardPaths(t *testing.T) {
 	zdma, _ := Find("ZDMA")
 	if zdma.BuildTCLPath(libDir) != libDir+"/ZDMA/vivado_build_100t.tcl" {
 		t.Errorf("ZDMA BuildTCLPath() = %q", zdma.BuildTCLPath(libDir))
+	}
+}
+
+func TestFindBoard_returnsFlashMetadata_whenBoardSupportsFlashing(t *testing.T) {
+	// Given
+	b, err := Find("acorn")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Then
+	if b.Flash == nil {
+		t.Fatal("Flash metadata should be present")
+	}
+	if b.Flash.Tool != "openFPGALoader" {
+		t.Errorf("Flash.Tool = %q, want openFPGALoader", b.Flash.Tool)
+	}
+	if b.Flash.OpenFPGALoaderBoard != "acornCle215" {
+		t.Errorf("Flash.OpenFPGALoaderBoard = %q, want acornCle215", b.Flash.OpenFPGALoaderBoard)
+	}
+	if b.Flash.Target != "flash" {
+		t.Errorf("Flash.Target = %q, want flash", b.Flash.Target)
+	}
+}
+
+func TestAllBoards_haveFlashMetadata(t *testing.T) {
+	// Given
+	boards := All()
+
+	// Then
+	for _, b := range boards {
+		if b.Flash == nil {
+			t.Errorf("Board %q missing flash metadata", b.Name)
+			continue
+		}
+		if b.Flash.Tool == "" {
+			t.Errorf("Board %q missing flash tool", b.Name)
+		}
+		if b.Flash.Target == "" {
+			t.Errorf("Board %q missing flash target", b.Name)
+		}
+		if b.Flash.InstructionsURL == "" {
+			t.Errorf("Board %q missing flash instructions URL", b.Name)
+		}
 	}
 }
 
@@ -192,5 +237,15 @@ func TestFindBoardErrorMessage(t *testing.T) {
 	errMsg := err.Error()
 	if len(errMsg) < 100 {
 		t.Errorf("Error message too short, should list available boards: %s", errMsg)
+	}
+}
+
+func TestFindBoard_50THint(t *testing.T) {
+	_, err := Find("CaptainDMA_50T")
+	if err == nil {
+		t.Fatal("expected error for unsupported 50T board")
+	}
+	if !strings.Contains(err.Error(), "XC7A50T") {
+		t.Fatalf("expected 50T hint in error, got: %s", err)
 	}
 }

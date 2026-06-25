@@ -6,7 +6,15 @@
         "max_link_speed": 2,
         "top_module": "pcileech_squirrel_top",
         "project_dir": "PCIeSquirrel",
-        "tcl_file": "vivado_generate_project.tcl"
+        "tcl_file": "vivado_generate_project.tcl",
+        "flash": {
+            "tool": "OpenOCD",
+            "cable": "built-in-update-port",
+            "target": "flash",
+            "config": "flash_screamer_squirrel.cfg",
+            "instructions_url": "https://docs.lambdaconcept.com/screamer/programming.html",
+            "notes": "Use the LambdaConcept Screamer Squirrel OpenOCD flashing script; the built-in update port is not directly supported by Vivado."
+        }
     },
     {
         "name": "ScreamerM2",
@@ -15,7 +23,15 @@
         "max_link_speed": 2,
         "top_module": "pcileech_screamer_m2_top",
         "project_dir": "ScreamerM2",
-        "tcl_file": "vivado_generate_project.tcl"
+        "tcl_file": "vivado_generate_project.tcl",
+        "flash": {
+            "tool": "Vivado Tcl",
+            "cable": "digilent_hs2",
+            "target": "flash",
+            "script": "vivado_flash_hs2.tcl",
+            "instructions_url": "https://github.com/ufrisk/pcileech-fpga/tree/master/ScreamerM2",
+            "notes": "LambdaConcept programming cable users should use the OpenOCD flash_screamer_r03_r04.cfg path instead."
+        }
     },
     {
         "name": "pciescreamer",
@@ -24,7 +40,15 @@
         "max_link_speed": 2,
         "top_module": "pcileech_pciescreamer_top",
         "project_dir": "pciescreamer",
-        "tcl_file": "vivado_generate_project.tcl"
+        "tcl_file": "vivado_generate_project.tcl",
+        "flash": {
+            "tool": "Vivado Tcl",
+            "cable": "digilent_hs2",
+            "target": "flash",
+            "script": "vivado_flash_hs2.tcl",
+            "instructions_url": "https://github.com/ufrisk/pcileech-fpga/tree/master/pciescreamer",
+            "notes": "LambdaConcept programming cable users should follow the documented OpenOCD path instead."
+        }
     },
     {
         "name": "EnigmaX1",
@@ -34,7 +58,13 @@
         "bram_size": 8192,
         "top_module": "pcileech_enigma_x1_top",
         "project_dir": "EnigmaX1",
-        "tcl_file": "vivado_generate_project.tcl"
+        "tcl_file": "vivado_generate_project.tcl",
+        "flash": {
+            "tool": "manual",
+            "target": "flash",
+            "instructions_url": "https://github.com/ufrisk/pcileech-fpga",
+            "notes": "No EnigmaX1-specific upstream flashing instructions were found; verify vendor programming procedure before flashing."
+        }
     },
     {
         "name": "CaptainDMA_M2_x1",
@@ -44,7 +74,14 @@
         "top_module": "pcileech_35t325_x1_top",
         "project_dir": "CaptainDMA",
         "sub_dir": "35t325_x1",
-        "tcl_file": "vivado_generate_project_captaindma_m2x1.tcl"
+        "tcl_file": "vivado_generate_project_captaindma_m2x1.tcl",
+        "flash": {
+            "tool": "WCH CH347 FPGA Tool",
+            "cable": "CaptainDMA M2-FW flash module",
+            "target": "flash",
+            "instructions_url": "https://github.com/ufrisk/pcileech-fpga/tree/master/CaptainDMA",
+            "notes": "Requires the separate CaptainDMA M2-FW flash module."
+        }
     },
     {
         "name": "CaptainDMA_M2_x4",
@@ -54,7 +91,14 @@
         "top_module": "pcileech_35t325_x4_top",
         "project_dir": "CaptainDMA",
         "sub_dir": "35t325_x4",
-        "tcl_file": "vivado_generate_project_captaindma_m2x4.tcl"
+        "tcl_file": "vivado_generate_project_captaindma_m2x4.tcl",
+        "flash": {
+            "tool": "WCH CH347 FPGA Tool",
+            "cable": "CaptainDMA M2-FW flash module",
+            "target": "flash",
+            "instructions_url": "https://github.com/ufrisk/pcileech-fpga/tree/master/CaptainDMA",
+            "notes": "Requires the separate CaptainDMA M2-FW flash module."
+        }
     },
     {
         "name": "CaptainDMA_35T",
@@ -64,7 +108,15 @@
         "top_module": "pcileech_35t484_x1_top",
         "project_dir": "CaptainDMA",
         "sub_dir": "35t484_x1",
-        "tcl_file": "vivado_generate_project_captaindma_35t.tcl"
+        "tcl_file": "vivado_generate_project_captaindma_35t.tcl",
+        "flash": {
+            "tool": "OpenOCD",
+            "cable": "built-in-update-port",
+            "target": "flash",
+            "config": "flash_screamer_squirrel.cfg",
+            "instructions_url": "https://github.com/ufrisk/pcileech-fpga/tree/master/CaptainDMA",
+            "notes": "Upstream CaptainDMA notes say the 35T/4.1th follows the PCIeSquirrel flash instructions."
+        }
     },
     {
         "name": "CaptainDMA_75T",
@@ -75,7 +127,14 @@
         "top_module": "pcileech_75t484_x1_top",
         "project_dir": "CaptainDMA",
         "sub_dir": "75t484_x1",
-        "tcl_file": "vivado_generate_project_captaindma_75t.tcl"
+        "tcl_file": "vivado_generate_project_captaindma_75t.tcl",
+        "flash": {
+            "tool": "WCH CH347 FPGA Tool",
+            "cable": "ch347",
+            "target": "flash",
+            "instructions_url": "https://github.com/ufrisk/pcileech-fpga/tree/master/CaptainDMA",
+            "notes": "Use the WCH CH347 FPGA Tool with the board update port."
+        }
     },
     {
         "name": "CaptainDMA_100T",
@@ -86,7 +145,14 @@
         "top_module": "pcileech_100t484_x1_top",
         "project_dir": "CaptainDMA",
         "sub_dir": "100t484-1",
-        "tcl_file": "vivado_generate_project_captaindma_100t.tcl"
+        "tcl_file": "vivado_generate_project_captaindma_100t.tcl",
+        "flash": {
+            "tool": "WCH CH347 FPGA Tool",
+            "cable": "ch347",
+            "target": "flash",
+            "instructions_url": "https://github.com/ufrisk/pcileech-fpga/tree/master/CaptainDMA",
+            "notes": "Use the WCH CH347 FPGA Tool with the board update port."
+        }
     },
     {
         "name": "ZDMA",
@@ -97,7 +163,15 @@
         "top_module": "pcileech_tbx4_100t_top",
         "project_dir": "ZDMA",
         "tcl_file": "vivado_generate_project_100t.tcl",
-        "build_tcl": "vivado_build_100t.tcl"
+        "build_tcl": "vivado_build_100t.tcl",
+        "flash": {
+            "tool": "Vivado Hardware Manager",
+            "cable": "built-in-jtag-update-port",
+            "target": "flash",
+            "memory_part": "is25lp128f",
+            "instructions_url": "https://github.com/ufrisk/pcileech-fpga/tree/master/ZDMA",
+            "notes": "Flash xc7a100t_0 only; the other FPGA must not be flashed."
+        }
     },
     {
         "name": "GBOX",
@@ -106,7 +180,15 @@
         "max_link_speed": 2,
         "top_module": "pcileech_gbox_top",
         "project_dir": "GBOX",
-        "tcl_file": "vivado_generate_project.tcl"
+        "tcl_file": "vivado_generate_project.tcl",
+        "flash": {
+            "tool": "Vivado Hardware Manager",
+            "cable": "built-in-jtag-update-port",
+            "target": "flash",
+            "memory_part": "is25lp128f",
+            "instructions_url": "https://github.com/ufrisk/pcileech-fpga/tree/master/GBOX",
+            "notes": "Flash xc7a35t_0 only; the other FPGA must not be flashed."
+        }
     },
     {
         "name": "NeTV2_35T",
@@ -115,7 +197,16 @@
         "max_link_speed": 2,
         "top_module": "pcileech_netv2_top",
         "project_dir": "NeTV2",
-        "tcl_file": "vivado_generate_project_35t.tcl"
+        "tcl_file": "vivado_generate_project_35t.tcl",
+        "flash": {
+            "tool": "OpenOCD",
+            "cable": "NeTV2 bundled Raspberry Pi",
+            "target": "flash",
+            "config": "cl-spifpga.cfg",
+            "script": "bscan_spi_xc7a35t.bit",
+            "instructions_url": "https://github.com/ufrisk/pcileech-fpga/tree/master/NeTV2",
+            "notes": "Copy pcileech_netv2_top.bin to the bundled Raspberry Pi and flash through the NeTV2 quickstart OpenOCD scripts."
+        }
     },
     {
         "name": "NeTV2_100T",
@@ -125,7 +216,16 @@
         "bram_size": 32768,
         "top_module": "pcileech_netv2_top",
         "project_dir": "NeTV2",
-        "tcl_file": "vivado_generate_project_100t.tcl"
+        "tcl_file": "vivado_generate_project_100t.tcl",
+        "flash": {
+            "tool": "OpenOCD",
+            "cable": "NeTV2 bundled Raspberry Pi",
+            "target": "flash",
+            "config": "cl-spifpga.cfg",
+            "script": "bscan_spi_xc7a100t.bit",
+            "instructions_url": "https://github.com/ufrisk/pcileech-fpga/tree/master/NeTV2",
+            "notes": "Copy pcileech_netv2_top.bin to the bundled Raspberry Pi and flash through the NeTV2 quickstart OpenOCD scripts."
+        }
     },
     {
         "name": "ac701_ft601",
@@ -135,7 +235,15 @@
         "bram_size": 32768,
         "top_module": "pcileech_ac701_ft601_top",
         "project_dir": "ac701_ft601",
-        "tcl_file": "vivado_generate_project.tcl"
+        "tcl_file": "vivado_generate_project.tcl",
+        "flash": {
+            "tool": "Vivado Tcl",
+            "cable": "jtag-usb",
+            "target": "flash",
+            "script": "vivado_flash.tcl",
+            "instructions_url": "https://github.com/ufrisk/pcileech-fpga/tree/master/ac701_ft601",
+            "notes": "openFPGALoader lists ac701 memory loading but flash support as not tested; use the upstream Vivado flash script."
+        }
     },
     {
         "name": "acorn",
@@ -145,7 +253,14 @@
         "bram_size": 32768,
         "top_module": "pcileech_acorn_top",
         "project_dir": "acorn_ft2232h",
-        "tcl_file": "vivado_generate_project_acorn.tcl"
+        "tcl_file": "vivado_generate_project_acorn.tcl",
+        "flash": {
+            "tool": "openFPGALoader",
+            "openfpgaloader_board": "acornCle215",
+            "target": "flash",
+            "instructions_url": "https://trabucayre.github.io/openFPGALoader/compatibility/board.html",
+            "notes": "openFPGALoader lists acornCle215 with memory and flash support."
+        }
     },
     {
         "name": "litefury",
@@ -155,7 +270,14 @@
         "bram_size": 32768,
         "top_module": "pcileech_acorn_top",
         "project_dir": "acorn_ft2232h",
-        "tcl_file": "vivado_generate_project_litefury.tcl"
+        "tcl_file": "vivado_generate_project_litefury.tcl",
+        "flash": {
+            "tool": "Vivado",
+            "cable": "FT2232H mini module",
+            "target": "flash",
+            "instructions_url": "https://github.com/ufrisk/pcileech-fpga/tree/master/acorn_ft2232h",
+            "notes": "Upstream project points LiteFury+FT2232H flashing to the hardware modification blog/Vivado flow; no verified openFPGALoader board id is assigned here."
+        }
     },
     {
         "name": "sp605_ft601",
@@ -164,6 +286,14 @@
         "max_link_speed": 2,
         "top_module": "pcileech_top",
         "project_dir": "sp605_ft601",
-        "tcl_file": "vivado_generate_project.tcl"
+        "tcl_file": "vivado_generate_project.tcl",
+        "flash": {
+            "tool": "Xilinx iMPACT",
+            "cable": "jtag-usb",
+            "target": "flash",
+            "script": "flash.bat",
+            "instructions_url": "https://github.com/ufrisk/pcileech-fpga/tree/master/sp605_ft601",
+            "notes": "Use ISE Design Suite 64-Bit Command Prompt and run flash.bat."
+        }
     }
 ]

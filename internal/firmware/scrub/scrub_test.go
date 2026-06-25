@@ -132,6 +132,41 @@ func TestScrubConfigSpace_ClampBAR0(t *testing.T) {
 	}
 }
 
+func TestScrubConfigSpace_RealtekWiFiNoBARCreates32BitBAR(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	cs.WriteU16(0x00, 0x10EC)
+	cs.WriteU16(0x02, 0x8179)
+	cs.WriteU8(0x09, 0x00)
+	cs.WriteU8(0x0A, 0x80)
+	cs.WriteU8(0x0B, 0x02)
+
+	scrubbed := ScrubConfigSpace(cs, nil)
+	bar0 := scrubbed.BAR(0)
+	if bar0&0x01 != 0 {
+		t.Fatalf("BAR0 should be memory, got 0x%08X", bar0)
+	}
+	if bar0&0x06 != 0 {
+		t.Fatalf("Realtek RTL8188EE fallback BAR0 should be 32-bit, got 0x%08X", bar0)
+	}
+}
+
+func TestScrubConfigSpace_UnknownRealtekWiFiNoBARUsesGeneric64BitBAR(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	cs.WriteU16(0x00, 0x10EC)
+	cs.WriteU16(0x02, 0xFFFF)
+	cs.WriteU8(0x09, 0x00)
+	cs.WriteU8(0x0A, 0x80)
+	cs.WriteU8(0x0B, 0x02)
+
+	scrubbed := ScrubConfigSpace(cs, nil)
+	bar0 := scrubbed.BAR(0)
+	if bar0&0x06 != 0x04 {
+		t.Fatalf("unknown Realtek Wi-Fi fallback BAR0 should be generic 64-bit, got 0x%08X", bar0)
+	}
+}
+
 func TestIsUnsafeExtCap(t *testing.T) {
 	if IsUnsafeExtCap(pci.ExtCapIDAER) {
 		t.Error("AER should be safe")
@@ -359,6 +394,24 @@ func TestZeroVendorRegisters_WhitelistPreserves(t *testing.T) {
 	}
 }
 
+func TestZeroVendorRegisters_RealtekWhitelistIsDeviceScoped(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	cs.WriteU16(0x00, 0x10EC)
+	cs.WriteU16(0x02, 0x522A)
+	cs.WriteU8(0x09, 0x00)
+	cs.WriteU8(0x0A, 0x00)
+	cs.WriteU8(0x0B, 0xFF)
+	cs.WriteU32(0x84, 0xDEADBEEF)
+
+	om := overlay.NewMap(cs)
+	zeroVendorRegisters(cs, om, pci.ParseCapabilities(cs))
+
+	if cs.ReadU32(0x84) != 0 {
+		t.Errorf("RTS522A should not inherit RTL8188EE whitelist, got 0x%08x", cs.ReadU32(0x84))
+	}
+}
+
 func TestComputeMSISize(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -478,7 +531,8 @@ func TestRelocateMSIXToBRAM_TableOutside(t *testing.T) {
 	// table offset should be relocated to 0x1000
 	tableReg := scrubbed.ReadU32(0x94)
 	tableOff := tableReg &^ 0x07
-	off := uint32(0x1000); if tableOff != off {
+	off := uint32(0x1000)
+	if tableOff != off {
 		t.Errorf("MSI-X table offset should be relocated to 0x1000, got 0x%X", tableOff)
 	}
 
@@ -514,7 +568,8 @@ func TestRelocateMSIXToBRAM_TableInside(t *testing.T) {
 	// table still relocated to 0x1000 (consistent placement)
 	tableReg := scrubbed.ReadU32(0x94)
 	tableOff := tableReg &^ 0x07
-	off := uint32(0x1000); if tableOff != off {
+	off := uint32(0x1000)
+	if tableOff != off {
 		t.Errorf("MSI-X table should be relocated to 0x1000, got 0x%X", tableOff)
 	}
 }
@@ -724,7 +779,8 @@ func TestRelocateMSIXToBRAM(t *testing.T) {
 	// Table should be relocated to 0x1000
 	tableReg := cs.ReadU32(0x84)
 	tableOff := tableReg & 0xFFFFFFF8
-	off := uint32(0x1000); if tableOff != off {
+	off := uint32(0x1000)
+	if tableOff != off {
 		t.Errorf("Table offset = 0x%x, want 0x1000", tableOff)
 	}
 
@@ -953,7 +1009,11 @@ func TestASPMFullyDisabledAfterScrub(t *testing.T) {
 	}
 }
 
-func TestComputeBAR0SizeLarge(t *testing.T){if got:=ComputeBAR0Size(512,0);got!=32768{t.Errorf("ComputeBAR0Size(large)=%d",got)}}
+func TestComputeBAR0SizeLarge(t *testing.T) {
+	if got := ComputeBAR0Size(512, 0); got != 32768 {
+		t.Errorf("ComputeBAR0Size(large)=%d", got)
+	}
+}
 
 // TestPhisonNVMe64bMSIXScrub simulates the exact scenario for Code10 residual hunt:
 // NVMe (class 0x010802), vendor 0x1987 Phison, 64-bit BAR (e.g. 16KB size mask), MSIX present,
@@ -973,8 +1033,8 @@ func TestPhisonNVMe64bMSIXScrub(t *testing.T) {
 	cs.WriteU8(0x0A, 0x08)    // Subclass
 	cs.WriteU8(0x0B, 0x01)    // Base NVMe class 0108xx
 	cs.WriteU8(0x0C, 0x10)
-	cs.WriteU8(0x0D, 0x00)    // latency
-	cs.WriteU8(0x0E, 0x00)    // header type 0
+	cs.WriteU8(0x0D, 0x00) // latency
+	cs.WriteU8(0x0E, 0x00) // header type 0
 	cs.WriteU8(0x0F, 0x00)
 	// 64b BAR0 16KB example: size mask FFFFC000 + type bits 0x4 (64b mem)
 	cs.WriteU32(0x10, 0xFFFC0004)
@@ -994,7 +1054,7 @@ func TestPhisonNVMe64bMSIXScrub(t *testing.T) {
 	// MSI-X at 0x48
 	cs.WriteU8(0x48, pci.CapIDMSIX)
 	cs.WriteU8(0x49, 0x60)
-	cs.WriteU16(0x4A, 0x0003) // 4 vectors, enabled later by relocate
+	cs.WriteU16(0x4A, 0x0003)     // 4 vectors, enabled later by relocate
 	cs.WriteU32(0x4C, 0x00000000) // table off (will relocate)
 	cs.WriteU32(0x50, 0x00000008) // pba
 
@@ -1002,7 +1062,9 @@ func TestPhisonNVMe64bMSIXScrub(t *testing.T) {
 	cs.WriteU8(0x60, pci.CapIDPCIExpress)
 	cs.WriteU8(0x61, 0x00)
 	// fill minimal for cap parse
-	for i := 0x62; i < 0x60+60; i++ { cs.WriteU8(i, 0) }
+	for i := 0x62; i < 0x60+60; i++ {
+		cs.WriteU8(i, 0)
+	}
 	cs.WriteU16(0x62, 0x0002) // ver2 endpoint
 
 	// Phison vendor region at 0x40-0x4F (but will be cap-overlapped, knownWhitelist preserves 0x40-0x50 even if not cap)
@@ -1059,7 +1121,7 @@ func TestPhisonNVMe64bMSIXScrub(t *testing.T) {
 	// check Phison vendor region preserved (whitelist 0x40-0x50)
 	// since 0x40-0x50 overlaps caps, check a non-cap vendor spot if any; here 0x80 not whitelisted so zeroed ok
 	// but the pass zeroVendor is after caps; verify cmd/status/class intact
-	if scrubbed.ReadU32(0x08) >> 8 != classCode {
+	if scrubbed.ReadU32(0x08)>>8 != classCode {
 		t.Error("class at 0x08 not matching")
 	}
 }

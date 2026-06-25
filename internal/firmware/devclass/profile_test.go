@@ -137,8 +137,8 @@ func TestProfileForClass_ProgIFAgnostic(t *testing.T) {
 
 func TestAllProfiles(t *testing.T) {
 	profiles := AllProfiles()
-	if len(profiles) != 10 {
-		t.Errorf("expected 10 profiles, got %d", len(profiles))
+	if len(profiles) != 14 {
+		t.Errorf("expected 14 profiles, got %d", len(profiles))
 	}
 	names := make(map[string]bool)
 	for _, p := range profiles {
@@ -149,7 +149,9 @@ func TestAllProfiles(t *testing.T) {
 	}
 	for _, expected := range []string{
 		"NVMe", "xHCI USB", "Ethernet", "HD Audio",
-		"GPU", "SATA AHCI", "Wi-Fi", "Wi-Fi (MediaTek)", "Thunderbolt", "Generic",
+		"GPU", "SATA AHCI", "Wi-Fi", "Wi-Fi (MediaTek)",
+		"Wi-Fi (Intel BE200 family)", "Wi-Fi (Atheros AR9287)",
+		"Wi-Fi (Realtek RTL8188EE)", "Card Reader (RTS522A)", "Thunderbolt", "Generic",
 	} {
 		if !names[expected] {
 			t.Errorf("missing profile: %s", expected)
@@ -217,6 +219,22 @@ func TestXHCIProfile_PORTSC(t *testing.T) {
 	}
 }
 
+func TestXHCIProfile_InterrupterRegs(t *testing.T) {
+	p := xhciProfile()
+	found := map[string]bool{}
+	for _, d := range p.BARDefaults {
+		switch d.Name {
+		case "IMAN0", "ERSTSZ0", "ERSTBA_LO", "ERDP_LO":
+			found[d.Name] = true
+		}
+	}
+	for _, name := range []string{"IMAN0", "ERSTSZ0", "ERSTBA_LO", "ERDP_LO"} {
+		if !found[name] {
+			t.Errorf("xHCI profile missing interrupter register: %s", name)
+		}
+	}
+}
+
 func TestXHCIProfile_HCCPARAMS1_AC64(t *testing.T) {
 	p := xhciProfile()
 	for _, d := range p.BARDefaults {
@@ -228,6 +246,92 @@ func TestXHCIProfile_HCCPARAMS1_AC64(t *testing.T) {
 		}
 	}
 	t.Error("HCCPARAMS1 not found")
+}
+
+func TestIntelWiFiProfile_Basic(t *testing.T) {
+	p := intelWiFiProfile()
+	if p.ClassName != "Wi-Fi (Intel BE200 family)" {
+		t.Fatalf("got %q, want Wi-Fi (Intel BE200 family)", p.ClassName)
+	}
+	if p.MinBARSize != 16384 {
+		t.Errorf("MinBARSize = %d, want 16384", p.MinBARSize)
+	}
+	found := map[string]bool{}
+	for _, d := range p.BARDefaults {
+		switch d.Name {
+		case "GP_CTL", "UCODE_DRV_GP1", "RF_ID":
+			found[d.Name] = true
+		}
+	}
+	for _, name := range []string{"GP_CTL", "UCODE_DRV_GP1", "RF_ID"} {
+		if !found[name] {
+			t.Errorf("Intel Wi-Fi profile missing BAR default %s", name)
+		}
+	}
+}
+
+func TestRTS522AProfile_Basic(t *testing.T) {
+	p := rts522aProfile()
+	if p.ClassName != "Card Reader (RTS522A)" {
+		t.Fatalf("got %q, want Card Reader (RTS522A)", p.ClassName)
+	}
+	if p.PreferredBAR != 0 {
+		t.Errorf("PreferredBAR = %d, want 0", p.PreferredBAR)
+	}
+	if p.Uses64BitBAR {
+		t.Error("RTS522A should not use 64-bit BAR")
+	}
+	found := map[string]bool{}
+	for _, d := range p.BARDefaults {
+		switch d.Name {
+		case "RTSX_HCBAR", "RTSX_BIPR", "RTSX_BIER":
+			found[d.Name] = true
+		}
+	}
+	for _, name := range []string{"RTSX_HCBAR", "RTSX_BIPR", "RTSX_BIER"} {
+		if !found[name] {
+			t.Errorf("RTS522A profile missing BAR default %s", name)
+		}
+	}
+}
+
+func TestRTS522AProfile_HAIMRFSM(t *testing.T) {
+	p := rts522aProfile()
+	for _, d := range p.BARDefaults {
+		if d.Name == "RTSX_HAIMR" {
+			if !d.IsFSMDriven {
+				t.Fatal("RTSX_HAIMR should be FSM-driven for indirect register emulation")
+			}
+			return
+		}
+	}
+	t.Fatal("RTSX_HAIMR not found")
+}
+
+func TestRTS522AProfile_BIPRFSM(t *testing.T) {
+	p := rts522aProfile()
+	for _, d := range p.BARDefaults {
+		if d.Name == "RTSX_BIPR" {
+			if !d.IsFSMDriven {
+				t.Fatal("RTSX_BIPR should be FSM-driven for interrupt status semantics")
+			}
+			return
+		}
+	}
+	t.Fatal("RTSX_BIPR not found")
+}
+
+func TestRTS522AProfile_BIPRCardPresent(t *testing.T) {
+	p := rts522aProfile()
+	for _, d := range p.BARDefaults {
+		if d.Name == "RTSX_BIPR" {
+			if d.Reset&0x00010000 == 0 {
+				t.Fatal("RTSX_BIPR should report SD_EXIST on reset")
+			}
+			return
+		}
+	}
+	t.Fatal("RTSX_BIPR not found")
 }
 
 func TestAudioProfile_DWORDPacked(t *testing.T) {

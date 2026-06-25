@@ -9,6 +9,7 @@ import (
 
 	"github.com/sercanarga/pcileechgen/internal/board"
 	"github.com/sercanarga/pcileechgen/internal/donor"
+	"github.com/sercanarga/pcileechgen/internal/donor/mmio"
 	"github.com/sercanarga/pcileechgen/internal/firmware"
 	"github.com/sercanarga/pcileechgen/internal/pci"
 )
@@ -89,7 +90,10 @@ func TestBuildSVConfig(t *testing.T) {
 			ow := NewOutputWriter(t.TempDir(), "", 0, 0)
 			ids := firmware.ExtractDeviceIDs(ctx.ConfigSpace, ctx.ExtCapabilities)
 
-			cfg, err := ow.buildSVConfig(ctx, ctx.ConfigSpace, ids, 0xDEAD, &board.Board{}); if err != nil { t.Fatal(err) }
+			cfg, err := ow.buildSVConfig(ctx, ctx.ConfigSpace, ids, 0xDEAD, &board.Board{})
+			if err != nil {
+				t.Fatal(err)
+			}
 			if cfg == nil {
 				t.Fatal("config should not be nil")
 			}
@@ -108,9 +112,51 @@ func TestBuildSVConfig_NVMeHasIdentify(t *testing.T) {
 	ow := NewOutputWriter(t.TempDir(), "", 0, 0)
 	ids := firmware.ExtractDeviceIDs(ctx.ConfigSpace, ctx.ExtCapabilities)
 
-	cfg, err := ow.buildSVConfig(ctx, ctx.ConfigSpace, ids, 0xBEEF, &board.Board{}); if err != nil { t.Fatal(err) }
+	cfg, err := ow.buildSVConfig(ctx, ctx.ConfigSpace, ids, 0xBEEF, &board.Board{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if cfg.NVMeIdentify == nil {
 		t.Error("NVMe class should have Identify data")
+	}
+}
+
+func TestBuildSVConfig_TraceOverlayReachesBARModel(t *testing.T) {
+	ctx := makeDonorContext(0x168C, 0x002E, 0x028000)
+	ctx.BARTraceOverlays = map[int]*mmio.TraceBAROverlay{
+		0: {Sequential: map[uint32][]uint32{0x4010: {0xDEADBEEF, 0x2, 0x1, 0x55}}},
+	}
+	ow := NewOutputWriter(t.TempDir(), "", 0, 0)
+	ids := firmware.ExtractDeviceIDs(ctx.ConfigSpace, ctx.ExtCapabilities)
+
+	cfg, err := ow.buildSVConfig(ctx, ctx.ConfigSpace, ids, 0xBEEF, &board.Board{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	found := false
+	for _, reg := range cfg.BARModel.Registers {
+		if reg.Offset == 0x4010 && len(reg.SequentialValues) == 4 && reg.SequentialValues[3] == 0x55 {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("expected trace overlay to override BAR register 0x4010 sequence")
+	}
+}
+
+func TestBuildSVConfig_AtherosDoesNotAdvertiseUnwiredINTx(t *testing.T) {
+	ctx := makeDonorContext(0x168C, 0x002E, 0x028000)
+	ctx.ConfigSpace.WriteU8(0x3D, 0x03) // INTC#
+	ow := NewOutputWriter(t.TempDir(), "", 0, 0)
+	ids := firmware.ExtractDeviceIDs(ctx.ConfigSpace, ctx.ExtCapabilities)
+
+	cfg, err := ow.buildSVConfig(ctx, ctx.ConfigSpace, ids, 0xBEEF, &board.Board{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.INTxConfig != nil {
+		t.Fatal("INTx must stay disabled until board-top wiring is generated")
 	}
 }
 
@@ -139,7 +185,10 @@ func TestWriteCoreSVArtifacts(t *testing.T) {
 	ow := NewOutputWriter(dir, "", 0, 0)
 	ids := firmware.ExtractDeviceIDs(ctx.ConfigSpace, ctx.ExtCapabilities)
 
-	cfg, err := ow.buildSVConfig(ctx, ctx.ConfigSpace, ids, 0x42, &board.Board{}); if err != nil { t.Fatal(err) }
+	cfg, err := ow.buildSVConfig(ctx, ctx.ConfigSpace, ids, 0x42, &board.Board{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	scrubbed := ctx.ConfigSpace.Clone()
 
 	if err := ow.writeCoreSVArtifacts(cfg, scrubbed); err != nil {
@@ -172,7 +221,10 @@ func TestWriteConditionalArtifacts_NVMe(t *testing.T) {
 	ow := NewOutputWriter(dir, "", 0, 0)
 	ids := firmware.ExtractDeviceIDs(ctx.ConfigSpace, ctx.ExtCapabilities)
 
-	cfg, err := ow.buildSVConfig(ctx, ctx.ConfigSpace, ids, 0x42, &board.Board{}); if err != nil { t.Fatal(err) }
+	cfg, err := ow.buildSVConfig(ctx, ctx.ConfigSpace, ids, 0x42, &board.Board{})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if err := ow.writeConditionalArtifacts(cfg, ctx); err != nil {
 		t.Fatalf("writeConditionalArtifacts failed: %v", err)
@@ -201,7 +253,10 @@ func TestWriteConditionalArtifacts_MSIXDonor(t *testing.T) {
 	ow := NewOutputWriter(dir, "", 0, 0)
 	ids := firmware.ExtractDeviceIDs(ctx.ConfigSpace, ctx.ExtCapabilities)
 
-	cfg, err := ow.buildSVConfig(ctx, ctx.ConfigSpace, ids, 0x42, &board.Board{BRAMSize: 32768}); if err != nil { t.Fatal(err) }
+	cfg, err := ow.buildSVConfig(ctx, ctx.ConfigSpace, ids, 0x42, &board.Board{BRAMSize: 32768})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if err := ow.writeConditionalArtifacts(cfg, ctx); err != nil {
 		t.Fatalf("writeConditionalArtifacts failed: %v", err)
@@ -222,7 +277,10 @@ func TestLogSVSummary(t *testing.T) {
 	ow := NewOutputWriter(t.TempDir(), "", 0, 0)
 	ids := firmware.ExtractDeviceIDs(ctx.ConfigSpace, ctx.ExtCapabilities)
 
-	cfg, err := ow.buildSVConfig(ctx, ctx.ConfigSpace, ids, 0x42, &board.Board{}); if err != nil { t.Fatal(err) }
+	cfg, err := ow.buildSVConfig(ctx, ctx.ConfigSpace, ids, 0x42, &board.Board{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	// should not panic
 	ow.logSVSummary(cfg)
 }
@@ -246,5 +304,27 @@ func TestWriteTCLScripts(t *testing.T) {
 		if len(data) == 0 {
 			t.Errorf("%s is empty", name)
 		}
+	}
+}
+
+func TestWriteWindowsLabChecklist(t *testing.T) {
+	dir := t.TempDir()
+	ctx := makeDonorContext(0x144D, 0xA808, 0x010802)
+	b := &board.Board{Name: "CaptainDMA_75T", FPGAPart: "xc7a75tfgg484-2"}
+	ow := NewOutputWriter(dir, "", 0, 0)
+
+	if err := ow.writeWindowsLabChecklist(ctx, b); err != nil {
+		t.Fatalf("writeWindowsLabChecklist failed: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "windows_lab_checklist.txt"))
+	if err != nil {
+		t.Fatalf("windows_lab_checklist.txt not created: %v", err)
+	}
+	s := string(data)
+	if !strings.Contains(s, "Windows 10") || !strings.Contains(s, "Windows 11") {
+		t.Fatal("checklist should mention Windows 10 and Windows 11")
+	}
+	if !strings.Contains(s, "CaptainDMA_75T") {
+		t.Fatal("checklist should mention board name")
 	}
 }

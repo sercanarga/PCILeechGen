@@ -15,8 +15,15 @@ import (
 // MSIConfig describes the MSI capability programmed into config space.
 type MSIConfig struct {
 	Enabled bool   // MSI enabled in Message Control
-	AddrLo  uint32 // MSI Message Address (lower 32 bits)
+	AddrLo  uint32 // MSI MESSAGE_ADDRESS (lower 32 bits)
 	Data    uint16 // MSI Message Data
+}
+
+// INTxConfig drives the legacy INTx interrupt generator module.
+// Line selects INTA(0)..INTD(3); used by drivers that bind to the legacy
+// interrupt line (e.g. Atheros ath9k) rather than MSI/MSI-X.
+type INTxConfig struct {
+	Line uint8 // 0=INTA, 1=INTB, 2=INTC, 3=INTD
 }
 
 // SVGeneratorConfig is the input data for all SV template renders.
@@ -31,8 +38,10 @@ type SVGeneratorConfig struct {
 	DeviceClass        string             // "nvme", "xhci", "audio", "ethernet", or ""
 	MSIXConfig         *MSIXConfig        // MSI-X table replication (nil = no MSI-X table)
 	MSIConfig          *MSIConfig         // MSI capability info (nil = no MSI cap or disabled)
+	INTxConfig         *INTxConfig        // legacy INTx generator (nil = no INTx module)
 	NVMeIdentify       *nvme.IdentifyData // NVMe Identify Controller/Namespace data (nil = no responder)
 	NVMeDoorbellStride uint32             // CAP.DSTRD - doorbell stride (0 = 4B, default)
+	NVMeNumIOQueues    uint32             // IO SQ/CQ pairs advertised (Set Features 0x07 clamp); 0 = default 0x00070007
 	Bar0Size           int
 }
 
@@ -110,6 +119,11 @@ func GenerateBarImplMSISV(cfg *SVGeneratorConfig) (string, error) {
 	return renderTemplate("bar_impl_msi", cfg)
 }
 
+// GenerateINTxSV renders the legacy INTx interrupt generator module.
+func GenerateINTxSV(cfg *SVGeneratorConfig) (string, error) {
+	return renderTemplate("intx_gen", cfg)
+}
+
 // svFuncMap provides hex formatting and arithmetic helpers for templates.
 func svFuncMap() template.FuncMap {
 	return template.FuncMap{
@@ -128,6 +142,22 @@ func svFuncMap() template.FuncMap {
 				uint8((mask >> 8) & 0xFF),
 				uint8((mask >> 16) & 0xFF),
 				uint8((mask >> 24) & 0xFF),
+			}
+		},
+		"rw1CMaskBytes": func(mask uint32) [4]uint8 {
+			return [4]uint8{
+				uint8(mask & 0xFF),
+				uint8((mask >> 8) & 0xFF),
+				uint8((mask >> 16) & 0xFF),
+				uint8((mask >> 24) & 0xFF),
+			}
+		},
+		"rwSetBytes": func(rwMask, rw1CMask uint32) [4]uint8 {
+			return [4]uint8{
+				uint8(rwMask & 0xFF &^ (rw1CMask & 0xFF)),
+				uint8((rwMask >> 8) & 0xFF &^ ((rw1CMask >> 8) & 0xFF)),
+				uint8((rwMask >> 16) & 0xFF &^ ((rw1CMask >> 16) & 0xFF)),
+				uint8((rwMask >> 24) & 0xFF &^ ((rw1CMask >> 24) & 0xFF)),
 			}
 		},
 		"cdfVal": func(cdf [16]uint8, i int) uint8 {

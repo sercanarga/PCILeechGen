@@ -6,6 +6,7 @@ package mmio
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"strconv"
@@ -19,6 +20,36 @@ const (
 	tracePipe     = tracingDir + "/trace_pipe"
 	tracingOnPath = tracingDir + "/tracing_on"
 )
+
+type TraceImportOptions struct {
+	BDF      string
+	BARIndex int
+	BARSize  int
+	BARBase  uint64
+}
+
+func ParseTraceReader(r io.Reader, opts TraceImportOptions) (*TraceResult, error) {
+	trace := &TraceResult{
+		BDF:      opts.BDF,
+		BARIndex: opts.BARIndex,
+		BARSize:  opts.BARSize,
+	}
+	scanner := bufio.NewScanner(r)
+	for scanner.Scan() {
+		rec, ok := parseMMIOTraceLine(scanner.Text(), opts)
+		if !ok {
+			continue
+		}
+		trace.Records = append(trace.Records, rec)
+		if rec.Timestamp > trace.Duration {
+			trace.Duration = rec.Timestamp
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("read trace: %w", err)
+	}
+	return trace, nil
+}
 
 // LiveTrace enables mmiotrace, records BAR accesses for `duration`, then stops.
 func LiveTrace(bdf string, duration time.Duration) (*TraceResult, error) {
@@ -76,7 +107,7 @@ func LiveTrace(bdf string, duration time.Duration) (*TraceResult, error) {
 				break
 			}
 			line := scanner.Text()
-			rec, ok := parseMMIOTraceLine(line)
+			rec, ok := parseMMIOTraceLine(line, TraceImportOptions{})
 			if ok {
 				result.Records = append(result.Records, rec)
 			}
@@ -97,7 +128,7 @@ func LiveTrace(bdf string, duration time.Duration) (*TraceResult, error) {
 }
 
 // parseMMIOTraceLine parses one mmiotrace line (R/W <width> <ts> <addr> <val>).
-func parseMMIOTraceLine(line string) (AccessRecord, bool) {
+func parseMMIOTraceLine(line string, opts TraceImportOptions) (AccessRecord, bool) {
 	line = strings.TrimSpace(line)
 	// mmiotrace lines typically look like:
 	// R 4 1234567.890 0xfee00000 0x00000001 ...
@@ -118,12 +149,18 @@ func parseMMIOTraceLine(line string) (AccessRecord, bool) {
 		return AccessRecord{}, false
 	}
 
-	// lower 12 bits = offset within 4K BAR page
+	// Keep the full physical address so callers can map it back to the selected
+	// BAR resource. Offset remains the legacy low-page offset until remapped.
 	addr, err := strconv.ParseUint(strings.TrimPrefix(fields[3], "0x"), 16, 64)
 	if err != nil {
 		return AccessRecord{}, false
 	}
-	rec.Offset = uint32(addr & 0xFFF) // BAR offset within 4K page
+	rec.Address = addr
+	offset, ok := traceOffset(addr, opts)
+	if !ok {
+		return AccessRecord{}, false
+	}
+	rec.Offset = offset
 
 	// Parse value
 	val, err := strconv.ParseUint(strings.TrimPrefix(fields[4], "0x"), 16, 32)
@@ -138,4 +175,18 @@ func parseMMIOTraceLine(line string) (AccessRecord, bool) {
 	}
 
 	return rec, true
+}
+
+func traceOffset(addr uint64, opts TraceImportOptions) (uint32, bool) {
+	if opts.BARBase == 0 {
+		return uint32(addr & 0xFFF), true
+	}
+	if addr < opts.BARBase {
+		return 0, false
+	}
+	offset := addr - opts.BARBase
+	if opts.BARSize > 0 && offset >= uint64(opts.BARSize) {
+		return 0, false
+	}
+	return uint32(offset), true
 }

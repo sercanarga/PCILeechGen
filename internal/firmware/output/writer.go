@@ -2,26 +2,24 @@
 package output
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/sercanarga/pcileechgen/internal/board"
 	"github.com/sercanarga/pcileechgen/internal/donor"
+	"github.com/sercanarga/pcileechgen/internal/donor/mmio"
 	"github.com/sercanarga/pcileechgen/internal/firmware"
-	"github.com/sercanarga/pcileechgen/internal/firmware/barmodel"
 	"github.com/sercanarga/pcileechgen/internal/firmware/codegen"
-	"github.com/sercanarga/pcileechgen/internal/firmware/devclass"
-	"github.com/sercanarga/pcileechgen/internal/firmware/nvme"
 	"github.com/sercanarga/pcileechgen/internal/firmware/overlay"
 	"github.com/sercanarga/pcileechgen/internal/firmware/scrub"
 	"github.com/sercanarga/pcileechgen/internal/firmware/svgen"
 	"github.com/sercanarga/pcileechgen/internal/firmware/tclgen"
 	"github.com/sercanarga/pcileechgen/internal/firmware/variance"
 	"github.com/sercanarga/pcileechgen/internal/pci"
-	"github.com/sercanarga/pcileechgen/internal/util"
 )
 
 // OutputWriter drops all generated files into OutputDir.
@@ -67,11 +65,15 @@ func (ow *OutputWriter) WriteAll(ctx *donor.DeviceContext, b *board.Board) error
 		return err
 	}
 
+	if err := ow.writeTraceReportArtifact(ctx); err != nil {
+		return err
+	}
+
 	if err := ow.writeTCLScripts(ctx, b); err != nil {
 		return err
 	}
 
-	if err := ow.patchSVSources(ctx, b, ids); err != nil {
+	if err := ow.patchSVSources(b, ids); err != nil {
 		return fmt.Errorf("SV patching failed: %w", err)
 	}
 
@@ -90,8 +92,67 @@ func (ow *OutputWriter) WriteAll(ctx *donor.DeviceContext, b *board.Board) error
 		}
 	}
 
-	ow.writeManifest(ctx, ids)
+	if err := ow.writeWindowsLabChecklist(ctx, b); err != nil {
+		return err
+	}
+
+	ow.writeManifest(ctx, ids, b)
 	return nil
+}
+
+// writeWindowsLabChecklist emits a class-aware Windows lab validation
+// checklist so operators have a concrete verification script per build.
+func (ow *OutputWriter) writeWindowsLabChecklist(ctx *donor.DeviceContext, b *board.Board) error {
+	boardName := "unspecified"
+	fpgaPart := "unspecified"
+	if b != nil {
+		boardName = b.Name
+		fpgaPart = b.FPGAPart
+	}
+	lines := []string{
+		"Windows lab checklist",
+		"",
+		fmt.Sprintf("Board: %s", boardName),
+		fmt.Sprintf("FPGA: %s", fpgaPart),
+		fmt.Sprintf("Device: %04X:%04X class 0x%06X", ctx.Device.VendorID, ctx.Device.DeviceID, ctx.Device.ClassCode),
+		"",
+		"Windows 10",
+		"- Flash the generated firmware to the target FPGA board.",
+		"- Boot with only the test board attached to the Windows host.",
+		"- Verify Device Manager shows the device without Code 10 or Code 43.",
+		"- Capture setupapi.dev.log and Device Manager hardware IDs.",
+		"",
+		"Windows 11",
+		"- Repeat enumeration and driver binding checks.",
+		"- Verify modern standby or resume does not wedge the device.",
+		"- Re-test after cold boot and warm reboot.",
+		"",
+		"Class-specific checks",
+	}
+	switch uint16(ctx.Device.BaseClass())<<8 | uint16(ctx.Device.SubClass()) {
+	case 0x0108:
+		lines = append(lines,
+			"- NVMe: verify stornvme loads, namespaces appear, and no Code 10 is reported.",
+		)
+	case 0x0C03:
+		lines = append(lines,
+			"- xHCI: verify USB root hub enumerates, hot-plug a device, and confirm no disconnect storms.",
+		)
+	case 0x0280:
+		lines = append(lines,
+			"- Wi-Fi: verify the radio enumerates without dropping the host network during install.",
+		)
+	case 0xFF00:
+		lines = append(lines,
+			"- Card reader: insert media and verify card-detect and interrupt paths behave as expected.",
+		)
+	}
+	lines = append(lines,
+		"",
+		"Evidence",
+		"- Save screenshots, event logs, and exact board name/FPGA part with each run.",
+	)
+	return ow.writeFile("windows_lab_checklist.txt", strings.Join(lines, "\n"))
 }
 
 // writeDeviceContext saves the raw device context JSON.
@@ -144,9 +205,79 @@ func (ow *OutputWriter) writeConfigSpaceArtifacts(ctx *donor.DeviceContext, scru
 	bar0Size := firmware.CappedBAR0Size(ctx, b, msixTableSize)
 
 	scrub.ScrubBarContent(ctx.BARContents, ctx.Device.ClassCode, ctx.Device.VendorID, bar0Size)
+	if err := ow.writeBARContentArtifacts(ctx, bar0Size); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (ow *OutputWriter) writeBARContentArtifacts(ctx *donor.DeviceContext, fallbackSize int) error {
+	if ctx != nil && len(ctx.BARContents) > 0 {
+		indices := make([]int, 0, len(ctx.BARContents))
+		for idx := range ctx.BARContents {
+			indices = append(indices, idx)
+		}
+		sort.Ints(indices)
+
+		for _, idx := range indices {
+			data := ctx.BARContents[idx]
+			size := len(data)
+			if size == 0 {
+				size = fallbackSize
+			}
+			name := fmt.Sprintf("pcileech_bar%d.coe", idx)
+			if err := ow.writeFile(name, codegen.GenerateSingleBarContentCOE(idx, data, size)); err != nil {
+				return fmt.Errorf("failed to write BAR%d COE: %w", idx, err)
+			}
+		}
+	}
+
+	var barContents map[int][]byte
+	if ctx != nil {
+		barContents = ctx.BARContents
+	}
 	if err := ow.writeFile("pcileech_bar_zero4k.coe",
-		codegen.GenerateBarContentCOE(ctx.BARContents, firmware.CappedBAR0Size(ctx, b, msixTableSize))); err != nil {
-		return fmt.Errorf("failed to write bar zero COE: %w", err)
+		codegen.GenerateBarContentCOE(barContents, fallbackSize)); err != nil {
+		return fmt.Errorf("failed to write legacy BAR COE: %w", err)
+	}
+	return nil
+}
+
+type traceReportArtifact struct {
+	Reports       []*mmio.TraceReport           `json:"reports"`
+	TraceOverlays map[int]*mmio.TraceBAROverlay `json:"trace_overlays,omitempty"`
+}
+
+func (ow *OutputWriter) writeTraceReportArtifact(ctx *donor.DeviceContext) error {
+	if ctx == nil || len(ctx.MMIOTraces) == 0 {
+		return nil
+	}
+	indices := make([]int, 0, len(ctx.MMIOTraces))
+	for idx := range ctx.MMIOTraces {
+		indices = append(indices, idx)
+	}
+	sort.Ints(indices)
+
+	artifact := traceReportArtifact{
+		Reports: make([]*mmio.TraceReport, 0, len(indices)),
+	}
+	if len(ctx.BARTraceOverlays) > 0 {
+		artifact.TraceOverlays = make(map[int]*mmio.TraceBAROverlay, len(ctx.BARTraceOverlays))
+		for idx, overlay := range ctx.BARTraceOverlays {
+			artifact.TraceOverlays[idx] = overlay
+		}
+	}
+
+	for _, idx := range indices {
+		artifact.Reports = append(artifact.Reports, mmio.BuildLegacyTraceReport(ctx.MMIOTraces[idx]))
+	}
+
+	data, err := json.MarshalIndent(artifact, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal BAR model report: %w", err)
+	}
+	if err := ow.writeFile("bar_model_report.json", string(data)+"\n"); err != nil {
+		return fmt.Errorf("failed to write BAR model report: %w", err)
 	}
 	return nil
 }
@@ -165,8 +296,8 @@ func (ow *OutputWriter) writeTCLScripts(ctx *donor.DeviceContext, b *board.Board
 }
 
 // writeManifest generates the build manifest with file checksums.
-func (ow *OutputWriter) writeManifest(ctx *donor.DeviceContext, ids firmware.DeviceIDs) {
-	manifest, err := GenerateManifest(ow.OutputDir, ctx.ToolVersion, "", ids.VendorID, ids.DeviceID)
+func (ow *OutputWriter) writeManifest(ctx *donor.DeviceContext, ids firmware.DeviceIDs, b *board.Board) {
+	manifest, err := GenerateManifestForBuild(ow.OutputDir, ctx.ToolVersion, b, ctx, nil, ids.VendorID, ids.DeviceID)
 	if err != nil {
 		slog.Warn("manifest generation failed", "error", err)
 		return
@@ -177,465 +308,4 @@ func (ow *OutputWriter) writeManifest(ctx *donor.DeviceContext, ids firmware.Dev
 	} else {
 		slog.Info("build manifest written", "files", len(manifest.Files))
 	}
-}
-
-// svFilesReplacedByGenerator: board source files we replace with
-// generated versions. These are excluded from the board source copy
-// so Vivado only sees the generated versions.
-var svFilesReplacedByGenerator = map[string]bool{
-	"pcileech_tlps128_bar_controller.sv": true,
-}
-
-// barControllerSubModules: sub-module names extracted from the board's
-// BAR controller file. The top-level module (pcileech_tlps128_bar_controller)
-// is replaced by the generated version, but these shared modules are still
-// needed by the generated controller.
-var barControllerSubModules = []string{
-	"pcileech_tlps128_bar_rdengine",
-	"pcileech_tlps128_bar_wrengine",
-	"pcileech_bar_impl_none",
-	"pcileech_bar_impl_loopaddr",
-	"pcileech_bar_impl_zerowrite4k",
-}
-
-// patchSVSources copies the board's SV tree (excluding files that will
-// be regenerated), and patches donor IDs into the remaining sources.
-func (ow *OutputWriter) patchSVSources(ctx *donor.DeviceContext, b *board.Board, ids firmware.DeviceIDs) error {
-	srcDir := b.SrcPath(ow.LibDir)
-	dstDir := filepath.Join(ow.OutputDir, "src")
-
-	if _, err := os.Stat(srcDir); os.IsNotExist(err) {
-		slog.Warn("board source dir not found", "path", srcDir)
-		slog.Info("run: git submodule update --init --recursive")
-		return fmt.Errorf("board sources not found at %s (is the pcileech-fpga submodule initialized?)", srcDir)
-	}
-
-	// Copy board sources to local src/ (excluding the top-level bar controller
-	// when generating custom version). The generated vivado_generate_project.tcl
-	// now globs from this local dir so the donor-custom controller is used
-	// instead of stock, avoiding duplicate module imports.
-	if err := copyDirExcluding(srcDir, dstDir, svFilesReplacedByGenerator); err != nil {
-		return fmt.Errorf("failed to copy SV sources: %w", err)
-	}
-
-	// Extract sub-modules from the board's BAR controller file and write
-	// them as separate .sv files. The generated BAR controller depends on
-	// these but the board's top-level module would conflict with the
-	// generated version, so we exclude the original file and split it.
-	if !ow.StockBar {
-		ctrlSrc := filepath.Join(srcDir, "pcileech_tlps128_bar_controller.sv")
-		if err := extractSubModules(ctrlSrc, dstDir, barControllerSubModules); err != nil {
-			slog.Warn("could not extract BAR controller sub-modules, board source may be incompatible", "error", err)
-		}
-	} else {
-		slog.Info("stock-bar mode: keeping stock bar controller")
-		// In stock mode, re-copy the controller since copyDirExcluding skipped it.
-		srcFile := filepath.Join(srcDir, "pcileech_tlps128_bar_controller.sv")
-		dstFile := filepath.Join(dstDir, "pcileech_tlps128_bar_controller.sv")
-		if data, err := os.ReadFile(srcFile); err == nil {
-			os.WriteFile(dstFile, data, 0644)
-		}
-	}
-
-	patcher := svgen.NewSVPatcher(ids, dstDir)
-
-	if err := patcher.PatchAll(); err != nil {
-		return fmt.Errorf("failed to patch SV sources: %w", err)
-	}
-
-	if results := patcher.Results(); len(results) > 0 {
-		slog.Info("SV patches applied", "summary", svgen.FormatPatchSummary(results))
-	}
-
-	return nil
-}
-
-// copyDirExcluding copies a directory recursively but skips files whose
-// names are in the exclude map. Used to prevent board source files from
-// being imported alongside generated versions with the same module names.
-func copyDirExcluding(src, dst string, exclude map[string]bool) error {
-	if err := os.MkdirAll(dst, 0755); err != nil {
-		return err
-	}
-	entries, err := os.ReadDir(src)
-	if err != nil {
-		return err
-	}
-	for _, e := range entries {
-		srcPath := filepath.Join(src, e.Name())
-		dstPath := filepath.Join(dst, e.Name())
-		if e.IsDir() {
-			if err := copyDirExcluding(srcPath, dstPath, exclude); err != nil {
-				return err
-			}
-		} else if !exclude[e.Name()] {
-			data, err := os.ReadFile(srcPath)
-			if err != nil {
-				return err
-			}
-			if err := os.WriteFile(dstPath, data, 0644); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-// extractSubModules reads a board BAR controller source file and writes
-// each named sub-module as a separate .sv file. This allows the generated
-// top-level BAR controller to use shared sub-modules without conflicting
-// with the board's original file.
-func extractSubModules(srcPath string, dstDir string, subModules []string) error {
-	data, err := os.ReadFile(srcPath)
-	if err != nil {
-		return err
-	}
-
-	content := string(data)
-	for _, modName := range subModules {
-		searchStr := "module " + modName
-		start := strings.Index(content, searchStr)
-		if start == -1 {
-			slog.Warn("sub-module not found in board controller", "module", modName)
-			continue
-		}
-
-		// Find the end: next "\nmodule " after our match, or end of file.
-		rest := content[start+len(searchStr):]
-		nextIdx := strings.Index(rest, "\nmodule ")
-		var modBody string
-		if nextIdx == -1 {
-			modBody = content[start:]
-		} else {
-			modBody = content[start : start+len(searchStr)+nextIdx+1]
-		}
-
-		dstFile := filepath.Join(dstDir, modName+".sv")
-		if err := os.WriteFile(dstFile, []byte(modBody), 0644); err != nil {
-			slog.Warn("failed to write sub-module file", "module", modName, "error", err)
-		}
-	}
-	return nil
-}
-
-func (ow *OutputWriter) writeFile(name, content string) error {
-	return os.WriteFile(filepath.Join(ow.OutputDir, name), []byte(content), 0644)
-}
-
-// ListOutputFiles is used by the CLI to show what gets generated.
-func ListOutputFiles() []string {
-	return []string{
-		"device_context.json",
-		"pcileech_cfgspace.coe",
-		"pcileech_cfgspace_writemask.coe",
-		"pcileech_bar_zero4k.coe",
-		"vivado_generate_project.tcl",
-		"vivado_build.tcl",
-		"src/",
-		"pcileech_bar_impl_device.sv",
-		"pcileech_tlps128_bar_controller.sv",
-		"pcileech_bar_impl_msi.sv",
-		"pcileech_msix_table.sv",
-		"pcileech_nvme_admin_responder.sv",
-		"pcileech_nvme_dma_bridge.sv",
-		"tlp_latency_emulator.sv",
-		"device_config.sv",
-		"config_space_init.hex",
-		"msix_table_init.hex",
-		"scrub_diff_report.txt",
-		"build_manifest.json",
-	}
-}
-
-// svArtifact describes one SV file to generate.
-type svArtifact struct {
-	filename string
-	generate func(cfg *svgen.SVGeneratorConfig) (string, error)
-}
-
-// coreSVArtifacts are always generated.
-var coreSVArtifacts = []svArtifact{
-	{"pcileech_bar_impl_device.sv", svgen.GenerateBarImplDeviceSV},
-	{"pcileech_tlps128_bar_controller.sv", svgen.GenerateBarControllerSV},
-	{"pcileech_bar_impl_msi.sv", svgen.GenerateBarImplMSISV},
-	{"tlp_latency_emulator.sv", svgen.GenerateLatencyEmulatorSV},
-	{"device_config.sv", svgen.GenerateDeviceConfigSV},
-}
-
-// writeSVModules generates device-specific SV and HEX init files.
-func (ow *OutputWriter) writeSVModules(ctx *donor.DeviceContext, scrubbedCS *pci.ConfigSpace, ids firmware.DeviceIDs, entropy uint32, b *board.Board) error {
-	cfg, err := ow.buildSVConfig(ctx, scrubbedCS, ids, entropy, b)
-	if err != nil {
-		return err
-	}
-
-	if err := ow.writeCoreSVArtifacts(cfg, scrubbedCS); err != nil {
-		return err
-	}
-
-	if err := ow.writeConditionalArtifacts(cfg, ctx); err != nil {
-		return err
-	}
-
-	ow.logSVSummary(cfg)
-	return nil
-}
-
-// extractMSIInfo parses the MSI capability from scrubbed config space.
-// Returns nil if MSI is absent or not yet programmed by the host.
-func extractMSIInfo(cs *pci.ConfigSpace) *svgen.MSIConfig {
-	// Walk the capability linked list
-	ptr := int(cs.CapabilityPointer()) & 0xFC
-	for ptr != 0 && ptr < 0x100 {
-		capID := cs.ReadU8(ptr)
-		nextPtr := int(cs.ReadU8(ptr+1)) & 0xFC
-
-		if capID == 0x05 { // CapIDMSI
-			msgCtl := cs.ReadU16(ptr + 2)
-			is64bit := (msgCtl & (1 << 7)) != 0
-
-			addrLo := cs.ReadU32(ptr + 4)
-			var data uint16
-			if is64bit {
-				data = cs.ReadU16(ptr + 12)
-			} else {
-				data = cs.ReadU16(ptr + 8)
-			}
-
-			// Use standard defaults if not yet programmed by host (addr=0).
-			// The APIC accepts MSI writes to 0xFEE00000.
-			if addrLo == 0 {
-				addrLo = 0xFEE00000
-			}
-			if data == 0 {
-				data = 0x0000 // vector 0, edge, physical mode
-			}
-
-			return &svgen.MSIConfig{
-				Enabled: (msgCtl & (1 << 0)) != 0,
-				AddrLo:  addrLo,
-				Data:    data,
-			}
-		}
-
-		ptr = nextPtr
-	}
-	return nil
-}
-
-// buildSVConfig assembles the SVGeneratorConfig from donor context.
-func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.ConfigSpace, ids firmware.DeviceIDs, entropy uint32, b *board.Board) (*svgen.SVGeneratorConfig, error) {
-	// Use the same BAR index for content data and probe profile to avoid
-	// mismatched register maps (e.g. IO BAR0 profile + MMIO BAR2 data).
-	barIdx := firmware.LargestBarIndex(ctx.BARContents)
-	barData := ctx.BARContents[barIdx]
-	var barProfile *donor.BARProfile
-	if ctx.BARProfiles != nil {
-		if p, ok := ctx.BARProfiles[barIdx]; ok {
-			barProfile = p
-		}
-	}
-	slog.Info("BAR selection for SV codegen",
-		"bar_index", barIdx,
-		"bar_size", len(barData),
-		"has_profile", barProfile != nil,
-		"class_code", fmt.Sprintf("0x%06X", ctx.Device.ClassCode),
-	)
-	bm := barmodel.BuildBARModel(barData, ctx.Device.ClassCode, barProfile)
-	slog.Info("BAR model built",
-		"model_nil", bm == nil,
-		"reg_count", func() int { if bm != nil { return len(bm.Registers) }; return 0 }(),
-	)
-
-	strategy := devclass.StrategyForClassAndVendor(ctx.Device.ClassCode, ids.VendorID)
-	devClass := ""
-	if strategy != nil {
-		devClass = strategy.DeviceClass()
-	}
-	slog.Info("device class resolution", "class", devClass)
-
-	msixTableSize := 0
-	if ctx.MSIXData != nil && ctx.MSIXData.TableSize > 0 {
-		msixTableSize = ctx.MSIXData.TableSize
-	}
-	donorBar := firmware.DonorBAR0Demand(ctx, b, msixTableSize)
-	bar0Size := firmware.CappedBAR0Size(ctx, b, msixTableSize)
-	if bm != nil && bm.Size < bar0Size {
-		bm.Size = bar0Size
-	}
-	if bm == nil && bar0Size > board.DefaultBRAMSize {
-		bm = &barmodel.BARModel{Size: bar0Size}
-	}
-
-	cfg := &svgen.SVGeneratorConfig{
-		DeviceIDs:     ids,
-		BARModel:      bm,
-		ClassCode:     ctx.Device.ClassCode,
-		LatencyConfig: svgen.DefaultLatencyConfig(ctx.Device.ClassCode),
-		HasMSIX:       bm != nil,
-		BuildEntropy:  entropy,
-		PRNGSeeds:     svgen.BuildPRNGSeeds(ids.VendorID, ids.DeviceID, entropy),
-		DeviceClass:   devClass,
-		Bar0Size:      bar0Size,
-	}
-
-	if devClass == devclass.ClassNVMe {
-		cfg.NVMeIdentify = nvme.BuildIdentifyData(ids, barData)
-		if len(barData) >= 0x08 {
-			capHI := util.ReadLE32(barData, 0x04)
-			cfg.NVMeDoorbellStride = capHI & 0x0F
-		}
-	}
-
-	if ctx.MSIXData != nil && ctx.MSIXData.TableSize > 0 {
-		class := uint32(0)
-		if devClass == devclass.ClassNVMe {
-			class = 0x0108
-		}
-		dstrd := cfg.NVMeDoorbellStride
-		tableOff, pbaOffset, _ := firmware.MSIXPlacement(cfg.Bar0Size, ctx.MSIXData.TableSize, class, dstrd)
-		cfg.MSIXConfig = &svgen.MSIXConfig{
-			NumVectors:  ctx.MSIXData.TableSize,
-			TableOffset: tableOff,
-			PBAOffset:   pbaOffset,
-		}
-		cfg.HasMSIX = true
-		if m := pci.ParseMSIXCap(scrubbedCS); m != nil {
-			scrubbedCS.WriteU32(m.CapOffset+4, tableOff&0xFFFFFFF8)
-			scrubbedCS.WriteU32(m.CapOffset+8, pbaOffset&0xFFFFFFF8)
-		}
-	}
-
-	// Extract MSI capability for interrupt generation.
-	// MSI is the primary interrupt mechanism for HDA devices.
-	if msiInfo := extractMSIInfo(scrubbedCS); msiInfo != nil {
-		cfg.MSIConfig = msiInfo
-	}
-
-	bram := b.BRAMSizeOrDefault()
-	// Validate *donor demand* (may exceed) against board BRAM; error unless --force.
-	// (bar0Size is the Capped value actually used for artifacts/scrub/SV.)
-	if issues := ValidateBARSize(donorBar, bram, 0); len(issues) > 0 {
-		if !ow.Force { return nil, fmt.Errorf("%s", issues[0]) }
-	}
-	if cfg.MSIXConfig != nil {
-		if issues := ValidateBARSize(donorBar, bram, cfg.MSIXConfig.TableOffset); len(issues) > 0 {
-			if !ow.Force { return nil, fmt.Errorf("%s", issues[0]) }
-		}
-	}
-
-	return cfg, nil
-}
-
-// writeCoreSVArtifacts generates core SV modules and config space HEX.
-func (ow *OutputWriter) writeCoreSVArtifacts(cfg *svgen.SVGeneratorConfig, scrubbedCS *pci.ConfigSpace) error {
-	for _, art := range coreSVArtifacts {
-		content, err := art.generate(cfg)
-		if err != nil {
-			return fmt.Errorf("generating %s: %w", art.filename, err)
-		}
-		if err := ow.writeFile(art.filename, content); err != nil {
-			return err
-		}
-	}
-
-	hex := codegen.GenerateConfigSpaceHex(scrubbedCS)
-	return ow.writeFile("config_space_init.hex", hex)
-}
-
-// writeConditionalArtifacts generates MSI-X and NVMe artifacts when applicable.
-func (ow *OutputWriter) writeConditionalArtifacts(cfg *svgen.SVGeneratorConfig, ctx *donor.DeviceContext) error {
-	if cfg.MSIXConfig != nil {
-		msixSV, err := svgen.GenerateMSIXTableSV(cfg)
-		if err != nil {
-			return fmt.Errorf("generating pcileech_msix_table.sv: %w", err)
-		}
-		if err := ow.writeFile("pcileech_msix_table.sv", msixSV); err != nil {
-			return err
-		}
-
-		entries := ctx.MSIXData.Entries
-		if entries == nil {
-			entries = make([]pci.MSIXEntry, cfg.MSIXConfig.NumVectors)
-			for i := range entries {
-				entries[i].Control = 0x01 // masked
-			}
-		}
-		if err := ow.writeFile("msix_table_init.hex", codegen.GenerateMSIXTableHex(entries)); err != nil {
-			return err
-		}
-	}
-
-	if cfg.NVMeIdentify != nil {
-		nvmeSV, err := svgen.GenerateNVMeResponderSV(cfg)
-		if err != nil {
-			return fmt.Errorf("generating pcileech_nvme_admin_responder.sv: %w", err)
-		}
-		if err := ow.writeFile("pcileech_nvme_admin_responder.sv", nvmeSV); err != nil {
-			return err
-		}
-
-		bridgeSV, err := svgen.GenerateNVMeDMABridgeSV(cfg)
-		if err != nil {
-			return fmt.Errorf("generating pcileech_nvme_dma_bridge.sv: %w", err)
-		}
-		if err := ow.writeFile("pcileech_nvme_dma_bridge.sv", bridgeSV); err != nil {
-			return err
-		}
-
-		if err := ow.writeFile("identify_init.hex", nvme.IdentifyDataToHex(cfg.NVMeIdentify)); err != nil {
-			return err
-		}
-	}
-
-	if cfg.DeviceClass == devclass.ClassAudio && cfg.BARModel != nil {
-		hdaSV, err := svgen.GenerateHDARIRBDMASV(cfg)
-		if err != nil {
-			return fmt.Errorf("generating pcileech_hda_rirb_dma.sv: %w", err)
-		}
-		if err := ow.writeFile("pcileech_hda_rirb_dma.sv", hdaSV); err != nil {
-			return err
-		}
-
-		// MSI interrupt generator for HDA - critical for driver completion.
-		// always generated for audio devices: template instantiates unconditionally.
-		hdaMSISV, err := svgen.GenerateHDAMSISV(cfg)
-		if err != nil {
-			return fmt.Errorf("generating pcileech_hda_msi.sv: %w", err)
-		}
-		if err := ow.writeFile("pcileech_hda_msi.sv", hdaMSISV); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// logSVSummary prints a summary of generated SV features.
-func (ow *OutputWriter) logSVSummary(cfg *svgen.SVGeneratorConfig) {
-	var features []string
-	switch cfg.DeviceClass {
-	case devclass.ClassNVMe:
-		features = append(features, "NVMe FSM")
-		if cfg.NVMeIdentify != nil {
-			features = append(features, "NVMe Admin Responder", "NVMe DMA Bridge")
-		}
-	case devclass.ClassXHCI:
-		features = append(features, "xHCI FSM")
-	case devclass.ClassAudio:
-		features = append(features, "HD Audio FSM", "RIRB DMA Bridge")
-		if cfg.MSIConfig != nil {
-			features = append(features, "MSI Interrupt Gen")
-		}
-	}
-	if cfg.MSIXConfig != nil {
-		features = append(features, fmt.Sprintf("MSI-X %d vectors", cfg.MSIXConfig.NumVectors))
-	}
-	if cfg.BARModel != nil {
-		features = append(features, fmt.Sprintf("%d registers", len(cfg.BARModel.Registers)))
-	} else {
-		features = append(features, "BRAM fallback")
-	}
-	features = append(features, "latency emulator", "interrupt controller")
-	slog.Info("SV modules generated", "features", strings.Join(features, ", "))
 }

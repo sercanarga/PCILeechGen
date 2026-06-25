@@ -34,12 +34,12 @@ type projectTCLData struct {
 	LinkWidth     string
 	TrgtLinkSpeed string
 
-	Bar0Enabled bool
-	Bar0Size    string
-	Bar0Scale   string
-	Bar064bit   bool
+	Bar0Enabled  bool
+	Bar0Size     string
+	Bar0Scale    string
+	Bar064bit    bool
 	Bar0ByteSize int
-	StockBar    bool
+	StockBar     bool
 
 	DSNEnabled       bool
 	MSICapVectorsStr string
@@ -77,24 +77,33 @@ func buildBAR0Config(bar0Size int, ctx *donor.DeviceContext) bar0Config {
 	scale, size := barSizeToTCL(uint64(bar0Size))
 	is64 := false
 	if ctx != nil {
+		profileIs64 := func() bool {
+			p := devclass.ProfileForDevice(ctx.Device.ClassCode, ctx.Device.VendorID, ctx.Device.DeviceID)
+			return p != nil && p.Uses64BitBAR
+		}
+		configBAR0 := func() (uint32, bool) {
+			if ctx.ConfigSpace == nil {
+				return 0, false
+			}
+			raw := ctx.ConfigSpace.BAR(0)
+			return raw, raw != 0
+		}
 		if len(ctx.BARs) > 0 {
 			raw := ctx.BARs[0].RawValue
+			if raw == 0 {
+				if cfgRaw, ok := configBAR0(); ok {
+					raw = cfgRaw
+				}
+			}
 			if raw != 0 {
 				is64 = (raw & 0x06) == 0x04
 			} else {
-				p := devclass.ProfileForClass(ctx.Device.ClassCode)
-				if p != nil {
-					is64 = p.Uses64BitBAR
-				}
+				is64 = profileIs64()
 			}
-		} else if ctx.ConfigSpace != nil {
-			raw := ctx.ConfigSpace.BAR(0)
+		} else if raw, ok := configBAR0(); ok {
 			is64 = (raw & 0x06) == 0x04
 		} else {
-			p := devclass.ProfileForClass(ctx.Device.ClassCode)
-			if p != nil {
-				is64 = p.Uses64BitBAR
-			}
+			is64 = profileIs64()
 		}
 	}
 	return bar0Config{

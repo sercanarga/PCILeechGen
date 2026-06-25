@@ -594,7 +594,9 @@ module pcileech_tlps128_bar_controller(
     wire [8:0]   nvme_tlp_tx_tuser;
     wire         nvme_tlp_tx_tready;
 
-    pcileech_nvme_admin_responder i_nvme_responder(
+    pcileech_nvme_admin_responder #(
+        .NUM_IO_QUEUES     ( 32'h{{ printf "%08X" .NVMeNumIOQueues }} )
+    ) i_nvme_responder(
         .rst                ( rst                           ),
         .clk                ( clk                           ),
         .cc_en              ( nvme_reg_cc[0]                ),
@@ -790,6 +792,36 @@ module pcileech_tlps128_bar_controller(
         end
     endgenerate
 
-    assign intr_req = bar2_intr_req{{ if eq .DeviceClass "audio" }} | hda_intr_req{{ end }}{{ if eq .DeviceClass "nvme" }} | nvme_msix_trigger{{ end }};
+    // Delayed interrupt enable. Real devices do not fire interrupts the
+    // instant the link comes up; they finish internal init first. Drivers
+    // that probe config space during early init can mistake a spurious
+    // interrupt pulse for a stuck/legacy line. We gate intr_req off for a
+    // short startup window (~500M cycles ~= 5s at 100 MHz) after reset,
+    // then let the real sources through.
+    localparam [29:0] IRQ_ENABLE_DELAY = 30'd500_000_000;
+    reg [29:0] irq_startup_cnt;
+    reg        irq_enabled;
+    reg        intr_req_pending;
+    wire       intr_req_raw = bar2_intr_req{{ if eq .DeviceClass "audio" }} | hda_intr_req{{ end }}{{ if eq .DeviceClass "nvme" }} | nvme_msix_trigger{{ end }};
+    always @(posedge clk) begin
+        if (rst) begin
+            irq_startup_cnt <= 30'h0;
+            irq_enabled     <= 1'b0;
+            intr_req_pending <= 1'b0;
+        end else begin
+            if (!irq_enabled) begin
+                if (intr_req_raw)
+                    intr_req_pending <= 1'b1;
+                if (irq_startup_cnt >= IRQ_ENABLE_DELAY)
+                    irq_enabled <= 1'b1;
+                else
+                    irq_startup_cnt <= irq_startup_cnt + 1'b1;
+            end else begin
+                intr_req_pending <= 1'b0;
+            end
+        end
+    end
+
+    assign intr_req = irq_enabled & (intr_req_raw | intr_req_pending);
 
 endmodule

@@ -100,6 +100,11 @@ func applyDSNVariance(cs *pci.ConfigSpace, rng *splitMix64) {
 	}
 }
 
+// StripDSNExtCap removes DSN from the extended capability chain if present.
+func StripDSNExtCap(cs *pci.ConfigSpace) {
+	stripDSNExtCap(cs)
+}
+
 // stripDSNExtCap removes DSN from the ext cap chain if present.
 func stripDSNExtCap(cs *pci.ConfigSpace) {
 	if cs.Size < pci.ConfigSpaceSize {

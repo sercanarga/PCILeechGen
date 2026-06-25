@@ -61,6 +61,8 @@ package device_config;
     localparam HAS_XHCI_FSM     = {{ if eq .DeviceClass "xhci" }}1{{ else }}0{{ end }};
     localparam HAS_AUDIO_FSM    = {{ if eq .DeviceClass "audio" }}1{{ else }}0{{ end }};
     localparam HAS_MSIX_INT     = {{ if .HasMSIX }}1{{ else }}0{{ end }};
+    localparam HAS_INTX_INT     = {{ if .INTxConfig }}1{{ else }}0{{ end }};
+    localparam INTX_LINE        = {{ if .INTxConfig }}3'd{{ (index .INTxConfig).Line }}{{ else }}3'd0{{ end }};
     localparam HAS_LATENCY_EMU  = {{ if .LatencyConfig }}1{{ else }}0{{ end }};
 endpackage
 

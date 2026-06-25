@@ -125,6 +125,24 @@ func TestGenerateBarContentCOE_WithData(t *testing.T) {
 	}
 }
 
+func TestGenerateSingleBarContentCOE_UsesRequestedBAR(t *testing.T) {
+	bar0 := []byte{0x11, 0x11, 0x11, 0x11}
+	bar2 := []byte{0xDD, 0xCC, 0xBB, 0xAA}
+
+	coe := GenerateSingleBarContentCOE(2, bar2, 4096)
+
+	if !strings.Contains(coe, "BAR2") {
+		t.Error("COE header should identify the source BAR")
+	}
+	if !strings.Contains(coe, "aabbccdd") {
+		t.Error("COE should contain BAR2 data")
+	}
+	if strings.Contains(coe, "11111111") {
+		t.Errorf("COE used BAR0 data instead of requested BAR2: %s", coe[:200])
+	}
+	_ = bar0 // documents the regression: largest/lowest BAR data must not leak in
+}
+
 func TestGenerateConfigSpaceHex(t *testing.T) {
 	cs := pci.NewConfigSpace()
 	cs.Size = pci.ConfigSpaceSize
@@ -188,7 +206,7 @@ func TestGenerateMSIXTableHex_Empty(t *testing.T) {
 func TestWritemask_ScrubbedBAR0FromZero(t *testing.T) {
 	cs := pci.NewConfigSpace()
 	cs.Size = pci.ConfigSpaceSize
-	cs.WriteU16(0x00, 0x1102)     // Creative Labs
+	cs.WriteU16(0x00, 0x1102) // Creative Labs
 	cs.WriteU16(0x02, 0x0012)
 	cs.WriteU32(0x10, 0xFFFFF000) // BAR0 = 4KB mem (from scrubber)
 
@@ -255,11 +273,11 @@ func TestWritemask_IOBAROverwrittenToMemory(t *testing.T) {
 func TestWritemask_IdentityRegistersReadOnly(t *testing.T) {
 	cs := pci.NewConfigSpace()
 	cs.Size = pci.ConfigSpaceSize
-	cs.WriteU16(0x00, 0x1102) // VID
-	cs.WriteU16(0x02, 0x0012) // DID
+	cs.WriteU16(0x00, 0x1102)     // VID
+	cs.WriteU16(0x02, 0x0012)     // DID
 	cs.WriteU32(0x08, 0x04030000) // ClassCode + RevID
-	cs.WriteU16(0x2C, 0x1102) // SubsysVID
-	cs.WriteU16(0x2E, 0x0012) // SubsysDID
+	cs.WriteU16(0x2C, 0x1102)     // SubsysVID
+	cs.WriteU16(0x2E, 0x0012)     // SubsysDID
 	cs.WriteU32(0x10, 0xFFFFF000) // BAR0
 
 	wm := GenerateWritemaskCOE(cs)
@@ -337,8 +355,8 @@ func TestWritemask_MultipleBARs(t *testing.T) {
 func TestConfigSpaceCOE_ScrubbedDeviceIdentity(t *testing.T) {
 	cs := pci.NewConfigSpace()
 	cs.Size = pci.ConfigSpaceSize
-	cs.WriteU16(0x00, 0x1102) // VID
-	cs.WriteU16(0x02, 0x0012) // DID
+	cs.WriteU16(0x00, 0x1102)     // VID
+	cs.WriteU16(0x02, 0x0012)     // DID
 	cs.WriteU32(0x08, 0x04030000) // ClassCode 04:03:00
 
 	coe := GenerateConfigSpaceCOE(cs)
@@ -385,4 +403,3 @@ func parseCOEDwords(t *testing.T, coe string) []string {
 	}
 	return dwords
 }
-

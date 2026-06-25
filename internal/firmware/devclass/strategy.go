@@ -8,6 +8,7 @@ const (
 	ClassGPU         = "gpu"
 	ClassSATA        = "sata"
 	ClassWiFi        = "wifi"
+	ClassCardReader  = "cardreader"
 	ClassThunderbolt = "thunderbolt"
 	ClassGeneric     = "generic"
 )
@@ -46,8 +47,18 @@ func StrategyForClass(classCode uint32) DeviceStrategy {
 }
 
 // StrategyForClassAndVendor returns a strategy based on class code and vendor ID.
-// vendor-specific dispatch is used for classes with multiple vendors (e.g. WiFi).
+// vendor-specific dispatch is used only for devices where vendor identity is
+// enough to select a safe profile.
 func StrategyForClassAndVendor(classCode uint32, vendorID uint16) DeviceStrategy {
+	return strategyForDevice(classCode, vendorID, 0)
+}
+
+// StrategyForDevice returns a strategy based on class, vendor and device ID.
+func StrategyForDevice(classCode uint32, vendorID, deviceID uint16) DeviceStrategy {
+	return strategyForDevice(classCode, vendorID, deviceID)
+}
+
+func strategyForDevice(classCode uint32, vendorID, deviceID uint16) DeviceStrategy {
 	baseClass := (classCode >> 16) & 0xFF
 	subClass := (classCode >> 8) & 0xFF
 
@@ -65,7 +76,9 @@ func StrategyForClassAndVendor(classCode uint32, vendorID uint16) DeviceStrategy
 	case baseClass == 0x01 && subClass == 0x06:
 		return &sataStrategy{baseStrategy{"SATA AHCI", ClassSATA, sataProfile}}
 	case baseClass == 0x02 && subClass == 0x80:
-		return wifiStrategyForVendor(vendorID)
+		return wifiStrategyForDevice(vendorID, deviceID)
+	case baseClass == 0xFF && vendorID == realtekVID && deviceID == rts522aDeviceID:
+		return &rts522aCardReaderStrategy{baseStrategy{"Card Reader (RTS522A)", ClassCardReader, rts522aProfile}}
 	case baseClass == 0x0C && subClass == 0x80:
 		return &thunderboltStrategy{baseStrategy{"Thunderbolt", ClassThunderbolt, thunderboltProfile}}
 	default:
@@ -73,10 +86,20 @@ func StrategyForClassAndVendor(classCode uint32, vendorID uint16) DeviceStrategy
 	}
 }
 
-// wifiStrategyForVendor selects between mediatek and intel/broadcom wifi profiles.
-func wifiStrategyForVendor(vendorID uint16) DeviceStrategy {
+// wifiStrategyForDevice selects between mediatek, atheros, intel, exact
+// Realtek-device and generic wifi profiles.
+func wifiStrategyForDevice(vendorID, deviceID uint16) DeviceStrategy {
 	if vendorID == mediatekVID {
 		return &mediatekWifiStrategy{baseStrategy{"Wi-Fi (MediaTek)", ClassWiFi, mediatekWifiProfile}}
+	}
+	if vendorID == atherosVID && deviceID == ar9287DeviceID {
+		return &ar9287WifiStrategy{baseStrategy{"Wi-Fi (Atheros AR9287)", ClassWiFi, ar9287Profile}}
+	}
+	if vendorID == intelVID && deviceID == intelBE200DeviceID {
+		return &intelWifiStrategy{baseStrategy{"Wi-Fi (Intel BE200 family)", ClassWiFi, intelWiFiProfile}}
+	}
+	if vendorID == realtekVID && deviceID == realtekRTL8188EEDeviceID {
+		return &realtekWifiStrategy{baseStrategy{"Wi-Fi (Realtek RTL8188EE)", ClassWiFi, realtekRTL8188EEProfile}}
 	}
 	return &wifiStrategy{baseStrategy{"Wi-Fi", ClassWiFi, wifiProfile}}
 }

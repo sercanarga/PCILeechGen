@@ -24,6 +24,93 @@ func BuildIdentifyData(ids firmware.DeviceIDs, barData []byte) *IdentifyData {
 	return d
 }
 
+// BuildIdentifyDataFromCapture prefers donor-captured Identify pages when
+// present and valid, then merges a small set of identity fields that must stay
+// consistent with the donor's BAR0 registers / config-space so host drivers
+// don't flag a mismatch:
+//   - Controller VID (0x000), SSVID (0x002): from ids (config-space)
+//   - Controller VER (0x050): from BAR0 VS (offset 0x08) when present, else 1.4
+//   - Controller MDTS (0x04D): clamped to the safe value derived from CAP.MPSMIN
+//
+// Missing/invalid pages fall back to full synthesis via BuildIdentifyData.
+func BuildIdentifyDataFromCapture(ids firmware.DeviceIDs, barData []byte, cap *Capture) *IdentifyData {
+	if cap == nil || (!cap.HasController && !cap.HasNamespace) {
+		return BuildIdentifyData(ids, barData)
+	}
+
+	d := &IdentifyData{}
+
+	// Controller: prefer captured, merge identity fields.
+	if cap.HasController && !isZeroPage(cap.Controller[:]) {
+		d.Controller = cap.Controller
+		mergeControllerIdentity(&d.Controller, ids, barData)
+	} else {
+		d.Controller = buildIdentifyController(ids, barData)
+	}
+
+	// Namespace: prefer captured verbatim; else synthesize.
+	if cap.HasNamespace && !isZeroPage(cap.Namespace[:]) {
+		d.Namespace = cap.Namespace
+	} else {
+		d.Namespace = buildIdentifyNamespace(barData)
+	}
+
+	return d
+}
+
+// Capture is the donor-captured Identify pages (mirrors donor.NVMeIdentifyCapture
+// without the cross-package dependency).
+type Capture struct {
+	Controller    [4096]byte
+	Namespace     [4096]byte
+	HasController bool
+	HasNamespace  bool
+}
+
+// isZeroPage reports whether the 4096-byte page is entirely zero, which we
+// treat as "not captured" / invalid.
+func isZeroPage(p []byte) bool {
+	for _, b := range p {
+		if b != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// mergeControllerIdentity overwrites the small set of Identify Controller
+// fields that must stay consistent with the donor's config-space / BAR0 so
+// host drivers (notably stornvme.sys) do not raise Code 10 on mismatch.
+func mergeControllerIdentity(data *[4096]byte, ids firmware.DeviceIDs, barData []byte) {
+	binary.LittleEndian.PutUint16(data[0x000:], ids.VendorID)
+	binary.LittleEndian.PutUint16(data[0x002:], ids.SubsysVendorID)
+
+	nvmeVer := uint32(0x00010400)
+	if len(barData) >= 0x0C {
+		v := binary.LittleEndian.Uint32(barData[0x08:0x0C])
+		if v != 0 {
+			nvmeVer = v
+		}
+	}
+	binary.LittleEndian.PutUint32(data[0x050:], nvmeVer)
+
+	// MDTS: clamp to a host-safe value derived from CAP.MPSMIN.
+	mdts := uint8(5)
+	if len(barData) >= 0x08 {
+		capHi := binary.LittleEndian.Uint32(barData[0x04:0x08])
+		mpsmin := (capHi >> 16) & 0x0F
+		if mpsmin > 0 && mpsmin < 5 && mdts > uint8(5-mpsmin) {
+			mdts = uint8(5 - mpsmin)
+			if mdts == 0 {
+				mdts = 1
+			}
+		}
+	}
+	if data[0x04D] == 0 || data[0x04D] > mdts {
+		data[0x04D] = mdts
+	}
+}
+
 // buildIdentifyController - CNS=1, NVMe 1.4 spec Figure 247.
 func buildIdentifyController(ids firmware.DeviceIDs, barData []byte) [4096]byte {
 	var data [4096]byte

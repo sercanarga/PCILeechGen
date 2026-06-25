@@ -1,0 +1,7 @@
+{
+  "source_url": "https://example.invalid/repo",
+  "license": "unknown",
+  "scope": "Proposed anti-cheat bypass helper.",
+  "safety_classification": "rejected",
+  "imported_artifacts": []
+}

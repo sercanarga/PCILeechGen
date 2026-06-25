@@ -1,0 +1,9 @@
+{
+  "source_url": "https://github.com/example/pcileech-forks/commit/2b3c4d5",
+  "license": "MIT",
+  "commit_ref": "2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c",
+  "scope": "Add conservative read-only BAR0 register model derived from a published NVMe identify dump.",
+  "safety_classification": "needs-review",
+  "imported_artifacts": ["config_space_256.bin"],
+  "attribution": "Example Author <author@example.com>"
+}

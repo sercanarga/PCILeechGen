@@ -59,3 +59,32 @@ func TestCORBSTSRW1CGeneration(t *testing.T) {
 		t.Error("0x4C should NOT be in generic write case (IsRW1C=true)")
 	}
 }
+
+func TestGenericRW1CGeneration(t *testing.T) {
+	cfg := &svgen.SVGeneratorConfig{
+		DeviceIDs: firmware.DeviceIDs{VendorID: 0x8086, DeviceID: 0x1234, RevisionID: 0x01},
+		BARModel: &barmodel.BARModel{
+			Size: 4096,
+			Registers: []barmodel.BARRegister{
+				{Offset: 0x80, Width: 4, Name: "GEN_STATUS", Reset: 0x00000001, RWMask: 0x0000000F, RW1CMask: 0x00000001, IsRW1C: true},
+			},
+		},
+		DeviceClass: "",
+		PRNGSeeds:   [4]uint32{1, 2, 3, 4},
+	}
+
+	sv, err := svgen.GenerateBarImplDeviceSV(cfg)
+	if err != nil {
+		t.Fatalf("generate SV: %v", err)
+	}
+
+	if !strings.Contains(sv, "32'h00000080: begin") {
+		t.Fatal("RW1C generic register missing from write case")
+	}
+	if !strings.Contains(sv, "& ~(8'h01 & wr_data[7:0])") {
+		t.Fatal("expected RW1C clear expression in generic write case")
+	}
+	if !strings.Contains(sv, "wr_data[7:0] & 8'h0E") {
+		t.Fatal("expected RW set mask for non-RW1C bits")
+	}
+}

@@ -21,6 +21,19 @@ type Board struct {
 	SubDir       string `json:"sub_dir"`
 	TCLFile      string `json:"tcl_file"`
 	BuildTCL     string `json:"build_tcl"`
+	Flash        *Flash `json:"flash,omitempty"`
+}
+
+type Flash struct {
+	Tool                string `json:"tool"`
+	OpenFPGALoaderBoard string `json:"openfpgaloader_board,omitempty"`
+	Cable               string `json:"cable,omitempty"`
+	Target              string `json:"target"`
+	Script              string `json:"script,omitempty"`
+	Config              string `json:"config,omitempty"`
+	MemoryPart          string `json:"memory_part,omitempty"`
+	InstructionsURL     string `json:"instructions_url"`
+	Notes               string `json:"notes,omitempty"`
 }
 
 // String returns the board name.
@@ -122,8 +135,12 @@ func Find(name string) (*Board, error) {
 			return &registry[i], nil
 		}
 	}
-	return nil, fmt.Errorf("unknown board %q, available boards:\n%s",
-		name, formatBoardList())
+	note := ""
+	if strings.Contains(lower, "50t") {
+		note = "\nNote: no XC7A50T board entry is defined in this repo. Supported Artix-7 board families here include XC7A35T, XC7A75T, and XC7A100T."
+	}
+	return nil, fmt.Errorf("unknown board %q, available boards:\n%s%s",
+		name, formatBoardList(), note)
 }
 
 // formatBoardList returns a formatted list of available boards for error messages.

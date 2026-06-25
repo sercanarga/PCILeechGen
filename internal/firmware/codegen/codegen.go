@@ -71,10 +71,10 @@ func GenerateWritemaskCOE(cs *pci.ConfigSpace) string {
 	// scrubber already neutralized all writable extended cap fields.
 
 	// header type 0 registers (DWORD index = byte offset / 4)
-	masks[0] = 0x00000000  // 0x00: VID:DID (read-only identity)
-	masks[1] = 0xFFFFFFFF  // 0x04: Command:Status (OS needs full control)
-	masks[2] = 0x00000000  // 0x08: RevisionID:ClassCode (read-only identity)
-	masks[3] = 0xFF00FFFF  // 0x0C: CLS+LT writable, HeaderType RO, BIST writable
+	masks[0] = 0x00000000 // 0x00: VID:DID (read-only identity)
+	masks[1] = 0xFFFFFFFF // 0x04: Command:Status (OS needs full control)
+	masks[2] = 0x00000000 // 0x08: RevisionID:ClassCode (read-only identity)
+	masks[3] = 0xFF00FFFF // 0x0C: CLS+LT writable, HeaderType RO, BIST writable
 
 	// BAR registers 0x10-0x24 (DWORD 4-9): size-matching masks
 	for i := 0; i < 6; i++ {
@@ -111,23 +111,36 @@ func GenerateWritemaskCOE(cs *pci.ConfigSpace) string {
 	)
 }
 
-// GenerateBarContentCOE outputs BAR shadow COE from the lowest BAR.
-// Note: actual BAR aperture (Bar0Size) may be variable (>4KB on large boards); this seeds 4KB shadow.
+// GenerateBarContentCOE outputs the legacy BAR shadow COE from the largest BAR.
+// Kept for compatibility with existing templates that expect pcileech_bar_zero4k.coe.
 func GenerateBarContentCOE(barContents map[int][]byte, size int) string {
-	n := 1024
-	if size > 0 {
-		n = (size + 3) / 4
+	data := firmware.LargestBar(barContents)
+	return GenerateSingleBarContentCOE(-1, data, size)
+}
+
+// GenerateSingleBarContentCOE outputs one BAR shadow COE from a specific donor BAR.
+func GenerateSingleBarContentCOE(barIndex int, data []byte, size int) string {
+	if size <= 0 {
+		if len(data) > 0 {
+			size = len(data)
+		} else {
+			size = 4096
+		}
 	}
+	n := (size + 3) / 4
 	words := make([]uint32, n)
 
-	data := firmware.LargestBar(barContents)
 	if data != nil {
 		for i := 0; i+4 <= len(data) && i/4 < len(words); i += 4 {
 			words[i/4] = util.ReadLE32(data, i)
 		}
 	}
 
-	header := "; PCILeechGen - BAR Content (4KB shadow)\n"
+	header := "; PCILeechGen - BAR Content"
+	if barIndex >= 0 {
+		header += fmt.Sprintf(" (BAR%d)", barIndex)
+	}
+	header += "\n"
 	if data != nil {
 		header += "; Populated from donor device BAR memory\n"
 	} else {
@@ -168,4 +181,3 @@ func GenerateMSIXTableHex(entries []pci.MSIXEntry) string {
 
 	return sb.String()
 }
-

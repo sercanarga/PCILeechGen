@@ -1,10 +1,80 @@
 package barmodel
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/sercanarga/pcileechgen/internal/donor"
+	"github.com/sercanarga/pcileechgen/internal/donor/mmio"
 )
+
+func TestBARRegisterAccessKind(t *testing.T) {
+	tests := []struct {
+		name string
+		reg  BARRegister
+		want RegisterAccessKind
+	}{
+		{name: "read-only", reg: BARRegister{RWMask: 0}, want: RegisterReadOnly},
+		{name: "read-write", reg: BARRegister{RWMask: 0xFFFFFFFF}, want: RegisterReadWrite},
+		{name: "rw1c", reg: BARRegister{RWMask: 0x0000000F, IsRW1C: true}, want: RegisterRW1C},
+		{name: "fsm", reg: BARRegister{RWMask: 0xFFFFFFFF, IsFSMDriven: true}, want: RegisterFSMDriven},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.reg.AccessKind(); got != tt.want {
+				t.Fatalf("AccessKind() = %s, want %s", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestApplyTraceOverlay_InfersWriteMaskForExistingRegister(t *testing.T) {
+	model := &BARModel{
+		Registers: []BARRegister{{
+			Offset: 0x1C,
+			Name:   "CSTS",
+		}},
+	}
+	overlay := &mmio.TraceBAROverlay{
+		WriteMask: map[uint32]uint32{0x1C: 0x0000000F},
+		RW1CMask:  map[uint32]uint32{0x1C: 0x0000000F},
+	}
+
+	applyTraceOverlay(model, overlay)
+
+	if len(model.Registers) != 1 {
+		t.Fatalf("register count = %d, want 1", len(model.Registers))
+	}
+	reg := model.Registers[0]
+	if reg.RWMask != 0x0000000F {
+		t.Fatalf("RWMask = 0x%08X, want 0x0000000F", reg.RWMask)
+	}
+	if !reg.IsRW1C {
+		t.Fatal("RW1C flag should be set from overlay")
+	}
+	if reg.RW1CMask != 0x0000000F {
+		t.Fatalf("RW1CMask = 0x%08X, want 0x0000000F", reg.RW1CMask)
+	}
+}
+
+func TestApplyTraceOverlay_AddsWritableOnlyRegister(t *testing.T) {
+	model := &BARModel{}
+	overlay := &mmio.TraceBAROverlay{WriteMask: map[uint32]uint32{0x100: 0x000000F0}}
+
+	applyTraceOverlay(model, overlay)
+
+	if len(model.Registers) != 1 {
+		t.Fatalf("register count = %d, want 1", len(model.Registers))
+	}
+	reg := model.Registers[0]
+	if reg.Offset != 0x100 {
+		t.Fatalf("offset = 0x%X, want 0x100", reg.Offset)
+	}
+	if reg.RWMask != 0x000000F0 || reg.Name != "TRACE_WR_0x00000100" {
+		t.Fatalf("write-only inferred register mismatch: %#v", reg)
+	}
+}
 
 func TestBuildBARModel_NVMe(t *testing.T) {
 	barData := make([]byte, 4096)
@@ -61,6 +131,34 @@ func TestBuildBARModel_NVMe_AllRegisters(t *testing.T) {
 	}
 }
 
+func TestBuildBARModel_NVMe_ProfiledMandatoryFSMRegs(t *testing.T) {
+	profile := &donor.BARProfile{
+		Size: 0x1000,
+		Probes: []donor.BARProbeResult{
+			{Offset: 0x14, Original: 0x00000001, RWMask: 0xFFFFFFFF},
+			{Offset: 0x24, Original: 0x00000000, RWMask: 0xFFFFFFFF},
+		},
+	}
+
+	model := BuildBARModelForDeviceIDWithOverlay(nil, 0x010802, 0, 0, profile, nil)
+	if model == nil {
+		t.Fatal("NVMe profiled model returned nil")
+	}
+
+	byOff := map[uint32]BARRegister{}
+	for _, reg := range model.Registers {
+		byOff[reg.Offset] = reg
+	}
+	for _, off := range []uint32{0x14, 0x1C, 0x24, 0x28, 0x2C, 0x30, 0x34} {
+		if _, ok := byOff[off]; !ok {
+			t.Fatalf("mandatory NVMe register 0x%X missing", off)
+		}
+	}
+	if !byOff[0x1C].IsFSMDriven {
+		t.Fatal("NVMe CSTS must stay FSM-driven")
+	}
+}
+
 func TestBuildBARModel_NVMe_RWMasks(t *testing.T) {
 	model := BuildBARModel(nil, 0x010802, nil)
 	for _, reg := range model.Registers {
@@ -106,10 +204,46 @@ func TestBuildBARModel_XHCI_PORTSC(t *testing.T) {
 	for _, reg := range model.Registers {
 		if reg.Name == "PORTSC1" || reg.Name == "PORTSC2" {
 			portFound++
+			if !reg.IsFSMDriven {
+				t.Fatalf("%s must be FSM-driven to avoid duplicate generic writers", reg.Name)
+			}
+			if reg.Reset != 0x000002A0 {
+				t.Fatalf("%s reset = 0x%08X, want 0x000002A0", reg.Name, reg.Reset)
+			}
 		}
 	}
-	// barmodel builder may not have PORTSC - that's in the profile only.
-	// but the profile builder (xhci.go) does include them.
+	if portFound != 2 {
+		t.Fatalf("xHCI model PORTSC count = %d, want 2", portFound)
+	}
+}
+
+func TestBuildBARModel_XHCI_ProfiledMandatoryFSMRegs(t *testing.T) {
+	profile := &donor.BARProfile{
+		Size: 0x1000,
+		Probes: []donor.BARProbeResult{
+			{Offset: 0x20, Original: 0x00000001, RWMask: 0xFFFFFFFF},
+			{Offset: 0x420, Original: 0x000002A0, RWMask: 0xFFFFFFFF},
+		},
+	}
+
+	model := BuildBARModelForDeviceIDWithOverlay(nil, 0x0C0330, 0, 0, profile, nil)
+	if model == nil {
+		t.Fatal("xHCI profiled model returned nil")
+	}
+
+	byOff := map[uint32]BARRegister{}
+	for _, reg := range model.Registers {
+		byOff[reg.Offset] = reg
+	}
+	for _, off := range []uint32{0x20, 0x24, 0x220, 0x420, 0x430} {
+		reg, ok := byOff[off]
+		if !ok {
+			t.Fatalf("mandatory xHCI FSM reg 0x%X missing", off)
+		}
+		if !reg.IsFSMDriven {
+			t.Fatalf("mandatory xHCI FSM reg 0x%X not marked FSM-driven", off)
+		}
+	}
 }
 
 func TestBuildBARModel_XHCI_AllRegisters(t *testing.T) {
@@ -118,9 +252,28 @@ func TestBuildBARModel_XHCI_AllRegisters(t *testing.T) {
 	for _, r := range model.Registers {
 		names[r.Name] = true
 	}
-	for _, required := range []string{"CAPLENGTH_HCIVERSION", "HCSPARAMS1", "HCCPARAMS1", "USBCMD", "USBSTS", "PAGESIZE", "CRCR_LO", "DCBAAP_LO", "CONFIG"} {
+	for _, required := range []string{
+		"CAPLENGTH_HCIVERSION", "HCSPARAMS1", "HCCPARAMS1", "USBCMD", "USBSTS",
+		"PAGESIZE", "CRCR_LO", "DCBAAP_LO", "CONFIG", "IMAN0", "ERDP_LO",
+	} {
 		if !names[required] {
 			t.Errorf("xHCI model missing register: %s", required)
+		}
+	}
+}
+
+func TestBuildBARModelForDevice_RTS522A_FromProfileFallback(t *testing.T) {
+	model := BuildBARModelForDeviceIDWithOverlay(nil, 0xFF0000, 0x10EC, 0x522A, nil, nil)
+	if model == nil {
+		t.Fatal("RTS522A BuildBARModelForDeviceIDWithOverlay returned nil")
+	}
+	names := map[string]bool{}
+	for _, reg := range model.Registers {
+		names[reg.Name] = true
+	}
+	for _, required := range []string{"RTSX_HCBAR", "RTSX_BIPR", "RTSX_BIER"} {
+		if !names[required] {
+			t.Errorf("RTS522A fallback model missing register: %s", required)
 		}
 	}
 }
@@ -672,5 +825,291 @@ func TestIsProbeDataReliable_AllRW(t *testing.T) {
 	profile := &donor.BARProfile{Size: 4096, Probes: probes}
 	if isProbeDataReliable(profile) {
 		t.Error("all-RW probes should be considered unreliable")
+	}
+}
+
+func TestApplyDonorProbeOverlay_Writes(t *testing.T) {
+	// spec-table NVMe model; donor probe says CC has extra writable bits.
+	barData := make([]byte, 4096)
+	model := BuildBARModel(barData, 0x010802, nil)
+	if model == nil {
+		t.Fatal("nil model")
+	}
+	profile := &donor.BARProfile{BarIndex: 0, Size: 4096}
+	// CC is at 0x14, spec RWMask 0x00FFFFF1; donor says 0x00FFFFF9 (extra bit 3)
+	profile.Probes = append(profile.Probes, donor.BARProbeResult{Offset: 0x14, Original: 0x00460001, RWMask: 0x00FFFFF9})
+	profile.Probes = append(profile.Probes, donor.BARProbeResult{Offset: 0x24, Original: 0x00000000, RWMask: 0x00000000})
+	// CSTS at 0x1C is IsFSMDriven -> must NOT be overridden even if probe says writable
+	profile.Probes = append(profile.Probes, donor.BARProbeResult{Offset: 0x1C, Original: 0x00000001, RWMask: 0xFFFFFFFF})
+	applyDonorProbeOverlay(model, profile)
+	for _, r := range model.Registers {
+		switch r.Offset {
+		case 0x14:
+			if r.RWMask != 0x00FFFFF9 {
+				t.Errorf("CC RWMask: got 0x%08X, want 0x00FFFFF9 (donor overlay)", r.RWMask)
+			}
+		case 0x24:
+			if r.RWMask != 0 || r.Reset != 0 {
+				t.Errorf("AQA should accept zero-valued donor overlay, got reset=0x%08X rw=0x%08X", r.Reset, r.RWMask)
+			}
+		case 0x1C:
+			if r.RWMask != 0x00000000 {
+				t.Errorf("CSTS is IsFSMDriven; RWMask must stay 0, got 0x%08X", r.RWMask)
+			}
+		}
+	}
+}
+
+func TestApplyDonorProbeOverlay_RW1C(t *testing.T) {
+	barData := make([]byte, 4096)
+	model := BuildBARModel(barData, 0x0C0330, nil) // xHCI
+	if model == nil {
+		t.Fatal("nil model")
+	}
+	profile := &donor.BARProfile{BarIndex: 0, Size: 4096}
+	// A non-FSM register (DBOFF 0x14) donor-detected RW1C
+	profile.Probes = append(profile.Probes, donor.BARProbeResult{Offset: 0x14, Original: 0x00000020, RWMask: 0x000000FF, MaybeRW1C: true})
+	applyDonorProbeOverlay(model, profile)
+	for _, r := range model.Registers {
+		if r.Offset == 0x14 {
+			if !r.IsRW1C {
+				t.Error("DBOFF should inherit IsRW1C from donor probe")
+			}
+			if r.RWMask != 0 {
+				t.Error("RW1C register should be modeled read-only (RWMask=0)")
+			}
+		}
+	}
+}
+
+func TestPopulateStaticShadow(t *testing.T) {
+	barData := make([]byte, 4096)
+	// NVMe model covers 0x00-0x34. Put a non-zero static word at 0x100 (unmodeled).
+	utilWriteLE32(barData, 0x100, 0xCAFEBABE)
+	// And a word inside the modeled range (0x00) that should NOT appear in shadow.
+	utilWriteLE32(barData, 0x00, 0x11223344)
+	model := BuildBARModel(barData, 0x010802, nil)
+	if model == nil {
+		t.Fatal("nil model")
+	}
+	found := false
+	for _, w := range model.StaticShadow {
+		if w.Offset == 0x100 && w.Value == 0xCAFEBABE {
+			found = true
+		}
+		if w.Offset == 0x00 {
+			t.Error("modeled offset 0x00 must not appear in static shadow")
+		}
+	}
+	if !found {
+		t.Error("static shadow should contain donor word at 0x100")
+	}
+}
+
+func utilWriteLE32(b []byte, off int, v uint32) {
+	b[off] = byte(v)
+	b[off+1] = byte(v >> 8)
+	b[off+2] = byte(v >> 16)
+	b[off+3] = byte(v >> 24)
+}
+
+func TestBuildBARModelForDevice_Atheros_SequentialRead(t *testing.T) {
+	// AR9287 is class 0x028000 (network, other), vendor 0x168C (Atheros).
+	// Use a donor barData that has the EEPROM handshake sentinel at 0x4010.
+	barData := make([]byte, 0x4080)
+	utilWriteLE32(barData, 0x4010, 0xDEADBEEF)
+	utilWriteLE32(barData, 0x407C, 0x0000BEEF)
+
+	model := BuildBARModelForDeviceIDWithOverlay(barData, 0x028000, 0x168C, 0x002E, nil, nil)
+	if model == nil {
+		t.Fatal("AR9287 model should not be nil")
+	}
+	var req, data *BARRegister
+	for i := range model.Registers {
+		if model.Registers[i].Offset == 0x4010 {
+			req = &model.Registers[i]
+		}
+		if model.Registers[i].Offset == 0x407C {
+			data = &model.Registers[i]
+		}
+	}
+	if req == nil {
+		t.Fatal("EEPROM_REQ (0x4010) not in model")
+	}
+	if !req.SequentialRead {
+		t.Error("EEPROM_REQ should be SequentialRead")
+	}
+	if len(req.SequentialValues) != 3 {
+		t.Fatalf("EEPROM_REQ sequence len = %d, want 3", len(req.SequentialValues))
+	}
+	if req.SequentialValues[0] != 0xDEADBEEF || req.SequentialValues[2] != 0x00000001 {
+		t.Fatalf("EEPROM_REQ sequence = %#v, want donor-like pending->done sequence", req.SequentialValues)
+	}
+	if data == nil {
+		t.Fatal("EEPROM_DATA (0x407C) not in model")
+	}
+	if !data.SequentialRead {
+		t.Error("EEPROM_DATA should be SequentialRead")
+	}
+	if len(data.SequentialValues) != 4 {
+		t.Fatalf("EEPROM_DATA sequence len = %d, want 4", len(data.SequentialValues))
+	}
+	if data.SequentialValues[0] != 0x0000BEEF {
+		t.Fatalf("EEPROM_DATA first sequence value = 0x%08X, want donor reset 0x0000BEEF", data.SequentialValues[0])
+	}
+	// Ensure no duplicate static-shadow entries at the handshake offsets
+	// (would produce duplicate case labels in the generated SV).
+	for _, sw := range model.StaticShadow {
+		if sw.Offset == 0x4010 || sw.Offset == 0x407C {
+			t.Errorf("static shadow should not include modeled handshake offset 0x%X", sw.Offset)
+		}
+	}
+}
+
+func TestApplyProfileSequentialRead_ExistingRegKeepsReset(t *testing.T) {
+	// Probe path already discovered 0x4010 with the sentinel. The profile
+	// overlay must set the flag but keep the donor-observed reset.
+	profile := &donor.BARProfile{
+		Size: 0x4080,
+		Probes: []donor.BARProbeResult{
+			{Offset: 0x4010, Original: 0xCAFEBABE, RWMask: 0x00000000},
+		},
+	}
+	model := BuildBARModelForDeviceIDWithOverlay(nil, 0x028000, 0x168C, 0x002E, profile, nil)
+	if model == nil {
+		t.Fatal("model should not be nil")
+	}
+	var req *BARRegister
+	for i := range model.Registers {
+		if model.Registers[i].Offset == 0x4010 {
+			req = &model.Registers[i]
+		}
+	}
+	if req == nil {
+		t.Fatal("EEPROM_REQ not in model")
+	}
+	if !req.SequentialRead {
+		t.Error("EEPROM_REQ should be SequentialRead")
+	}
+	if req.Reset != 0xCAFEBABE {
+		t.Errorf("donor reset should be kept: got 0x%08X, want 0xCAFEBABE", req.Reset)
+	}
+	if len(req.SequentialValues) == 0 || req.SequentialValues[0] != 0xCAFEBABE {
+		t.Fatalf("donor reset should seed sequential ROM[0], got %#v", req.SequentialValues)
+	}
+}
+
+func TestApplyTraceOverlay_RefinesExistingSequentialRegister(t *testing.T) {
+	model := &BARModel{Registers: []BARRegister{{
+		Offset: 0x10, Name: "EEPROM_REQ", Reset: 0xAAAAAAAA, SequentialRead: true,
+	}}}
+	overlay := &mmio.TraceBAROverlay{
+		Sequential: map[uint32][]uint32{0x10: {0xDEADBEEF, 0x00000002, 0x00000001}},
+	}
+
+	applyTraceOverlay(model, overlay)
+
+	got := model.Registers[0].SequentialValues
+	want := []uint32{0xDEADBEEF, 0x00000002, 0x00000001}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("seq values = %#v, want %#v", got, want)
+	}
+}
+
+func TestApplyTraceOverlay_AddsSequentialRegisterForUnmodeledOffset(t *testing.T) {
+	model := &BARModel{Registers: []BARRegister{{Offset: 0x00, Name: "CAP"}}}
+	overlay := &mmio.TraceBAROverlay{
+		Sequential: map[uint32][]uint32{0x100: {0xAAAA0001, 0xAAAA0002}},
+		Static:     map[uint32]uint32{0x100: 0xBBBB0000},
+	}
+
+	applyTraceOverlay(model, overlay)
+
+	for _, reg := range model.Registers {
+		if reg.Offset == 0x100 {
+			if !reg.SequentialRead {
+				t.Fatal("trace-only register should be SequentialRead")
+			}
+			if !reflect.DeepEqual(reg.SequentialValues, []uint32{0xAAAA0001, 0xAAAA0002}) {
+				t.Fatalf("trace-only sequence = %#v", reg.SequentialValues)
+			}
+			if reg.Reset != 0xAAAA0001 {
+				t.Fatalf("trace-only reset = 0x%08X", reg.Reset)
+			}
+			for _, sw := range model.StaticShadow {
+				if sw.Offset == 0x100 {
+					t.Fatal("trace-only sequential register should not also be static shadow")
+				}
+			}
+			return
+		}
+	}
+	t.Fatal("trace-only sequential register missing")
+}
+
+func TestApplyTraceOverlay_SkipsFSMDrivenSequentialRegister(t *testing.T) {
+	model := &BARModel{Registers: []BARRegister{{
+		Offset: 0x24, Name: "USBSTS", IsFSMDriven: true,
+	}}}
+	overlay := &mmio.TraceBAROverlay{
+		Sequential: map[uint32][]uint32{0x24: {0x00000010, 0x00000018}},
+	}
+
+	applyTraceOverlay(model, overlay)
+
+	if model.Registers[0].SequentialRead || len(model.Registers[0].SequentialValues) != 0 {
+		t.Fatalf("FSM-driven register should not get trace sequence: %#v", model.Registers[0])
+	}
+}
+
+func TestBuildBARModelForDevice_RealtekWiFiUsesProfile(t *testing.T) {
+	model := BuildBARModelForDeviceIDWithOverlay(nil, 0x028000, 0x10EC, 0x8179, nil, nil)
+	if model == nil {
+		t.Fatal("model should not be nil")
+	}
+	names := map[string]bool{}
+	for _, reg := range model.Registers {
+		names[reg.Name] = true
+	}
+	for _, want := range []string{"HIMR", "HISR", "PCIE_CTRL_INT_MIG"} {
+		if !names[want] {
+			t.Fatalf("Realtek model missing %s; got %#v", want, names)
+		}
+	}
+	if names["MAC0_3"] {
+		t.Fatal("Realtek Wi-Fi should not fall back to Ethernet BAR model")
+	}
+}
+
+func TestApplyTraceOverlay_AddsStaticShadowForUnmodeledOffset(t *testing.T) {
+	model := &BARModel{Registers: []BARRegister{{Offset: 0x00, Name: "CAP"}}}
+	overlay := &mmio.TraceBAROverlay{Static: map[uint32]uint32{0x100: 0xCAFEBABE}}
+
+	applyTraceOverlay(model, overlay)
+
+	if len(model.StaticShadow) != 1 || model.StaticShadow[0].Offset != 0x100 {
+		t.Fatalf("static shadow = %#v", model.StaticShadow)
+	}
+}
+
+func TestPopulateStaticShadowPreservesTraceStatic(t *testing.T) {
+	barData := make([]byte, 0x200)
+	utilWriteLE32(barData, 0x100, 0x11111111)
+	model := &BARModel{
+		Registers:    []BARRegister{{Offset: 0x00, Name: "CAP"}},
+		StaticShadow: []StaticWord{{Offset: 0x180, Value: 0x22222222}},
+	}
+
+	populateStaticShadow(model, barData)
+
+	found := map[uint32]uint32{}
+	for _, sw := range model.StaticShadow {
+		found[sw.Offset] = sw.Value
+	}
+	if found[0x180] != 0x22222222 {
+		t.Fatalf("trace static shadow lost: %#v", model.StaticShadow)
+	}
+	if found[0x100] != 0x11111111 {
+		t.Fatalf("donor static shadow missing: %#v", model.StaticShadow)
 	}
 }

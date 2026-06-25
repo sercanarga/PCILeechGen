@@ -111,13 +111,20 @@ func TestStrategyForClassAndVendor_MediatekWiFi(t *testing.T) {
 	}
 }
 
-func TestStrategyForClassAndVendor_IntelWiFi(t *testing.T) {
-	s := StrategyForClassAndVendor(0x028000, 0x8086)
+func TestStrategyForDevice_IntelBE200WiFi(t *testing.T) {
+	s := StrategyForDevice(0x028000, 0x8086, intelBE200DeviceID)
 	if s == nil {
 		t.Fatal("expected Intel Wi-Fi strategy, got nil")
 	}
+	if s.ClassName() != "Wi-Fi (Intel BE200 family)" {
+		t.Errorf("expected Wi-Fi (Intel BE200 family), got %s", s.ClassName())
+	}
+}
+
+func TestStrategyForDevice_UnknownIntelWiFiFallsBack(t *testing.T) {
+	s := StrategyForDevice(0x028000, 0x8086, 0xFFFF)
 	if s.ClassName() != "Wi-Fi" {
-		t.Errorf("expected Wi-Fi (Intel fallback), got %s", s.ClassName())
+		t.Errorf("expected Wi-Fi fallback, got %s", s.ClassName())
 	}
 }
 
@@ -128,6 +135,26 @@ func TestStrategyForClassAndVendor_NoVendor(t *testing.T) {
 	}
 	if s.ClassName() != "Wi-Fi" {
 		t.Errorf("expected Wi-Fi fallback, got %s", s.ClassName())
+	}
+}
+
+func TestStrategyForDevice_RTS522ACardReader(t *testing.T) {
+	s := StrategyForDevice(0xFF0000, 0x10EC, rts522aDeviceID)
+	if s == nil {
+		t.Fatal("expected RTS522A card reader strategy, got nil")
+	}
+	if s.ClassName() != "Card Reader (RTS522A)" {
+		t.Errorf("expected Card Reader (RTS522A), got %s", s.ClassName())
+	}
+	if s.DeviceClass() != ClassCardReader {
+		t.Errorf("expected %s, got %s", ClassCardReader, s.DeviceClass())
+	}
+}
+
+func TestStrategyForDevice_UnknownRealtekVendorClassFallsBack(t *testing.T) {
+	s := StrategyForDevice(0xFF0000, 0x10EC, 0xFFFF)
+	if s.ClassName() != "Generic" {
+		t.Errorf("expected Generic fallback, got %s", s.ClassName())
 	}
 }
 
@@ -666,5 +693,42 @@ func TestAllStrategies_Profile(t *testing.T) {
 		if p.ClassName == "" {
 			t.Errorf("empty profile className for %s", s.ClassName())
 		}
+	}
+}
+
+func TestStrategyForDevice_AtherosAR9287WiFi(t *testing.T) {
+	s := StrategyForDevice(0x028000, 0x168C, ar9287DeviceID)
+	if s == nil {
+		t.Fatal("expected Atheros AR9287 strategy, got nil")
+	}
+	if s.ClassName() != "Wi-Fi (Atheros AR9287)" {
+		t.Errorf("expected Wi-Fi (Atheros AR9287), got %s", s.ClassName())
+	}
+	p := s.Profile()
+	if p == nil {
+		t.Fatal("expected non-nil profile")
+	}
+	if !p.PrefersINTx {
+		t.Error("AR9287 profile should prefer legacy INTx")
+	}
+	// EEPROM handshake registers must be SequentialRead.
+	var reqFound, dataFound bool
+	for _, d := range p.BARDefaults {
+		if d.Offset == 0x4010 && d.SequentialRead {
+			reqFound = true
+		}
+		if d.Offset == 0x407C && d.SequentialRead {
+			dataFound = true
+		}
+	}
+	if !reqFound || !dataFound {
+		t.Errorf("AR9287 profile missing SequentialRead EEPROM regs (req=%v data=%v)", reqFound, dataFound)
+	}
+}
+
+func TestStrategyForDevice_UnknownAtherosWiFiFallsBack(t *testing.T) {
+	s := StrategyForDevice(0x028000, 0x168C, 0xFFFF)
+	if s.ClassName() != "Wi-Fi" {
+		t.Errorf("expected Wi-Fi fallback, got %s", s.ClassName())
 	}
 }

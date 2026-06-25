@@ -17,7 +17,12 @@
 
 `timescale 1ns / 1ps
 
-module pcileech_nvme_admin_responder(
+module pcileech_nvme_admin_responder #(
+    // Number of IO SQ/CQ pairs we advertise via the Identify controller and
+    // clamp Set Features 0x07 (Number of Queues) to. stornvme requests a count
+    // and reads it back; we grant min(requested, NUM_IO_QUEUES).
+    parameter [31:0] NUM_IO_QUEUES = 32'h00070007
+)(
     input               rst,
     input               clk,
 
@@ -115,6 +120,14 @@ module pcileech_nvme_admin_responder(
     reg [31:0]  cqe [0:3];
     reg [1:0]   cqe_dw_idx;
 
+    // CQE DW3[31:16] is the NVMe status field ({DNR,SCT,SC,...,P});
+    // DW3[15:0] is the command identifier.
+    localparam [15:0] SC_SUCCESS        = 16'h0000;  // SCT=0, SC=0x00
+    localparam [15:0] SC_INVALID_OPCODE  = 16'h0030;  // SCT=0, SC=0x01, DNR=1
+    localparam [15:0] SC_INVALID_FIELD   = 16'h0050;  // SCT=0, SC=0x02, DNR=1
+    localparam [15:0] SC_INVALID_QID      = 16'h8110;  // SCT=1, SC=0x08, DNR=1
+    localparam [15:0] SC_INVALID_LOGPAGE  = 16'h8130;  // SCT=1, SC=0x09, DNR=1
+
     // transfer progress
     reg [10:0]  data_dw_cnt;
     reg [12:0]  id_rom_offset;
@@ -206,15 +219,36 @@ module pcileech_nvme_admin_responder(
 
                     // ---- figure out what the driver wants --------------------
                     S_DECODE_CMD: begin
+                        // DW3 = {rsvd14, P, SCT, SC, DNR, M, CRD, rsvd2}. Default
+                        // to success; error branches override cqe[3] below. In SV
+                        // the last non-blocking assignment in a cycle wins, so an
+                        // explicit override below takes precedence.
+                        cqe[3] <= {(SC_SUCCESS | {15'h0, cq_phase}), cmd_cid};
+                        cqe[1] <= 32'h0;
+                        cqe[2] <= {cmd_cid, sq_head};
+
                         case (cmd_opcode)
 
-                            // Get Log Page
+                            // Get Log Page (0x02). LID lives in CDW10[7:0].
+                            // 0x02 SMART/health is fully served; 0x01 error, 0x03
+                            // firmware slots, 0x05 commands supported are legal
+                            // but empty (zeroed log). Anything else -> InvalidLog.
                             8'h02: begin
-                                data_dw_cnt <= 11'h0;
-                                state       <= S_EXEC_LOGPAGE;
+                                case (cmd_cdw10[7:0])
+                                    8'h01, 8'h02, 8'h03, 8'h05: begin
+                                        data_dw_cnt <= 11'h0;
+                                        state       <= S_EXEC_LOGPAGE;
+                                    end
+                                    default: begin
+                                        cqe[3] <= {(SC_INVALID_LOGPAGE | {15'h0, cq_phase}), cmd_cid};
+                                        cqe[0] <= 32'h0;
+                                        cqe_dw_idx <= 2'h0;
+                                        state      <= S_POST_CQE;
+                                    end
+                                endcase
                             end
 
-                            // Identify
+                            // Identify (0x06). CNS in CDW10[7:0].
                             8'h06: begin
                                 case (identify_cns)
                                     8'h01: begin   // controller data
@@ -231,71 +265,65 @@ module pcileech_nvme_admin_responder(
                                         data_dw_cnt <= 11'h0;
                                         state       <= S_EXEC_NSLIST;
                                     end
-                                    default: begin // unknown CNS, just say OK
+                                    default: begin // unknown CNS -> InvalidField
+                                        cqe[3] <= {(SC_INVALID_FIELD | {15'h0, cq_phase}), cmd_cid};
                                         cqe[0] <= 32'h0;
-                                        cqe[1] <= 32'h0;
-                                        cqe[2] <= {cmd_cid, sq_head};
-                                        cqe[3] <= {15'h0, cq_phase};
                                         cqe_dw_idx <= 2'h0;
-                                        state  <= S_POST_CQE;
+                                        state      <= S_POST_CQE;
                                     end
                                 endcase
                             end
 
-                            // Abort – "yeah sure, we didn't find that command"
+                            // Abort (0x08) – "yeah sure, we didn't find that command"
                             8'h08: begin
-                                cqe[0] <= 32'h0;
-                                cqe[1] <= 32'h0;
-                                cqe[2] <= {cmd_cid, sq_head};
-                                cqe[3] <= {15'h0, cq_phase};
+                                cqe[0]     <= 32'h0;
                                 cqe_dw_idx <= 2'h0;
-                                state  <= S_POST_CQE;
+                                state      <= S_POST_CQE;
                             end
 
-                            // Set Features – the driver configures a bunch of stuff,
-                            // we nod along and say everything's fine
+                            // Set Features (0x09). We nod along; for Number of
+                            // Queues (0x07) we clamp the grant to NUM_IO_QUEUES so
+                            // the readback the driver does stays consistent.
                             8'h09: begin
                                 case (cmd_cdw10[7:0])
-                                    8'h04:   cqe[0] <= 32'h0;            // temp threshold
-                                    8'h05:   cqe[0] <= 32'h0;            // error recovery
-                                    8'h06:   cqe[0] <= cmd_cdw11;        // volatile write cache
-                                    8'h07: begin                           // number of queues
-                                        num_queues_granted <= cmd_cdw11;
-                                        cqe[0] <= cmd_cdw11;
+                                    8'h04:   cqe[0] <= 32'h0;             // temp threshold
+                                    8'h05:   cqe[0] <= 32'h0;             // error recovery
+                                    8'h06:   cqe[0] <= cmd_cdw11;         // volatile write cache
+                                    8'h07: begin                        // number of queues
+                                        num_queues_granted <= (cmd_cdw11 <= NUM_IO_QUEUES)
+                                                              ? cmd_cdw11 : NUM_IO_QUEUES;
+                                        cqe[0] <= (cmd_cdw11 <= NUM_IO_QUEUES)
+                                                  ? cmd_cdw11 : NUM_IO_QUEUES;
                                     end
-                                    8'h08:   cqe[0] <= 32'h0;            // interrupt vector config
-                                    8'h09:   cqe[0] <= 32'h0;            // write atomicity
-                                    8'h0B:   cqe[0] <= 32'h0;            // interrupt coalescing
-                                    8'h0F:   cqe[0] <= 32'h0;            // keep alive timer
+                                    8'h08:   cqe[0] <= 32'h0;             // interrupt vector config
+                                    8'h09:   cqe[0] <= 32'h0;             // write atomicity
+                                    8'h0B:   cqe[0] <= 32'h0;             // interrupt coalescing
+                                    8'h0F:   cqe[0] <= 32'h0;             // keep alive timer
                                     default: cqe[0] <= 32'h0;
                                 endcase
-                                cqe[1] <= 32'h0;
-                                cqe[2] <= {cmd_cid, sq_head};
-                                cqe[3] <= {15'h0, cq_phase};
                                 cqe_dw_idx <= 2'h0;
-                                state  <= S_POST_CQE;
+                                state      <= S_POST_CQE;
                             end
 
-                            // Get Features
+                            // Get Features (0x0A). Number of Queues echoes the
+                            // granted value; Volatile Write Cache reports present.
                             8'h0A: begin
                                 case (cmd_cdw10[7:0])
-                                    8'h07:   cqe[0] <= num_queues_granted;  // echo last Set Features value
-                                    8'h0B:   cqe[0] <= 32'h00000000;  // coalescing off
+                                    8'h06:   cqe[0] <= 32'h00000001;     // VWC present + enabled
+                                    8'h07:   cqe[0] <= num_queues_granted;
+                                    8'h0B:   cqe[0] <= 32'h00000000;     // coalescing off
                                     default: cqe[0] <= 32'h0;
                                 endcase
-                                cqe[1] <= 32'h0;
-                                cqe[2] <= {cmd_cid, sq_head};
-                                cqe[3] <= {15'h0, cq_phase};
                                 cqe_dw_idx <= 2'h0;
-                                state  <= S_POST_CQE;
+                                state      <= S_POST_CQE;
                             end
 
-                            // AER – these just pile up until an event happens.
-                            // since nothing ever happens on our end, we eat them.
+                            // AER (0x0C) – accepted and skipped. Nothing ever
+                            // happens on this fake controller, so we eat the SQE
+                            // and post no CQE (legal: AEN never fires).
                             8'h0C: begin
                                 if (aer_pending < 4'hF)
                                     aer_pending <= aer_pending + 1'b1;
-                                // move the SQ head along but don't post any CQE
                                 if (sq_head >= asqs)
                                     sq_head <= 16'h0;
                                 else
@@ -303,14 +331,14 @@ module pcileech_nvme_admin_responder(
                                 state <= S_IDLE;
                             end
 
-                            // everything else (Create IO CQ/SQ, etc.) – just say yes
+                            // Unknown opcode -> InvalidOpcode (DNR).
+                            // Fail fast instead of blanket success, which lets the
+                            // driver log a real error rather than silently retry.
                             default: begin
-                                cqe[0] <= 32'h0;
-                                cqe[1] <= 32'h0;
-                                cqe[2] <= {cmd_cid, sq_head};
-                                cqe[3] <= {15'h0, cq_phase};
+                                cqe[3]     <= {(SC_INVALID_OPCODE | {15'h0, cq_phase}), cmd_cid};
+                                cqe[0]     <= 32'h0;
                                 cqe_dw_idx <= 2'h0;
-                                state  <= S_POST_CQE;
+                                state      <= S_POST_CQE;
                             end
                         endcase
                     end
@@ -388,7 +416,7 @@ module pcileech_nvme_admin_responder(
                         cqe[0] <= 32'h0;
                         cqe[1] <= 32'h0;
                         cqe[2] <= {cmd_cid, sq_head};
-                        cqe[3] <= {15'h0, cq_phase};
+                        cqe[3] <= {(SC_SUCCESS | {15'h0, cq_phase}), cmd_cid};
                         cqe_dw_idx <= 2'h0;
                         state  <= S_POST_CQE;
                     end

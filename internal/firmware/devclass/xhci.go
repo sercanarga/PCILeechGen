@@ -82,10 +82,11 @@ func xhciProfile() *DeviceProfile {
 			// RTSOFF - runtime register space offset
 			{Offset: 0x18, Width: 4, Name: "RTSOFF", Reset: 0x00000200, RWMask: 0x00000000},
 			// Operational registers (at CAPLENGTH offset 0x20)
-			// USBCMD - R/S=1 (running)
-			{Offset: 0x20, Width: 4, Name: "USBCMD", Reset: 0x00000001, RWMask: 0x00001F0F},
-			// USBSTS - HCH=0 (not halted)
-			{Offset: 0x24, Width: 4, Name: "USBSTS", Reset: 0x00000000, RWMask: 0x0000041C},
+			// USBCMD - R/S=1 (running). xHCI FSM is sole driver so HCRST, R/S and
+			// host writes stay coordinated with USBSTS.
+			{Offset: 0x20, Width: 4, Name: "USBCMD", Reset: 0x00000001, RWMask: 0x00001F0F, IsFSMDriven: true},
+			// USBSTS - HCH=0; status bits (HSE/INTR/PCD/HCE) are W1C, HCH is FSM-driven
+			{Offset: 0x24, Width: 4, Name: "USBSTS", Reset: 0x00000000, RWMask: 0x0000041C, IsRW1C: true, IsFSMDriven: true},
 			// PAGESIZE - 4KB pages
 			{Offset: 0x28, Width: 4, Name: "PAGESIZE", Reset: 0x00000001, RWMask: 0x00000000},
 			// DNCTRL - device notification control
@@ -93,18 +94,29 @@ func xhciProfile() *DeviceProfile {
 			// CRCR - command ring control
 			{Offset: 0x38, Width: 4, Name: "CRCR_LO", Reset: 0x00000000, RWMask: 0xFFFFFFF0},
 			{Offset: 0x3C, Width: 4, Name: "CRCR_HI", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
+			// Runtime interrupter 0 - enough for port-status-change interrupts and
+			// simple host acknowledgement of pending events.
+			{Offset: 0x220, Width: 4, Name: "IMAN0", Reset: 0x00000000, RWMask: 0x00000003, IsRW1C: true, IsFSMDriven: true},
+			{Offset: 0x224, Width: 4, Name: "IMOD0", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
+			{Offset: 0x228, Width: 4, Name: "ERSTSZ0", Reset: 0x00000000, RWMask: 0x0000FFFF},
+			{Offset: 0x230, Width: 4, Name: "ERSTBA_LO", Reset: 0x00000000, RWMask: 0xFFFFFFC0},
+			{Offset: 0x234, Width: 4, Name: "ERSTBA_HI", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
+			{Offset: 0x238, Width: 4, Name: "ERDP_LO", Reset: 0x00000000, RWMask: 0xFFFFFFF8},
+			{Offset: 0x23C, Width: 4, Name: "ERDP_HI", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
 			// DCBAAP - device context base address
 			{Offset: 0x50, Width: 4, Name: "DCBAAP_LO", Reset: 0x00000000, RWMask: 0xFFFFFFC0},
 			{Offset: 0x54, Width: 4, Name: "DCBAAP_HI", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
 			// CONFIG - max device slots enabled
 			{Offset: 0x58, Width: 4, Name: "CONFIG", Reset: 0x00000000, RWMask: 0x000000FF},
-			// PORTSC1 - port 1 status/control (powered, no device)
-			{Offset: 0x420, Width: 4, Name: "PORTSC1", Reset: 0x000002A0, RWMask: 0x8EFFC3F2},
-			// PORTSC2 - port 2 status/control
-			{Offset: 0x430, Width: 4, Name: "PORTSC2", Reset: 0x000002A0, RWMask: 0x8EFFC3F2},
+			// PORTSC1/2 - xHCI FSM owns port reset side-effects and W1C change bits.
+			{Offset: 0x420, Width: 4, Name: "PORTSC1", Reset: 0x000002A0, RWMask: 0x8EFFC3F2, IsFSMDriven: true},
+			{Offset: 0x430, Width: 4, Name: "PORTSC2", Reset: 0x000002A0, RWMask: 0x8EFFC3F2, IsFSMDriven: true},
 		},
 
 		Notes: "xHCI 1.1 profile. HCCPARAMS1 bit 0 = AC64 (64-bit capable). " +
-			"PORTSC powered+PP with no device attached. USBCMD R/S=1, USBSTS HCH=0.",
+			"PORTSC powered+PP with no device attached. USBCMD R/S=1, USBSTS HCH=0. " +
+			"USBSTS status bits (HSE/INTR/PCD/HCE) are RW1C; HCH is FSM-driven. " +
+			"Ring pointers (CRCR/DCBAAP) are stored, never dereferenced. " +
+			"Unmapped BAR reads return an offset-echo fill (0xFFFFF0xx).",
 	}
 }

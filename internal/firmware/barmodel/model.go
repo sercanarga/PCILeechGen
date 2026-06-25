@@ -4,10 +4,21 @@ package barmodel
 import (
 	"fmt"
 	"log/slog"
+	"sort"
 
 	"github.com/sercanarga/pcileechgen/internal/donor"
+	"github.com/sercanarga/pcileechgen/internal/donor/mmio"
 	"github.com/sercanarga/pcileechgen/internal/firmware/devclass"
 	"github.com/sercanarga/pcileechgen/internal/util"
+)
+
+type RegisterAccessKind string
+
+const (
+	RegisterReadOnly  RegisterAccessKind = "read_only"
+	RegisterReadWrite RegisterAccessKind = "read_write"
+	RegisterRW1C      RegisterAccessKind = "rw1c"
+	RegisterFSMDriven RegisterAccessKind = "fsm"
 )
 
 // BARRegister describes a single register inside a BAR.
@@ -16,20 +27,112 @@ type BARRegister struct {
 	Width       int    // 1, 2, or 4 bytes
 	Reset       uint32 // reset/initial value (from donor snapshot or spec default)
 	RWMask      uint32 // writable bits (1 = host can write, 0 = read-only)
+	RW1CMask    uint32 // write-1-to-clear bits inside RWMask
 	Name        string // human-readable register name
 	IsRW1C      bool   // true if this register uses write-1-to-clear semantics
 	IsFSMDriven bool   // true if driven by a dedicated FSM always block (excluded from generic reset/write)
+	// SequentialRead marks a register whose read value advances through a
+	// small ROM on each read to the same address (stateful reads). Models
+	// devices whose drivers expect different data on repeated reads of one
+	// offset (e.g. Atheros ath9k EEPROM request/response handshakes).
+	SequentialRead bool
+	// SequentialValues optionally provides the exact readback sequence for
+	// SequentialRead registers. When empty, the SV template falls back to
+	// Reset + a small wrapping counter.
+	SequentialValues []uint32
 }
 
 // BARModel is the complete register map that ends up in the SV template.
 type BARModel struct {
 	Size      int
 	Registers []BARRegister // ordered by Offset
+	// StaticShadow holds donor-derived read-only words for 4-byte-aligned
+	// offsets that are NOT covered by Registers (i.e. unmodeled static regs).
+	// The SV template emits a read case returning these before the offset-echo
+	// fallback, so the full BAR0 mirrors the donor for static offsets without
+	// bloating the writable register file. Populated from donor barData.
+	StaticShadow []StaticWord
+}
+
+// StaticWord is one donor-derived read-only word for the static shadow.
+type StaticWord struct {
+	Offset uint32
+	Value  uint32
 }
 
 // BuildBARModel returns a register map from probe data or spec tables.
 // Returns nil for unknown device classes.
+//
+// vendorID is only used to look up vendor-specific device profiles (e.g. the
+// Atheros AR9287 EEPROM handshake registers); pass 0 to use class-only
+// resolution. See BuildBARModelForDevice for the vendor-aware entry point.
 func BuildBARModel(barData []byte, classCode uint32, profile *donor.BARProfile) *BARModel {
+	return BuildBARModelForDeviceWithOverlay(barData, classCode, 0, profile, nil)
+}
+
+// BuildBARModelForDevice is the vendor-aware BAR model builder. It resolves the
+// active device profile from the class code + vendor ID and, after building the
+// probe- or spec-table-based model, applies the profile's stateful-read
+// register defaults (BARDefault.SequentialRead) so generated read logic
+// advances those offsets per read (e.g. Atheros ath9k EEPROM request/response
+// handshakes that the donor probe / spec table cannot describe on their own).
+func BuildBARModelForDevice(barData []byte, classCode uint32, vendorID uint16, profile *donor.BARProfile) *BARModel {
+	return BuildBARModelForDeviceWithOverlay(barData, classCode, vendorID, profile, nil)
+}
+
+// BuildBARModelForDeviceWithOverlay applies an optional trace-derived overlay
+// before final static-shadow population.
+func BuildBARModelForDeviceWithOverlay(barData []byte, classCode uint32, vendorID uint16, profile *donor.BARProfile, overlay *mmio.TraceBAROverlay) *BARModel {
+	return BuildBARModelForDeviceIDWithOverlay(barData, classCode, vendorID, 0, profile, overlay)
+}
+
+// BuildBARModelForDeviceIDWithOverlay applies an optional trace-derived overlay
+// and allows device-specific profile resolution when a vendor ID alone is not
+// narrow enough.
+func BuildBARModelForDeviceIDWithOverlay(barData []byte, classCode uint32, vendorID, deviceID uint16, profile *donor.BARProfile, overlay *mmio.TraceBAROverlay) *BARModel {
+	devProfile := (*devclass.DeviceProfile)(nil)
+	if vendorID != 0 {
+		devProfile = devclass.ProfileForDevice(classCode, vendorID, deviceID)
+	}
+
+	model := buildBARModelCore(barData, classCode, profile)
+	if model == nil && devProfile != nil && devProfile.ClassName != "Generic" && len(devProfile.BARDefaults) > 0 {
+		model = buildBARModelFromProfile(devProfile, barData)
+	}
+	if model == nil {
+		return nil
+	}
+	validateModel(model)
+	// Even when probe data was deemed unreliable and we fell back to the
+	// spec table, overlay per-donor write masks / reset values / RW1C flags
+	// from the probe results where they intersect the spec registers. This
+	// keeps the dynamic FSM registers (IsFSMDriven) on spec semantics while
+	// letting donor-observed writability refine the static ones.
+	if profile != nil && len(profile.Probes) > 0 {
+		applyDonorProbeOverlay(model, profile)
+	}
+	// Apply vendor-specific stateful-read register defaults (SequentialRead)
+	// from the resolved device profile BEFORE the trace/static shadow so the
+	// handshake offsets are treated as modeled (and excluded from later shadow
+	// cases), avoiding duplicate read-case labels in the generated SV.
+	if devProfile != nil {
+		applyProfileSequentialRead(model, devProfile, barData)
+	}
+	applyTraceOverlay(model, overlay)
+	// Seed a static read shadow from donor barData for offsets the model
+	// does not cover, so the full BAR0 mirrors the donor for static regs.
+	if len(barData) > 0 {
+		populateStaticShadow(model, barData)
+	}
+	return model
+}
+
+// buildBARModelCore is the probe-then-spec-table dispatch without the
+// post-processing overlays (kept here so BuildBARModelForDevice can layer them
+// in a fixed order).
+func buildBARModelCore(barData []byte, classCode uint32, profile *donor.BARProfile) *BARModel {
+	var model *BARModel
+
 	// Use probe data when available, but bail if VFIO reported
 	// everything as writable (breaks CC->CSTS handshake etc).
 	if profile != nil && len(profile.Probes) > 0 {
@@ -37,34 +140,241 @@ func BuildBARModel(barData []byte, classCode uint32, profile *donor.BARProfile) 
 			slog.Warn("BAR probe data unreliable (all registers report fully writable), falling back to spec-based model",
 				"probes", len(profile.Probes))
 		} else {
-			model := SynthesizeBARModel(profile, classCode)
-			if model != nil {
-				return model
-			}
+			model = SynthesizeBARModel(profile, classCode)
 		}
 	}
 
 	// fall back to hardcoded spec tables
-	baseClass := (classCode >> 16) & 0xFF
-	subClass := (classCode >> 8) & 0xFF
-	progIF := classCode & 0xFF
-
-	var model *BARModel
-	switch {
-	case baseClass == 0x01 && subClass == 0x08 && progIF == 0x02:
-		model = buildNVMeBARModel(barData)
-	case baseClass == 0x0C && subClass == 0x03 && progIF == 0x30:
-		model = buildXHCIBARModel(barData)
-	case baseClass == 0x02:
-		model = buildEthernetBARModel(barData)
-	case baseClass == 0x04 && subClass == 0x03:
-		model = buildAudioBARModel(barData)
+	if model == nil {
+		if isNVMeClass(classCode) {
+			model = buildNVMeBARModel(barData)
+		} else if isXHCIClass(classCode) {
+			model = buildXHCIBARModel(barData)
+		} else {
+			baseClass := (classCode >> 16) & 0xFF
+			subClass := (classCode >> 8) & 0xFF
+			switch {
+			case baseClass == 0x02 && subClass == 0x00:
+				model = buildEthernetBARModel(barData)
+			case baseClass == 0x04 && subClass == 0x03:
+				model = buildAudioBARModel(barData)
+			}
+		}
 	}
-
-	if model != nil {
-		validateModel(model)
+	if model != nil && isNVMeClass(classCode) {
+		ensureNVMeFSMRegisters(model, barData)
+	}
+	if model != nil && isXHCIClass(classCode) {
+		ensureXHCIFSMRegisters(model, barData)
 	}
 	return model
+}
+
+func buildBARModelFromProfile(p *devclass.DeviceProfile, barData []byte) *BARModel {
+	if p == nil || len(p.BARDefaults) == 0 {
+		return nil
+	}
+	regs := make([]BARRegister, 0, len(p.BARDefaults))
+	for _, d := range p.BARDefaults {
+		reset := d.Reset
+		if len(barData) > 0 && int(d.Offset)+4 <= len(barData) {
+			if v := util.ReadLE32(barData, int(d.Offset)); v != 0 {
+				reset = v
+			}
+		}
+		regs = append(regs, BARRegister{
+			Offset:           d.Offset,
+			Width:            d.Width,
+			Reset:            reset,
+			RWMask:           d.RWMask,
+			Name:             d.Name,
+			IsRW1C:           d.IsRW1C,
+			IsFSMDriven:      d.IsFSMDriven,
+			SequentialRead:   d.SequentialRead,
+			SequentialValues: append([]uint32(nil), d.SequentialValues...),
+		})
+	}
+	model := &BARModel{Size: len(barData), Registers: regs}
+	sortRegistersByOffset(model)
+	return model
+}
+
+// applyProfileSequentialRead ensures every device-profile register marked
+// SequentialRead is present in the model with the SequentialRead flag set.
+// The donor probe / spec table cannot describe stateful reads on their own, so
+// the profile is the authority for these offsets:
+//   - If a register already exists (probe or spec), only the flag is set; the
+//     donor-observed reset / RWMask are kept (the donor snapshot already holds
+//     the handshake sentinel for a real device).
+//   - If no register exists, a read-only one is added, seeded from the profile
+//     BARDefault reset (or the donor barData word when available) so the first
+//     read returns the handshake base value.
+func applyProfileSequentialRead(model *BARModel, devProfile *devclass.DeviceProfile, barData []byte) {
+	if model == nil || devProfile == nil {
+		return
+	}
+	byOff := make(map[uint32]int, len(model.Registers))
+	for i, r := range model.Registers {
+		byOff[r.Offset] = i
+	}
+	for _, d := range devProfile.BARDefaults {
+		if !d.SequentialRead {
+			continue
+		}
+		if idx, ok := byOff[d.Offset]; ok {
+			model.Registers[idx].SequentialRead = true
+			// Keep donor reset when present; fall back to the profile default.
+			if model.Registers[idx].Reset == 0 {
+				model.Registers[idx].Reset = d.Reset
+			}
+			if len(d.SequentialValues) > 0 {
+				seq := append([]uint32(nil), d.SequentialValues...)
+				seq[0] = model.Registers[idx].Reset
+				model.Registers[idx].SequentialValues = seq
+			}
+			continue
+		}
+		reset := d.Reset
+		if len(barData) > 0 && int(d.Offset)+4 <= len(barData) {
+			if v := util.ReadLE32(barData, int(d.Offset)); v != 0 {
+				reset = v
+			}
+		}
+		reg := BARRegister{
+			Offset:         d.Offset,
+			Width:          d.Width,
+			Reset:          reset,
+			RWMask:         d.RWMask,
+			Name:           d.Name,
+			SequentialRead: true,
+		}
+		if len(d.SequentialValues) > 0 {
+			reg.SequentialValues = append([]uint32(nil), d.SequentialValues...)
+			reg.SequentialValues[0] = reset
+		}
+		model.Registers = append(model.Registers, reg)
+		byOff[d.Offset] = len(model.Registers) - 1
+	}
+	// Re-sort by offset so the generated case statement stays ordered.
+	sortRegistersByOffset(model)
+}
+
+func applyTraceOverlay(model *BARModel, overlay *mmio.TraceBAROverlay) {
+	if model == nil || overlay == nil {
+		return
+	}
+
+	byOff := make(map[uint32]int, len(model.Registers))
+	for i, r := range model.Registers {
+		byOff[r.Offset] = i
+	}
+
+	for off, seq := range overlay.Sequential {
+		if len(seq) == 0 {
+			continue
+		}
+		if idx, ok := byOff[off]; ok {
+			if model.Registers[idx].IsFSMDriven {
+				continue
+			}
+			model.Registers[idx].SequentialRead = true
+			model.Registers[idx].SequentialValues = append([]uint32(nil), seq...)
+			continue
+		}
+		model.Registers = append(model.Registers, BARRegister{
+			Offset:           off,
+			Width:            4,
+			Reset:            seq[0],
+			RWMask:           0,
+			Name:             fmt.Sprintf("TRACE_SEQ_0x%08X", off),
+			SequentialRead:   true,
+			SequentialValues: append([]uint32(nil), seq...),
+		})
+		byOff[off] = len(model.Registers) - 1
+	}
+
+	sortRegistersByOffset(model)
+
+	for off, writeMask := range overlay.WriteMask {
+		if writeMask == 0 {
+			continue
+		}
+		if idx, ok := byOff[off]; ok {
+			if model.Registers[idx].IsFSMDriven {
+				continue
+			}
+			if model.Registers[idx].RWMask == 0 {
+				model.Registers[idx].RWMask = writeMask
+			} else {
+				model.Registers[idx].RWMask |= writeMask
+			}
+			continue
+		}
+
+		reg := BARRegister{
+			Offset: off,
+			Width:  4,
+			Reset:  overlay.Static[off],
+			RWMask: writeMask,
+			Name:   fmt.Sprintf("TRACE_WR_0x%08X", off),
+		}
+		model.Registers = append(model.Registers, reg)
+		byOff[off] = len(model.Registers) - 1
+	}
+
+	for off, rw1cMask := range overlay.RW1CMask {
+		if rw1cMask == 0 {
+			continue
+		}
+		if idx, ok := byOff[off]; ok {
+			if model.Registers[idx].IsFSMDriven {
+				continue
+			}
+			model.Registers[idx].IsRW1C = true
+			model.Registers[idx].RW1CMask = rw1cMask
+			if model.Registers[idx].RWMask == 0 {
+				model.Registers[idx].RWMask = rw1cMask
+			} else {
+				model.Registers[idx].RWMask |= rw1cMask
+			}
+			continue
+		}
+
+		reg := BARRegister{
+			Offset:   off,
+			Width:    4,
+			Reset:    overlay.Static[off],
+			RWMask:   rw1cMask,
+			RW1CMask: rw1cMask,
+			Name:     fmt.Sprintf("TRACE_RW1C_0x%08X", off),
+			IsRW1C:   true,
+		}
+		model.Registers = append(model.Registers, reg)
+		byOff[off] = len(model.Registers) - 1
+	}
+
+	sortRegistersByOffset(model)
+
+	existingShadow := make(map[uint32]bool, len(model.StaticShadow))
+	for _, sw := range model.StaticShadow {
+		existingShadow[sw.Offset] = true
+	}
+	for off, val := range overlay.Static {
+		if _, modeled := byOff[off]; modeled || existingShadow[off] {
+			continue
+		}
+		model.StaticShadow = append(model.StaticShadow, StaticWord{Offset: off, Value: val})
+	}
+	sort.Slice(model.StaticShadow, func(i, j int) bool {
+		return model.StaticShadow[i].Offset < model.StaticShadow[j].Offset
+	})
+}
+
+// sortRegistersByOffset sorts model.Registers by Offset (stable).
+func sortRegistersByOffset(model *BARModel) {
+	sort.SliceStable(model.Registers, func(i, j int) bool {
+		return model.Registers[i].Offset < model.Registers[j].Offset
+	})
 }
 
 // validateModel checks for misaligned or duplicate offsets.
@@ -155,8 +465,13 @@ func buildXHCIBARModel(barData []byte) *BARModel {
 
 		// operational regs
 		{Offset: 0x20, Width: 4, Name: "USBCMD", RWMask: 0x00002F0E, IsFSMDriven: true},
-		// USBSTS (mostly RW1C)
-		{Offset: 0x24, Width: 4, Name: "USBSTS", RWMask: 0x00000000, IsFSMDriven: true},
+		// USBSTS: status bits are write-1-to-clear (RW1C). Bits: 0=HCH (FSM),
+		// 2=HSE, 3=INTR, 4=PCD, 10=HCE. HCH stays FSM-driven; the rest are
+		// cleared by the host writing 1. Kept IsFSMDriven so the xHCI FSM
+		// (the sole always block driving this reg) can both set event bits
+		// and service host W1C clears in one place. (Hardening: the
+		// original ignored host USBSTS writes entirely.)
+		{Offset: 0x24, Width: 4, Name: "USBSTS", RWMask: 0x0000041C, IsRW1C: true, IsFSMDriven: true},
 		// Page Size (read-only)
 		{Offset: 0x28, Width: 4, Name: "PAGESIZE", RWMask: 0x00000000},
 		// Device Notification Control
@@ -164,6 +479,17 @@ func buildXHCIBARModel(barData []byte) *BARModel {
 		// Command Ring Control - 64-bit
 		{Offset: 0x38, Width: 4, Name: "CRCR_LO", RWMask: 0xFFFFFFF7},
 		{Offset: 0x3C, Width: 4, Name: "CRCR_HI", RWMask: 0xFFFFFFFF},
+		// Runtime interrupter 0
+		{Offset: 0x220, Width: 4, Name: "IMAN0", RWMask: 0x00000003, IsRW1C: true, IsFSMDriven: true},
+		{Offset: 0x224, Width: 4, Name: "IMOD0", RWMask: 0xFFFFFFFF},
+		{Offset: 0x228, Width: 4, Name: "ERSTSZ0", RWMask: 0x0000FFFF},
+		{Offset: 0x230, Width: 4, Name: "ERSTBA_LO", RWMask: 0xFFFFFFC0},
+		{Offset: 0x234, Width: 4, Name: "ERSTBA_HI", RWMask: 0xFFFFFFFF},
+		{Offset: 0x238, Width: 4, Name: "ERDP_LO", RWMask: 0xFFFFFFF8},
+		{Offset: 0x23C, Width: 4, Name: "ERDP_HI", RWMask: 0xFFFFFFFF},
+		// Port Status and Control registers are driven by the xHCI FSM block.
+		{Offset: 0x420, Width: 4, Name: "PORTSC1", Reset: 0x000002A0, RWMask: 0x8EFFC3F2, IsRW1C: true, IsFSMDriven: true},
+		{Offset: 0x430, Width: 4, Name: "PORTSC2", Reset: 0x000002A0, RWMask: 0x8EFFC3F2, IsRW1C: true, IsFSMDriven: true},
 		// Device Context Base Address Array Pointer - 64-bit
 		{Offset: 0x50, Width: 4, Name: "DCBAAP_LO", RWMask: 0xFFFFFFC0},
 		{Offset: 0x54, Width: 4, Name: "DCBAAP_HI", RWMask: 0xFFFFFFFF},
@@ -191,6 +517,76 @@ func buildXHCIBARModel(barData []byte) *BARModel {
 		Size:      sz,
 		Registers: regs,
 	}
+}
+
+func isNVMeClass(classCode uint32) bool {
+	baseClass := (classCode >> 16) & 0xFF
+	subClass := (classCode >> 8) & 0xFF
+	progIF := classCode & 0xFF
+	return baseClass == 0x01 && subClass == 0x08 && progIF == 0x02
+}
+
+func isXHCIClass(classCode uint32) bool {
+	baseClass := (classCode >> 16) & 0xFF
+	subClass := (classCode >> 8) & 0xFF
+	progIF := classCode & 0xFF
+	return baseClass == 0x0C && subClass == 0x03 && progIF == 0x30
+}
+
+func ensureNVMeFSMRegisters(model *BARModel, barData []byte) {
+	spec := buildNVMeBARModel(barData)
+	byOff := make(map[uint32]int, len(model.Registers))
+	for i, reg := range model.Registers {
+		byOff[reg.Offset] = i
+	}
+	for _, reg := range spec.Registers {
+		switch reg.Offset {
+		case 0x14, 0x1C, 0x24, 0x28, 0x2C, 0x30, 0x34:
+		default:
+			continue
+		}
+		if idx, ok := byOff[reg.Offset]; ok {
+			model.Registers[idx].Width = reg.Width
+			model.Registers[idx].Name = reg.Name
+			model.Registers[idx].RWMask = reg.RWMask
+			model.Registers[idx].IsRW1C = reg.IsRW1C
+			model.Registers[idx].IsFSMDriven = reg.IsFSMDriven
+			if model.Registers[idx].Reset == 0 {
+				model.Registers[idx].Reset = reg.Reset
+			}
+			continue
+		}
+		model.Registers = append(model.Registers, reg)
+	}
+	sortRegistersByOffset(model)
+}
+
+func ensureXHCIFSMRegisters(model *BARModel, barData []byte) {
+	spec := buildXHCIBARModel(barData)
+	byOff := make(map[uint32]int, len(model.Registers))
+	for i, reg := range model.Registers {
+		byOff[reg.Offset] = i
+	}
+	for _, reg := range spec.Registers {
+		switch reg.Offset {
+		case 0x20, 0x24, 0x220, 0x420, 0x430:
+		default:
+			continue
+		}
+		if idx, ok := byOff[reg.Offset]; ok {
+			model.Registers[idx].Width = reg.Width
+			model.Registers[idx].Name = reg.Name
+			model.Registers[idx].RWMask = reg.RWMask
+			model.Registers[idx].IsRW1C = reg.IsRW1C
+			model.Registers[idx].IsFSMDriven = reg.IsFSMDriven
+			if model.Registers[idx].Reset == 0 {
+				model.Registers[idx].Reset = reg.Reset
+			}
+			continue
+		}
+		model.Registers = append(model.Registers, reg)
+	}
+	sortRegistersByOffset(model)
 }
 
 // populateResetValues fills in reset values from donor BAR memory.
@@ -477,4 +873,78 @@ func classRegisterNames(classCode uint32) map[uint32]string {
 		names[d.Offset] = d.Name
 	}
 	return names
+}
+
+// applyDonorProbeOverlay refines spec-table registers with donor-observed
+// write masks, RW1C flags, and reset values. FSM-driven registers
+// (IsFSMDriven) keep their spec semantics (the FSM is the authority for those
+// offsets); everything else inherits the donor's per-bit writability so host
+// writes to read-only donor bits are rejected exactly as on the real device.
+func applyDonorProbeOverlay(model *BARModel, profile *donor.BARProfile) {
+	if profile == nil || model == nil {
+		return
+	}
+	byOff := make(map[uint32]donor.BARProbeResult, len(profile.Probes))
+	for _, p := range profile.Probes {
+		byOff[p.Offset] = p
+	}
+	for i := range model.Registers {
+		r := &model.Registers[i]
+		probe, ok := byOff[r.Offset]
+		if !ok {
+			continue
+		}
+		if r.IsFSMDriven {
+			// FSM owns this offset; only let the donor refine the reset seed
+			// for non-handshake bits the FSM doesn't touch. Keep it simple: do
+			// not override FSM registers.
+			continue
+		}
+		if probe.MaybeRW1C {
+			r.IsRW1C = true
+			r.RWMask = 0 // RW1C registers are modeled as read-only to the host
+		} else {
+			r.RWMask = probe.RWMask
+		}
+		r.Reset = probe.Original
+	}
+}
+
+// populateStaticShadow collects donor 4-byte words at offsets NOT already
+// covered by Registers, so the generated read case returns the donor value
+// for those static offsets instead of the offset-echo fallback. Only non-zero
+// words are emitted (zero reads are already the natural default for unmapped
+// space). Capped to keep the generated case statement bounded.
+func populateStaticShadow(model *BARModel, barData []byte) {
+	if model == nil || len(barData) == 0 {
+		return
+	}
+	const maxShadow = 256
+	existing := make(map[uint32]bool, len(model.StaticShadow)+len(model.Registers))
+	shadow := make([]StaticWord, 0, maxShadow)
+	for _, r := range model.Registers {
+		existing[r.Offset] = true
+	}
+	for _, sw := range model.StaticShadow {
+		if existing[sw.Offset] || len(shadow) >= maxShadow {
+			continue
+		}
+		existing[sw.Offset] = true
+		shadow = append(shadow, sw)
+	}
+	for off := 0; off+4 <= len(barData) && len(shadow) < maxShadow; off += 4 {
+		if existing[uint32(off)] {
+			continue
+		}
+		val := util.ReadLE32(barData, off)
+		if val == 0 {
+			continue
+		}
+		existing[uint32(off)] = true
+		shadow = append(shadow, StaticWord{Offset: uint32(off), Value: val})
+	}
+	sort.Slice(shadow, func(i, j int) bool {
+		return shadow[i].Offset < shadow[j].Offset
+	})
+	model.StaticShadow = shadow
 }
