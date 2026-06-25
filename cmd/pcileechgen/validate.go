@@ -124,7 +124,7 @@ func (v *validator) validateCOEFiles() {
 		if string(coeData) == expectedCOE {
 			v.result.Passed = append(v.result.Passed, "pcileech_cfgspace.coe matches donor config space (scrubbed)")
 		} else {
-			v.result.Warnings = append(v.result.Warnings, "pcileech_cfgspace.coe differs from deterministic scrubbed baseline (per-build variance may be applied)")
+			v.result.Failed = append(v.result.Failed, "pcileech_cfgspace.coe MISMATCH")
 		}
 	} else {
 		v.result.Failed = append(v.result.Failed, "pcileech_cfgspace.coe not found")
