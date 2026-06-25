@@ -111,6 +111,18 @@ module pcileech_nvme_admin_responder(
     wire [31:0] cmd_cdw11    = sqe[11];
     wire [7:0]  identify_cns = cmd_cdw10[7:0];
 
+    function [63:0] cmd_prp_addr;
+        input [12:0] data_byte_offset;
+        reg [12:0] prp_byte_offset;
+        begin
+            prp_byte_offset = {1'b0, cmd_prp1[11:0]} + data_byte_offset;
+            if (prp_byte_offset[12])
+                cmd_prp_addr = {cmd_prp2[63:12], 12'h000} + {52'h0, prp_byte_offset[11:0]};
+            else
+                cmd_prp_addr = cmd_prp1 + {51'h0, data_byte_offset};
+        end
+    endfunction
+
     // CQE we're building – 4 DWORDs, written to host one at a time
     reg [31:0]  cqe [0:3];
     reg [1:0]   cqe_dw_idx;
@@ -327,7 +339,7 @@ module pcileech_nvme_admin_responder(
                         end else begin
                             dma_wr_req   <= 1'b1;
                             dma_wr_valid <= 1'b1;
-                            dma_wr_addr  <= cmd_prp1 + {53'h0, data_dw_cnt - 11'h1, 2'b00};
+                            dma_wr_addr  <= cmd_prp_addr({data_dw_cnt - 11'h1, 2'b00});
                             dma_wr_data  <= id_rom_data;
                             dma_wr_be    <= 4'hF;
 
@@ -346,7 +358,7 @@ module pcileech_nvme_admin_responder(
                     S_EXEC_NSLIST: begin
                         dma_wr_req   <= 1'b1;
                         dma_wr_valid <= 1'b1;
-                        dma_wr_addr  <= cmd_prp1 + {53'h0, data_dw_cnt, 2'b00};
+                        dma_wr_addr  <= cmd_prp_addr({data_dw_cnt, 2'b00});
                         dma_wr_data  <= (data_dw_cnt == 11'h0) ? 32'h00000001 : 32'h0;
                         dma_wr_be    <= 4'hF;
 
@@ -364,7 +376,7 @@ module pcileech_nvme_admin_responder(
                     S_EXEC_LOGPAGE: begin
                         dma_wr_req   <= 1'b1;
                         dma_wr_valid <= 1'b1;
-                        dma_wr_addr  <= cmd_prp1 + {53'h0, data_dw_cnt, 2'b00};
+                        dma_wr_addr  <= cmd_prp_addr({data_dw_cnt, 2'b00});
                         dma_wr_be    <= 4'hF;
 
                         case (data_dw_cnt)
