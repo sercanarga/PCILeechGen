@@ -2,8 +2,10 @@
 package vivado
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -102,8 +104,9 @@ func (v *Vivado) RunTCL(tclScript string, workDir string, timeout time.Duration)
 
 	cmd := exec.CommandContext(ctx, v.BinaryPath(), "-mode", "batch", "-notrace", "-source", tclScript)
 	cmd.Dir = workDir
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	var output bytes.Buffer
+	cmd.Stdout = io.MultiWriter(os.Stdout, &output)
+	cmd.Stderr = io.MultiWriter(os.Stderr, &output)
 
 	// Set up environment
 	env := os.Environ()
@@ -119,5 +122,22 @@ func (v *Vivado) RunTCL(tclScript string, workDir string, timeout time.Duration)
 		return fmt.Errorf("Vivado execution failed: %w", err)
 	}
 
+	if line, ok := vivadoStartupFailure(output.String()); ok {
+		return fmt.Errorf("Vivado startup failed: %s", line)
+	}
+
 	return nil
+}
+
+func vivadoStartupFailure(output string) (string, bool) {
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if strings.Contains(line, "application-specific initialization failed") {
+			return line, true
+		}
+	}
+	return "", false
 }

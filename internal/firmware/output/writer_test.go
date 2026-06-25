@@ -1,10 +1,15 @@
 package output
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/sercanarga/pcileechgen/internal/donor"
+	"github.com/sercanarga/pcileechgen/internal/firmware/barprofile"
+	"github.com/sercanarga/pcileechgen/internal/pci"
 )
 
 func TestNewOutputWriter_Defaults(t *testing.T) {
@@ -71,5 +76,38 @@ func TestListOutputFiles(t *testing.T) {
 		if !found {
 			t.Errorf("ListOutputFiles missing %q", name)
 		}
+	}
+}
+
+func TestWriteBARBehaviorProfile_writesProfileArtifact(t *testing.T) {
+	tmpDir := t.TempDir()
+	ow := NewOutputWriter(tmpDir, "lib/pcileech-fpga", 4, 3600)
+	ctx := &donor.DeviceContext{
+		Device: pci.PCIDevice{ClassCode: 0x020000},
+		BARs: []pci.BAR{
+			{Index: 2, Size: 4, Type: pci.BARTypeMem32},
+		},
+		BARContents: map[int][]byte{
+			2: {0x11, 0x22, 0x33, 0x44},
+		},
+	}
+
+	if err := ow.writeBARBehaviorProfile(ctx); err != nil {
+		t.Fatalf("writeBARBehaviorProfile failed: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, "bar_behavior_profile.json"))
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+	var profile barprofile.Profile
+	if err := json.Unmarshal(data, &profile); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+	if profile.ClassCode != 0x020000 {
+		t.Fatalf("ClassCode = 0x%06X, want 0x020000", profile.ClassCode)
+	}
+	if len(profile.BARs) != 1 || profile.BARs[0].Index != 2 {
+		t.Fatalf("unexpected BAR profile: %+v", profile.BARs)
 	}
 }

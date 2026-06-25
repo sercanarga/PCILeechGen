@@ -67,11 +67,15 @@ func (ow *OutputWriter) WriteAll(ctx *donor.DeviceContext, b *board.Board) error
 		return err
 	}
 
+	if err := ow.writeBARBehaviorProfile(ctx); err != nil {
+		return err
+	}
+
 	if err := ow.writeTCLScripts(ctx, b); err != nil {
 		return err
 	}
 
-	if err := ow.patchSVSources(ctx, b, ids); err != nil {
+	if err := ow.patchSVSources(b, ids); err != nil {
 		return fmt.Errorf("SV patching failed: %w", err)
 	}
 
@@ -200,7 +204,7 @@ var barControllerSubModules = []string{
 
 // patchSVSources copies the board's SV tree (excluding files that will
 // be regenerated), and patches donor IDs into the remaining sources.
-func (ow *OutputWriter) patchSVSources(ctx *donor.DeviceContext, b *board.Board, ids firmware.DeviceIDs) error {
+func (ow *OutputWriter) patchSVSources(b *board.Board, ids firmware.DeviceIDs) error {
 	srcDir := b.SrcPath(ow.LibDir)
 	dstDir := filepath.Join(ow.OutputDir, "src")
 
@@ -233,7 +237,9 @@ func (ow *OutputWriter) patchSVSources(ctx *donor.DeviceContext, b *board.Board,
 		srcFile := filepath.Join(srcDir, "pcileech_tlps128_bar_controller.sv")
 		dstFile := filepath.Join(dstDir, "pcileech_tlps128_bar_controller.sv")
 		if data, err := os.ReadFile(srcFile); err == nil {
-			os.WriteFile(dstFile, data, 0644)
+			if writeErr := os.WriteFile(dstFile, data, 0644); writeErr != nil {
+				return fmt.Errorf("failed to copy stock BAR controller: %w", writeErr)
+			}
 		}
 	}
 
@@ -329,6 +335,7 @@ func ListOutputFiles() []string {
 		"pcileech_cfgspace.coe",
 		"pcileech_cfgspace_writemask.coe",
 		"pcileech_bar_zero4k.coe",
+		"bar_behavior_profile.json",
 		"vivado_generate_project.tcl",
 		"vivado_build.tcl",
 		"src/",
@@ -444,7 +451,12 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 	bm := barmodel.BuildBARModel(barData, ctx.Device.ClassCode, barProfile)
 	slog.Info("BAR model built",
 		"model_nil", bm == nil,
-		"reg_count", func() int { if bm != nil { return len(bm.Registers) }; return 0 }(),
+		"reg_count", func() int {
+			if bm != nil {
+				return len(bm.Registers)
+			}
+			return 0
+		}(),
 	)
 
 	strategy := devclass.StrategyForClassAndVendor(ctx.Device.ClassCode, ids.VendorID)
@@ -468,15 +480,16 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 	}
 
 	cfg := &svgen.SVGeneratorConfig{
-		DeviceIDs:     ids,
-		BARModel:      bm,
-		ClassCode:     ctx.Device.ClassCode,
-		LatencyConfig: svgen.DefaultLatencyConfig(ctx.Device.ClassCode),
-		HasMSIX:       bm != nil,
-		BuildEntropy:  entropy,
-		PRNGSeeds:     svgen.BuildPRNGSeeds(ids.VendorID, ids.DeviceID, entropy),
-		DeviceClass:   devClass,
-		Bar0Size:      bar0Size,
+		DeviceIDs:         ids,
+		DonorCapabilities: extractDonorCapabilities(scrubbedCS),
+		BARModel:          bm,
+		ClassCode:         ctx.Device.ClassCode,
+		LatencyConfig:     svgen.DefaultLatencyConfig(ctx.Device.ClassCode),
+		HasMSIX:           bm != nil,
+		BuildEntropy:      entropy,
+		PRNGSeeds:         svgen.BuildPRNGSeeds(ids.VendorID, ids.DeviceID, entropy),
+		DeviceClass:       devClass,
+		Bar0Size:          bar0Size,
 	}
 
 	if devClass == devclass.ClassNVMe {
@@ -516,11 +529,15 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 	// Validate *donor demand* (may exceed) against board BRAM; error unless --force.
 	// (bar0Size is the Capped value actually used for artifacts/scrub/SV.)
 	if issues := ValidateBARSize(donorBar, bram, 0); len(issues) > 0 {
-		if !ow.Force { return nil, fmt.Errorf("%s", issues[0]) }
+		if !ow.Force {
+			return nil, fmt.Errorf("%s", issues[0])
+		}
 	}
 	if cfg.MSIXConfig != nil {
 		if issues := ValidateBARSize(donorBar, bram, cfg.MSIXConfig.TableOffset); len(issues) > 0 {
-			if !ow.Force { return nil, fmt.Errorf("%s", issues[0]) }
+			if !ow.Force {
+				return nil, fmt.Errorf("%s", issues[0])
+			}
 		}
 	}
 
@@ -571,8 +588,8 @@ func (ow *OutputWriter) writeConditionalArtifacts(cfg *svgen.SVGeneratorConfig, 
 		if err != nil {
 			return fmt.Errorf("generating pcileech_nvme_admin_responder.sv: %w", err)
 		}
-		if err := ow.writeFile("pcileech_nvme_admin_responder.sv", nvmeSV); err != nil {
-			return err
+		if writeErr := ow.writeFile("pcileech_nvme_admin_responder.sv", nvmeSV); writeErr != nil {
+			return writeErr
 		}
 
 		bridgeSV, err := svgen.GenerateNVMeDMABridgeSV(cfg)
@@ -593,8 +610,8 @@ func (ow *OutputWriter) writeConditionalArtifacts(cfg *svgen.SVGeneratorConfig, 
 		if err != nil {
 			return fmt.Errorf("generating pcileech_hda_rirb_dma.sv: %w", err)
 		}
-		if err := ow.writeFile("pcileech_hda_rirb_dma.sv", hdaSV); err != nil {
-			return err
+		if writeErr := ow.writeFile("pcileech_hda_rirb_dma.sv", hdaSV); writeErr != nil {
+			return writeErr
 		}
 
 		// MSI interrupt generator for HDA - critical for driver completion.
@@ -635,6 +652,18 @@ func (ow *OutputWriter) logSVSummary(cfg *svgen.SVGeneratorConfig) {
 		features = append(features, fmt.Sprintf("%d registers", len(cfg.BARModel.Registers)))
 	} else {
 		features = append(features, "BRAM fallback")
+	}
+	if cfg.DonorCapabilities.HasPMCap {
+		features = append(features, "donor PM cap")
+	}
+	if cfg.DonorCapabilities.HasMSICap {
+		features = append(features, "donor MSI cap")
+	}
+	if cfg.DonorCapabilities.HasMSIXCap {
+		features = append(features, "donor MSI-X cap")
+	}
+	if cfg.DonorCapabilities.HasPCIeCap {
+		features = append(features, "donor PCIe cap")
 	}
 	features = append(features, "latency emulator", "interrupt controller")
 	slog.Info("SV modules generated", "features", strings.Join(features, ", "))

@@ -83,7 +83,9 @@ func TestIsBoundToVFIO_WithFakeSysfs(t *testing.T) {
 
 	bdf := "0000:03:00.0"
 	devDir := filepath.Join(tmpDir, bdf)
-	os.MkdirAll(devDir, 0755)
+	if err := os.MkdirAll(devDir, 0755); err != nil {
+		t.Fatal(err)
+	}
 
 	// No driver symlink -> not bound
 	if IsBoundToVFIO(bdf) {
@@ -92,8 +94,12 @@ func TestIsBoundToVFIO_WithFakeSysfs(t *testing.T) {
 
 	// Create a fake driver symlink pointing to vfio-pci
 	fakeDriver := filepath.Join(tmpDir, "drivers", "vfio-pci")
-	os.MkdirAll(fakeDriver, 0755)
-	os.Symlink(fakeDriver, filepath.Join(devDir, "driver"))
+	if err := os.MkdirAll(fakeDriver, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(fakeDriver, filepath.Join(devDir, "driver")); err != nil {
+		t.Fatal(err)
+	}
 
 	if !IsBoundToVFIO(bdf) {
 		t.Error("should be bound when driver symlink points to vfio-pci")
@@ -107,7 +113,9 @@ func TestQuickStatus_WithFakeSysfs(t *testing.T) {
 
 	bdf := "0000:03:00.0"
 	devDir := filepath.Join(tmpDir, bdf)
-	os.MkdirAll(devDir, 0755)
+	if err := os.MkdirAll(devDir, 0755); err != nil {
+		t.Fatal(err)
+	}
 
 	// No iommu group -> "no-iommu"
 	status := QuickStatus(bdf)
@@ -117,8 +125,12 @@ func TestQuickStatus_WithFakeSysfs(t *testing.T) {
 
 	// Add vfio-pci driver -> "ready"
 	fakeDriver := filepath.Join(tmpDir, "drivers", "vfio-pci")
-	os.MkdirAll(fakeDriver, 0755)
-	os.Symlink(fakeDriver, filepath.Join(devDir, "driver"))
+	if err := os.MkdirAll(fakeDriver, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(fakeDriver, filepath.Join(devDir, "driver")); err != nil {
+		t.Fatal(err)
+	}
 
 	status = QuickStatus(bdf)
 	if status != "ready" {
@@ -133,7 +145,9 @@ func TestCheckPowerState_WithFakeSysfs(t *testing.T) {
 
 	bdf := "0000:03:00.0"
 	devDir := filepath.Join(tmpDir, bdf)
-	os.MkdirAll(devDir, 0755)
+	if err := os.MkdirAll(devDir, 0755); err != nil {
+		t.Fatal(err)
+	}
 
 	// No power_state file -> error
 	_, err := CheckPowerState(bdf)
@@ -142,7 +156,9 @@ func TestCheckPowerState_WithFakeSysfs(t *testing.T) {
 	}
 
 	// Write D0
-	os.WriteFile(filepath.Join(devDir, "power_state"), []byte("D0\n"), 0644)
+	if writeErr := os.WriteFile(filepath.Join(devDir, "power_state"), []byte("D0\n"), 0644); writeErr != nil {
+		t.Fatal(writeErr)
+	}
 	state, err := CheckPowerState(bdf)
 	if err != nil {
 		t.Fatalf("CheckPowerState failed: %v", err)
@@ -159,7 +175,9 @@ func TestCheckBARAccessibility_WithFakeSysfs(t *testing.T) {
 
 	bdf := "0000:03:00.0"
 	devDir := filepath.Join(tmpDir, bdf)
-	os.MkdirAll(devDir, 0755)
+	if err := os.MkdirAll(devDir, 0755); err != nil {
+		t.Fatal(err)
+	}
 
 	// No resource files -> empty
 	results := CheckBARAccessibility(bdf)
@@ -168,7 +186,9 @@ func TestCheckBARAccessibility_WithFakeSysfs(t *testing.T) {
 	}
 
 	// Create a non-empty resource0 file
-	os.WriteFile(filepath.Join(devDir, "resource0"), make([]byte, 4096), 0644)
+	if err := os.WriteFile(filepath.Join(devDir, "resource0"), make([]byte, 4096), 0644); err != nil {
+		t.Fatal(err)
+	}
 	results = CheckBARAccessibility(bdf)
 	if len(results) == 0 {
 		t.Error("expected at least one BAR result")
@@ -185,12 +205,16 @@ func TestEnableMemorySpace_WithFakeSysfs(t *testing.T) {
 
 	bdf := "0000:03:00.0"
 	devDir := filepath.Join(tmpDir, bdf)
-	os.MkdirAll(devDir, 0755)
+	if err := os.MkdirAll(devDir, 0755); err != nil {
+		t.Fatal(err)
+	}
 
 	// Create a fake config file (4096 bytes, Command Register at 0x04 = 0x0000)
 	config := make([]byte, 4096)
 	configPath := filepath.Join(devDir, "config")
-	os.WriteFile(configPath, config, 0644)
+	if err := os.WriteFile(configPath, config, 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	// Enable memory space
 	err := EnableMemorySpace(bdf)
@@ -220,13 +244,17 @@ func TestEnableMemorySpace_AlreadyEnabled(t *testing.T) {
 
 	bdf := "0000:03:00.0"
 	devDir := filepath.Join(tmpDir, bdf)
-	os.MkdirAll(devDir, 0755)
+	if err := os.MkdirAll(devDir, 0755); err != nil {
+		t.Fatal(err)
+	}
 
 	// Config with command register already set to 0x06
 	config := make([]byte, 4096)
 	config[0x04] = 0x06
 	configPath := filepath.Join(devDir, "config")
-	os.WriteFile(configPath, config, 0644)
+	if err := os.WriteFile(configPath, config, 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	// Should be a no-op
 	err := EnableMemorySpace(bdf)

@@ -662,6 +662,7 @@ func TestAllStrategies_Profile(t *testing.T) {
 		p := s.Profile()
 		if p == nil {
 			t.Errorf("nil profile for %s", s.ClassName())
+			continue
 		}
 		if p.ClassName == "" {
 			t.Errorf("empty profile className for %s", s.ClassName())

@@ -150,8 +150,8 @@ func (c *checker) checkPowerState() {
 
 	// attempt auto-wake
 	fmt.Fprintf(c.w, color.Dim("Power state: %s - attempting D0 wake...\n"), ps)
-	if err := vfio.WakeToD0(c.bdf.String()); err != nil {
-		fmt.Fprintln(c.w, color.Failf("Power state: %s - failed to wake device: %v", ps, err))
+	if wakeErr := vfio.WakeToD0(c.bdf.String()); wakeErr != nil {
+		fmt.Fprintln(c.w, color.Failf("Power state: %s - failed to wake device: %v", ps, wakeErr))
 		c.issues++
 		return
 	}

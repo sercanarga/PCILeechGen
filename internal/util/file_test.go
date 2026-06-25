@@ -41,9 +41,15 @@ func TestCopyDir(t *testing.T) {
 	dstDir := filepath.Join(t.TempDir(), "dst")
 
 	// Create nested structure
-	os.MkdirAll(filepath.Join(srcDir, "sub"), 0755)
-	os.WriteFile(filepath.Join(srcDir, "a.txt"), []byte("aaa"), 0644)
-	os.WriteFile(filepath.Join(srcDir, "sub", "b.txt"), []byte("bbb"), 0644)
+	if err := os.MkdirAll(filepath.Join(srcDir, "sub"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "a.txt"), []byte("aaa"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "sub", "b.txt"), []byte("bbb"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := CopyDir(srcDir, dstDir); err != nil {
 		t.Fatalf("CopyDir error: %v", err)

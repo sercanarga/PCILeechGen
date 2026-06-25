@@ -26,13 +26,16 @@ func (vr *ValidationResult) Summary() string {
 
 func (vr *ValidationResult) pass(msg string) { vr.Passed = append(vr.Passed, msg) }
 func (vr *ValidationResult) fail(msg string) { vr.Failed = append(vr.Failed, msg) }
-func (vr *ValidationResult) warn(msg string) { vr.Warnings = append(vr.Warnings, msg) }
 
 // ValidateOutputDir checks that all expected files exist and aren't empty.
 func ValidateOutputDir(dir string) *ValidationResult {
 	result := &ValidationResult{}
 
 	for _, name := range ListOutputFiles() {
+		if !outputFileRequired(dir, name) {
+			continue
+		}
+
 		path := filepath.Join(dir, name)
 
 		if strings.HasSuffix(name, "/") {
@@ -87,8 +90,14 @@ func ValidateHexFile(hexContent string, expectedWords int) error {
 	nonEmpty := 0
 	for i, line := range lines {
 		line = strings.TrimSpace(line)
-		if line == "" {
+		if line == "" || strings.HasPrefix(line, "//") || strings.HasPrefix(line, ";") {
 			continue
+		}
+		if beforeComment, _, ok := strings.Cut(line, "//"); ok {
+			line = strings.TrimSpace(beforeComment)
+			if line == "" {
+				continue
+			}
 		}
 		nonEmpty++
 		if len(line) != 8 {
@@ -106,6 +115,45 @@ func ValidateHexFile(hexContent string, expectedWords int) error {
 	}
 
 	return nil
+}
+
+func outputFileRequired(dir string, name string) bool {
+	switch name {
+	case "pcileech_msix_table.sv", "msix_table_init.hex":
+		return generatedLocalparamPresent(dir, "MSIX_NUM_VECTORS")
+	case "pcileech_nvme_admin_responder.sv", "pcileech_nvme_dma_bridge.sv":
+		return generatedFeatureEnabled(dir, "HAS_NVME_RESP")
+	default:
+		return true
+	}
+}
+
+func generatedFeatureEnabled(dir string, feature string) bool {
+	data, err := os.ReadFile(filepath.Join(dir, "device_config.sv"))
+	if err != nil {
+		return true
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 4 && fields[1] == feature && fields[2] == "=" {
+			return strings.TrimSuffix(fields[3], ";") == "1"
+		}
+	}
+	return false
+}
+
+func generatedLocalparamPresent(dir string, name string) bool {
+	data, err := os.ReadFile(filepath.Join(dir, "device_config.sv"))
+	if err != nil {
+		return true
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[1] == name {
+			return true
+		}
+	}
+	return false
 }
 
 // ValidateCOEFile checks radix/vector directives and trailing semicolon.

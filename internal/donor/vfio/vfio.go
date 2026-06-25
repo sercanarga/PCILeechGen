@@ -131,14 +131,14 @@ func BindToVFIO(bdf string) error {
 
 	if driverLink != "" {
 		unbindPath := filepath.Join(devPath, "driver", "unbind")
-		if err := os.WriteFile(unbindPath, []byte(bdf), 0200); err != nil {
-			return fmt.Errorf("failed to unbind from current driver: %w", err)
+		if writeErr := os.WriteFile(unbindPath, []byte(bdf), 0200); writeErr != nil {
+			return fmt.Errorf("failed to unbind from current driver: %w", writeErr)
 		}
 	}
 
 	overridePath := filepath.Join(devPath, "driver_override")
-	if err := os.WriteFile(overridePath, []byte("vfio-pci"), 0200); err != nil {
-		return fmt.Errorf("failed to set driver override: %w", err)
+	if writeErr := os.WriteFile(overridePath, []byte("vfio-pci"), 0200); writeErr != nil {
+		return fmt.Errorf("failed to set driver override: %w", writeErr)
 	}
 
 	newIDPath := "/sys/bus/pci/drivers/vfio-pci/new_id"
@@ -146,8 +146,8 @@ func BindToVFIO(bdf string) error {
 	_ = os.WriteFile(newIDPath, []byte(idStr), 0200)
 
 	probePath := "/sys/bus/pci/drivers_probe"
-	if err := os.WriteFile(probePath, []byte(bdf), 0200); err != nil {
-		return fmt.Errorf("failed to probe device: %w", err)
+	if writeErr := os.WriteFile(probePath, []byte(bdf), 0200); writeErr != nil {
+		return fmt.Errorf("failed to probe device: %w", writeErr)
 	}
 
 	driverLink, err = os.Readlink(filepath.Join(devPath, "driver"))

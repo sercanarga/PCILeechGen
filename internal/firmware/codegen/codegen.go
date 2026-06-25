@@ -71,10 +71,10 @@ func GenerateWritemaskCOE(cs *pci.ConfigSpace) string {
 	// scrubber already neutralized all writable extended cap fields.
 
 	// header type 0 registers (DWORD index = byte offset / 4)
-	masks[0] = 0x00000000  // 0x00: VID:DID (read-only identity)
-	masks[1] = 0xFFFFFFFF  // 0x04: Command:Status (OS needs full control)
-	masks[2] = 0x00000000  // 0x08: RevisionID:ClassCode (read-only identity)
-	masks[3] = 0xFF00FFFF  // 0x0C: CLS+LT writable, HeaderType RO, BIST writable
+	masks[0] = 0x00000000 // 0x00: VID:DID (read-only identity)
+	masks[1] = 0xFFFFFFFF // 0x04: Command:Status (OS needs full control)
+	masks[2] = 0x00000000 // 0x08: RevisionID:ClassCode (read-only identity)
+	masks[3] = 0xFF00FFFF // 0x0C: CLS+LT writable, HeaderType RO, BIST writable
 
 	// BAR registers 0x10-0x24 (DWORD 4-9): size-matching masks
 	for i := 0; i < 6; i++ {
@@ -168,4 +168,3 @@ func GenerateMSIXTableHex(entries []pci.MSIXEntry) string {
 
 	return sb.String()
 }
-

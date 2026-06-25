@@ -58,18 +58,18 @@ func TestScrubConfigSpace(t *testing.T) {
 	}
 }
 
-func makeExtCapHeader(id uint16, version uint8, nextOffset int) uint32 {
-	return uint32(id) | uint32(version)<<16 | uint32(nextOffset)<<20
+func makeExtCapHeader(id uint16, nextOffset int) uint32 {
+	return uint32(id) | 1<<16 | uint32(nextOffset)<<20
 }
 
 func TestFilterExtCaps_RemoveMiddle(t *testing.T) {
 	cs := pci.NewConfigSpace()
 	cs.Size = pci.ConfigSpaceSize
 
-	cs.WriteU32(0x100, makeExtCapHeader(pci.ExtCapIDAER, 1, 0x150))
-	cs.WriteU32(0x150, makeExtCapHeader(pci.ExtCapIDSRIOV, 1, 0x200))
-	cs.WriteU32(0x200, makeExtCapHeader(pci.ExtCapIDDeviceSerialNumber, 1, 0x250))
-	cs.WriteU32(0x250, makeExtCapHeader(pci.ExtCapIDLTR, 1, 0))
+	cs.WriteU32(0x100, makeExtCapHeader(pci.ExtCapIDAER, 0x150))
+	cs.WriteU32(0x150, makeExtCapHeader(pci.ExtCapIDSRIOV, 0x200))
+	cs.WriteU32(0x200, makeExtCapHeader(pci.ExtCapIDDeviceSerialNumber, 0x250))
+	cs.WriteU32(0x250, makeExtCapHeader(pci.ExtCapIDLTR, 0))
 
 	removed := FilterExtCapabilities(cs, overlay.NewMap(cs))
 
@@ -90,8 +90,8 @@ func TestFilterExtCaps_AllRemoved(t *testing.T) {
 	cs := pci.NewConfigSpace()
 	cs.Size = pci.ConfigSpaceSize
 
-	cs.WriteU32(0x100, makeExtCapHeader(pci.ExtCapIDSRIOV, 1, 0x150))
-	cs.WriteU32(0x150, makeExtCapHeader(pci.ExtCapIDResizableBAR, 1, 0))
+	cs.WriteU32(0x100, makeExtCapHeader(pci.ExtCapIDSRIOV, 0x150))
+	cs.WriteU32(0x150, makeExtCapHeader(pci.ExtCapIDResizableBAR, 0))
 
 	removed := FilterExtCapabilities(cs, overlay.NewMap(cs))
 	if len(removed) != 2 {
@@ -478,7 +478,8 @@ func TestRelocateMSIXToBRAM_TableOutside(t *testing.T) {
 	// table offset should be relocated to 0x1000
 	tableReg := scrubbed.ReadU32(0x94)
 	tableOff := tableReg &^ 0x07
-	off := uint32(0x1000); if tableOff != off {
+	off := uint32(0x1000)
+	if tableOff != off {
 		t.Errorf("MSI-X table offset should be relocated to 0x1000, got 0x%X", tableOff)
 	}
 
@@ -514,7 +515,8 @@ func TestRelocateMSIXToBRAM_TableInside(t *testing.T) {
 	// table still relocated to 0x1000 (consistent placement)
 	tableReg := scrubbed.ReadU32(0x94)
 	tableOff := tableReg &^ 0x07
-	off := uint32(0x1000); if tableOff != off {
+	off := uint32(0x1000)
+	if tableOff != off {
 		t.Errorf("MSI-X table should be relocated to 0x1000, got 0x%X", tableOff)
 	}
 }
@@ -724,7 +726,8 @@ func TestRelocateMSIXToBRAM(t *testing.T) {
 	// Table should be relocated to 0x1000
 	tableReg := cs.ReadU32(0x84)
 	tableOff := tableReg & 0xFFFFFFF8
-	off := uint32(0x1000); if tableOff != off {
+	off := uint32(0x1000)
+	if tableOff != off {
 		t.Errorf("Table offset = 0x%x, want 0x1000", tableOff)
 	}
 
@@ -763,9 +766,9 @@ func TestSecondaryPCIeNotFiltered(t *testing.T) {
 	cs.Size = pci.ConfigSpaceSize
 
 	// AER -> SecondaryPCIe -> LTR
-	cs.WriteU32(0x100, makeExtCapHeader(pci.ExtCapIDAER, 1, 0x150))
-	cs.WriteU32(0x150, makeExtCapHeader(pci.ExtCapIDSecondaryPCIe, 1, 0x200))
-	cs.WriteU32(0x200, makeExtCapHeader(pci.ExtCapIDLTR, 1, 0))
+	cs.WriteU32(0x100, makeExtCapHeader(pci.ExtCapIDAER, 0x150))
+	cs.WriteU32(0x150, makeExtCapHeader(pci.ExtCapIDSecondaryPCIe, 0x200))
+	cs.WriteU32(0x200, makeExtCapHeader(pci.ExtCapIDLTR, 0))
 
 	removed := FilterExtCapabilities(cs, overlay.NewMap(cs))
 	if len(removed) != 0 {
@@ -828,9 +831,9 @@ func TestL1PMSubstatesNotFiltered(t *testing.T) {
 	cs.Size = pci.ConfigSpaceSize
 
 	// AER -> L1PM -> LTR
-	cs.WriteU32(0x100, makeExtCapHeader(pci.ExtCapIDAER, 1, 0x150))
-	cs.WriteU32(0x150, makeExtCapHeader(pci.ExtCapIDL1PMSubstates, 1, 0x200))
-	cs.WriteU32(0x200, makeExtCapHeader(pci.ExtCapIDLTR, 1, 0))
+	cs.WriteU32(0x100, makeExtCapHeader(pci.ExtCapIDAER, 0x150))
+	cs.WriteU32(0x150, makeExtCapHeader(pci.ExtCapIDL1PMSubstates, 0x200))
+	cs.WriteU32(0x200, makeExtCapHeader(pci.ExtCapIDLTR, 0))
 
 	removed := FilterExtCapabilities(cs, overlay.NewMap(cs))
 	if len(removed) != 0 {
@@ -908,8 +911,8 @@ func TestASPMFullyDisabledAfterScrub(t *testing.T) {
 	cs.WriteU16(0x68, 0x0400)
 
 	// L1PM Substates ext cap at 0x200
-	cs.WriteU32(0x100, makeExtCapHeader(pci.ExtCapIDAER, 1, 0x200))
-	cs.WriteU32(0x200, makeExtCapHeader(pci.ExtCapIDL1PMSubstates, 1, 0))
+	cs.WriteU32(0x100, makeExtCapHeader(pci.ExtCapIDAER, 0x200))
+	cs.WriteU32(0x200, makeExtCapHeader(pci.ExtCapIDL1PMSubstates, 0))
 	cs.WriteU32(0x204, 0x0000001F) // L1PM Capabilities: L1.1 + L1.2 support
 	cs.WriteU32(0x208, 0x0000000A) // L1PM Control 1: L1.1 + L1.2 enabled
 	cs.WriteU32(0x20C, 0x00000032) // L1PM Control 2
@@ -953,7 +956,11 @@ func TestASPMFullyDisabledAfterScrub(t *testing.T) {
 	}
 }
 
-func TestComputeBAR0SizeLarge(t *testing.T){if got:=ComputeBAR0Size(512,0);got!=32768{t.Errorf("ComputeBAR0Size(large)=%d",got)}}
+func TestComputeBAR0SizeLarge(t *testing.T) {
+	if got := ComputeBAR0Size(512, 0); got != 32768 {
+		t.Errorf("ComputeBAR0Size(large)=%d", got)
+	}
+}
 
 // TestPhisonNVMe64bMSIXScrub simulates the exact scenario for Code10 residual hunt:
 // NVMe (class 0x010802), vendor 0x1987 Phison, 64-bit BAR (e.g. 16KB size mask), MSIX present,
@@ -973,8 +980,8 @@ func TestPhisonNVMe64bMSIXScrub(t *testing.T) {
 	cs.WriteU8(0x0A, 0x08)    // Subclass
 	cs.WriteU8(0x0B, 0x01)    // Base NVMe class 0108xx
 	cs.WriteU8(0x0C, 0x10)
-	cs.WriteU8(0x0D, 0x00)    // latency
-	cs.WriteU8(0x0E, 0x00)    // header type 0
+	cs.WriteU8(0x0D, 0x00) // latency
+	cs.WriteU8(0x0E, 0x00) // header type 0
 	cs.WriteU8(0x0F, 0x00)
 	// 64b BAR0 16KB example: size mask FFFFC000 + type bits 0x4 (64b mem)
 	cs.WriteU32(0x10, 0xFFFC0004)
@@ -994,7 +1001,7 @@ func TestPhisonNVMe64bMSIXScrub(t *testing.T) {
 	// MSI-X at 0x48
 	cs.WriteU8(0x48, pci.CapIDMSIX)
 	cs.WriteU8(0x49, 0x60)
-	cs.WriteU16(0x4A, 0x0003) // 4 vectors, enabled later by relocate
+	cs.WriteU16(0x4A, 0x0003)     // 4 vectors, enabled later by relocate
 	cs.WriteU32(0x4C, 0x00000000) // table off (will relocate)
 	cs.WriteU32(0x50, 0x00000008) // pba
 
@@ -1002,7 +1009,9 @@ func TestPhisonNVMe64bMSIXScrub(t *testing.T) {
 	cs.WriteU8(0x60, pci.CapIDPCIExpress)
 	cs.WriteU8(0x61, 0x00)
 	// fill minimal for cap parse
-	for i := 0x62; i < 0x60+60; i++ { cs.WriteU8(i, 0) }
+	for i := 0x62; i < 0x60+60; i++ {
+		cs.WriteU8(i, 0)
+	}
 	cs.WriteU16(0x62, 0x0002) // ver2 endpoint
 
 	// Phison vendor region at 0x40-0x4F (but will be cap-overlapped, knownWhitelist preserves 0x40-0x50 even if not cap)
@@ -1059,7 +1068,7 @@ func TestPhisonNVMe64bMSIXScrub(t *testing.T) {
 	// check Phison vendor region preserved (whitelist 0x40-0x50)
 	// since 0x40-0x50 overlaps caps, check a non-cap vendor spot if any; here 0x80 not whitelisted so zeroed ok
 	// but the pass zeroVendor is after caps; verify cmd/status/class intact
-	if scrubbed.ReadU32(0x08) >> 8 != classCode {
+	if scrubbed.ReadU32(0x08)>>8 != classCode {
 		t.Error("class at 0x08 not matching")
 	}
 }

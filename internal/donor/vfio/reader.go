@@ -77,9 +77,9 @@ func openSession(bdf string) (*vfioSession, error) {
 	}
 
 	// check API version (VFIO_API_VERSION is 0)
-	if err := vfioIoctl(s.containerFD, vfioGetAPIVersion, 0); err != nil {
+	if ioctlErr := vfioIoctl(s.containerFD, vfioGetAPIVersion, 0); ioctlErr != nil {
 		s.close()
-		return nil, fmt.Errorf("VFIO API check failed: %w", err)
+		return nil, fmt.Errorf("VFIO API check failed: %w", ioctlErr)
 	}
 
 	// open group
@@ -107,7 +107,7 @@ func openSession(bdf string) (*vfioSession, error) {
 		vfioGroupGetDeviceFD, uintptr(unsafe.Pointer(&bdfBytes[0])))
 	if errno != 0 || int(fd) < 0 {
 		s.close()
-		return nil, fmt.Errorf("cannot get VFIO device FD for %s: %v", bdf, errno)
+		return nil, fmt.Errorf("cannot get VFIO device FD for %s: %w", bdf, errno)
 	}
 	s.deviceFD = int(fd)
 
@@ -118,7 +118,7 @@ func openSession(bdf string) (*vfioSession, error) {
 func vfioIoctl(fd int, request uintptr, arg uintptr) error {
 	_, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), request, arg)
 	if errno != 0 {
-		return fmt.Errorf("ioctl 0x%x: %v", request, errno)
+		return fmt.Errorf("ioctl 0x%x: %w", request, errno)
 	}
 	return nil
 }
@@ -177,7 +177,7 @@ func getRegionInfo(deviceFD, index int) (*vfioRegionInfo, error) {
 	_, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(deviceFD),
 		vfioDeviceGetRegionInfo, uintptr(unsafe.Pointer(&info)))
 	if errno != 0 {
-		return nil, fmt.Errorf("VFIO_DEVICE_GET_REGION_INFO index %d: %v", index, errno)
+		return nil, fmt.Errorf("VFIO_DEVICE_GET_REGION_INFO index %d: %w", index, errno)
 	}
 	return &info, nil
 }

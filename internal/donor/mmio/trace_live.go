@@ -33,22 +33,22 @@ func LiveTrace(bdf string, duration time.Duration) (*TraceResult, error) {
 		return nil, fmt.Errorf("cannot read current tracer: %w", err)
 	}
 	defer func() {
-		if err := os.WriteFile(currentTracer, prevTracer, 0644); err != nil {
-			slog.Warn("failed to restore tracer", "error", err)
+		if writeErr := os.WriteFile(currentTracer, prevTracer, 0644); writeErr != nil {
+			slog.Warn("failed to restore tracer", "error", writeErr)
 		}
 	}()
 
 	// switch to mmiotrace
-	if err := os.WriteFile(currentTracer, []byte("mmiotrace"), 0644); err != nil {
-		return nil, fmt.Errorf("cannot enable mmiotrace (CONFIG_MMIOTRACE=y needed): %w", err)
+	if writeErr := os.WriteFile(currentTracer, []byte("mmiotrace"), 0644); writeErr != nil {
+		return nil, fmt.Errorf("cannot enable mmiotrace (CONFIG_MMIOTRACE=y needed): %w", writeErr)
 	}
 
-	if err := os.WriteFile(tracingOnPath, []byte("1"), 0644); err != nil {
-		slog.Warn("failed to enable tracing", "error", err)
+	if writeErr := os.WriteFile(tracingOnPath, []byte("1"), 0644); writeErr != nil {
+		slog.Warn("failed to enable tracing", "error", writeErr)
 	}
 	defer func() {
-		if err := os.WriteFile(tracingOnPath, []byte("0"), 0644); err != nil {
-			slog.Warn("failed to disable tracing", "error", err)
+		if writeErr := os.WriteFile(tracingOnPath, []byte("0"), 0644); writeErr != nil {
+			slog.Warn("failed to disable tracing", "error", writeErr)
 		}
 	}()
 

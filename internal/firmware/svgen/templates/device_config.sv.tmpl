@@ -14,6 +14,9 @@
 // Class Code:      0x{{ hex02 (classBase .ClassCode) }}{{ hex02 (classSub .ClassCode) }}{{ hex02 (classProgIF .ClassCode) }}
 {{ if .DeviceIDs.HasDSN }}// DSN:             0x{{ printf "%016X" .DeviceIDs.DSN }}{{ end }}
 {{ if .DeviceIDs.HasPCIeCap }}// PCIe Link:       Speed={{ .DeviceIDs.LinkSpeed }} Width=x{{ .DeviceIDs.LinkWidth }}{{ end }}
+{{ if .DonorCapabilities.HasPMCap }}// Donor PM: PME support=0x{{ printf "%02X" .DonorCapabilities.PMESupportMask }}, PME_Enable={{ if .DonorCapabilities.PMEDefault }}on{{ else }}off{{ end }}{{ end }}
+{{ if .DonorCapabilities.HasMSICap }}// Donor MSI: multiple-msg=0x{{ printf "%02X" .DonorCapabilities.MSIMultipleMsg }}{{ if .DonorCapabilities.MSIDisable64Bit }}, 64-bit=off{{ end }}{{ end }}
+{{ if .DonorCapabilities.HasPCIeCap }}// Donor PCIe: ASPM cap=0x{{ printf "%01X" .DonorCapabilities.PCIeASPMCap }}, ASPM enable=0x{{ printf "%01X" .DonorCapabilities.PCIeASPMEnable }}, link=x{{ .DonorCapabilities.PCIELinkWidth }} {{ .DonorCapabilities.PCIELinkSpeed }}GT/s{{ end }}
 //
 // Features:
 {{ if eq .DeviceClass "nvme" }}//   - NVMe CC->CSTS state machine (dynamic handshake)
@@ -61,6 +64,29 @@ package device_config;
     localparam HAS_XHCI_FSM     = {{ if eq .DeviceClass "xhci" }}1{{ else }}0{{ end }};
     localparam HAS_AUDIO_FSM    = {{ if eq .DeviceClass "audio" }}1{{ else }}0{{ end }};
     localparam HAS_MSIX_INT     = {{ if .HasMSIX }}1{{ else }}0{{ end }};
+    localparam HAS_DONOR_PM_CAP   = {{ if .DonorCapabilities.HasPMCap }}1{{ else }}0{{ end }};
+    localparam HAS_DONOR_MSI_CAP  = {{ if .DonorCapabilities.HasMSICap }}1{{ else }}0{{ end }};
+    localparam HAS_DONOR_MSIX_CAP = {{ if .DonorCapabilities.HasMSIXCap }}1{{ else }}0{{ end }};
+    localparam HAS_DONOR_PCIE_CAP = {{ if .DonorCapabilities.HasPCIeCap }}1{{ else }}0{{ end }};
+    localparam HAS_DONOR_AER_CAP  = {{ if .DonorCapabilities.HasAERCap }}1{{ else }}0{{ end }};
+    localparam HAS_DONOR_LTR_CAP  = {{ if .DonorCapabilities.HasLTRCap }}1{{ else }}0{{ end }};
+    localparam HAS_DONOR_L1PM_CAP = {{ if .DonorCapabilities.HasL1PMSubstates }}1{{ else }}0{{ end }};
+    localparam HAS_DONOR_DSN_CAP  = {{ if .DonorCapabilities.HasDSNCap }}1{{ else }}0{{ end }};
+    localparam [11:0] DONOR_PM_CAP_OFF    = 12'h{{ printf "%03X" .DonorCapabilities.PMCapOffset }};
+    localparam [11:0] DONOR_MSI_CAP_OFF   = 12'h{{ printf "%03X" .DonorCapabilities.MSICapOffset }};
+    localparam [11:0] DONOR_MSIX_CAP_OFF  = 12'h{{ printf "%03X" .DonorCapabilities.MSIXCapOffset }};
+    localparam [11:0] DONOR_PCIE_CAP_OFF  = 12'h{{ printf "%03X" .DonorCapabilities.PCIeCapOffset }};
+    localparam [11:0] DONOR_AER_CAP_OFF   = 12'h{{ printf "%03X" .DonorCapabilities.AERCapOffset }};
+    localparam [11:0] DONOR_LTR_CAP_OFF   = 12'h{{ printf "%03X" .DonorCapabilities.LTRCapOffset }};
+    localparam [11:0] DONOR_L1PM_CAP_OFF  = 12'h{{ printf "%03X" .DonorCapabilities.L1PMCapOffset }};
+    localparam [11:0] DONOR_DSN_CAP_OFF   = 12'h{{ printf "%03X" .DonorCapabilities.DSNCapOffset }};
+    localparam [7:0] DONOR_PME_SUPPORT_MASK   = 8'h{{ printf "%02X" .DonorCapabilities.PMESupportMask }};
+    localparam       DONOR_MSI_DISABLE_64      = {{ if .DonorCapabilities.MSIDisable64Bit }}1{{ else }}0{{ end }};
+    localparam [2:0] DONOR_MSI_MULTIPLE_MSG    = 3'b{{ printf "%03b" .DonorCapabilities.MSIMultipleMsg }};
+    localparam [1:0] DONOR_PCIE_ASPM_CAP       = 2'b{{ printf "%02b" .DonorCapabilities.PCIeASPMCap }};
+    localparam [1:0] DONOR_PCIE_ASPM_ENABLE    = 2'b{{ printf "%02b" .DonorCapabilities.PCIeASPMEnable }};
+    localparam [7:0] DONOR_PCIELINK_SPEED      = 8'd{{ .DonorCapabilities.PCIELinkSpeed }};
+    localparam [7:0] DONOR_PCIELINK_WIDTH      = 8'd{{ .DonorCapabilities.PCIELinkWidth }};
     localparam HAS_LATENCY_EMU  = {{ if .LatencyConfig }}1{{ else }}0{{ end }};
 endpackage
 

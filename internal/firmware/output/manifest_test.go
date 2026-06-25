@@ -30,8 +30,12 @@ func TestGenerateManifest_Empty(t *testing.T) {
 func TestGenerateManifest_WithFiles(t *testing.T) {
 	tmpDir := t.TempDir()
 	// Create some output files
-	os.WriteFile(filepath.Join(tmpDir, "pcileech_cfgspace.coe"), []byte("test content"), 0644)
-	os.WriteFile(filepath.Join(tmpDir, "device_context.json"), []byte("{}"), 0644)
+	if err := os.WriteFile(filepath.Join(tmpDir, "pcileech_cfgspace.coe"), []byte("test content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "device_context.json"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	m, err := GenerateManifest(tmpDir, "1.0.0", "TestBoard", 0x8086, 0x1533)
 	if err != nil {
@@ -53,8 +57,12 @@ func TestGenerateManifest_WithFiles(t *testing.T) {
 func TestGenerateManifest_WithSrcDir(t *testing.T) {
 	tmpDir := t.TempDir()
 	srcDir := filepath.Join(tmpDir, "src")
-	os.MkdirAll(srcDir, 0755)
-	os.WriteFile(filepath.Join(srcDir, "test.sv"), []byte("module test; endmodule"), 0644)
+	if err := os.MkdirAll(srcDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "test.sv"), []byte("module test; endmodule"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	m, err := GenerateManifest(tmpDir, "1.0.0", "", 0, 0)
 	if err != nil {
@@ -109,7 +117,9 @@ func TestWriteJSON(t *testing.T) {
 func TestFileHash(t *testing.T) {
 	tmpDir := t.TempDir()
 	path := filepath.Join(tmpDir, "test.txt")
-	os.WriteFile(path, []byte("hello"), 0644)
+	if err := os.WriteFile(path, []byte("hello"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	hash, err := fileHash(path)
 	if err != nil {
@@ -121,7 +131,9 @@ func TestFileHash(t *testing.T) {
 
 	// Same content -> same hash
 	path2 := filepath.Join(tmpDir, "test2.txt")
-	os.WriteFile(path2, []byte("hello"), 0644)
+	if writeErr := os.WriteFile(path2, []byte("hello"), 0644); writeErr != nil {
+		t.Fatal(writeErr)
+	}
 	hash2, _ := fileHash(path2)
 	if hash != hash2 {
 		t.Error("Same content should produce same hash")
@@ -137,7 +149,9 @@ func TestFileHash(t *testing.T) {
 func TestVerifyManifest_AllPass(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	os.WriteFile(filepath.Join(tmpDir, "test.coe"), []byte("content"), 0644)
+	if err := os.WriteFile(filepath.Join(tmpDir, "test.coe"), []byte("content"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	hash, _ := fileHash(filepath.Join(tmpDir, "test.coe"))
 	m := &BuildManifest{
@@ -146,7 +160,9 @@ func TestVerifyManifest_AllPass(t *testing.T) {
 		},
 	}
 	manifestPath := filepath.Join(tmpDir, "manifest.json")
-	m.WriteJSON(manifestPath)
+	if err := m.WriteJSON(manifestPath); err != nil {
+		t.Fatal(err)
+	}
 
 	v, err := VerifyManifest(manifestPath, tmpDir)
 	if err != nil {
@@ -168,7 +184,9 @@ func TestVerifyManifest_MissingFile(t *testing.T) {
 		},
 	}
 	manifestPath := filepath.Join(tmpDir, "manifest.json")
-	m.WriteJSON(manifestPath)
+	if err := m.WriteJSON(manifestPath); err != nil {
+		t.Fatal(err)
+	}
 
 	v, err := VerifyManifest(manifestPath, tmpDir)
 	if err != nil {
@@ -184,7 +202,9 @@ func TestVerifyManifest_MissingFile(t *testing.T) {
 
 func TestVerifyManifest_HashMismatch(t *testing.T) {
 	tmpDir := t.TempDir()
-	os.WriteFile(filepath.Join(tmpDir, "test.coe"), []byte("content"), 0644)
+	if err := os.WriteFile(filepath.Join(tmpDir, "test.coe"), []byte("content"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	m := &BuildManifest{
 		Files: []ManifestEntry{
@@ -192,7 +212,9 @@ func TestVerifyManifest_HashMismatch(t *testing.T) {
 		},
 	}
 	manifestPath := filepath.Join(tmpDir, "manifest.json")
-	m.WriteJSON(manifestPath)
+	if err := m.WriteJSON(manifestPath); err != nil {
+		t.Fatal(err)
+	}
 
 	v, err := VerifyManifest(manifestPath, tmpDir)
 	if err != nil {
@@ -213,7 +235,9 @@ func TestLoadManifest_Invalid(t *testing.T) {
 	}
 
 	tmpDir := t.TempDir()
-	os.WriteFile(filepath.Join(tmpDir, "bad.json"), []byte("not json"), 0644)
+	if writeErr := os.WriteFile(filepath.Join(tmpDir, "bad.json"), []byte("not json"), 0644); writeErr != nil {
+		t.Fatal(writeErr)
+	}
 	_, err = LoadManifest(filepath.Join(tmpDir, "bad.json"))
 	if err == nil {
 		t.Error("LoadManifest should fail for invalid JSON")

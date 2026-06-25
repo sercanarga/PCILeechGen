@@ -444,7 +444,7 @@ func SynthesizeBARModel(profile *donor.BARProfile, classCode uint32) *BARModel {
 	nameHints := classRegisterNames(classCode)
 	attrs := specRegisterAttrs(classCode)
 
-	var regs []BARRegister
+	regs := make([]BARRegister, 0, len(profile.Probes))
 	for _, probe := range profile.Probes {
 		attr := attrs[probe.Offset]
 		// Drop dead regs, but keep ones the spec knows about — a status register

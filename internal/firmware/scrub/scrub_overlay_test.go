@@ -58,8 +58,8 @@ func TestScrubConfigSpaceWithOverlay_BoardAwareLinkSpeed(t *testing.T) {
 	// Capability pointer
 	cs.WriteU8(0x34, 0x40)
 	// PCIe Capability at offset 0x40
-	cs.WriteU8(0x40, byte(pci.CapIDPCIExpress)) // PCIe cap ID
-	cs.WriteU8(0x41, 0x00)                      // next cap = 0
+	cs.WriteU8(0x40, pci.CapIDPCIExpress) // PCIe cap ID
+	cs.WriteU8(0x41, 0x00)                // next cap = 0
 	// Link Capabilities at cap+0x0C = 0x4C: Gen3, x4
 	cs.WriteU32(0x4C, 0x00000043)
 

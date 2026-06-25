@@ -132,7 +132,7 @@ func ParseBARsFromSysfsResource(lines []string) []BAR {
 		n, _ := fmt.Sscanf(lines[i], "0x%x 0x%x 0x%x", &start, &end, &flags)
 		if n != 3 {
 			// Try without 0x prefix
-			n, _ = fmt.Sscanf(lines[i], "%x %x %x", &start, &end, &flags)
+			_, _ = fmt.Sscanf(lines[i], "%x %x %x", &start, &end, &flags)
 		}
 
 		bar := BAR{Index: i}

@@ -37,7 +37,7 @@ func (sr *SysfsReader) ScanDevices() ([]pci.PCIDevice, error) {
 		return nil, fmt.Errorf("failed to read sysfs: %w", err)
 	}
 
-	var devices []pci.PCIDevice
+	devices := make([]pci.PCIDevice, 0, len(entries))
 	for _, entry := range entries {
 		// sysfs entries are symlinks, not plain directories
 		name := entry.Name()
