@@ -73,7 +73,13 @@ module pcileech_nvme_admin_responder(
 
     // identify data lives in a BRAM initialized from .hex at synthesis
     output reg [12:0]   id_rom_addr,
-    input [31:0]        id_rom_data
+    input [31:0]        id_rom_data,
+
+    output reg [31:0]   debug_status,
+    output reg [31:0]   debug_last_cmd,
+    output reg [31:0]   debug_last_nsid,
+    output reg [31:0]   debug_last_cdw10,
+    output reg [31:0]   debug_queue_state
 );
 
     // FSM states – 4 bits is plenty, Vivado infers one-hot if it wants to
@@ -200,6 +206,11 @@ module pcileech_nvme_admin_responder(
             log_page_id     <= 8'h02;
             id_rom_offset   <= 13'h0;
             id_rom_addr     <= 13'h0;
+            debug_status    <= 32'h0;
+            debug_last_cmd  <= 32'h0;
+            debug_last_nsid <= 32'h0;
+            debug_last_cdw10 <= 32'h0;
+            debug_queue_state <= 32'h0;
             cc_en_prev      <= 1'b0;
             aer_pending     <= 4'h0;
             num_queues_granted <= 32'h00010001;  // default: 1 SQ + 1 CQ
@@ -221,6 +232,8 @@ module pcileech_nvme_admin_responder(
             dma_wr_req      <= 1'b0;
             dma_wr_valid    <= 1'b0;
             msix_trigger    <= 1'b0;
+            debug_status    <= {22'h0, state, active_io_cmd, iosq_enabled, iocq_enabled, cq_phase, iocq_phase, cc_en};
+            debug_queue_state <= {sq_head[7:0], cq_head[7:0], iosq_head[7:0], iocq_head[7:0]};
 
             cc_en_prev <= cc_en;
 
@@ -280,6 +293,9 @@ module pcileech_nvme_admin_responder(
 
                     // ---- figure out what the driver wants --------------------
                     S_DECODE_CMD: begin
+                        debug_last_cmd <= {7'h0, active_io_cmd, cmd_opcode, cmd_cid};
+                        debug_last_nsid <= cmd_nsid;
+                        debug_last_cdw10 <= cmd_cdw10;
                         if (active_io_cmd) begin
                             case (cmd_opcode)
                                 8'h02: begin

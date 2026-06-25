@@ -73,3 +73,27 @@ func TestGenerateNVMeResponderSV_HandlesCompatibilityLogsAndFeatures(t *testing.
 		}
 	}
 }
+
+func TestGenerateNVMeResponderSV_TracksDebugState(t *testing.T) {
+	cfg := testConfig()
+
+	result, err := GenerateNVMeResponderSV(cfg)
+	if err != nil {
+		t.Fatalf("GenerateNVMeResponderSV failed: %v", err)
+	}
+
+	for _, want := range []string{
+		"output reg [31:0]   debug_status",
+		"output reg [31:0]   debug_last_cmd",
+		"output reg [31:0]   debug_last_nsid",
+		"output reg [31:0]   debug_last_cdw10",
+		"output reg [31:0]   debug_queue_state",
+		"debug_last_cmd <= {7'h0, active_io_cmd, cmd_opcode, cmd_cid};",
+		"debug_last_nsid <= cmd_nsid;",
+		"debug_last_cdw10 <= cmd_cdw10;",
+	} {
+		if !strings.Contains(result, want) {
+			t.Fatalf("NVMe responder should contain debug state %q", want)
+		}
+	}
+}
