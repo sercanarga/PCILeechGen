@@ -268,9 +268,14 @@ module pcileech_tlps128_bar_controller(
     wire [31:0] nvme_debug_queue_state;
 {{ end }}
 {{ if and (eq .DeviceClass "nvme") .NVMeIdentify .BARModel }}
+    // Diagnostic registers are read-only and sit immediately after all four
+    // admin + IO queue doorbells (SQ0/CQ0/SQ1/CQ1), using the same DSTRD spacing.
     wire        nvme_diag_addr_hit = rd_req_valid && rd_req_bar[0] &&
                                      (rd_req_addr_bar0 >= 32'h{{ printf "%08X" .NVMeDiagBaseOffset }}) &&
                                      (rd_req_addr_bar0 <= 32'h{{ printf "%08X" .NVMeDiagQueueStateOffset }});
+    wire        nvme_diag_wr_addr_hit = wr_valid && wr_bar[0] &&
+                                        (wr_addr_bar0 >= 32'h{{ printf "%08X" .NVMeDiagBaseOffset }}) &&
+                                        (wr_addr_bar0 <= 32'h{{ printf "%08X" .NVMeDiagQueueStateOffset }});
     reg  [87:0] nvme_diag_ctx;
     reg  [31:0] nvme_diag_data;
     reg         nvme_diag_valid;
@@ -369,7 +374,7 @@ module pcileech_tlps128_bar_controller(
         .wr_addr        ( {{ if .BARModel }}wr_addr_bar0{{ else }}wr_addr{{ end }}                       ),
         .wr_be          ( wr_be                         ),
         .wr_data        ( wr_data                       ),
-        .wr_valid       ( wr_valid && wr_bar[0]         ),
+        .wr_valid       ( wr_valid && wr_bar[0]{{ if and (eq .DeviceClass "nvme") .NVMeIdentify .BARModel }} && !nvme_diag_wr_addr_hit{{ end }} ),
         .rd_req_ctx     ( rd_req_ctx                    ),
         .rd_req_addr    ( {{ if .BARModel }}rd_req_addr_bar0{{ else }}rd_req_addr{{ end }}                   ),
         .rd_req_valid   ( rd_req_valid && rd_req_bar[0]{{ if .MSIXConfig }} && !msix_addr_hit{{ end }}{{ if and (eq .DeviceClass "nvme") .NVMeIdentify .BARModel }} && !nvme_diag_addr_hit{{ end }} ),

@@ -44,12 +44,14 @@ func TestGenerateBarControllerSV_ExposesNVMeDiagnostics(t *testing.T) {
 
 	for _, want := range []string{
 		"nvme_diag_addr_hit",
+		"nvme_diag_wr_addr_hit",
 		"nvme_diag_data",
 		"32'h00001010",
 		"32'h00001014",
 		"nvme_debug_status",
 		"nvme_debug_last_cmd",
 		"nvme_debug_queue_state",
+		".wr_valid       ( wr_valid && wr_bar[0] && !nvme_diag_wr_addr_hit )",
 		".debug_last_cdw10",
 	} {
 		if !strings.Contains(result, want) {
