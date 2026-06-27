@@ -26,7 +26,8 @@ if {[string equal [get_filesets -quiet sources_1] ""]} {
 set obj [get_filesets sources_1]
 set sv_files [glob -nocomplain "${origin_dir}/src/*.sv"]
 set svh_files [glob -nocomplain "${origin_dir}/src/*.svh"]
-set all_src_files [concat $sv_files $svh_files]
+set v_files [glob -nocomplain "${origin_dir}/src/*.v"]  ;# ZDMA/GBOX: pcileech_com_e.v
+set all_src_files [concat $sv_files $svh_files $v_files]
 if {[llength $all_src_files] > 0} {
   set imported_files [import_files -fileset sources_1 $all_src_files]
 }
@@ -37,6 +38,9 @@ foreach f [get_files -of_objects [get_filesets sources_1] -filter {NAME =~ "*.sv
 }
 foreach f [get_files -of_objects [get_filesets sources_1] -filter {NAME =~ "*.svh"}] {
   set_property -name "file_type" -value "Verilog Header" -objects $f
+}
+foreach f [get_files -of_objects [get_filesets sources_1] -filter {NAME =~ "*.v"}] {
+  set_property -name "file_type" -value "SystemVerilog" -objects $f
 }
 
 {{if not .StockBar}}
