@@ -73,7 +73,13 @@ module pcileech_nvme_admin_responder(
 
     // identify data lives in a BRAM initialized from .hex at synthesis
     output reg [12:0]   id_rom_addr,
-    input [31:0]        id_rom_data
+    input [31:0]        id_rom_data,
+
+    output reg [31:0]   debug_status,
+    output reg [31:0]   debug_last_cmd,
+    output reg [31:0]   debug_last_nsid,
+    output reg [31:0]   debug_last_cdw10,
+    output reg [31:0]   debug_queue_state
 );
 
     // FSM states – 4 bits is plenty, Vivado infers one-hot if it wants to
@@ -142,6 +148,8 @@ module pcileech_nvme_admin_responder(
     // transfer progress
     reg [10:0]  data_dw_cnt;
     reg [10:0]  io_zero_dw_limit;
+    reg [10:0]  log_dw_limit;
+    reg [7:0]   log_page_id;
     reg [12:0]  id_rom_offset;
 
     // edge detect for CC.EN so we can do a clean shutdown
@@ -167,6 +175,12 @@ module pcileech_nvme_admin_responder(
     // Set/Get Features Number of Queues must be consistent - stornvme sets
     // the desired count then reads it back.  We clamp to what CAP.MQES allows.
     reg [31:0]  num_queues_granted;
+    reg         volatile_write_cache_enabled;
+    reg [31:0]  interrupt_coalescing;
+    reg [31:0]  interrupt_vector_config;
+    reg [31:0]  write_atomicity_normal;
+    reg [31:0]  async_event_config;
+    reg [31:0]  keep_alive_timer;
 
     always @(posedge clk) begin
         if (rst) begin
@@ -188,11 +202,24 @@ module pcileech_nvme_admin_responder(
             cqe_dw_idx      <= 2'h0;
             data_dw_cnt     <= 11'h0;
             io_zero_dw_limit <= 11'h0;
+            log_dw_limit    <= 11'd128;
+            log_page_id     <= 8'h02;
             id_rom_offset   <= 13'h0;
             id_rom_addr     <= 13'h0;
+            debug_status    <= 32'h0;
+            debug_last_cmd  <= 32'h0;
+            debug_last_nsid <= 32'h0;
+            debug_last_cdw10 <= 32'h0;
+            debug_queue_state <= 32'h0;
             cc_en_prev      <= 1'b0;
             aer_pending     <= 4'h0;
             num_queues_granted <= 32'h00010001;  // default: 1 SQ + 1 CQ
+            volatile_write_cache_enabled <= 1'b1;
+            interrupt_coalescing <= 32'h0;
+            interrupt_vector_config <= 32'h0;
+            write_atomicity_normal <= 32'h0;
+            async_event_config <= 32'h0;
+            keep_alive_timer <= 32'h0;
             iosq_base       <= 64'h0;
             iocq_base       <= 64'h0;
             iosq_size       <= 16'h0;
@@ -205,6 +232,8 @@ module pcileech_nvme_admin_responder(
             dma_wr_req      <= 1'b0;
             dma_wr_valid    <= 1'b0;
             msix_trigger    <= 1'b0;
+            debug_status    <= {22'h0, state, active_io_cmd, iosq_enabled, iocq_enabled, cq_phase, iocq_phase, cc_en};
+            debug_queue_state <= {sq_head[7:0], cq_head[7:0], iosq_head[7:0], iocq_head[7:0]};
 
             cc_en_prev <= cc_en;
 
@@ -264,6 +293,9 @@ module pcileech_nvme_admin_responder(
 
                     // ---- figure out what the driver wants --------------------
                     S_DECODE_CMD: begin
+                        debug_last_cmd <= {7'h0, active_io_cmd, cmd_opcode, cmd_cid};
+                        debug_last_nsid <= cmd_nsid;
+                        debug_last_cdw10 <= cmd_cdw10;
                         if (active_io_cmd) begin
                             case (cmd_opcode)
                                 8'h02: begin
@@ -324,7 +356,12 @@ module pcileech_nvme_admin_responder(
 
                             // Get Log Page
                             8'h02: begin
+                                log_page_id <= cmd_cdw10[7:0];
                                 data_dw_cnt <= 11'h0;
+                                if (cmd_cdw10[31:16] >= 16'd1023)
+                                    log_dw_limit <= 11'd1024;
+                                else
+                                    log_dw_limit <= {1'b0, cmd_cdw10[25:16]} + 11'd1;
                                 state       <= S_EXEC_LOGPAGE;
                             end
 
@@ -400,15 +437,34 @@ module pcileech_nvme_admin_responder(
                                 case (cmd_cdw10[7:0])
                                     8'h04:   cqe[0] <= 32'h0;            // temp threshold
                                     8'h05:   cqe[0] <= 32'h0;            // error recovery
-                                    8'h06:   cqe[0] <= cmd_cdw11;        // volatile write cache
+                                    8'h06: begin                           // volatile write cache
+                                        volatile_write_cache_enabled <= cmd_cdw11[0];
+                                        cqe[0] <= {31'h0, cmd_cdw11[0]};
+                                    end
                                     8'h07: begin                           // number of queues
                                         num_queues_granted <= cmd_cdw11;
                                         cqe[0] <= cmd_cdw11;
                                     end
-                                    8'h08:   cqe[0] <= 32'h0;            // interrupt vector config
-                                    8'h09:   cqe[0] <= 32'h0;            // write atomicity
-                                    8'h0B:   cqe[0] <= 32'h0;            // interrupt coalescing
-                                    8'h0F:   cqe[0] <= 32'h0;            // keep alive timer
+                                    8'h08: begin                           // interrupt coalescing
+                                        interrupt_coalescing <= cmd_cdw11;
+                                        cqe[0] <= cmd_cdw11;
+                                    end
+                                    8'h09: begin                           // interrupt vector config
+                                        interrupt_vector_config <= cmd_cdw11;
+                                        cqe[0] <= cmd_cdw11;
+                                    end
+                                    8'h0A: begin                           // write atomicity normal
+                                        write_atomicity_normal <= cmd_cdw11;
+                                        cqe[0] <= cmd_cdw11;
+                                    end
+                                    8'h0B: begin                           // async event config
+                                        async_event_config <= cmd_cdw11;
+                                        cqe[0] <= cmd_cdw11;
+                                    end
+                                    8'h0F: begin                           // keep alive timer
+                                        keep_alive_timer <= cmd_cdw11;
+                                        cqe[0] <= cmd_cdw11;
+                                    end
                                     default: cqe[0] <= 32'h0;
                                 endcase
                                 cqe[1] <= 32'h0;
@@ -421,8 +477,15 @@ module pcileech_nvme_admin_responder(
                             // Get Features
                             8'h0A: begin
                                 case (cmd_cdw10[7:0])
+                                    8'h04:   cqe[0] <= 32'h00000135;  // 35C warning threshold
+                                    8'h05:   cqe[0] <= 32'h0;  // no error recovery timeout
+                                    8'h06:   cqe[0] <= {31'h0, volatile_write_cache_enabled};
                                     8'h07:   cqe[0] <= num_queues_granted;  // echo last Set Features value
-                                    8'h0B:   cqe[0] <= 32'h00000000;  // coalescing off
+                                    8'h08:   cqe[0] <= interrupt_coalescing;
+                                    8'h09:   cqe[0] <= interrupt_vector_config;
+                                    8'h0A:   cqe[0] <= write_atomicity_normal;
+                                    8'h0B:   cqe[0] <= async_event_config;
+                                    8'h0F:   cqe[0] <= keep_alive_timer;
                                     default: cqe[0] <= 32'h0;
                                 endcase
                                 cqe[1] <= 32'h0;
@@ -513,22 +576,29 @@ module pcileech_nvme_admin_responder(
                         state <= S_WAIT_DMA_WR;
                     end
 
-                    // ---- SMART health log: "everything is fine" -------------
-                    // 512B of mostly zeros with temperature ~35°C and full spare
+                    // ---- common admin logs: error, SMART, firmware, NS list -
                     S_EXEC_LOGPAGE: begin
                         dma_wr_req   <= 1'b1;
                         dma_wr_valid <= 1'b1;
                         dma_wr_addr  <= cmd_prp_addr({data_dw_cnt, 2'b00});
                         dma_wr_be    <= 4'hF;
 
-                        case (data_dw_cnt)
-                            11'h000: dma_wr_data <= 32'h01340000;  // temp=308K (35°C), no warnings
-                            11'h001: dma_wr_data <= 32'h00640064;  // 100% spare, 100% threshold
-                            11'h002: dma_wr_data <= 32'h00000000;  // 0% used
-                            default: dma_wr_data <= 32'h00000000;
+                        case (log_page_id)
+                            8'h01: dma_wr_data <= 32'h0;
+                            8'h02: begin
+                                case (data_dw_cnt)
+                                    11'h000: dma_wr_data <= 32'h01340000;  // temp=308K (35C), no warnings
+                                    11'h001: dma_wr_data <= 32'h00640064;  // 100% spare, 100% threshold
+                                    11'h002: dma_wr_data <= 32'h00000000;  // 0% used
+                                    default: dma_wr_data <= 32'h00000000;
+                                endcase
+                            end
+                            8'h03: dma_wr_data <= (data_dw_cnt == 11'h0) ? 32'h00000001 : 32'h0;
+                            8'h04: dma_wr_data <= 32'h0;
+                            default: dma_wr_data <= 32'h0;
                         endcase
 
-                        if (data_dw_cnt >= 11'd127) begin
+                        if (data_dw_cnt >= log_dw_limit - 11'd1) begin
                             return_state <= S_WRITE_DATA;
                         end else begin
                             data_dw_cnt  <= data_dw_cnt + 1'b1;

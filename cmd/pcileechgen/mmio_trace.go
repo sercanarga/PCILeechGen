@@ -26,6 +26,7 @@ type mmioTraceOptions struct {
 	jsonOutput bool
 	outputFile string
 	traceFile  string
+	format     string
 }
 
 var mmioTraceOpts mmioTraceOptions
@@ -38,7 +39,7 @@ var mmioTraceCmd = &cobra.Command{
 Example:
   pcileechgen mmio-trace --bdf 0000:03:00.0 --duration 5s
   pcileechgen mmio-trace --bdf 03:00.0 --bar-size 4096 --class-code 0x010802
-  pcileechgen mmio-trace --trace-file mmiotrace.txt --bar-base 0xf7800000 --bar-index 2 --json`,
+  pcileechgen mmio-trace --trace-file mmiotrace.txt --format mmio2verilog --bar-base 0xf7800000 --bar-index 2 --json`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if mmioTraceOpts.traceFile == "" {
 			if _, err := pci.ParseBDF(mmioTraceOpts.bdf); err != nil {
@@ -64,8 +65,12 @@ Example:
 		if err != nil {
 			return err
 		}
+		traceFormat, err := parseTraceFormat(mmioTraceOpts.format)
+		if err != nil {
+			return err
+		}
 
-		trace, err := loadMMIOTrace(mmioTraceOpts, barBase)
+		trace, err := loadMMIOTrace(mmioTraceOpts, barBase, traceFormat)
 		if err != nil {
 			return err
 		}
@@ -105,7 +110,7 @@ Example:
 	},
 }
 
-func loadMMIOTrace(opts mmioTraceOptions, barBase uint64) (*mmio.TraceResult, error) {
+func loadMMIOTrace(opts mmioTraceOptions, barBase uint64, format mmio.TraceFormat) (*mmio.TraceResult, error) {
 	if opts.traceFile != "" {
 		f, err := os.Open(opts.traceFile)
 		if err != nil {
@@ -118,6 +123,7 @@ func loadMMIOTrace(opts mmioTraceOptions, barBase uint64) (*mmio.TraceResult, er
 			BARIndex: opts.barIndex,
 			BARSize:  opts.barSize,
 			BARBase:  barBase,
+			Format:   format,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("parse trace file %q: %w", opts.traceFile, err)
@@ -136,6 +142,18 @@ func loadMMIOTrace(opts mmioTraceOptions, barBase uint64) (*mmio.TraceResult, er
 	trace.Duration = opts.duration
 	trace.StartTime = start
 	return trace, nil
+}
+
+func parseTraceFormat(raw string) (mmio.TraceFormat, error) {
+	if strings.TrimSpace(raw) == "" {
+		return mmio.TraceFormatAuto, nil
+	}
+
+	format := mmio.TraceFormat(strings.ToLower(strings.TrimSpace(raw)))
+	if !format.Valid() {
+		return "", fmt.Errorf("invalid --format %q (expected auto, mmiotrace, or mmio2verilog)", raw)
+	}
+	return format, nil
 }
 
 func parseTraceClassCode(raw string) (uint32, error) {
@@ -210,6 +228,7 @@ func init() {
 	mmioTraceCmd.Flags().StringVar(&mmioTraceOpts.classCode, "class-code", "", "PCI class code in hex (e.g. 0x010802)")
 	mmioTraceCmd.Flags().StringVar(&mmioTraceOpts.outputFile, "output", "", "save raw trace JSON to file")
 	mmioTraceCmd.Flags().StringVar(&mmioTraceOpts.traceFile, "trace-file", "", "analyze an existing mmiotrace text file instead of capturing live")
+	mmioTraceCmd.Flags().StringVar(&mmioTraceOpts.format, "format", "auto", "offline trace format: auto, mmiotrace, or mmio2verilog")
 	mmioTraceCmd.Flags().BoolVar(&mmioTraceOpts.jsonOutput, "json", false, "emit machine-readable report")
 	rootCmd.AddCommand(mmioTraceCmd)
 }
