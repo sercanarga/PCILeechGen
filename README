@@ -32,7 +32,7 @@ PREREQUISITES
 -------------
   - Go 1.26+
   - Linux with IOMMU/VFIO enabled
-  - Vivado 2023.2+ (for synthesis)
+  - Vivado 2023.2 (for synthesis)
 
   VFIO needs IOMMU enabled in BIOS and in the kernel parameters
   (intel_iommu=on or amd_iommu=on).
