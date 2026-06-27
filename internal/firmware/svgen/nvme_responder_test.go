@@ -45,3 +45,31 @@ func TestGenerateNVMeResponderSV_HandlesFormattingIOQueuePath(t *testing.T) {
 		}
 	}
 }
+
+func TestGenerateNVMeResponderSV_HandlesCompatibilityLogsAndFeatures(t *testing.T) {
+	cfg := testConfig()
+
+	result, err := GenerateNVMeResponderSV(cfg)
+	if err != nil {
+		t.Fatalf("GenerateNVMeResponderSV failed: %v", err)
+	}
+
+	for _, want := range []string{
+		"log_page_id",
+		"log_dw_limit",
+		"8'h01: dma_wr_data <= 32'h0;",
+		"8'h03: dma_wr_data <= (data_dw_cnt == 11'h0) ? 32'h00000001 : 32'h0;",
+		"8'h04: dma_wr_data <= 32'h0;",
+		"volatile_write_cache_enabled",
+		"async_event_config",
+		"8'h06:   cqe[0] <= {31'h0, volatile_write_cache_enabled};",
+		"8'h08:   cqe[0] <= interrupt_coalescing;",
+		"8'h09:   cqe[0] <= interrupt_vector_config;",
+		"8'h0B:   cqe[0] <= async_event_config;",
+		"8'h0F:   cqe[0] <= keep_alive_timer;",
+	} {
+		if !strings.Contains(result, want) {
+			t.Fatalf("NVMe responder should contain %q", want)
+		}
+	}
+}
