@@ -97,7 +97,9 @@ func (v *Vivado) BinaryPath() string {
 	return filepath.Join(v.Path, "bin", "vivado")
 }
 
-// RunTCL executes a TCL script in Vivado batch mode with a timeout.
+// RunTCL executes a TCL script in Vivado batch mode with a timeout. Under sudo
+// the invoking user's license env is recovered via envOverrides; otherwise it's
+// a no-op.
 func (v *Vivado) RunTCL(tclScript string, workDir string, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -108,9 +110,13 @@ func (v *Vivado) RunTCL(tclScript string, workDir string, timeout time.Duration)
 	cmd.Stdout = io.MultiWriter(os.Stdout, &output)
 	cmd.Stderr = io.MultiWriter(os.Stderr, &output)
 
-	// Set up environment
 	env := os.Environ()
-	env = append(env, fmt.Sprintf("XILINX_VIVADO=%s", v.Path))
+	ov, err := envOverrides()
+	if err != nil {
+		return err
+	}
+	env = applyOverrides(env, ov)
+	env = setEnv(env, "XILINX_VIVADO", v.Path)
 	cmd.Env = env
 
 	slog.Info("running Vivado", "cmd", strings.Join(cmd.Args, " "), "dir", workDir, "timeout", timeout)

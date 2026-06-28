@@ -115,6 +115,11 @@ func (b *Builder) Build(ctx *donor.DeviceContext) error {
 		}
 	}
 
+	// Hand the deliverables to the invoking user after a sudo build.
+	if err := chownOutputs(b.opts.OutputDir); err != nil {
+		slog.Warn("chown output files", "error", err)
+	}
+
 	slog.Info("build completed successfully")
 	return nil
 }
