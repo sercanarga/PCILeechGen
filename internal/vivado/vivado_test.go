@@ -41,6 +41,46 @@ func TestVivadoBinaryPath(t *testing.T) {
 	}
 }
 
+func TestValidateVivadoAcceptsBinaryPath(t *testing.T) {
+	installDir := t.TempDir()
+	binDir := filepath.Join(installDir, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	vivadoPath := filepath.Join(binDir, "vivado")
+	if err := os.WriteFile(vivadoPath, []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	v, err := Find(vivadoPath)
+	if err != nil {
+		t.Fatalf("Find(binary path) error: %v", err)
+	}
+	if v.Path != installDir {
+		t.Fatalf("Find(binary path) Path = %q, want %q", v.Path, installDir)
+	}
+}
+
+func TestRunTCLEnvIncludesLicenseFile(t *testing.T) {
+	v := &Vivado{
+		Path:        "/tools/Xilinx/Vivado/2023.2",
+		Version:     "2023.2",
+		LicenseFile: "/home/user/Xilinx.lic",
+	}
+
+	env := v.env()
+
+	for _, want := range []string{
+		"XILINX_VIVADO=/tools/Xilinx/Vivado/2023.2",
+		"XILINXD_LICENSE_FILE=/home/user/Xilinx.lic",
+		"LM_LICENSE_FILE=/home/user/Xilinx.lic",
+	} {
+		if !containsEnv(env, want) {
+			t.Fatalf("env missing %q in %v", want, env)
+		}
+	}
+}
+
 func TestBuilderDefaults(t *testing.T) {
 	b, _ := Find("") // will fail but ok for testing builder creation
 	_ = b
@@ -140,4 +180,13 @@ exit 0
 	if !strings.Contains(err.Error(), "libtinfo.so.5") {
 		t.Fatalf("RunTCL error = %q, want loader detail", err.Error())
 	}
+}
+
+func containsEnv(env []string, want string) bool {
+	for _, got := range env {
+		if got == want {
+			return true
+		}
+	}
+	return false
 }

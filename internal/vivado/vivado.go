@@ -24,8 +24,9 @@ var DefaultPaths = []string{
 
 // Vivado represents a Vivado installation.
 type Vivado struct {
-	Path    string // path to Vivado installation (e.g., /tools/Xilinx/Vivado/2023.2)
-	Version string // Vivado version string
+	Path        string // path to Vivado installation (e.g., /tools/Xilinx/Vivado/2023.2)
+	Version     string // Vivado version string
+	LicenseFile string
 }
 
 // Find searches for a Vivado installation.
@@ -79,6 +80,9 @@ func Find(customPath string) (*Vivado, error) {
 
 // validateVivado checks if a path contains a valid Vivado installation.
 func validateVivado(path string) (*Vivado, error) {
+	if filepath.Base(path) == "vivado" && filepath.Base(filepath.Dir(path)) == "bin" {
+		path = filepath.Dir(filepath.Dir(path))
+	}
 	binary := filepath.Join(path, "bin", "vivado")
 	if _, err := os.Stat(binary); os.IsNotExist(err) {
 		return nil, fmt.Errorf("Vivado binary not found at %s", binary)
@@ -109,9 +113,7 @@ func (v *Vivado) RunTCL(tclScript string, workDir string, timeout time.Duration)
 	cmd.Stderr = io.MultiWriter(os.Stderr, &output)
 
 	// Set up environment
-	env := os.Environ()
-	env = append(env, fmt.Sprintf("XILINX_VIVADO=%s", v.Path))
-	cmd.Env = env
+	cmd.Env = v.env()
 
 	slog.Info("running Vivado", "cmd", strings.Join(cmd.Args, " "), "dir", workDir, "timeout", timeout)
 
@@ -127,6 +129,18 @@ func (v *Vivado) RunTCL(tclScript string, workDir string, timeout time.Duration)
 	}
 
 	return nil
+}
+
+func (v *Vivado) env() []string {
+	env := os.Environ()
+	env = append(env, fmt.Sprintf("XILINX_VIVADO=%s", v.Path))
+	if v.LicenseFile != "" {
+		env = append(env,
+			fmt.Sprintf("XILINXD_LICENSE_FILE=%s", v.LicenseFile),
+			fmt.Sprintf("LM_LICENSE_FILE=%s", v.LicenseFile),
+		)
+	}
+	return env
 }
 
 func vivadoStartupFailure(output string) (string, bool) {

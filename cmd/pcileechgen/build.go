@@ -14,17 +14,18 @@ import (
 
 // buildFlags groups all build command flags.
 type buildFlags struct {
-	bdf        string
-	board      string
-	vivadoPath string
-	output     string
-	skipVivado bool
-	jobs       int
-	timeout    int
-	libDir     string
-	fromJSON   string
-	stockBar   bool
-	force      bool
+	bdf         string
+	board       string
+	vivadoPath  string
+	licenseFile string
+	output      string
+	skipVivado  bool
+	jobs        int
+	timeout     int
+	libDir      string
+	fromJSON    string
+	stockBar    bool
+	force       bool
 }
 
 var buildOpts buildFlags
@@ -79,14 +80,15 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	}
 
 	builder := vivado.NewBuilder(b, vivado.BuildOptions{
-		VivadoPath: buildOpts.vivadoPath,
-		OutputDir:  buildOpts.output,
-		LibDir:     buildOpts.libDir,
-		Jobs:       buildOpts.jobs,
-		Timeout:    buildOpts.timeout,
-		SkipVivado: buildOpts.skipVivado,
-		StockBar:   buildOpts.stockBar,
-		Force:      buildOpts.force,
+		VivadoPath:        buildOpts.vivadoPath,
+		VivadoLicenseFile: buildOpts.licenseFile,
+		OutputDir:         buildOpts.output,
+		LibDir:            buildOpts.libDir,
+		Jobs:              buildOpts.jobs,
+		Timeout:           buildOpts.timeout,
+		SkipVivado:        buildOpts.skipVivado,
+		StockBar:          buildOpts.stockBar,
+		Force:             buildOpts.force,
 	})
 
 	return builder.Build(ctx)
@@ -150,6 +152,7 @@ func init() {
 	buildCmd.Flags().StringVar(&buildOpts.board, "board", "", "target FPGA board name (required, e.g. PCIeSquirrel)")
 	buildCmd.Flags().StringVar(&buildOpts.fromJSON, "from-json", "", "load donor device data from JSON file (offline build)")
 	buildCmd.Flags().StringVar(&buildOpts.vivadoPath, "vivado-path", "", "path to Vivado installation")
+	buildCmd.Flags().StringVar(&buildOpts.licenseFile, "vivado-license-file", "", "path or server for Vivado license")
 	buildCmd.Flags().StringVar(&buildOpts.output, "output", "pcileech_datastore", "output directory")
 	buildCmd.Flags().BoolVar(&buildOpts.skipVivado, "skip-vivado", false, "skip Vivado synthesis (only generate artifacts)")
 	buildCmd.Flags().IntVar(&buildOpts.jobs, "jobs", 4, "number of parallel Vivado jobs")

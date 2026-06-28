@@ -14,14 +14,15 @@ import (
 
 // BuildOptions holds build configuration.
 type BuildOptions struct {
-	VivadoPath string
-	OutputDir  string
-	LibDir     string
-	Jobs       int
-	Timeout    int
-	SkipVivado bool
-	StockBar   bool
-	Force      bool
+	VivadoPath        string
+	VivadoLicenseFile string
+	OutputDir         string
+	LibDir            string
+	Jobs              int
+	Timeout           int
+	SkipVivado        bool
+	StockBar          bool
+	Force             bool
 }
 
 // WithDefaults returns a copy of opts with zero values replaced by sensible defaults.
@@ -81,6 +82,7 @@ func (b *Builder) Build(ctx *donor.DeviceContext) error {
 	if err != nil {
 		return fmt.Errorf("Vivado not found: %w", err)
 	}
+	vivado.LicenseFile = b.opts.VivadoLicenseFile
 	slog.Info("Vivado found", "version", vivado.Version, "path", vivado.Path)
 
 	timeout := time.Duration(b.opts.Timeout) * time.Second
