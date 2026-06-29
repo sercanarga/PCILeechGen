@@ -95,13 +95,9 @@ func setMFIState(data []byte, off int) {
 	util.WriteLE32(data, off, v)
 }
 
-func (s *raidStrategy) PostInitRegisters(regs map[uint32]*uint32) {
-	for _, off := range []uint32{raidScratchG3, raidScratchG2} {
-		if v, ok := regs[off]; ok {
-			*v = (*v &^ mfiStateMask) | mfiStateReady
-		}
-	}
-}
+// PostInitRegisters is a no-op: ScrubBAR already sets MFI_STATE_READY in
+// both scratch-pad offsets as part of the BAR data scrub pass.
+func (s *raidStrategy) PostInitRegisters(regs map[uint32]*uint32) {}
 
 // raidProfile is the no-arg profile used by the registry (AllProfiles) and the
 // class-only ProfileForClass path. It reflects the default Fusion generation.

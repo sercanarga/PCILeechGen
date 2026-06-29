@@ -139,17 +139,3 @@ func TestRAIDStrategy_ScrubBAR_TooShort(t *testing.T) {
 	data := make([]byte, 0x40)
 	s.ScrubBAR(data) // must not panic
 }
-
-func TestRAIDStrategy_PostInitRegisters(t *testing.T) {
-	s := &raidStrategy{}
-	var sp0 uint32 = 0x40000000
-	var sp2 uint32 = 0x00000000
-	regs := map[uint32]*uint32{0xA8: &sp0, 0xB0: &sp2}
-	s.PostInitRegisters(regs)
-	if sp0&mfiStateMask != mfiStateReady {
-		t.Errorf("scratch_pad_0 should be READY, got 0x%08X", sp0)
-	}
-	if sp2&mfiStateMask != mfiStateReady {
-		t.Errorf("scratch_pad_2 should be READY, got 0x%08X", sp2)
-	}
-}

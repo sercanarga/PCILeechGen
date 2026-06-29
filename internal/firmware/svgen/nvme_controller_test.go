@@ -1,5 +1,10 @@
 package svgen
 
+// NOTE: these tests verify that generated SystemVerilog contains expected
+// strings (structural text matching). They do not simulate the hardware.
+// A Verilator or iverilog simulation testbench would catch wiring bugs
+// (e.g. combinational loops, timing mismatches) that text matching misses.
+
 import (
 	"strings"
 	"testing"

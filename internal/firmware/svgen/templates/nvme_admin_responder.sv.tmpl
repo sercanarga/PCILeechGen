@@ -360,10 +360,10 @@ module pcileech_nvme_admin_responder(
                             8'h02: begin
                                 log_page_id <= cmd_cdw10[7:0];
                                 data_dw_cnt <= 11'h0;
-                                if (cmd_cdw10[31:16] >= 16'd1023)
+                                if (cmd_cdw11[15:0] != 16'h0 || cmd_cdw10[27:16] >= 12'd1023)
                                     log_dw_limit <= 11'd1024;
                                 else
-                                    log_dw_limit <= {1'b0, cmd_cdw10[25:16]} + 11'd1;
+                                    log_dw_limit <= cmd_cdw10[26:16] + 11'd1;
                                 state       <= S_EXEC_LOGPAGE;
                             end
 

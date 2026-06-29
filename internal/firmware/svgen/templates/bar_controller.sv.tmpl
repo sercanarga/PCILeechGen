@@ -276,20 +276,18 @@ module pcileech_tlps128_bar_controller(
     wire        nvme_diag_wr_addr_hit = wr_valid && wr_bar[0] &&
                                         (wr_addr_bar0 >= 32'h{{ printf "%08X" .NVMeDiagBaseOffset }}) &&
                                         (wr_addr_bar0 <= 32'h{{ printf "%08X" .NVMeDiagQueueStateOffset }});
-    reg  [87:0] nvme_diag_ctx;
+    wire [87:0] nvme_diag_ctx   = rd_req_ctx;
+    wire        nvme_diag_valid = nvme_diag_addr_hit;
     reg  [31:0] nvme_diag_data;
-    reg         nvme_diag_valid;
 
-    always @(posedge clk) begin
-        nvme_diag_ctx   <= rd_req_ctx;
-        nvme_diag_valid <= nvme_diag_addr_hit;
+    always @(*) begin
         case (rd_req_addr_bar0)
-            32'h{{ printf "%08X" .NVMeDiagBaseOffset }}: nvme_diag_data <= nvme_debug_status;
-            32'h{{ printf "%08X" .NVMeDiagLastCommandOffset }}: nvme_diag_data <= nvme_debug_last_cmd;
-            32'h{{ printf "%08X" .NVMeDiagLastNSIDOffset }}: nvme_diag_data <= nvme_debug_last_nsid;
-            32'h{{ printf "%08X" .NVMeDiagLastCDW10Offset }}: nvme_diag_data <= nvme_debug_last_cdw10;
-            32'h{{ printf "%08X" .NVMeDiagQueueStateOffset }}: nvme_diag_data <= nvme_debug_queue_state;
-            default: nvme_diag_data <= 32'h0;
+            32'h{{ printf "%08X" .NVMeDiagBaseOffset }}: nvme_diag_data = nvme_debug_status;
+            32'h{{ printf "%08X" .NVMeDiagLastCommandOffset }}: nvme_diag_data = nvme_debug_last_cmd;
+            32'h{{ printf "%08X" .NVMeDiagLastNSIDOffset }}: nvme_diag_data = nvme_debug_last_nsid;
+            32'h{{ printf "%08X" .NVMeDiagLastCDW10Offset }}: nvme_diag_data = nvme_debug_last_cdw10;
+            32'h{{ printf "%08X" .NVMeDiagQueueStateOffset }}: nvme_diag_data = nvme_debug_queue_state;
+            default: nvme_diag_data = 32'h0;
         endcase
     end
 {{ end }}
@@ -333,9 +331,12 @@ module pcileech_tlps128_bar_controller(
 {{ else }}
     // Neither latency nor MSI-X config — direct BAR0 passthrough.
 {{ if and (eq .DeviceClass "nvme") .NVMeIdentify .BARModel }}
-    assign bar_rsp_ctx[0]   = nvme_diag_valid ? nvme_diag_ctx : bar_rsp_ctx[0];
-    assign bar_rsp_data[0]  = nvme_diag_valid ? nvme_diag_data : 32'h0;
-    assign bar_rsp_valid[0] = nvme_diag_valid;
+    wire [87:0] bar0_direct_ctx;
+    wire [31:0] bar0_direct_data;
+    wire        bar0_direct_valid;
+    assign bar_rsp_ctx[0]   = nvme_diag_valid ? nvme_diag_ctx  : bar0_direct_ctx;
+    assign bar_rsp_data[0]  = nvme_diag_valid ? nvme_diag_data : bar0_direct_data;
+    assign bar_rsp_valid[0] = nvme_diag_valid || bar0_direct_valid;
 {{ else }}
     assign bar_rsp_ctx[0]   = 0;
     assign bar_rsp_data[0]  = 32'h0;
@@ -398,9 +399,15 @@ module pcileech_tlps128_bar_controller(
         .rd_rsp_data    ( bar0_base_data                ),
         .rd_rsp_valid   ( bar0_base_valid               )
 {{ else }}
+{{ if and (eq .DeviceClass "nvme") .NVMeIdentify .BARModel }}
+        .rd_rsp_ctx     ( bar0_direct_ctx               ),
+        .rd_rsp_data    ( bar0_direct_data              ),
+        .rd_rsp_valid   ( bar0_direct_valid             )
+{{ else }}
         .rd_rsp_ctx     ( bar_rsp_ctx[0]                ),
         .rd_rsp_data    ( bar_rsp_data[0]               ),
         .rd_rsp_valid   ( bar_rsp_valid[0]              )
+{{ end }}
 {{ end }}
 {{ if and (eq .DeviceClass "nvme") .BARModel }}        ,
         .nvme_cc        ( nvme_reg_cc                   ),
