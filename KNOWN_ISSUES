@@ -1,0 +1,62 @@
+problem: "device data collection failed" / BAR reads all 0xFF
+cause: donor is in D3 sleep, IOMMU is off, or the donor is not bound to vfio-pci.
+fix: enable IOMMU in GRUB (intel_iommu=on / amd_iommu=on iommu=pt), update-grub
+     + reboot, wake the device to D0, bind it to vfio-pci, turn Secure Boot off.
+
+problem: "VFIO_GROUP_SET_CONTAINER: invalid argument"
+cause: the donor shares its IOMMU group with devices still on native drivers.
+fix: move the whole group to vfio-pci, or isolate the donor (ACS).
+
+problem: PC crashes / hard reboot during build
+cause: a memory conflict - usually the OS/boot drive got bound to VFIO, or a
+       shared group. Look for MCE / "probe failed -22" in journalctl.
+fix: never bind the drive you boot from; use a separate donor; isolate the group.
+
+problem: "card in sleep mode"
+cause: runtime PM or the host driver keeps the donor in D3.
+fix: disable runtime PM, keep the donor in D0, bind it to vfio-pci.
+
+problem: Live / USB-boot Ubuntu
+cause: live-USB + VFIO is unreliable.
+fix: do a real install to disk.
+
+problem: Vivado "exit status 1" / "Invalid XML token"
+cause: a corrupted Vivado install (device parts / XML), not the tool.
+fix: reinstall Vivado cleanly; --skip-vivado proves the artifacts are fine.
+
+problem: Vivado license lost under sudo
+cause: sudo strips PATH / XILINXD_LICENSE_FILE.
+fix: pass them back: sudo env PATH="$PATH" XILINXD_LICENSE_FILE="$..." \
+     ./bin/pcileechgen build ...  (latest build also recovers them itself)
+
+problem: donor BAR > board BRAM -> [FAIL]
+cause: the donor BAR is bigger than the board can emulate.
+fix: pick a smaller-BAR donor or a bigger board
+
+problem: Windows Code 10 "cannot start"  (most common report)
+cause: the clone loads but doesn't behave like the real device BAR0 reads FF,
+       MSI-X/interrupt setup fails, or device-type emulation is incomplete.
+       Often hidden: stale Windows device history.
+fix: try a network / audio / wifi donor first (NVMe and xHCI hit Code 10 until
+     done); run tools/cleanup_device_history.ps1 (Admin) then reboot; Core
+     Isolation off; correct BIOS.
+
+problem: stale device metadata / wrong driver after reflash
+cause: Windows caches PCI device info in the registry.
+fix: run the bundled cleanup_device_history utility, reboot, reconnect.
+
+problem: yellow triangle / device not recognized after flash
+cause: a partial flash image, or the device needs repo enhancements.
+fix: rewrite the firmware with a working flasher; get a steady green light first.
+
+problem: lone-dma-test shows BAD DTB / can't find ntoskrnl
+cause: usually BIOS / Windows DMA settings, not the firmware.
+fix: recheck BIOS + Windows settings; compare to a known-good firmware.
+
+Note (not a bug): NVMe full disk emulation is still in progress.
+The admin queue and init work, but BRAM cache + IO queues are not done yet, so
+NVMe donors commonly hit Code 10 / stornvme Event 11 until then.
+
+Note (not a bug): xHCI (USB) emulation is partial.
+Clones enumerate, but host read/write + doorbell gaps remain, so USBXHCI often
+hits Code 10 (e.g. VIA VL805). Targeted this cycle.
