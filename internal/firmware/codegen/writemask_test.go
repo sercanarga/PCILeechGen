@@ -209,6 +209,44 @@ func TestWritemask_MultipleBARs(t *testing.T) {
 	}
 }
 
+// Capability read-only fields must be locked in the shadow so a detector can't
+// write to a cap ID / PMC / PCIe Capabilities / DevCap / LinkCap / MSI-X offset
+// register and read it back changed (real hardware ignores such writes).
+func TestWritemask_CapabilityReadOnlyFieldsLocked(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	cs.WriteU16(0x06, 0x0010) // capabilities list present
+	cs.WriteU8(0x34, 0x40)    // cap pointer
+	// chain: PM (0x40) -> MSI-X (0x50) -> PCIe (0x60, last)
+	cs.WriteU8(0x40, pci.CapIDPowerManagement)
+	cs.WriteU8(0x41, 0x50)
+	cs.WriteU8(0x50, pci.CapIDMSIX)
+	cs.WriteU8(0x51, 0x60)
+	cs.WriteU8(0x60, pci.CapIDPCIExpress)
+	cs.WriteU8(0x61, 0x00)
+
+	dwords := parseCOEDwords(t, GenerateWritemaskCOE(cs))
+
+	checks := map[int]string{
+		16: "00000000", // 0x40 PM header (ID+next+PMC all RO)
+		17: "ffffffff", // 0x44 PMCSR stays writable (power state control)
+		20: "c0000000", // 0x50 MSI-X header: only Enable+FuncMask writable
+		21: "00000000", // 0x54 MSI-X Table Offset/BIR (RO)
+		22: "00000000", // 0x58 MSI-X PBA Offset/BIR (RO)
+		24: "00000000", // 0x60 PCIe header (ID+next+PCIe Caps reg RO)
+		25: "00000000", // 0x64 Device Capabilities (RO)
+		26: "ffffffff", // 0x68 Device Control/Status stays writable
+		27: "00000000", // 0x6C Link Capabilities (RO)
+		33: "00000000", // 0x84 Device Capabilities 2 (RO)
+		35: "00000000", // 0x8C Link Capabilities 2 (RO)
+	}
+	for dw, want := range checks {
+		if dwords[dw] != want {
+			t.Errorf("DWORD[%d] (0x%02X) mask = %s, want %s", dw, dw*4, dwords[dw], want)
+		}
+	}
+}
+
 func parseCOEDwords(t *testing.T, coe string) []string {
 	t.Helper()
 	lines := strings.Split(coe, "\n")

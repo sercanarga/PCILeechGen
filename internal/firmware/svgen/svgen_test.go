@@ -56,6 +56,28 @@ func TestGenerateBarImplDeviceSV_NilBARModel(t *testing.T) {
 	if !strings.Contains(result, "bar_mem") {
 		t.Error("nil BARModel should fall back to BRAM-based implementation")
 	}
+	// Without a seed file, the fallback must only zero-init (no $readmemh).
+	if strings.Contains(result, "$readmemh") {
+		t.Error("BRAM fallback should not $readmemh when BARInitHexFile is unset")
+	}
+}
+
+func TestGenerateBarImplDeviceSV_NilBARModel_SeededFromSnapshot(t *testing.T) {
+	cfg := testConfig()
+	cfg.BARModel = nil
+	cfg.BARInitHexFile = "pcileech_bar_init.hex"
+	result, err := GenerateBarImplDeviceSV(cfg)
+	if err != nil {
+		t.Fatalf("GenerateBarImplDeviceSV failed: %v", err)
+	}
+	if !strings.Contains(result, `$readmemh("pcileech_bar_init.hex", bar_mem)`) {
+		t.Error("seeded BRAM fallback should $readmemh the donor snapshot into bar_mem")
+	}
+	// Zero-init must still precede the seed so a short hex file leaves the
+	// remainder defined.
+	if !strings.Contains(result, "bar_mem[i] = 32'h00000000") {
+		t.Error("seeded fallback must still zero-init before $readmemh")
+	}
 }
 
 func TestGenerateBarImplDeviceSV_WithBARModel(t *testing.T) {

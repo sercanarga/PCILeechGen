@@ -10,6 +10,7 @@ import (
 
 	"github.com/sercanarga/pcileechgen/internal/board"
 	"github.com/sercanarga/pcileechgen/internal/donor"
+	"github.com/sercanarga/pcileechgen/internal/donor/behavior"
 	"github.com/sercanarga/pcileechgen/internal/firmware"
 	"github.com/sercanarga/pcileechgen/internal/firmware/barmodel"
 	"github.com/sercanarga/pcileechgen/internal/firmware/codegen"
@@ -32,6 +33,9 @@ type OutputWriter struct {
 	Timeout   int
 	StockBar  bool
 	Force     bool
+	// TimingHistogram, when set from a captured donor MMIO trace, drives the
+	// TLP latency emulator with measured timing instead of synthetic defaults.
+	TimingHistogram *behavior.TimingHistogram
 }
 
 func NewOutputWriter(outputDir, libDir string, jobs, timeout int) *OutputWriter {
@@ -376,6 +380,15 @@ func (ow *OutputWriter) writeSVModules(ctx *donor.DeviceContext, scrubbedCS *pci
 		return err
 	}
 
+	// Emit the generic BRAM seed file when the fallback path requested it.
+	if cfg.BARInitHexFile != "" {
+		barIdx := firmware.LargestBarIndex(ctx.BARContents)
+		if err := ow.writeFile(cfg.BARInitHexFile,
+			codegen.GenerateBarInitHex(ctx.BARContents[barIdx], cfg.Bar0Size)); err != nil {
+			return err
+		}
+	}
+
 	if err := ow.writeCoreSVArtifacts(cfg, scrubbedCS); err != nil {
 		return err
 	}
@@ -484,12 +497,14 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 		DonorCapabilities: extractDonorCapabilities(scrubbedCS),
 		BARModel:          bm,
 		ClassCode:         ctx.Device.ClassCode,
-		LatencyConfig:     svgen.DefaultLatencyConfig(ctx.Device.ClassCode),
-		HasMSIX:           bm != nil,
-		BuildEntropy:      entropy,
-		PRNGSeeds:         svgen.BuildPRNGSeeds(ids.VendorID, ids.DeviceID, entropy),
-		DeviceClass:       devClass,
-		Bar0Size:          bar0Size,
+		// measured donor timing when a trace was captured; falls back to
+		// class-appropriate synthetic defaults when TimingHistogram is nil.
+		LatencyConfig: svgen.LatencyConfigFromHistogram(ow.TimingHistogram, ctx.Device.ClassCode),
+		HasMSIX:       bm != nil,
+		BuildEntropy:  entropy,
+		PRNGSeeds:     svgen.BuildPRNGSeeds(ids.VendorID, ids.DeviceID, entropy),
+		DeviceClass:   devClass,
+		Bar0Size:      bar0Size,
 	}
 
 	if devClass == devclass.ClassNVMe {
@@ -523,6 +538,14 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 	// MSI is the primary interrupt mechanism for HDA devices.
 	if msiInfo := extractMSIInfo(scrubbedCS); msiInfo != nil {
 		cfg.MSIConfig = msiInfo
+	}
+
+	// Generic BRAM fallback (no learned register model): seed it from the donor
+	// BAR snapshot so unknown-class register reads return real donor values
+	// instead of zero. Skip when an MSI-X table shares BAR0 to avoid overlapping
+	// the table region with snapshot data.
+	if cfg.BARModel == nil && cfg.MSIXConfig == nil && len(barData) > 0 {
+		cfg.BARInitHexFile = "pcileech_bar_init.hex"
 	}
 
 	bram := b.BRAMSizeOrDefault()

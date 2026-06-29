@@ -84,6 +84,8 @@ COMMANDS
     --skip-vivado      artifacts only, no synthesis
     --force            allow donor BAR > board BRAM (may truncate)
     --from-json <f>    offline build from saved device_context.json
+    --mmio-trace <f>   saved MMIO trace JSON (mmio-trace --output) for
+                       measured TLP latency instead of synthetic defaults
     --output <dir>     output directory (default: pcileech_datastore)
 
   Offline MMIO trace import:
@@ -121,6 +123,8 @@ FEATURES
   Diagnostics
     - VFIO diagnostics, BAR vs BRAM compatibility checks
     - post-build validation, build manifest, config-space diff report
+    - detectability audit: severity-rated residual enumeration tells
+      (check --board <name>) - flags link mismatch, stripped caps, etc.
 
 
 SUPPORTED BOARDS

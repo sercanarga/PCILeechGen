@@ -47,6 +47,26 @@ func TestExtractTimingHistogram_Basic(t *testing.T) {
 	}
 }
 
+func TestExtractTimingHistogram_WriteTiming(t *testing.T) {
+	// Trace with no usable writes (timingTrace has a single write) -> no Wr data.
+	if h := ExtractTimingHistogram(timingTrace()); h.WrMinCycles != 0 {
+		t.Errorf("single-write trace should yield WrMinCycles 0, got %d", h.WrMinCycles)
+	}
+
+	// Trace with several writes 1us apart -> measured write timing.
+	tr := &mmio.TraceResult{BARSize: 4096}
+	for i := 0; i < 5; i++ {
+		tr.Records = append(tr.Records,
+			mmio.AccessRecord{Offset: 0x14, Type: mmio.AccessWrite, Timestamp: time.Duration(i) * time.Microsecond},
+			mmio.AccessRecord{Offset: 0x1C, Type: mmio.AccessRead, Timestamp: time.Duration(i)*time.Microsecond + 100*time.Nanosecond},
+		)
+	}
+	h := ExtractTimingHistogram(tr)
+	if h.WrMinCycles <= 0 || h.WrMaxCycles < h.WrMinCycles {
+		t.Errorf("expected measured write timing, got min=%d max=%d", h.WrMinCycles, h.WrMaxCycles)
+	}
+}
+
 func TestExtractTimingHistogram_CDF(t *testing.T) {
 	h := ExtractTimingHistogram(timingTrace())
 	// CDF must be monotonically non-decreasing

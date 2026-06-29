@@ -35,6 +35,7 @@ type SVGeneratorConfig struct {
 	NVMeIdentify       *nvme.IdentifyData // NVMe Identify Controller/Namespace data (nil = no responder)
 	NVMeDoorbellStride uint32             // CAP.DSTRD - doorbell stride (0 = 4B, default)
 	Bar0Size           int
+	BARInitHexFile     string             // generic BRAM fallback: $readmemh seed file ("" = zero-init only)
 }
 
 // DonorCapabilities summarizes parsed capabilities from donor config space.

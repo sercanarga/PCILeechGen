@@ -44,6 +44,40 @@ func TestClearMiscPass_AllFields(t *testing.T) {
 	}
 }
 
+// A donor that uses MSI/MSI-X reports Interrupt Pin 0 legitimately; forcing
+// INTA# there is a fingerprint and is wrong. Only force when no MSI/MSI-X.
+func TestClearMiscPass_InterruptPinNotForcedWithMSIX(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceLegacySize
+	cs.WriteU16(0x06, 0x0010) // capabilities list present
+	cs.WriteU8(0x34, 0x40)
+	cs.WriteU8(0x40, pci.CapIDMSIX)
+	cs.WriteU8(0x41, 0x00) // next = end
+	// Interrupt Pin (0x3D) left 0 - donor uses MSI-X, no INTx
+
+	om := overlay.NewMap(cs)
+	p := &clearMiscPass{}
+	p.Apply(cs, nil, om, ctxFor(cs))
+
+	if got := cs.ReadU8(0x3D); got != 0x00 {
+		t.Errorf("Interrupt Pin = 0x%02X, want 0x00 (MSI-X device, INTA# must not be forced)", got)
+	}
+}
+
+// With no MSI/MSI-X the legacy fallback still forces INTA# so the driver loads.
+func TestClearMiscPass_InterruptPinForcedWithoutMSI(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceLegacySize
+	// no capabilities at all; Interrupt Pin = 0
+	om := overlay.NewMap(cs)
+	p := &clearMiscPass{}
+	p.Apply(cs, nil, om, ctxFor(cs))
+
+	if got := cs.ReadU8(0x3D); got != 0x01 {
+		t.Errorf("Interrupt Pin = 0x%02X, want 0x01 (no MSI/MSI-X, INTA# forced)", got)
+	}
+}
+
 func TestSanitizeCmdStatusPass_Force(t *testing.T) {
 	cs := pci.NewConfigSpace()
 	cs.Size = pci.ConfigSpaceLegacySize
@@ -191,6 +225,51 @@ func TestScrubAERPass_SmallCS(t *testing.T) {
 	om := overlay.NewMap(cs)
 	p := &scrubAERPass{}
 	p.Apply(cs, nil, om, ctxFor(cs)) // should be no-op
+}
+
+// AER masks must keep donor-specific bits (union'd with protective defaults)
+// instead of being overwritten with the bare spec defaults, which would leave
+// "mask == spec default" as a per-device fingerprint.
+func TestNormalizeAERMasksPass_DonorFaithful(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	cs.WriteU32(0x100, uint32(pci.ExtCapIDAER)|(1<<16)) // AER, version 1
+	const donorUncorrMask = 0x00000001                  // bit 0 - not in spec default
+	const donorCorrMask = 0x00000040                    // bit 6 - not in spec default
+	const donorSev = 0x12345678
+	cs.WriteU32(0x108, donorUncorrMask) // uncorrectable mask
+	cs.WriteU32(0x114, donorCorrMask)   // correctable mask
+	cs.WriteU32(0x10C, donorSev)        // uncorrectable severity
+
+	om := overlay.NewMap(cs)
+	p := &normalizeAERMasksPass{}
+	p.Apply(cs, nil, om, ctxFor(cs))
+
+	if got, want := cs.ReadU32(0x108), uint32(donorUncorrMask|aerUncorrMaskDefault); got != want {
+		t.Errorf("uncorrectable mask = 0x%08X, want donor|default 0x%08X", got, want)
+	}
+	if got, want := cs.ReadU32(0x114), uint32(donorCorrMask|aerCorrMaskDefault); got != want {
+		t.Errorf("correctable mask = 0x%08X, want donor|default 0x%08X", got, want)
+	}
+	if got := cs.ReadU32(0x10C); got != donorSev {
+		t.Errorf("severity = 0x%08X, want donor 0x%08X (faithful)", got, donorSev)
+	}
+}
+
+// When the donor never set the uncorrectable severity, fall back to spec default.
+func TestNormalizeAERMasksPass_SeverityFallback(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	cs.WriteU32(0x100, uint32(pci.ExtCapIDAER)|(1<<16))
+	// severity left 0
+
+	om := overlay.NewMap(cs)
+	p := &normalizeAERMasksPass{}
+	p.Apply(cs, nil, om, ctxFor(cs))
+
+	if got := cs.ReadU32(0x10C); got != aerUncorrSevDefault {
+		t.Errorf("severity = 0x%08X, want spec default 0x%08X", got, aerUncorrSevDefault)
+	}
 }
 
 func TestFilterExtCapsPass(t *testing.T) {

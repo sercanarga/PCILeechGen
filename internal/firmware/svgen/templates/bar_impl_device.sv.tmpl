@@ -1160,7 +1160,12 @@ module pcileech_bar_impl_device #(
     wire [31:0] wa = wr_addr & bar_addr_mask;
     wire [31:0] ra = rd_req_addr & bar_addr_mask;
     integer i;
-    initial for (i = 0; i < BAR_WORDS; i = i + 1) bar_mem[i] = 32'h00000000;
+    initial begin
+        for (i = 0; i < BAR_WORDS; i = i + 1) bar_mem[i] = 32'h00000000;
+{{ if .BARInitHexFile }}        // seed from donor BAR snapshot so register reads return the donor's
+        // real values instead of zero (no learned register model for this class)
+        $readmemh("{{ .BARInitHexFile }}", bar_mem);
+{{ end }}    end
     always @(posedge clk) begin
         if (wr_valid) begin
             if (wa[1:0] == 2'b00) begin

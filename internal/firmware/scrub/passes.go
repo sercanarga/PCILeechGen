@@ -8,6 +8,14 @@ import (
 	"github.com/sercanarga/pcileechgen/internal/pci"
 )
 
+// PCIe spec-recommended AER masks/severity. Used as a protective floor that is
+// union'd with the donor's own values (masks) or as a fallback (severity).
+const (
+	aerUncorrMaskDefault = 0x00462030
+	aerCorrMaskDefault   = 0x00002000
+	aerUncorrSevDefault  = 0x0045E011
+)
+
 type injectPCIeCapPass struct{}
 
 func (p *injectPCIeCapPass) Name() string { return "inject PCIe capability" }
@@ -20,11 +28,29 @@ type clearMiscPass struct{}
 func (p *clearMiscPass) Name() string { return "clear misc registers" }
 func (p *clearMiscPass) Apply(cs *pci.ConfigSpace, b *board.Board, om *overlay.Map, ctx *ScrubContext) {
 	om.WriteU8(0x0F, 0x00, "clear BIST register")
-	if cs.InterruptPin() == 0 {
-		om.WriteU8(0x3D, 0x01, "set Interrupt Pin to INTA# (was 0, prevents driver load)")
+	// Only force INTA# when the donor advertises no interrupt mechanism at all.
+	// A device with MSI/MSI-X legitimately reports Interrupt Pin 0; forcing INTA#
+	// there is both a fingerprint and wrong - such drivers use MSI/MSI-X and never
+	// touch INTx. Forcing only helps a donor with neither, where a driver may
+	// refuse to load on pin 0.
+	if cs.InterruptPin() == 0 && !hasMSICap(ctx) {
+		om.WriteU8(0x3D, 0x01, "set Interrupt Pin to INTA# (no MSI/MSI-X, prevents driver load)")
 	}
 	om.WriteU8(0x0D, 0x00, "clear Latency Timer")
 	om.WriteU8(0x0C, 0x00, "clear Cache Line Size")
+}
+
+// hasMSICap reports whether the donor advertises MSI or MSI-X.
+func hasMSICap(ctx *ScrubContext) bool {
+	if ctx == nil {
+		return false
+	}
+	for _, c := range ctx.Caps {
+		if c.ID == pci.CapIDMSI || c.ID == pci.CapIDMSIX {
+			return true
+		}
+	}
+	return false
 }
 
 type sanitizeCmdStatusPass struct{}
@@ -236,14 +262,31 @@ func (p *normalizeAERMasksPass) Apply(cs *pci.ConfigSpace, b *board.Board, om *o
 		if cap.ID != pci.ExtCapIDAER {
 			continue
 		}
+		// Donor-faithful masking: preserve the donor's real mask bits but
+		// union-in the protective spec defaults so any protocol slip the
+		// emulation may emit (malformed TLP, completion timeout, ...) stays
+		// suppressed and never surfaces as an AER event. Overwriting with the
+		// bare spec defaults erases donor-specific bits, leaving "mask == spec
+		// default" as a per-device fingerprint for a detector with a donor
+		// reference. The AER cap is only ever parsed from the donor (never
+		// synthesised), so these reads are authentic.
 		if cap.Offset+0x0C <= pci.ConfigSpaceSize {
-			om.WriteU32(cap.Offset+0x08, 0x00462030, "set AER uncorrectable mask (spec defaults)")
+			donor := cs.ReadU32(cap.Offset + 0x08)
+			om.WriteU32(cap.Offset+0x08, donor|aerUncorrMaskDefault, "AER uncorrectable mask (donor | protective defaults)")
 		}
 		if cap.Offset+0x18 <= pci.ConfigSpaceSize {
-			om.WriteU32(cap.Offset+0x14, 0x00002000, "set AER correctable mask (spec defaults)")
+			donor := cs.ReadU32(cap.Offset + 0x14)
+			om.WriteU32(cap.Offset+0x14, donor|aerCorrMaskDefault, "AER correctable mask (donor | protective defaults)")
 		}
 		if cap.Offset+0x10 <= pci.ConfigSpaceSize {
-			om.WriteU32(cap.Offset+0x0C, 0x0045E011, "set AER uncorrectable severity (CT non-fatal per spec)")
+			// Severity only classifies fatal vs non-fatal; it does not gate
+			// logging, so keep the donor value verbatim. Fall back to the spec
+			// default only when the donor never set it.
+			sev := cs.ReadU32(cap.Offset + 0x0C)
+			if sev == 0 {
+				sev = aerUncorrSevDefault
+			}
+			om.WriteU32(cap.Offset+0x0C, sev, "AER uncorrectable severity (donor-faithful)")
 		}
 	}
 }

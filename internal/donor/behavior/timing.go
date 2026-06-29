@@ -15,6 +15,11 @@ type TimingHistogram struct {
 	MaxCycles    int
 	MedianCycles int
 	SampleCount  int
+
+	// Write timing, derived from inter-write intervals (0 = not measured).
+	// Same interval-as-latency model used for reads, applied to the write path.
+	WrMinCycles int
+	WrMaxCycles int
 }
 
 const fpgaClockPeriodNs = 8 // 125MHz
@@ -25,28 +30,10 @@ func ExtractTimingHistogram(trace *mmio.TraceResult) *TimingHistogram {
 		return defaultHistogram()
 	}
 
-	var intervals []int64
-	var lastReadNs int64 = -1
-
-	for _, rec := range trace.Records {
-		if rec.Type != mmio.AccessRead {
-			continue
-		}
-		ns := rec.Timestamp.Nanoseconds()
-		if lastReadNs >= 0 {
-			delta := ns - lastReadNs
-			if delta > 0 && delta < 100_000 { // skip driver pauses >100µs
-				intervals = append(intervals, delta)
-			}
-		}
-		lastReadNs = ns
-	}
-
+	intervals := sortedIntervalsNs(trace, mmio.AccessRead)
 	if len(intervals) < 3 {
 		return defaultHistogram()
 	}
-
-	sort.Slice(intervals, func(i, j int) bool { return intervals[i] < intervals[j] })
 
 	minCycles := int(math.Max(1, float64(intervals[0])/fpgaClockPeriodNs))
 	maxCycles := int(math.Max(float64(minCycles)+1, float64(intervals[len(intervals)-1])/fpgaClockPeriodNs))
@@ -95,6 +82,8 @@ func ExtractTimingHistogram(trace *mmio.TraceResult) *TimingHistogram {
 		}
 	}
 
+	wrMin, wrMax := writeTimingCycles(trace)
+
 	return &TimingHistogram{
 		Buckets:      buckets,
 		CDF:          buildCDF(buckets),
@@ -102,7 +91,46 @@ func ExtractTimingHistogram(trace *mmio.TraceResult) *TimingHistogram {
 		MaxCycles:    maxCycles,
 		MedianCycles: medianCycles,
 		SampleCount:  len(intervals),
+		WrMinCycles:  wrMin,
+		WrMaxCycles:  wrMax,
 	}
+}
+
+// sortedIntervalsNs returns the ascending inter-access intervals (ns) for one
+// access type, dropping non-positive gaps and driver pauses over 100µs.
+func sortedIntervalsNs(trace *mmio.TraceResult, typ mmio.AccessType) []int64 {
+	var intervals []int64
+	var lastNs int64 = -1
+	for _, rec := range trace.Records {
+		if rec.Type != typ {
+			continue
+		}
+		ns := rec.Timestamp.Nanoseconds()
+		if lastNs >= 0 {
+			if delta := ns - lastNs; delta > 0 && delta < 100_000 {
+				intervals = append(intervals, delta)
+			}
+		}
+		lastNs = ns
+	}
+	sort.Slice(intervals, func(i, j int) bool { return intervals[i] < intervals[j] })
+	return intervals
+}
+
+// writeTimingCycles derives min/max write latency (FPGA cycles) from inter-write
+// intervals, the same interval-as-latency model used for reads. Returns (0,0)
+// when there are too few writes to be meaningful.
+func writeTimingCycles(trace *mmio.TraceResult) (minCycles, maxCycles int) {
+	intervals := sortedIntervalsNs(trace, mmio.AccessWrite)
+	if len(intervals) < 3 {
+		return 0, 0
+	}
+	minCycles = int(math.Max(1, float64(intervals[0])/fpgaClockPeriodNs))
+	maxCycles = int(math.Max(float64(minCycles)+1, float64(intervals[len(intervals)-1])/fpgaClockPeriodNs))
+	if maxCycles > 255 {
+		maxCycles = 255
+	}
+	return minCycles, maxCycles
 }
 
 // buildCDF converts weight histogram to cumulative distribution [0-255].

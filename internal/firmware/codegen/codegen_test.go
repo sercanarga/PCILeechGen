@@ -137,3 +137,32 @@ func TestConfigSpaceHex_DWORDFormat(t *testing.T) {
 		t.Error("HEX should contain BAR0 at offset [010]")
 	}
 }
+
+// BAR snapshot init hex: donor values seeded, sized to BAR words, zero-padded.
+func TestGenerateBarInitHex(t *testing.T) {
+	barData := []byte{
+		0x78, 0x56, 0x34, 0x12, // word0 = 0x12345678
+		0x21, 0x43, 0x65, 0x87, // word1 = 0x87654321
+	}
+	hex := GenerateBarInitHex(barData, 4096)
+
+	lines := strings.Split(strings.TrimSpace(hex), "\n")
+	var words []string
+	for _, l := range lines {
+		if !strings.HasPrefix(l, "//") {
+			words = append(words, l)
+		}
+	}
+	if len(words) != 1024 {
+		t.Fatalf("expected 4096/4=1024 words, got %d", len(words))
+	}
+	if words[0] != "12345678" {
+		t.Errorf("word0 = %s, want 12345678", words[0])
+	}
+	if words[1] != "87654321" {
+		t.Errorf("word1 = %s, want 87654321", words[1])
+	}
+	if words[2] != "00000000" {
+		t.Errorf("word2 (past snapshot) = %s, want 00000000 (zero-padded)", words[2])
+	}
+}

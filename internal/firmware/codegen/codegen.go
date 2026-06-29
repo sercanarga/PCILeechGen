@@ -67,6 +67,46 @@ func GenerateWritemaskCOE(cs *pci.ConfigSpace) string {
 		masks[i] = 0xFFFFFFFF
 	}
 
+	// Lock the read-only fields inside the capability window. The window is
+	// writable by default (above) so control/status bits stay in sync with the
+	// Xilinx IP core, but a capability's structural fields (ID, next pointer)
+	// and its read-only registers (PMC, the PCIe Capabilities/DevCap/LinkCap
+	// registers, the MSI-X Table/PBA offset registers, ...) never accept writes
+	// on real hardware. Leaving them writable lets a detector write one and read
+	// it back changed - a write-to-RO-then-readback tell real silicon never
+	// produces. Lock only the unambiguous read-only fields, bounded to each
+	// capability's own extent so a short cap can't clobber its neighbour.
+	for _, cap := range pci.ParseCapabilities(cs) {
+		hdr := cap.Offset / 4
+		if hdr < 0x40/4 || hdr >= 0x100/4 {
+			continue
+		}
+		capLen := len(cap.Data)
+		lockRO := func(rel int) { // lock the DWORD at cap.Offset+rel if inside the cap
+			if rel+4 > capLen {
+				return
+			}
+			if dw := (cap.Offset + rel) / 4; dw >= 0x40/4 && dw < 0x100/4 {
+				masks[dw] = 0x00000000
+			}
+		}
+		masks[hdr] &^= 0x0000FFFF // ID + next pointer are always read-only
+		switch cap.ID {
+		case pci.CapIDPowerManagement:
+			masks[hdr] = 0x00000000 // header DWORD also holds PMC (RO); PMCSR at +4 stays writable
+		case pci.CapIDPCIExpress:
+			masks[hdr] = 0x00000000 // header DWORD holds the PCIe Capabilities register (RO)
+			lockRO(0x04)            // Device Capabilities (RO); DevCtl/Sta at +0x08 stay writable
+			lockRO(0x0C)            // Link Capabilities (RO); LinkCtl/Sta at +0x10 stay writable
+			lockRO(0x24)            // Device Capabilities 2 (RO)
+			lockRO(0x2C)            // Link Capabilities 2 (RO)
+		case pci.CapIDMSIX:
+			masks[hdr] = 0xC0000000 // keep only MSI-X Enable + Function Mask writable
+			lockRO(0x04)            // Table Offset/BIR (RO)
+			lockRO(0x08)            // PBA Offset/BIR (RO)
+		}
+	}
+
 	// extended config space (0x100-0xFFF): read-only.
 	// scrubber already neutralized all writable extended cap fields.
 
@@ -136,6 +176,31 @@ func GenerateBarContentCOE(barContents map[int][]byte, size int) string {
 	header += ";\n"
 
 	return formatCOE(header, words)
+}
+
+// GenerateBarInitHex outputs a donor BAR snapshot in $readmemh format, one
+// DWORD per line, sized to sizeBytes/4 words (padded with zero, truncated to
+// fit). The generic BRAM fallback ($readmemh into bar_mem) uses this so an
+// unknown-class device returns the donor's real register values instead of all
+// zeros - a driver/detector reading a known donor register no longer sees 0.
+func GenerateBarInitHex(barData []byte, sizeBytes int) string {
+	words := sizeBytes / 4
+	if words <= 0 {
+		words = 1024
+	}
+
+	var sb strings.Builder
+	sb.WriteString("// PCILeechGen - BAR Snapshot Init (generic BRAM seed)\n")
+	sb.WriteString(fmt.Sprintf("// %d DWORDs from donor BAR memory\n", words))
+	for i := 0; i < words; i++ {
+		off := i * 4
+		var w uint32
+		if off+4 <= len(barData) {
+			w = util.ReadLE32(barData, off)
+		}
+		sb.WriteString(fmt.Sprintf("%08X\n", w))
+	}
+	return sb.String()
 }
 
 // GenerateConfigSpaceHex outputs config space in $readmemh format (1024 DWORDs).

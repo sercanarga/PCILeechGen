@@ -12,12 +12,14 @@ import (
 	"github.com/sercanarga/pcileechgen/internal/donor"
 	"github.com/sercanarga/pcileechgen/internal/donor/vfio"
 	"github.com/sercanarga/pcileechgen/internal/firmware"
+	"github.com/sercanarga/pcileechgen/internal/firmware/scrub"
 	"github.com/sercanarga/pcileechgen/internal/pci"
 	"github.com/spf13/cobra"
 )
 
 var checkDevice string
 var checkForce bool
+var checkBoard string
 
 var checkCmd = &cobra.Command{
 	Use:   "check",
@@ -61,6 +63,7 @@ func (c *checker) run() error {
 	c.showCapabilities()
 	c.showBARs()
 	c.showBoardCompatibility()
+	c.showDetectability()
 
 	fmt.Fprintf(c.w, "\n%s\n", color.Header("Summary"))
 	if c.issues == 0 {
@@ -274,9 +277,53 @@ func (c *checker) showBoardCompatibility() {
 	fmt.Fprintf(c.w, "\nTotal: %d boards\n", compatible)
 }
 
+// showDetectability prints a severity-rated audit of the residual enumeration
+// tells that remain after scrubbing this donor for the chosen board. Only runs
+// when --board is given, since most tells depend on the target board's limits.
+func (c *checker) showDetectability() {
+	if c.cs == nil || checkBoard == "" {
+		return
+	}
+	b, err := board.Find(checkBoard)
+	if err != nil {
+		fmt.Fprintln(c.w, color.Warnf("\nDetectability audit skipped: %v", err))
+		return
+	}
+
+	findings := scrub.Audit(c.cs, b)
+	fmt.Fprintf(c.w, "\n%s (donor on %s)\n", color.Header("Detectability Audit"), color.Bold(b.Name))
+	if len(findings) == 0 {
+		fmt.Fprintln(c.w, color.OK("No residual enumeration tells detected"))
+		return
+	}
+
+	for _, f := range findings {
+		var sev string
+		switch f.Severity {
+		case scrub.SevHigh:
+			sev = color.Failf("HIGH  ")
+		case scrub.SevMedium:
+			sev = color.Warnf("MEDIUM")
+		default:
+			sev = color.Dim("LOW   ")
+		}
+		fmt.Fprintf(c.w, "  [%s] %s\n", sev, f.Title)
+		fmt.Fprintln(c.w, color.Dim("           "+f.Detail))
+		if f.Hint != "" {
+			fmt.Fprintln(c.w, color.Dim("           -> "+f.Hint))
+		}
+	}
+
+	high, medium, low := scrub.AuditSummary(findings)
+	fmt.Fprintf(c.w, "\n%s\n", color.Dim(fmt.Sprintf(
+		"%d HIGH, %d MEDIUM, %d LOW  -  HIGH tells are board-physics limits; choose a closer donor/board to reduce them.",
+		high, medium, low)))
+}
+
 func init() {
 	checkCmd.Flags().StringVar(&checkDevice, "bdf", "", "device BDF address to check (required)")
 	checkCmd.Flags().BoolVar(&checkForce, "force", false, "ignore donor BAR > board BRAM check")
+	checkCmd.Flags().StringVar(&checkBoard, "board", "", "target board for the detectability audit (optional)")
 	_ = checkCmd.MarkFlagRequired("bdf")
 	rootCmd.AddCommand(checkCmd)
 }
