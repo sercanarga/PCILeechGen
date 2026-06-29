@@ -82,7 +82,7 @@ func buildBAR0Config(bar0Size int, ctx *donor.DeviceContext) bar0Config {
 			if raw != 0 {
 				is64 = (raw & 0x06) == 0x04
 			} else {
-				p := devclass.ProfileForClass(ctx.Device.ClassCode)
+				p := devclass.ProfileForDevice(ctx.Device.ClassCode, ctx.Device.VendorID, ctx.Device.DeviceID)
 				if p != nil {
 					is64 = p.Uses64BitBAR
 				}

@@ -11,6 +11,8 @@ type ScrubContext struct {
 	Caps      []pci.Capability
 	ExtCaps   []pci.ExtCapability
 	ClassCode uint32
+	VendorID  uint16
+	DeviceID  uint16
 	Bar0Size  int
 }
 

@@ -214,6 +214,28 @@ func TestMSIXPlacement_LargeBAR_NoClamp(t *testing.T) {
 	}
 }
 
+// TestMSIXPlacement_RAID checks a MegaRAID-class donor (generic placement,
+// 64 KiB register BAR, ~97 reply-post vectors) lands a valid, in-range,
+// non-colliding MSI-X table — the geometry path #2 relies on.
+func TestMSIXPlacement_RAID(t *testing.T) {
+	const bar0, vectors = 0x10000, 97
+	tableOff, pbaOff, _ := MSIXPlacement(bar0, vectors, 0, 0)
+	if tableOff < 0x40 {
+		t.Errorf("RAID tableOff 0x%X too low", tableOff)
+	}
+	tableBytes := uint32(vectors * 16)
+	pbaBytes := uint32((vectors + 63) / 64 * 8)
+	if tableOff+tableBytes > uint32(bar0) {
+		t.Errorf("RAID MSI-X table overruns BAR: off 0x%X + 0x%X > 0x%X", tableOff, tableBytes, bar0)
+	}
+	if pbaOff < tableOff+tableBytes {
+		t.Errorf("RAID PBA 0x%X overlaps table end 0x%X", pbaOff, tableOff+tableBytes)
+	}
+	if pbaOff+pbaBytes > uint32(bar0) {
+		t.Errorf("RAID PBA overruns BAR: off 0x%X + 0x%X > 0x%X", pbaOff, pbaBytes, bar0)
+	}
+}
+
 // TestLargeBAR_DemandAndCapped (local to firmware pkg to avoid import cycles).
 // Exercises DonorBAR0Demand + CappedBAR0Size (the core calls underlying
 // cmd/pcileechgen check/build/validate large-BAR >4k donor vs board BRAM gates,
