@@ -96,5 +96,5 @@ func LiveTrace(bdf string, duration time.Duration) (*TraceResult, error) {
 
 // parseMMIOTraceLine parses one mmiotrace line (R/W <width> <ts> <addr> <val>).
 func parseMMIOTraceLine(line string) (AccessRecord, bool) {
-	return parseTextTraceLine(line, 0)
+	return parseTextTraceLine(line, 0, TraceFormatLive)
 }

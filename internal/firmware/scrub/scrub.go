@@ -166,6 +166,8 @@ func ScrubConfigSpaceWithOverlay(cs *pci.ConfigSpace, b *board.Board, bar0Size .
 		Caps:      pci.ParseCapabilities(scrubbed),
 		ExtCaps:   pci.ParseExtCapabilities(scrubbed),
 		ClassCode: cs.ReadU32(0x08) >> 8,
+		VendorID:  cs.VendorID(),
+		DeviceID:  cs.DeviceID(),
 		Bar0Size:  bar0,
 	}
 
@@ -211,7 +213,7 @@ func clampBARsToFPGA(cs *pci.ConfigSpace, om *overlay.Map, ctx *ScrubContext) {
 	if bar0 == 0 || (bar0&0x01 != 0) {
 		createVal := mask
 		if ctx != nil {
-			if p := devclass.ProfileForClass(ctx.ClassCode); p != nil && p.Uses64BitBAR {
+			if p := devclass.ProfileForDevice(ctx.ClassCode, ctx.VendorID, ctx.DeviceID); p != nil && p.Uses64BitBAR {
 				createVal = mask | 0x04
 				om.WriteU32(0x14, 0xFFFFFFFF, fmt.Sprintf("create BAR1 upper for 64-bit BAR0 %dKB", bar0KB))
 			}

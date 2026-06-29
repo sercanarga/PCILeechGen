@@ -95,6 +95,30 @@ func TestIdentifyController_NN(t *testing.T) {
 	}
 }
 
+func TestIdentifyController_AdvertisesOnlyImplementedAdminCommands(t *testing.T) {
+	id := BuildIdentifyData(sampleIDs(), nil)
+	oacs := binary.LittleEndian.Uint16(id.Controller[0x100:])
+	if oacs != 0x0002 {
+		t.Errorf("OACS: got 0x%04X, want only Format NVM support", oacs)
+	}
+}
+
+func TestIdentifyController_AdvertisesImplementedNVMCommands(t *testing.T) {
+	id := BuildIdentifyData(sampleIDs(), nil)
+	oncs := binary.LittleEndian.Uint16(id.Controller[0x208:])
+	if oncs != 0x000C {
+		t.Errorf("ONCS: got 0x%04X, want Dataset Management and Write Zeroes only", oncs)
+	}
+}
+
+func TestIdentifyController_AdvertisesConservativeLogPageAttributes(t *testing.T) {
+	id := BuildIdentifyData(sampleIDs(), nil)
+	lpa := id.Controller[0x105]
+	if lpa != 0x00 {
+		t.Errorf("LPA: got 0x%02X, want no optional log-page attributes", lpa)
+	}
+}
+
 func TestIdentifyController_Version(t *testing.T) {
 	// nil BAR data -> default NVMe 1.4
 	id := BuildIdentifyData(sampleIDs(), nil)

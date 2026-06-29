@@ -96,6 +96,28 @@ func (c *SVGeneratorConfig) NVMeCQ1DoorbellOffset() uint32 {
 	return dbBase + 3*stride
 }
 
+func (c *SVGeneratorConfig) NVMeDiagBaseOffset() uint32 {
+	stride := uint32(4) << c.NVMeDoorbellStride
+	dbBase := uint32(board.DefaultBRAMSize)
+	return dbBase + 4*stride
+}
+
+func (c *SVGeneratorConfig) NVMeDiagLastCommandOffset() uint32 {
+	return c.NVMeDiagBaseOffset() + 0x4
+}
+
+func (c *SVGeneratorConfig) NVMeDiagLastNSIDOffset() uint32 {
+	return c.NVMeDiagBaseOffset() + 0x8
+}
+
+func (c *SVGeneratorConfig) NVMeDiagLastCDW10Offset() uint32 {
+	return c.NVMeDiagBaseOffset() + 0xC
+}
+
+func (c *SVGeneratorConfig) NVMeDiagQueueStateOffset() uint32 {
+	return c.NVMeDiagBaseOffset() + 0x10
+}
+
 func renderTemplate(name string, data any) (string, error) {
 	tmplStr := mustReadTemplate(name + ".sv.tmpl")
 	tmpl, err := template.New(name).Funcs(svFuncMap()).Parse(tmplStr)

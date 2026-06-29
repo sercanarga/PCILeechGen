@@ -459,7 +459,7 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 		}(),
 	)
 
-	strategy := devclass.StrategyForClassAndVendor(ctx.Device.ClassCode, ids.VendorID)
+	strategy := devclass.StrategyForDevice(ctx.Device.ClassCode, ids.VendorID, ids.DeviceID)
 	devClass := ""
 	if strategy != nil {
 		devClass = strategy.DeviceClass()
