@@ -256,3 +256,31 @@ func TestLargeBAR_DemandAndCapped(t *testing.T) {
 	}
 	t.Logf("LargeBAR demand/capped OK: 16k donor on 4k board demand=16384 capped=4096; fits on larger; artifacts size always <=BRAM")
 }
+
+func TestDonorMSIXPlacement(t *testing.T) {
+	const nvme = uint32(0x010802)
+	// donor table in BAR0, fits with room for donor PBA -> kept verbatim
+	if tbl, pba, ok := DonorMSIXPlacement(0x4000, 16, 0, 0x3000, 0, 0x3800, nvme, 0); !ok || tbl != 0x3000 || pba != 0x3800 {
+		t.Errorf("fit case: got tbl=0x%X pba=0x%X ok=%v, want 0x3000/0x3800/true", tbl, pba, ok)
+	}
+	// donor PBA doesn't fit -> PBA packed right after the table, table still donor's
+	if tbl, pba, ok := DonorMSIXPlacement(0x3200, 16, 0, 0x3000, 0, 0x3800, nvme, 0); !ok || tbl != 0x3000 || pba != 0x3100 {
+		t.Errorf("packed-PBA case: got tbl=0x%X pba=0x%X ok=%v, want 0x3000/0x3100/true", tbl, pba, ok)
+	}
+	// table doesn't fit the BAR -> relocate (ok=false)
+	if _, _, ok := DonorMSIXPlacement(0x2000, 16, 0, 0x3000, 0, 0x3800, nvme, 0); ok {
+		t.Error("table beyond BAR should not be donor-faithful")
+	}
+	// table in a different BAR (BIR != 0) -> can't match, relocate
+	if _, _, ok := DonorMSIXPlacement(0x4000, 16, 2, 0x3000, 2, 0x3800, nvme, 0); ok {
+		t.Error("BIR!=0 should not be donor-faithful")
+	}
+	// donor table overlapping the NVMe doorbell window -> relocate
+	if _, _, ok := DonorMSIXPlacement(0x4000, 16, 0, 0x1000, 0, 0x1800, nvme, 0); ok {
+		t.Error("table over NVMe doorbell window should not be donor-faithful")
+	}
+	// non-NVMe device: same doorbell offset is fine (no doorbell window)
+	if _, _, ok := DonorMSIXPlacement(0x4000, 16, 0, 0x1000, 0, 0x1800, 0x020000, 0); !ok {
+		t.Error("non-NVMe at 0x1000 should be donor-faithful")
+	}
+}

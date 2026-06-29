@@ -243,7 +243,16 @@ func relocateMSIXToBRAM(cs *pci.ConfigSpace, om *overlay.Map, caps []pci.Capabil
 		dstrd := uint32(0)
 		var newTableOffset, newPBAOffset uint32
 		if ctx != nil {
-			newTableOffset, newPBAOffset, _ = firmware.MSIXPlacement(ctx.Bar0Size, info.TableSize, ctx.ClassCode, dstrd)
+			// Prefer the donor's own BAR0 table/PBA offsets when they fit, so the
+			// emulated MSI-X table sits exactly where the donor's does instead of
+			// a synthesized offset (which is both a cross-build signature and a
+			// donor mismatch). Relocate only when the donor table isn't in BAR0
+			// or won't fit.
+			if dt, dp, ok := firmware.DonorMSIXPlacement(ctx.Bar0Size, info.TableSize, info.TableBIR, info.TableOffset, info.PBABIR, info.PBAOffset, ctx.ClassCode, dstrd); ok {
+				newTableOffset, newPBAOffset = dt, dp
+			} else {
+				newTableOffset, newPBAOffset, _ = firmware.MSIXPlacement(ctx.Bar0Size, info.TableSize, ctx.ClassCode, dstrd)
+			}
 		} else {
 			newTableOffset = uint32(board.DefaultBRAMSize)
 			newPBAOffset = newTableOffset + uint32(tableSize)

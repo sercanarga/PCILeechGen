@@ -142,6 +142,61 @@ func CappedBAR0Size(ctx *donor.DeviceContext, b *board.Board, msixTableSize int)
 	return demand
 }
 
+// rangesOverlap reports whether [a, a+alen) and [b, b+blen) intersect.
+func rangesOverlap(a, alen, b, blen uint32) bool {
+	return a < b+blen && b < a+alen
+}
+
+// msixRegionFits reports whether an MSI-X region [off, off+size) is a valid
+// placement in the emulated BAR0: inside the BAR, past the early header-mirror
+// area, and (for NVMe) clear of the doorbell window at DefaultBRAMSize.
+func msixRegionFits(off, size, bar0Size, class, dstrd uint32) bool {
+	if size == 0 || off < 0x40 || off+size > bar0Size {
+		return false
+	}
+	if class>>8 == 0x0108 { // NVMe: keep clear of the SQ/CQ doorbell window
+		stride := uint32(4) << dstrd
+		if rangesOverlap(off, size, uint32(board.DefaultBRAMSize), 2*stride) {
+			return false
+		}
+	}
+	return true
+}
+
+// DonorMSIXPlacement returns the donor's own MSI-X table/PBA offsets when its
+// table lives in BAR0 (BIR 0) and both regions fit the emulated BAR0 without
+// hitting the NVMe doorbell window, so the emulated layout matches the donor
+// exactly instead of a synthesized BRAM offset. ok=false means relocation is
+// required - fall back to MSIXPlacement. class is the full 24-bit class code.
+func DonorMSIXPlacement(bar0Size, msixTableSize, tableBIR int, donorTableOff uint32, pbaBIR int, donorPBAOff uint32, class, dstrd uint32) (tableOff, pbaOff uint32, ok bool) {
+	if tableBIR != 0 || msixTableSize <= 0 || bar0Size <= 0 {
+		return 0, 0, false
+	}
+	tableBytes := uint32(msixTableSize) * 16
+	pbaBytes := (uint32(msixTableSize) + 63) / 64 * 8
+	if pbaBytes < 8 {
+		pbaBytes = 8
+	}
+	bar := uint32(bar0Size)
+	t := donorTableOff &^ 0x7
+	if !msixRegionFits(t, tableBytes, bar, class, dstrd) {
+		return 0, 0, false
+	}
+	// Prefer the donor PBA offset when it is also in BAR0 and clears the table;
+	// otherwise pack the PBA immediately after the table.
+	p := (t + tableBytes + 7) &^ 7
+	if pbaBIR == 0 {
+		dp := donorPBAOff &^ 0x7
+		if msixRegionFits(dp, pbaBytes, bar, class, dstrd) && !rangesOverlap(t, tableBytes, dp, pbaBytes) {
+			p = dp
+		}
+	}
+	if p+pbaBytes > bar || rangesOverlap(t, tableBytes, p, pbaBytes) {
+		return 0, 0, false
+	}
+	return t, p, true
+}
+
 func MSIXPlacement(bar0Size int, msixTableSize int, class uint32, dstrd uint32) (uint32, uint32, uint32) {
 	tableBytes := msixTableSize * 16
 	isNVMe := class>>8 == 0x0108

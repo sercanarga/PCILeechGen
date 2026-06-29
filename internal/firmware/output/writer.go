@@ -516,22 +516,21 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 	}
 
 	if ctx.MSIXData != nil && ctx.MSIXData.TableSize > 0 {
-		class := uint32(0)
-		if devClass == devclass.ClassNVMe {
-			class = 0x0108
+		// Single source of truth: the scrubber already wrote the final table/PBA
+		// offsets into the shadow config space (donor-faithful when they fit,
+		// otherwise relocated). Read them back so the RTL parameters match the
+		// config space - and the COE generated from it - exactly. Recomputing
+		// here risked a config-space/RTL desync (different class/dstrd inputs).
+		tableOff, pbaOffset := uint32(board.DefaultBRAMSize), uint32(board.DefaultBRAMSize)+uint32(ctx.MSIXData.TableSize*16)
+		if m := pci.ParseMSIXCap(scrubbedCS); m != nil {
+			tableOff, pbaOffset = m.TableOffset, m.PBAOffset
 		}
-		dstrd := cfg.NVMeDoorbellStride
-		tableOff, pbaOffset, _ := firmware.MSIXPlacement(cfg.Bar0Size, ctx.MSIXData.TableSize, class, dstrd)
 		cfg.MSIXConfig = &svgen.MSIXConfig{
 			NumVectors:  ctx.MSIXData.TableSize,
 			TableOffset: tableOff,
 			PBAOffset:   pbaOffset,
 		}
 		cfg.HasMSIX = true
-		if m := pci.ParseMSIXCap(scrubbedCS); m != nil {
-			scrubbedCS.WriteU32(m.CapOffset+4, tableOff&0xFFFFFFF8)
-			scrubbedCS.WriteU32(m.CapOffset+8, pbaOffset&0xFFFFFFF8)
-		}
 	}
 
 	// Extract MSI capability for interrupt generation.
