@@ -58,11 +58,14 @@ func GenerateConfigSpaceCOE(cs *pci.ConfigSpace) string {
 func GenerateWritemaskCOE(cs *pci.ConfigSpace) string {
 	masks := make([]uint32, shadowCfgSpaceWords)
 
-	// standard config space capabilities (0x40-0xFF): fully writable.
-	// the writemask only controls what goes into shadow BRAM; the Xilinx
-	// IP core processes config writes independently. locking fields here
-	// would create a BRAM/IP-core mismatch (e.g. BRAM shows D0 while IP
-	// core is in D3), confusing the OS and causing completion timeouts.
+	// Standard capability window (0x40-0xFF): writable by default; the loop
+	// below locks the individual read-only fields. The shadow is read-modify-
+	// write (wr_dina = mask ? wr_data : rd_data), so a writable bit stores the
+	// host value and reads it back, while a locked bit ignores the write and
+	// returns the baked value - exactly real-HW RW vs RO semantics. Control
+	// bits a driver writes and reads back (e.g. PMCSR power state, MSI/MSI-X
+	// enable, PCIe Device/Link Control) MUST stay writable, or the OS sees its
+	// write not take and stalls; only genuinely read-only fields are locked.
 	for i := 0x40 / 4; i < 0x100/4; i++ {
 		masks[i] = 0xFFFFFFFF
 	}
@@ -82,22 +85,42 @@ func GenerateWritemaskCOE(cs *pci.ConfigSpace) string {
 			continue
 		}
 		capLen := len(cap.Data)
-		lockRO := func(rel int) { // lock the DWORD at cap.Offset+rel if inside the cap
+		inCap := func(rel int) (int, bool) {
 			if rel+4 > capLen {
-				return
+				return 0, false
 			}
-			if dw := (cap.Offset + rel) / 4; dw >= 0x40/4 && dw < 0x100/4 {
+			dw := (cap.Offset + rel) / 4
+			return dw, dw >= 0x40/4 && dw < 0x100/4
+		}
+		lockRO := func(rel int) { // whole DWORD at cap.Offset+rel read-only
+			if dw, ok := inCap(rel); ok {
 				masks[dw] = 0x00000000
+			}
+		}
+		lockStatusHalf := func(rel int) { // upper 16 bits RO (status), lower 16 (control) stay RW
+			if dw, ok := inCap(rel); ok {
+				masks[dw] &^= 0xFFFF0000
 			}
 		}
 		masks[hdr] &^= 0x0000FFFF // ID + next pointer are always read-only
 		switch cap.ID {
 		case pci.CapIDPowerManagement:
 			masks[hdr] = 0x00000000 // header DWORD also holds PMC (RO); PMCSR at +4 stays writable
+		case pci.CapIDMSI:
+			// Message Control (upper 16): only MSI Enable (bit0) and Multiple
+			// Message Enable (bits 6:4) are writable; the rest (64-bit/PVM
+			// capable, Multiple Message Capable) is read-only. Address/Data
+			// registers at +4 onward stay writable for the OS to program.
+			masks[hdr] = 0x00710000
 		case pci.CapIDPCIExpress:
 			masks[hdr] = 0x00000000 // header DWORD holds the PCIe Capabilities register (RO)
-			lockRO(0x04)            // Device Capabilities (RO); DevCtl/Sta at +0x08 stay writable
-			lockRO(0x0C)            // Link Capabilities (RO); LinkCtl/Sta at +0x10 stay writable
+			lockRO(0x04)            // Device Capabilities (RO)
+			lockStatusHalf(0x08)    // Device Status (RO/RW1C); Device Control stays RW
+			lockRO(0x0C)            // Link Capabilities (RO)
+			lockStatusHalf(0x10)    // Link Status (RO/RW1C); Link Control stays RW
+			lockStatusHalf(0x18)    // Slot Status (RO/RW1C); Slot Control stays RW
+			lockStatusHalf(0x1C)    // Root Capabilities (RO, upper); Root Control stays RW
+			lockRO(0x20)            // Root Status (RO/RW1C)
 			lockRO(0x24)            // Device Capabilities 2 (RO)
 			lockRO(0x2C)            // Link Capabilities 2 (RO)
 		case pci.CapIDMSIX:
@@ -112,7 +135,7 @@ func GenerateWritemaskCOE(cs *pci.ConfigSpace) string {
 
 	// header type 0 registers (DWORD index = byte offset / 4)
 	masks[0] = 0x00000000 // 0x00: VID:DID (read-only identity)
-	masks[1] = 0xFFFFFFFF // 0x04: Command:Status (OS needs full control)
+	masks[1] = 0x0000FFFF // 0x04: Command (RW); Status (upper 16) is RO/RW1C - writes ignored like real HW
 	masks[2] = 0x00000000 // 0x08: RevisionID:ClassCode (read-only identity)
 	masks[3] = 0xFF00FFFF // 0x0C: CLS+LT writable, HeaderType RO, BIST writable
 
