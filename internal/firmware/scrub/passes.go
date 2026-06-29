@@ -89,16 +89,22 @@ func (p *scrubPMCapPass) Apply(cs *pci.ConfigSpace, b *board.Board, om *overlay.
 		// advertising PME from D3hot/D3cold tells Windows the device can
 		// wake from D3, triggering aggressive PM transitions (~5 min idle).
 		// the FPGA IP core can't handle D3 and stops processing TLPs.
-		pmc := cs.ReadU16(cap.Offset + 2)
-		pmc &= 0x01FF // clear bits [15:11] = PME_Support, bits [10:9] = D1/D2 Support
-		om.WriteU16(cap.Offset+2, pmc, "PM: clear PME_Support + D1/D2 Support (prevent D3/D2/D1 transitions)")
+		//
+		// EmulatePM keeps the donor's PME_Support + D1/D2 advertised so config
+		// readback matches the donor; the IP core is still pinned to D0 for DMA
+		// stability (PMCSR power state is writable + reads back, but cosmetic).
+		if !ctx.EmulatePM {
+			pmc := cs.ReadU16(cap.Offset + 2)
+			pmc &= 0x01FF // clear bits [15:11] = PME_Support, bits [10:9] = D1/D2 Support
+			om.WriteU16(cap.Offset+2, pmc, "PM: clear PME_Support + D1/D2 Support (prevent D3/D2/D1 transitions)")
+		}
 
 		// PMCSR (cap+4): force D0, NoSoftReset, clear PME_Status + PME_Enable
 		pmcsr := cs.ReadU16(cap.Offset + 4)
-		pmcsr &= 0xFFFC  // bits [1:0] = 00 (D0)
-		pmcsr &= ^uint16(1 << 8)  // bit 8 = PME_Enable off
-		pmcsr &= 0x7FFF  // bit 15 = PME_Status clear
-		pmcsr |= 0x0008  // bit 3 = NoSoftReset
+		pmcsr &= 0xFFFC          // bits [1:0] = 00 (D0)
+		pmcsr &= ^uint16(1 << 8) // bit 8 = PME_Enable off
+		pmcsr &= 0x7FFF          // bit 15 = PME_Status clear
+		pmcsr |= 0x0008          // bit 3 = NoSoftReset
 		om.WriteU16(cap.Offset+4, pmcsr, "PM: D0, NoSoftReset, PME disabled")
 	}
 }
@@ -216,8 +222,8 @@ func (p *scrubASPMPass) Apply(cs *pci.ConfigSpace, b *board.Board, om *overlay.M
 		// bits 1:0 = ASPM enable, bit 8 = Clock PM enable
 		if cap.Offset+0x10+2 <= pci.ConfigSpaceLegacySize {
 			linkCtl := cs.ReadU16(cap.Offset + 0x10)
-			linkCtl &= 0xFFFC           // bits 1:0 = ASPM enable
-			linkCtl &= ^uint16(1 << 8)  // bit 8 = Enable Clock PM
+			linkCtl &= 0xFFFC          // bits 1:0 = ASPM enable
+			linkCtl &= ^uint16(1 << 8) // bit 8 = Enable Clock PM
 			om.WriteU16(cap.Offset+0x10, linkCtl, "disable ASPM L0s/L1 + Clock PM")
 		}
 		// clear LTR Mechanism Enable in Device Control 2 (cap+0x28)

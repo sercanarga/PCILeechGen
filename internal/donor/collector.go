@@ -22,6 +22,15 @@ const (
 // Collector gathers donor PCI data from sysfs.
 type Collector struct {
 	sysfs *SysfsReader
+	// NoVFIO restricts collection to sysfs only (no vfio-pci bind). Lets a donor
+	// be captured on hosts without IOMMU/VFIO or where the operator won't unbind
+	// the device. Config space + BAR snapshot still work via sysfs; BAR probing
+	// may be skipped if the resource isn't writable.
+	NoVFIO bool
+	// CaptureOptionROM reads the donor's expansion ROM (sysfs /rom) so it can be
+	// served from the BAR6 responder. Off by default - enabling the ROM decode
+	// briefly touches the device.
+	CaptureOptionROM bool
 }
 
 func NewCollector() *Collector {
@@ -69,6 +78,15 @@ func (c *Collector) Collect(bdf pci.BDF) (*DeviceContext, error) {
 	ctx.Capabilities = pci.ParseCapabilities(cs)
 	ctx.ExtCapabilities = pci.ParseExtCapabilities(cs)
 	ctx.MSIXData = c.collectMSIXData(cs, ctx.BARContents)
+
+	if c.CaptureOptionROM {
+		if rom, romErr := c.sysfs.ReadOptionROM(bdf, maxBARReadSize); romErr != nil {
+			slog.Warn("option ROM read failed", "bdf", bdf, "error", romErr)
+		} else if len(rom) > 0 {
+			ctx.OptionROM = rom
+			slog.Info("captured donor option ROM", "bdf", bdf, "bytes", len(rom))
+		}
+	}
 
 	if err := c.validateBARContents(ctx); err != nil {
 		return nil, err
@@ -328,6 +346,9 @@ func (c *Collector) tryNativeDriverRebind(bdf pci.BDF, bars []pci.BAR, current m
 func (c *Collector) collectConfigSpace(bdf pci.BDF) (*pci.ConfigSpace, error) {
 	cs, err := c.sysfs.ReadConfigSpace(bdf)
 	if err != nil {
+		if c.NoVFIO {
+			return nil, fmt.Errorf("config space read failed for %s via sysfs and --no-vfio set: %w", bdf, err)
+		}
 		slog.Info("sysfs config read failed, trying VFIO", "error", err)
 		if bindErr := vfio.BindToVFIO(bdf.String()); bindErr != nil {
 			return nil, fmt.Errorf("config space read failed for %s (sysfs: %w, VFIO: %w)", bdf, err, bindErr)

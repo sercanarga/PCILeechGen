@@ -109,9 +109,9 @@ func Audit(donor *pci.ConfigSpace, b *board.Board) []Finding {
 	if rom := donor.ReadU32(0x30); rom&0xFFFFF801 != 0 {
 		f = append(f, Finding{
 			Severity: SevMedium,
-			Title:    "Expansion ROM present, not emulated",
-			Detail:   "donor implements an Expansion ROM BAR (0x30); the FPGA does not serve ROM content, so reads to the ROM window fail",
-			Hint:     "pick a donor without an option ROM, or accept the tell (full ROM serving needs RTL)",
+			Title:    "Expansion ROM present",
+			Detail:   "donor implements an Expansion ROM BAR (0x30); reads to the ROM window must return the donor image or the absence is a tell",
+			Hint:     "build with --option-rom to capture + serve it via BAR6 (enables the IP expansion-ROM BAR)",
 		})
 	}
 

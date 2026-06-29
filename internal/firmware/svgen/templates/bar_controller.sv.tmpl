@@ -777,10 +777,10 @@ module pcileech_tlps128_bar_controller(
         .intr_req       ( bar2_intr_req                 )
     );
 
-    // BAR3-6: unimplemented
+    // BAR3-5 unimplemented{{ if .OptionROMHexFile }}; BAR6 serves the donor expansion ROM{{ else }}; BAR6 unimplemented{{ end }}
     genvar gi;
     generate
-        for (gi = 3; gi < 7; gi = gi + 1) begin : gen_bar_none
+        for (gi = 3; gi < {{ if .OptionROMHexFile }}6{{ else }}7{{ end }}; gi = gi + 1) begin : gen_bar_none
             pcileech_bar_impl_none i_bar_none(
                 .rst            ( rst                           ),
                 .clk            ( clk                           ),
@@ -797,6 +797,23 @@ module pcileech_tlps128_bar_controller(
             );
         end
     endgenerate
+{{ if .OptionROMHexFile }}
+    // BAR6: expansion ROM responder (serves the donor option ROM image)
+    pcileech_bar_impl_optrom i_bar6_optrom(
+        .rst            ( rst                           ),
+        .clk            ( clk                           ),
+        .wr_addr        ( wr_addr                       ),
+        .wr_be          ( wr_be                         ),
+        .wr_data        ( wr_data                       ),
+        .wr_valid       ( wr_valid && wr_bar[6]         ),
+        .rd_req_ctx     ( rd_req_ctx                    ),
+        .rd_req_addr    ( rd_req_addr                   ),
+        .rd_req_valid   ( rd_req_valid && rd_req_bar[6] ),
+        .rd_rsp_ctx     ( bar_rsp_ctx[6]                ),
+        .rd_rsp_data    ( bar_rsp_data[6]               ),
+        .rd_rsp_valid   ( bar_rsp_valid[6]              )
+    );
+{{ end }}
 
     assign intr_req = bar2_intr_req{{ if eq .DeviceClass "audio" }} | hda_intr_req{{ end }}{{ if eq .DeviceClass "nvme" }} | nvme_msix_trigger{{ end }};
 

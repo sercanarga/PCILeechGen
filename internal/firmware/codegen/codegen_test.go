@@ -166,3 +166,25 @@ func TestGenerateBarInitHex(t *testing.T) {
 		t.Errorf("word2 (past snapshot) = %s, want 00000000 (zero-padded)", words[2])
 	}
 }
+
+func TestGenerateOptionROMHex(t *testing.T) {
+	rom := []byte{0x55, 0xAA, 0x00, 0x00, 0x11, 0x22, 0x33, 0x44}
+	var words []string
+	for _, l := range strings.Split(strings.TrimSpace(GenerateOptionROMHex(rom, 2048)), "\n") {
+		if !strings.HasPrefix(l, "//") {
+			words = append(words, l)
+		}
+	}
+	if len(words) != 512 {
+		t.Fatalf("want 512 words, got %d", len(words))
+	}
+	if words[0] != "0000AA55" {
+		t.Errorf("word0 = %s, want 0000AA55", words[0])
+	}
+	if words[1] != "44332211" {
+		t.Errorf("word1 = %s, want 44332211", words[1])
+	}
+	if words[2] != "00000000" {
+		t.Errorf("word2 = %s, want 00000000 (zero-padded)", words[2])
+	}
+}

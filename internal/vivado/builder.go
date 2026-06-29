@@ -23,6 +23,7 @@ type BuildOptions struct {
 	SkipVivado bool
 	StockBar   bool
 	Force      bool
+	EmulatePM  bool // keep donor PM capability faithful (cosmetic D-state)
 	// TimingHistogram, when set, drives the latency emulator with measured donor
 	// timing (from a captured MMIO trace) instead of synthetic defaults.
 	TimingHistogram *behavior.TimingHistogram
@@ -64,6 +65,7 @@ func (b *Builder) Build(ctx *donor.DeviceContext) error {
 	ow := fwout.NewOutputWriter(b.opts.OutputDir, b.opts.LibDir, b.opts.Jobs, b.opts.Timeout)
 	ow.StockBar = b.opts.StockBar
 	ow.Force = b.opts.Force
+	ow.EmulatePM = b.opts.EmulatePM
 	ow.TimingHistogram = b.opts.TimingHistogram
 	if err := ow.WriteAll(ctx, b.board); err != nil {
 		return fmt.Errorf("artifact generation failed: %w", err)

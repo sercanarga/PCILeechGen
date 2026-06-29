@@ -33,6 +33,9 @@ type OutputWriter struct {
 	Timeout   int
 	StockBar  bool
 	Force     bool
+	// EmulatePM keeps the donor's Power Management capability faithful instead
+	// of stripping it (cosmetic D-state; IP core stays D0 for DMA stability).
+	EmulatePM bool
 	// TimingHistogram, when set from a captured donor MMIO trace, drives the
 	// TLP latency emulator with measured timing instead of synthetic defaults.
 	TimingHistogram *behavior.TimingHistogram
@@ -121,7 +124,8 @@ func (ow *OutputWriter) scrubAndVary(ctx *donor.DeviceContext, b *board.Board, i
 		msixTableSize = ctx.MSIXData.TableSize
 	}
 	bar0Size := firmware.CappedBAR0Size(ctx, b, msixTableSize)
-	scrubbedCS, overlayMap := scrub.ScrubConfigSpaceWithOverlay(ctx.ConfigSpace, b, bar0Size)
+	scrubbedCS, overlayMap := scrub.ScrubConfigSpaceWithOptions(ctx.ConfigSpace, b,
+		scrub.ScrubConfigOptions{EmulatePM: ow.EmulatePM}, bar0Size)
 	if overlayMap.Count() > 0 {
 		slog.Info("config space scrubbed", "modifications", overlayMap.Count())
 	}
@@ -389,6 +393,21 @@ func (ow *OutputWriter) writeSVModules(ctx *donor.DeviceContext, scrubbedCS *pci
 		}
 	}
 
+	// Emit the expansion ROM image + BAR6 responder when an option ROM was captured.
+	if cfg.OptionROMHexFile != "" {
+		if err := ow.writeFile(cfg.OptionROMHexFile,
+			codegen.GenerateOptionROMHex(ctx.OptionROM, cfg.OptionROMSize)); err != nil {
+			return err
+		}
+		romSV, err := svgen.GenerateOptionROMSV(cfg)
+		if err != nil {
+			return fmt.Errorf("generating pcileech_bar_impl_optrom.sv: %w", err)
+		}
+		if err := ow.writeFile("pcileech_bar_impl_optrom.sv", romSV); err != nil {
+			return err
+		}
+	}
+
 	if err := ow.writeCoreSVArtifacts(cfg, scrubbedCS); err != nil {
 		return err
 	}
@@ -545,6 +564,15 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 	// the table region with snapshot data.
 	if cfg.BARModel == nil && cfg.MSIXConfig == nil && len(barData) > 0 {
 		cfg.BARInitHexFile = "pcileech_bar_init.hex"
+	}
+
+	// Expansion ROM: when the donor's option ROM was captured, serve it from the
+	// BAR6 responder so reads to the ROM window return the real image instead of
+	// nothing. Requires the IP's expansion ROM BAR to be enabled (patched into
+	// the .xci) so the root complex routes ROM reads to the device.
+	if len(ctx.OptionROM) > 0 {
+		cfg.OptionROMSize = firmware.OptionROMAperture(len(ctx.OptionROM))
+		cfg.OptionROMHexFile = "option_rom.hex"
 	}
 
 	bram := b.BRAMSizeOrDefault()

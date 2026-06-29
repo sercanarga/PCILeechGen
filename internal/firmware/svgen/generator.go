@@ -35,7 +35,9 @@ type SVGeneratorConfig struct {
 	NVMeIdentify       *nvme.IdentifyData // NVMe Identify Controller/Namespace data (nil = no responder)
 	NVMeDoorbellStride uint32             // CAP.DSTRD - doorbell stride (0 = 4B, default)
 	Bar0Size           int
-	BARInitHexFile     string             // generic BRAM fallback: $readmemh seed file ("" = zero-init only)
+	BARInitHexFile     string // generic BRAM fallback: $readmemh seed file ("" = zero-init only)
+	OptionROMHexFile   string // BAR6 expansion ROM responder: $readmemh seed ("" = no ROM served)
+	OptionROMSize      int    // expansion ROM aperture size in bytes (power of 2)
 }
 
 // DonorCapabilities summarizes parsed capabilities from donor config space.
@@ -152,6 +154,11 @@ func GenerateHDAMSISV(cfg *SVGeneratorConfig) (string, error) {
 // GenerateBarImplMSISV renders the MSI doorbell BAR implementation.
 func GenerateBarImplMSISV(cfg *SVGeneratorConfig) (string, error) {
 	return renderTemplate("bar_impl_msi", cfg)
+}
+
+// GenerateOptionROMSV renders the BAR6 expansion ROM responder.
+func GenerateOptionROMSV(cfg *SVGeneratorConfig) (string, error) {
+	return renderTemplate("bar_impl_optrom", cfg)
 }
 
 // svFuncMap provides hex formatting and arithmetic helpers for templates.

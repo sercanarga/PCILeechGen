@@ -36,6 +36,7 @@ type DeviceContext struct {
 	Capabilities    []pci.Capability    `json:"capabilities"`
 	ExtCapabilities []pci.ExtCapability `json:"ext_capabilities,omitempty"`
 	MSIXData        *MSIXData           `json:"msix_data,omitempty"`
+	OptionROM       []byte              `json:"-"` // donor expansion ROM image (nil = none)
 }
 
 // JSON wire format - config space as hex words, BARs as base64.
@@ -52,6 +53,7 @@ type deviceContextJSON struct {
 	Capabilities    []pci.Capability       `json:"capabilities"`
 	ExtCapabilities []pci.ExtCapability    `json:"ext_capabilities,omitempty"`
 	MSIXData        *MSIXData              `json:"msix_data,omitempty"`
+	OptionROM       string                 `json:"option_rom,omitempty"` // base64
 }
 
 func (dc *DeviceContext) MarshalJSON() ([]byte, error) {
@@ -79,6 +81,10 @@ func (dc *DeviceContext) MarshalJSON() ([]byte, error) {
 		for idx, data := range dc.BARContents {
 			j.BARContents[strconv.Itoa(idx)] = base64.StdEncoding.EncodeToString(data)
 		}
+	}
+
+	if len(dc.OptionROM) > 0 {
+		j.OptionROM = base64.StdEncoding.EncodeToString(dc.OptionROM)
 	}
 
 	if len(dc.BARProfiles) > 0 {
@@ -111,6 +117,14 @@ func (dc *DeviceContext) UnmarshalJSON(data []byte) error {
 	dc.Capabilities = j.Capabilities
 	dc.ExtCapabilities = j.ExtCapabilities
 	dc.MSIXData = j.MSIXData
+
+	if j.OptionROM != "" {
+		rom, err := base64.StdEncoding.DecodeString(j.OptionROM)
+		if err != nil {
+			return fmt.Errorf("failed to decode option ROM: %w", err)
+		}
+		dc.OptionROM = rom
+	}
 
 	// Reconstruct config space from hex words
 	if len(j.ConfigSpaceHex) > 0 {

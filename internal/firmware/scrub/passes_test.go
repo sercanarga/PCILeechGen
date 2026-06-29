@@ -194,6 +194,34 @@ func TestScrubPMCapPass_PreventsD3(t *testing.T) {
 	}
 }
 
+// With EmulatePM set, the donor's PME_Support / D-state bits must be preserved
+// (config readback matches the donor) instead of stripped.
+func TestScrubPMCapPass_EmulatePM(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceLegacySize
+	cs.WriteU16(0x06, 0x0010)
+	cs.WriteU8(0x34, 0x40)
+	cs.WriteU8(0x40, pci.CapIDPowerManagement)
+	cs.WriteU8(0x41, 0x00)
+	cs.WriteU16(0x42, 0xF803) // PMC: PME from D0..D3cold + D1/D2 support
+	cs.WriteU16(0x44, 0x0103) // PMCSR: D3, PME_Enable
+
+	ctx := ctxFor(cs)
+	ctx.EmulatePM = true
+	om := overlay.NewMap(cs)
+	(&scrubPMCapPass{}).Apply(cs, nil, om, ctx)
+
+	// PME_Support / D1/D2 bits preserved (donor-faithful)
+	if pmc := cs.ReadU16(0x42); pmc&0xFE00 != (0xF803 & 0xFE00) {
+		t.Errorf("EmulatePM: PMC PME_Support/D-state bits should be preserved, got 0x%04X", pmc)
+	}
+	// PMCSR still sanitized to D0 power-on + PME disabled, but power-state writable
+	pmcsr := cs.ReadU16(0x44)
+	if pmcsr&0x03 != 0 {
+		t.Errorf("EmulatePM: PMCSR should still power on in D0, got D%d", pmcsr&0x03)
+	}
+}
+
 func TestScrubAERPass(t *testing.T) {
 	cs := pci.NewConfigSpace()
 	cs.Size = pci.ConfigSpaceSize

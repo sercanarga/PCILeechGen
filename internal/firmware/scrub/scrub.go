@@ -147,6 +147,16 @@ func ScrubConfigSpace(cs *pci.ConfigSpace, b *board.Board, bar0Size ...int) *pci
 // ScrubConfigSpaceWithOverlay scrubs the config space and returns both the
 // scrubbed copy and an overlay map recording every change.
 func ScrubConfigSpaceWithOverlay(cs *pci.ConfigSpace, b *board.Board, bar0Size ...int) (*pci.ConfigSpace, *overlay.Map) {
+	return ScrubConfigSpaceWithOptions(cs, b, ScrubConfigOptions{}, bar0Size...)
+}
+
+// ScrubConfigOptions carries optional, non-default scrubbing behaviour.
+type ScrubConfigOptions struct {
+	EmulatePM bool // keep donor PM capability faithful instead of stripping it
+}
+
+// ScrubConfigSpaceWithOptions is ScrubConfigSpaceWithOverlay with extra knobs.
+func ScrubConfigSpaceWithOptions(cs *pci.ConfigSpace, b *board.Board, opts ScrubConfigOptions, bar0Size ...int) (*pci.ConfigSpace, *overlay.Map) {
 	scrubbed := cs.Clone()
 	om := overlay.NewMap(scrubbed)
 
@@ -167,6 +177,7 @@ func ScrubConfigSpaceWithOverlay(cs *pci.ConfigSpace, b *board.Board, bar0Size .
 		ExtCaps:   pci.ParseExtCapabilities(scrubbed),
 		ClassCode: cs.ReadU32(0x08) >> 8,
 		Bar0Size:  bar0,
+		EmulatePM: opts.EmulatePM,
 	}
 
 	for _, pass := range defaultPipeline() {

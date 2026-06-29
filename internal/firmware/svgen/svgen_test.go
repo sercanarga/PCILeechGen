@@ -407,7 +407,8 @@ func TestNVMeDoorbellOffsets(t *testing.T) {
 	sq0 := cfg.NVMeSQ0DoorbellOffset()
 	cq0 := cfg.NVMeCQ0DoorbellOffset()
 
-	d := uint32(0x1000); if sq0 != d {
+	d := uint32(0x1000)
+	if sq0 != d {
 		t.Errorf("SQ0 doorbell = 0x%X, want 0x1000", sq0)
 	}
 	if cq0 != 0x1004 {
@@ -418,7 +419,8 @@ func TestNVMeDoorbellOffsets(t *testing.T) {
 	cfg.NVMeDoorbellStride = 1
 	sq0 = cfg.NVMeSQ0DoorbellOffset()
 	cq0 = cfg.NVMeCQ0DoorbellOffset()
-	d = uint32(0x1000); if sq0 != d {
+	d = uint32(0x1000)
+	if sq0 != d {
 		t.Errorf("SQ0 doorbell (stride=1) = 0x%X, want 0x1000", sq0)
 	}
 	if cq0 != 0x1008 {
@@ -519,5 +521,24 @@ func TestBuildEntropyFromTime(t *testing.T) {
 
 	if e1 == 0 && e2 == 0 {
 		t.Error("BuildEntropyFromTime should produce non-zero values")
+	}
+}
+
+func TestGenerateOptionROMSV(t *testing.T) {
+	cfg := testConfig()
+	cfg.OptionROMHexFile = "option_rom.hex"
+	cfg.OptionROMSize = 4096
+	sv, err := GenerateOptionROMSV(cfg)
+	if err != nil {
+		t.Fatalf("GenerateOptionROMSV: %v", err)
+	}
+	if !strings.Contains(sv, `$readmemh("option_rom.hex", rom_mem)`) {
+		t.Error("optrom SV should $readmemh the option ROM image")
+	}
+	if !strings.Contains(sv, "ROM_SIZE = 4096") {
+		t.Error("optrom SV should carry the ROM aperture size")
+	}
+	if !strings.Contains(sv, "module pcileech_bar_impl_optrom") {
+		t.Error("optrom SV missing module")
 	}
 }

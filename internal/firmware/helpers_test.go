@@ -284,3 +284,13 @@ func TestDonorMSIXPlacement(t *testing.T) {
 		t.Error("non-NVMe at 0x1000 should be donor-faithful")
 	}
 }
+
+func TestOptionROMAperture(t *testing.T) {
+	for _, c := range []struct{ in, want int }{
+		{1, 2048}, {2048, 2048}, {2049, 4096}, {4096, 4096}, {60000, 65536}, {200000, 65536},
+	} {
+		if g := OptionROMAperture(c.in); g != c.want {
+			t.Errorf("OptionROMAperture(%d) = %d, want %d", c.in, g, c.want)
+		}
+	}
+}

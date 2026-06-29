@@ -142,6 +142,21 @@ func CappedBAR0Size(ctx *donor.DeviceContext, b *board.Board, msixTableSize int)
 	return demand
 }
 
+// OptionROMAperture rounds an option ROM size up to a power of two, with a 2KB
+// floor (PCIe expansion ROM minimum) and a 64KB cap. Shared by the RTL responder
+// aperture and the IP expansion-ROM size so the two always agree.
+func OptionROMAperture(n int) int {
+	const minSize, maxSize = 2048, 65536
+	size := minSize
+	for size < n && size < maxSize {
+		size <<= 1
+	}
+	if size > maxSize {
+		size = maxSize
+	}
+	return size
+}
+
 // rangesOverlap reports whether [a, a+alen) and [b, b+blen) intersect.
 func rangesOverlap(a, alen, b, blen uint32) bool {
 	return a < b+blen && b < a+alen

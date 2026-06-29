@@ -30,6 +30,9 @@ type buildFlags struct {
 	stockBar   bool
 	force      bool
 	mmioTrace  string
+	emulatePM  bool
+	noVFIO     bool
+	optionROM  bool
 }
 
 var buildOpts buildFlags
@@ -97,6 +100,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		SkipVivado:      buildOpts.skipVivado,
 		StockBar:        buildOpts.stockBar,
 		Force:           buildOpts.force,
+		EmulatePM:       buildOpts.emulatePM,
 		TimingHistogram: timing,
 	})
 
@@ -123,6 +127,8 @@ func loadDonorContext() (*donor.DeviceContext, error) {
 	slog.Info("collecting donor device data")
 
 	collector := donor.NewCollector()
+	collector.NoVFIO = buildOpts.noVFIO
+	collector.CaptureOptionROM = buildOpts.optionROM
 	ctx, err := collector.Collect(bdf)
 	if err != nil {
 		return nil, fmt.Errorf("device data collection failed: %w", err)
@@ -194,6 +200,9 @@ func init() {
 	buildCmd.Flags().BoolVar(&buildOpts.stockBar, "stock-bar", false, "use stock bar controller (diagnostic: skip custom SV modules)")
 	buildCmd.Flags().BoolVar(&buildOpts.force, "force", false, "ignore donor BAR > board BRAM check")
 	buildCmd.Flags().StringVar(&buildOpts.mmioTrace, "mmio-trace", "", "saved donor MMIO trace JSON (from `mmio-trace --output`) for measured TLP latency")
+	buildCmd.Flags().BoolVar(&buildOpts.emulatePM, "emulate-pm", false, "keep donor Power Management capability faithful (cosmetic D-state; IP core stays D0)")
+	buildCmd.Flags().BoolVar(&buildOpts.noVFIO, "no-vfio", false, "sysfs-only donor capture, no vfio-pci bind (for hosts without IOMMU/VFIO)")
+	buildCmd.Flags().BoolVar(&buildOpts.optionROM, "option-rom", false, "capture + serve the donor expansion ROM via BAR6 (needs IP expansion-ROM enable; see docs)")
 
 	_ = buildCmd.MarkFlagRequired("board")
 

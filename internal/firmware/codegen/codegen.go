@@ -226,6 +226,30 @@ func GenerateBarInitHex(barData []byte, sizeBytes int) string {
 	return sb.String()
 }
 
+// GenerateOptionROMHex outputs the donor expansion ROM image in $readmemh
+// format, one DWORD per line, sized to sizeBytes/4 words (zero-padded). The
+// BAR6 expansion ROM responder ($readmemh into rom_mem) serves this so the
+// emulated device returns the donor's real option ROM instead of nothing.
+func GenerateOptionROMHex(romData []byte, sizeBytes int) string {
+	words := sizeBytes / 4
+	if words <= 0 {
+		words = 512
+	}
+
+	var sb strings.Builder
+	sb.WriteString("// PCILeechGen - Expansion ROM image (BAR6 responder seed)\n")
+	sb.WriteString(fmt.Sprintf("// %d DWORDs from donor option ROM\n", words))
+	for i := 0; i < words; i++ {
+		off := i * 4
+		var w uint32
+		if off+4 <= len(romData) {
+			w = util.ReadLE32(romData, off)
+		}
+		sb.WriteString(fmt.Sprintf("%08X\n", w))
+	}
+	return sb.String()
+}
+
 // GenerateConfigSpaceHex outputs config space in $readmemh format (1024 DWORDs).
 func GenerateConfigSpaceHex(cs *pci.ConfigSpace) string {
 	var sb strings.Builder

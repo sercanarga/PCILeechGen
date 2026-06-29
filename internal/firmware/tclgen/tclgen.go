@@ -51,6 +51,10 @@ type projectTCLData struct {
 	MSIXTableOffset string
 	MSIXPBABIR      string
 	MSIXPBAOffset   string
+
+	// Expansion ROM (BAR6)
+	OptionROMEnable bool
+	OptionROMSizeKB int
 }
 
 // buildTCLData holds template data for Vivado build script.
@@ -176,9 +180,19 @@ func GenerateProjectTCL(ctx *donor.DeviceContext, b *board.Board, libDir string,
 			dstrd = binary.LittleEndian.Uint32(bar0d[4:8]) & 0x0F
 		}
 		tableOff, pbaOffset, _ := firmware.MSIXPlacement(bar0Size, ctx.MSIXData.TableSize, ctx.Device.ClassCode, dstrd)
+		// Match the scrubber's donor-faithful placement so the IP MSI-X config
+		// agrees with the shadow config space and the RTL (single offset).
+		if dt, dp, ok := firmware.DonorMSIXPlacement(bar0Size, ctx.MSIXData.TableSize, ctx.MSIXData.TableBIR, ctx.MSIXData.TableOffset, ctx.MSIXData.PBABIR, ctx.MSIXData.PBAOffset, ctx.Device.ClassCode, dstrd); ok {
+			tableOff, pbaOffset = dt, dp
+		}
 		data.MSIXTableOffset = fmt.Sprintf("%08X", tableOff)
 		data.MSIXPBABIR = barBIRToTCL(bir, is64)
 		data.MSIXPBAOffset = fmt.Sprintf("%08X", pbaOffset)
+	}
+
+	if len(ctx.OptionROM) > 0 {
+		data.OptionROMEnable = true
+		data.OptionROMSizeKB = firmware.OptionROMAperture(len(ctx.OptionROM)) / 1024
 	}
 
 	var buf bytes.Buffer
