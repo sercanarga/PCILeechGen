@@ -345,6 +345,7 @@ func ListOutputFiles() []string {
 		"pcileech_msix_table.sv",
 		"pcileech_nvme_admin_responder.sv",
 		"pcileech_nvme_dma_bridge.sv",
+		"pcileech_bram_disk.sv",
 		"tlp_latency_emulator.sv",
 		"device_config.sv",
 		"config_space_init.hex",
@@ -597,6 +598,14 @@ func (ow *OutputWriter) writeConditionalArtifacts(cfg *svgen.SVGeneratorConfig, 
 			return fmt.Errorf("generating pcileech_nvme_dma_bridge.sv: %w", err)
 		}
 		if err := ow.writeFile("pcileech_nvme_dma_bridge.sv", bridgeSV); err != nil {
+			return err
+		}
+
+		diskSV, err := svgen.GenerateNVMeBRAMDiskSV(cfg)
+		if err != nil {
+			return fmt.Errorf("generating pcileech_bram_disk.sv: %w", err)
+		}
+		if err := ow.writeFile("pcileech_bram_disk.sv", diskSV); err != nil {
 			return err
 		}
 

@@ -1,0 +1,433 @@
+//
+// Volatile BRAM-backed LBA cache for the NVMe responder.
+// [[ hex04 .DeviceIDs.VendorID ]]:[[ hex04 .DeviceIDs.DeviceID ]]
+//
+
+`timescale 1ns / 1ps
+
+module pcileech_bram_disk (
+    input               rst,
+    input               clk,
+
+    input               req_valid,
+    input               req_write,
+    input               req_flush,
+    input [63:0]        req_lba,
+    input [6:0]         req_word,
+    input [31:0]        req_wdata,
+    output reg          req_done,
+    output reg [31:0]   req_rdata,
+    output reg          req_hit,
+    output reg          busy,
+    output reg          error,
+    output [7:0]        dbg_state,
+    output [31:0]       dbg_info
+);
+
+    localparam [2:0] S_IDLE  = 3'd0;
+    localparam [2:0] S_DONE  = 3'd1;
+    localparam [2:0] S_CLEAR = 3'd2;
+    localparam [2:0] S_RAM   = 3'd3;
+    localparam [2:0] S_RAM_WAIT = 3'd4;
+    localparam integer DISK_WORDS = 32768;   // 128 KiB = 256 cacheable LBAs
+    localparam integer BACKING_LBAS = (DISK_WORDS < 128) ? 1 : (DISK_WORDS / 128);
+    localparam integer SLOT_WIDTH = (BACKING_LBAS <= 2) ? 1 : $clog2(BACKING_LBAS);
+    localparam integer ADDR_WIDTH = SLOT_WIDTH + 7;
+    localparam integer CLEAR_WIDTH = ADDR_WIDTH + 1;
+    localparam integer BANK_BITS = 2;
+    localparam integer BANK_ADDR_WIDTH = ADDR_WIDTH - BANK_BITS;
+    localparam [CLEAR_WIDTH-1:0] BACKING_COUNT = {1'b1, {ADDR_WIDTH{1'b0}}};
+    localparam [CLEAR_WIDTH-1:0] BACKING_ONE = {{ADDR_WIDTH{1'b0}}, 1'b1};
+    localparam integer PIN_WINDOW_LBAS =
+        (BACKING_LBAS >= 512) ? 128 :
+        (BACKING_LBAS >= 256) ? 64  :
+        (BACKING_LBAS >= 128) ? 32  : 0;
+    localparam integer PINNED_SLOTS = PIN_WINDOW_LBAS * 2;
+    localparam [63:0]  WIN64 = {32'h0, PIN_WINDOW_LBAS[31:0]}; // window width for 64-bit offset compares
+    localparam integer HASH_SLOTS = (BACKING_LBAS > PINNED_SLOTS) ?
+                                    (BACKING_LBAS - PINNED_SLOTS) : 1;
+    localparam integer HASH_WIDTH = (HASH_SLOTS <= 2) ? 1 : $clog2(HASH_SLOTS);
+
+    reg [2:0] state;
+    reg       pending_error;
+    reg        pending_clear;
+    reg        pending_full_format;
+    reg        pending_write;
+    reg [31:0] pending_wdata;
+    reg [63:0] pending_lba;
+    reg [SLOT_WIDTH-1:0] pending_slot;
+    reg [6:0]  pending_word;
+    reg        pending_hit;
+    reg [63:0] clear_base_lba;
+    reg [CLEAR_WIDTH-1:0] clear_idx;
+    reg [CLEAR_WIDTH-1:0] clear_total_dw;
+
+    (* ram_style = "distributed" *) reg        cache_valid [0:BACKING_LBAS-1];
+    (* ram_style = "distributed" *) reg [63:0] cache_tag   [0:BACKING_LBAS-1];
+    reg [BANK_BITS-1:0] read_bank_q;
+
+    // NTFS boot-sector snoop: pin the partition start (= boot sector LBA) and
+    // the $MFT region derived from the boot sector's BPB.
+    //   BPB byte offsets / 32-bit LE word (= byte>>2):
+    //   w0[7:0]=jump(EB/E9)  w0[31:24]='N'  w1[23:0]="TFS"  w3[15:8]=sectors/cluster
+    //   w12=MFT_LCN[31:0]  w13=MFT_LCN[63:32]  w127[31:16]=0xAA55
+    reg        boot_armed;
+    reg [63:0] pin_boot_lba;
+    reg [7:0]  fmt_spc;
+    reg [63:0] fmt_mft_lcn;
+    reg        mft_armed;
+    reg [63:0] pin_mft_lba;
+
+    // Route the boot sector's word 0 to the boot slot the cycle it is detected;
+    // the registered pin only catches up from word 1.
+    wire boot_detect_now = req_valid && req_write && !req_flush &&
+                           (req_word == 7'd0) &&
+                           ((req_wdata[7:0] == 8'hEB) || (req_wdata[7:0] == 8'hE9)) &&
+                           (req_wdata[31:24] == 8'h4E);   // 'N'
+    // Once a boot sector is armed, ignore further jump+'N' word-0 writes so
+    // stray data can't reroute or clobber the discovered pin.
+    wire        boot_route_now = boot_detect_now && !boot_armed;
+    wire        eff_boot_armed = boot_armed || boot_route_now;
+    wire [63:0] eff_pin_boot   = boot_route_now ? req_lba : pin_boot_lba;
+
+    always @(posedge clk) begin
+        if (rst) begin
+            boot_armed   <= 1'b0;
+            pin_boot_lba <= 64'd0;
+            fmt_spc      <= 8'd0;
+            fmt_mft_lcn  <= 64'd0;
+            mft_armed    <= 1'b0;
+            pin_mft_lba  <= 64'd0;
+        end else if (req_valid && req_write && !req_flush) begin
+            if (req_word == 7'd0) begin
+                if (boot_route_now) begin
+                    // First boot sector: latch its LBA, reset BPB fields so the
+                    // $MFT pin recomputes from this format.
+                    boot_armed   <= 1'b1;
+                    pin_boot_lba <= req_lba;
+                    fmt_spc      <= 8'd0;
+                    fmt_mft_lcn  <= 64'd0;
+                end
+            end else if (pin_boot_lba == req_lba) begin
+                // Accumulate BPB only while streaming this very boot sector.
+                if (req_word == 7'd1) begin
+                    // Confirm "TFS" at bytes 0x004..0x006; else it isn't NTFS.
+                    if (req_wdata[23:0] != 24'h534654)
+                        boot_armed <= 1'b0;
+                end else if (req_word == 7'd3) begin
+                    fmt_spc <= req_wdata[15:8];             // byte 0x00D
+                end else if (req_word == 7'd12) begin
+                    fmt_mft_lcn[31:0] <= req_wdata;         // 0x030
+                end else if (req_word == 7'd13) begin
+                    fmt_mft_lcn[63:32] <= req_wdata;        // 0x034
+                end else if (req_word == 7'd127) begin
+                    if (req_wdata[31:16] == 16'hAA55) begin
+                        pin_mft_lba <= pin_boot_lba + (fmt_mft_lcn * {56'h0, fmt_spc});
+                        mft_armed   <= 1'b1;
+                    end
+                end
+            end
+        end
+    end
+
+    function [SLOT_WIDTH-1:0] backing_slot;
+        input [63:0] lba;
+        reg [11:0] mix;
+        reg [63:0] boot_off;
+        reg [63:0] mft_off;
+        reg [HASH_WIDTH-1:0] hash_slot;
+        begin
+            mix = lba[11:0] ^ lba[23:12] ^ lba[35:24] ^
+                  lba[47:36] ^ lba[59:48] ^ {8'h00, lba[63:60]};
+            boot_off = lba - eff_pin_boot;
+            mft_off  = lba - pin_mft_lba;
+            hash_slot = mix[HASH_WIDTH-1:0];
+
+            if ((PIN_WINDOW_LBAS != 0) && mft_armed &&
+                (lba >= pin_mft_lba) && (mft_off < WIN64)) begin
+                backing_slot = mft_off[SLOT_WIDTH-1:0];                                // [0, W)
+            end else if ((PIN_WINDOW_LBAS != 0) && eff_boot_armed &&
+                         (lba >= eff_pin_boot) && (boot_off < WIN64)) begin
+                backing_slot = boot_off[SLOT_WIDTH-1:0] + PIN_WINDOW_LBAS[SLOT_WIDTH-1:0]; // [W, 2W)
+            end else begin
+                backing_slot = hash_slot + PINNED_SLOTS[SLOT_WIDTH-1:0];               // hash pool
+            end
+        end
+    endfunction
+
+    function [ADDR_WIDTH-1:0] backing_index;
+        input [63:0] lba;
+        input [6:0]  word_off;
+        begin
+            backing_index = {backing_slot(lba), word_off};
+        end
+    endfunction
+
+    function [63:0] clear_lba_offset;
+        input [CLEAR_WIDTH-1:0] idx;
+        begin
+            clear_lba_offset = {{(64-(CLEAR_WIDTH-7)){1'b0}}, idx[CLEAR_WIDTH-1:7]};
+        end
+    endfunction
+
+    function [CLEAR_WIDTH-1:0] lba_count_to_dw;
+        input [31:0] lba_count;
+        begin
+            if (lba_count == 32'h00000000)
+                lba_count_to_dw = {{(CLEAR_WIDTH-8){1'b0}}, 8'h80};
+            else if (lba_count >= BACKING_LBAS)
+                lba_count_to_dw = BACKING_COUNT;
+            else
+                lba_count_to_dw = {1'b0, lba_count[SLOT_WIDTH-1:0], 7'h00};
+        end
+    endfunction
+
+    wire [SLOT_WIDTH-1:0] req_slot = backing_slot(req_lba);
+    wire req_slot_hit = cache_valid[req_slot] && (cache_tag[req_slot] == req_lba);
+    wire req_word_cached = req_slot_hit;
+
+    wire pending_word_cached =
+        pending_hit &&
+        cache_valid[pending_slot] &&
+        (cache_tag[pending_slot] == pending_lba);
+    wire [63:0] clear_lba = clear_base_lba + clear_lba_offset(clear_idx);
+    wire [6:0] clear_word = clear_idx[6:0];
+    wire [SLOT_WIDTH-1:0] clear_format_slot = clear_idx[ADDR_WIDTH-1:7];
+    wire [SLOT_WIDTH-1:0] clear_slot = pending_full_format ? clear_format_slot : backing_slot(clear_lba);
+    wire [ADDR_WIDTH-1:0] clear_ram_addr = pending_full_format ?
+                                            clear_idx[ADDR_WIDTH-1:0] :
+                                            backing_index(clear_lba, clear_word);
+    wire [ADDR_WIDTH-1:0] data_ram_addr = backing_index(pending_lba, pending_word);
+    wire mem_clear = (state == S_CLEAR) && !pending_error;
+    wire mem_write = (state == S_RAM) && !pending_error && pending_write;
+    wire mem_read = (state == S_RAM) && !pending_error && !pending_write && pending_word_cached;
+    wire [ADDR_WIDTH-1:0] mem_addr = mem_clear ? clear_ram_addr : data_ram_addr;
+    wire [BANK_BITS-1:0] mem_bank = mem_addr[BANK_BITS-1:0];
+    wire [BANK_ADDR_WIDTH-1:0] mem_bank_addr = mem_addr[ADDR_WIDTH-1:BANK_BITS];
+    wire [31:0] mem_wdata = mem_clear ? 32'h00000000 : pending_wdata;
+    wire mem_active = mem_clear || mem_write || mem_read;
+    wire mem_we = mem_clear || mem_write;
+    wire [31:0] bank_dout0;
+    wire [31:0] bank_dout1;
+    wire [31:0] bank_dout2;
+    wire [31:0] bank_dout3;
+    wire [31:0] ram_dout =
+        (read_bank_q == 2'd0) ? bank_dout0 :
+        (read_bank_q == 2'd1) ? bank_dout1 :
+        (read_bank_q == 2'd2) ? bank_dout2 :
+                                bank_dout3;
+    wire [15:0] req_slot_dbg = {{(16-SLOT_WIDTH){1'b0}}, req_slot};
+    wire [15:0] pending_slot_dbg = {{(16-SLOT_WIDTH){1'b0}}, pending_slot};
+    integer reset_idx;
+
+    assign dbg_state = {5'h00, state};
+    assign dbg_info = {
+        pending_slot_dbg[7:0],
+        pending_word,
+        pending_write,
+        req_slot_dbg[7:0],
+        state,
+        req_slot_hit,
+        pending_hit,
+        pending_word_cached,
+        cache_valid[req_slot],
+        cache_valid[pending_slot]
+    };
+
+    pcileech_bram_disk_bank #(
+        .ADDR_WIDTH ( BANK_ADDR_WIDTH )
+    ) i_bank0 (
+        .clk  ( clk                                      ),
+        .en   ( mem_active && (mem_bank == 2'd0)         ),
+        .we   ( mem_we && (mem_bank == 2'd0)             ),
+        .addr ( mem_bank_addr                            ),
+        .din  ( mem_wdata                                ),
+        .dout ( bank_dout0                               )
+    );
+
+    pcileech_bram_disk_bank #(
+        .ADDR_WIDTH ( BANK_ADDR_WIDTH )
+    ) i_bank1 (
+        .clk  ( clk                                      ),
+        .en   ( mem_active && (mem_bank == 2'd1)         ),
+        .we   ( mem_we && (mem_bank == 2'd1)             ),
+        .addr ( mem_bank_addr                            ),
+        .din  ( mem_wdata                                ),
+        .dout ( bank_dout1                               )
+    );
+
+    pcileech_bram_disk_bank #(
+        .ADDR_WIDTH ( BANK_ADDR_WIDTH )
+    ) i_bank2 (
+        .clk  ( clk                                      ),
+        .en   ( mem_active && (mem_bank == 2'd2)         ),
+        .we   ( mem_we && (mem_bank == 2'd2)             ),
+        .addr ( mem_bank_addr                            ),
+        .din  ( mem_wdata                                ),
+        .dout ( bank_dout2                               )
+    );
+
+    pcileech_bram_disk_bank #(
+        .ADDR_WIDTH ( BANK_ADDR_WIDTH )
+    ) i_bank3 (
+        .clk  ( clk                                      ),
+        .en   ( mem_active && (mem_bank == 2'd3)         ),
+        .we   ( mem_we && (mem_bank == 2'd3)             ),
+        .addr ( mem_bank_addr                            ),
+        .din  ( mem_wdata                                ),
+        .dout ( bank_dout3                               )
+    );
+
+    always @(posedge clk) begin
+        if (rst) begin
+            state         <= S_IDLE;
+            req_done      <= 1'b0;
+            req_rdata     <= 32'h00000000;
+            req_hit       <= 1'b0;
+            busy          <= 1'b0;
+            error         <= 1'b0;
+            pending_error <= 1'b0;
+            pending_clear <= 1'b0;
+            pending_full_format <= 1'b0;
+            pending_write <= 1'b0;
+            pending_wdata <= 32'h00000000;
+            pending_lba   <= 64'h0000000000000000;
+            pending_slot  <= {SLOT_WIDTH{1'b0}};
+            pending_word  <= 7'h0;
+            pending_hit   <= 1'b0;
+            read_bank_q   <= {BANK_BITS{1'b0}};
+            clear_base_lba <= 64'h0000000000000000;
+            clear_idx <= {CLEAR_WIDTH{1'b0}};
+            clear_total_dw <= {CLEAR_WIDTH{1'b0}};
+            for (reset_idx = 0; reset_idx < BACKING_LBAS; reset_idx = reset_idx + 1) begin
+                cache_valid[reset_idx] <= 1'b0;
+                cache_tag[reset_idx]   <= 64'h0000000000000000;
+            end
+        end else begin
+            req_done <= 1'b0;
+            req_hit  <= 1'b0;
+            if (mem_read)
+                read_bank_q <= mem_bank;
+
+            case (state)
+                S_IDLE: begin
+                    busy  <= 1'b0;
+                    error <= 1'b0;
+
+                    if (req_valid) begin
+                        busy <= 1'b1;
+                        pending_write <= req_write;
+                        pending_wdata <= req_wdata;
+                        pending_lba   <= req_lba;
+                        pending_slot  <= req_slot;
+                        pending_word  <= req_word;
+                        pending_hit   <= req_slot_hit;
+                        pending_clear <= req_flush && req_write;
+                        pending_full_format <= req_flush && req_write &&
+                                               (req_lba == 64'h0000000000000000) &&
+                                               (req_wdata == 32'hFFFFFFFF);
+                        clear_base_lba <= req_lba;
+                        clear_idx <= {CLEAR_WIDTH{1'b0}};
+                        clear_total_dw <= ((req_lba == 64'h0000000000000000) &&
+                                           (req_wdata == 32'hFFFFFFFF)) ?
+                                          BACKING_COUNT :
+                                          lba_count_to_dw(req_wdata);
+
+                        pending_error <= 1'b0;
+
+                        if (req_flush && req_write) begin
+                            state <= S_CLEAR;
+                        end else if (req_flush) begin
+                            state <= S_DONE;
+                        end else if (req_write || req_word_cached) begin
+                            state <= S_RAM;
+                        end else begin
+                            state <= S_DONE;
+                        end
+                    end
+                end
+
+                S_CLEAR: begin
+                    busy <= 1'b1;
+                    if (pending_full_format) begin
+                        if (clear_word == 7'h00) begin
+                            cache_valid[clear_format_slot] <= 1'b0;
+                            cache_tag[clear_format_slot]   <= 64'h0000000000000000;
+                        end
+                    end else begin
+                        cache_valid[clear_slot] <= 1'b1;
+                        cache_tag[clear_slot]   <= clear_lba;
+                    end
+
+                    if ((clear_idx + BACKING_ONE) >= clear_total_dw) begin
+                        state <= S_DONE;
+                    end else begin
+                        clear_idx <= clear_idx + BACKING_ONE;
+                    end
+                end
+
+                S_RAM: begin
+                    busy <= 1'b1;
+                    if (!pending_error && pending_write) begin
+                        cache_valid[pending_slot] <= 1'b1;
+                        cache_tag[pending_slot]   <= pending_lba;
+                    end
+                    if (!pending_error && !pending_write && pending_word_cached)
+                        state <= S_RAM_WAIT;
+                    else
+                        state <= S_DONE;
+                end
+
+                S_RAM_WAIT: begin
+                    busy <= 1'b1;
+                    state <= S_DONE;
+                end
+
+                S_DONE: begin
+                    req_done <= 1'b1;
+                    req_hit  <= pending_word_cached || pending_write || pending_clear;
+                    busy     <= 1'b0;
+                    error    <= pending_error;
+                    if (!pending_error) begin
+                        if (pending_clear) begin
+                            req_rdata <= 32'h00000000;
+                        end else if (pending_write) begin
+                            req_rdata <= pending_wdata;
+                        end else if (pending_word_cached) begin
+                            req_rdata <= ram_dout;
+                        end else begin
+                            req_rdata <= 32'h00000000;
+                        end
+                    end
+                    state    <= S_IDLE;
+                end
+
+                default: state <= S_IDLE;
+            endcase
+        end
+    end
+
+endmodule
+
+module pcileech_bram_disk_bank #(
+    parameter integer ADDR_WIDTH = 13
+) (
+    input                    clk,
+    input                    en,
+    input                    we,
+    input [ADDR_WIDTH-1:0]   addr,
+    input [31:0]             din,
+    output reg [31:0]        dout
+);
+
+    (* ram_style = "block" *) reg [31:0] ram [0:(1 << ADDR_WIDTH)-1];
+
+    always @(posedge clk) begin
+        if (en) begin
+            if (we)
+                ram[addr] <= din;
+            dout <= ram[addr];
+        end
+    end
+
+endmodule

@@ -109,6 +109,21 @@ func renderTemplate(name string, data any) (string, error) {
 	return buf.String(), nil
 }
 
+// renderTemplateDelim renders with non-default delimiters (bram_disk uses [[ ]]
+// because its Verilog replication {{N{...}}} clashes with {{ }}).
+func renderTemplateDelim(name, leftDelim, rightDelim string, data any) (string, error) {
+	tmplStr := mustReadTemplate(name + ".sv.tmpl")
+	tmpl, err := template.New(name).Delims(leftDelim, rightDelim).Funcs(svFuncMap()).Parse(tmplStr)
+	if err != nil {
+		return "", fmt.Errorf("parsing %s template: %w", name, err)
+	}
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, data); err != nil {
+		return "", fmt.Errorf("executing %s template: %w", name, err)
+	}
+	return buf.String(), nil
+}
+
 func GenerateBarImplDeviceSV(cfg *SVGeneratorConfig) (string, error) {
 	return renderTemplate("bar_impl_device", cfg)
 }
@@ -136,6 +151,12 @@ func GenerateNVMeResponderSV(cfg *SVGeneratorConfig) (string, error) {
 // GenerateNVMeDMABridgeSV renders the NVMe DMA TLP bridge module.
 func GenerateNVMeDMABridgeSV(cfg *SVGeneratorConfig) (string, error) {
 	return renderTemplate("nvme_dma_bridge", cfg)
+}
+
+// GenerateNVMeBRAMDiskSV renders the BRAM-backed LBA cache ([[ ]] delimiters;
+// the body's Verilog {{N{...}}} clashes with {{ }}).
+func GenerateNVMeBRAMDiskSV(cfg *SVGeneratorConfig) (string, error) {
+	return renderTemplateDelim("nvme_bram_disk", "[[", "]]", cfg)
 }
 
 // GenerateHDARIRBDMASV renders the HDA RIRB DMA bridge module.

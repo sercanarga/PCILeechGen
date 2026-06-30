@@ -35,6 +35,15 @@ module pcileech_msix_table #(
     output [31:0]       vector0_data,
     output              vector0_masked,
 
+    // Indexed vector read for the NVMe responder: admin completions use vector
+    // 0, the I/O queue uses its programmed IV.  Registered (1-cycle latency) so
+    // it infers the same block RAM as the table; vector_select is stable for
+    // many cycles before the responder consumes vector_addr/data/masked.
+    input  [15:0]       vector_select,
+    output [63:0]       vector_addr,
+    output [31:0]       vector_data,
+    output              vector_masked,
+
     output              addr_hit  // request targets MSI-X region
 );
 
@@ -64,6 +73,22 @@ module pcileech_msix_table #(
     assign vector0_addr   = {msix_table_ram[1], msix_table_ram[0]};
     assign vector0_data   = msix_table_ram[2];
     assign vector0_masked = msix_table_ram[3][0];
+
+    // Indexed vector read (see port comment).  Each vector occupies 4 DWORDs
+    // (addr_lo, addr_hi, data, ctrl).  Clamp an out-of-range select to vector 0.
+    wire [31:0] vsel_base = ((vector_select >= NUM_VECTORS) ? 32'd0
+                                                            : {16'd0, vector_select}) << 2;
+    reg [63:0] vector_addr_r;
+    reg [31:0] vector_data_r;
+    reg        vector_masked_r;
+    always @(posedge clk) begin
+        vector_addr_r   <= {msix_table_ram[vsel_base + 32'd1], msix_table_ram[vsel_base]};
+        vector_data_r   <= msix_table_ram[vsel_base + 32'd2];
+        vector_masked_r <= msix_table_ram[vsel_base + 32'd3][0];
+    end
+    assign vector_addr   = vector_addr_r;
+    assign vector_data   = vector_data_r;
+    assign vector_masked = vector_masked_r;
 
     // PBA - all cleared initially
     reg [31:0] msix_pba [0:((NUM_VECTORS+31)/32)-1];

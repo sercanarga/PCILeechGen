@@ -2,14 +2,10 @@
 // NVMe DMA Bridge
 // {{ hex04 .DeviceIDs.VendorID }}:{{ hex04 .DeviceIDs.DeviceID }}
 //
-// The admin responder thinks in terms of "write this DWORD here" and
-// "read 16 DWORDs from there."  This module does the ugly work of
-// wrapping those into proper PCIe TLPs so the root complex actually
-// sees them.
-//
-// Writes: MWr with 3DW (32-bit) or 4DW (64-bit) header + 1 DWORD payload.
-// Reads:  MRd then snoop inbound CplD, de-serialize 128-bit bus into
-//         sequential DWORDs for the admin responder.
+// Converts simple admin-responder DMA requests into PCIe MRd/MWr TLPs.
+// The bridge holds outgoing TLP words until the upstream mux accepts them,
+// and keeps all DMA payload DWORDs in the byte order expected by PCILeech's
+// 128-bit TLP path.
 //
 
 `timescale 1ns / 1ps
@@ -18,9 +14,9 @@ module pcileech_nvme_dma_bridge(
     input               rst,
     input               clk,
 
-    input [15:0]        pcie_id,        // our BDF, goes into requester ID
+    input [15:0]        pcie_id,
 
-    // write side – from admin responder
+    // write side - from admin responder
     input               dma_wr_req,
     input [63:0]        dma_wr_addr,
     input [31:0]        dma_wr_data,
@@ -28,7 +24,7 @@ module pcileech_nvme_dma_bridge(
     input               dma_wr_valid,
     output reg          dma_wr_done,
 
-    // read side – from admin responder
+    // read side - from admin responder
     input               dma_rd_req,
     input [63:0]        dma_rd_addr,
     input [9:0]         dma_rd_len,
@@ -36,44 +32,140 @@ module pcileech_nvme_dma_bridge(
     output reg [31:0]   dma_rd_data,
     output reg          dma_rd_done,
 
-    // outgoing TLP stream – gets muxed with bar controller responses
+    // outgoing TLP stream - muxed with BAR read completions
     output reg [127:0]  tlp_tx_tdata,
     output reg [3:0]    tlp_tx_tkeepdw,
     output reg          tlp_tx_tvalid,
     output reg          tlp_tx_tlast,
     output reg [8:0]    tlp_tx_tuser,
-    input               tlp_tx_tready,    // backpressure from tlps_out mux
+    input               tlp_tx_tready,
 
-    // incoming TLP snoop – we peek at this to catch CplD
+    // incoming TLP snoop - used to catch CplD for our MRd tags
     input [127:0]       tlp_rx_tdata,
     input [3:0]         tlp_rx_tkeepdw,
     input               tlp_rx_tvalid,
-    input [8:0]         tlp_rx_tuser
+    input [8:0]         tlp_rx_tuser,
+
+    output [31:0]       dbg_status
 );
 
-    localparam [3:0] B_IDLE        = 4'h0;
-    localparam [3:0] B_WR_TLP      = 4'h1;
-    localparam [3:0] B_WR_DONE     = 4'h2;
-    localparam [3:0] B_RD_TLP      = 4'h3;
-    localparam [3:0] B_RD_WAIT     = 4'h4;
-    localparam [3:0] B_RD_HDR      = 4'h5;  // first CplD beat: extract 1 payload DW
-    localparam [3:0] B_RD_DRAIN    = 4'h6;  // subsequent beats: extract up to 4 DW each
-    localparam [3:0] B_RD_EMIT     = 4'h7;  // emit buffered DWORDs one at a time
-    localparam [3:0] B_WR_TLP2     = 4'h8;  // 64-bit MWr second beat
+    localparam [3:0] B_IDLE     = 4'h0;
+    localparam [3:0] B_WR_SEND  = 4'h1;
+    localparam [3:0] B_WR_SEND2 = 4'h2;
+    localparam [3:0] B_WR_DONE  = 4'h3;
+    localparam [3:0] B_RD_SEND  = 4'h4;
+    localparam [3:0] B_RD_WAIT  = 4'h5;
+    localparam [3:0] B_RD_EMIT  = 4'h6;
 
     reg [3:0]  bstate;
+    reg [7:0]  rd_tag;
+    reg [7:0]  rd_active_tag;
+    reg [63:0] rd_base_addr;
+    reg [9:0]  rd_remaining;
+    reg [9:0]  rd_index;
+    reg [31:0] rd_payload;
 
-    reg [9:0]  rd_remaining;        // how many DWORDs we're still expecting
-    reg [7:0]  rd_tag;              // tags start at 0x80 to stay off host tags
+    reg [31:0] wr_data_hold;
+    reg        wr_pending;
+    reg [63:0] wr_pending_addr;
+    reg [31:0] wr_pending_data;
+    reg [3:0]  wr_pending_be;
+    reg        rd_pending;
+    reg [63:0] rd_pending_addr;
+    reg [9:0]  rd_pending_len;
 
-    // 64-bit address detection
-    wire wr_is_64bit = |dma_wr_addr[63:32];
-    wire rd_is_64bit = |dma_rd_addr[63:32];
+    localparam [7:0] NVME_RD_TAG_FIRST = 8'h10;
+    localparam [7:0] NVME_RD_TAG_LAST  = 8'h1F;
 
-    // CplD receive buffer: hold up to 4 DWORDs from one 128-bit beat
-    reg [31:0] rx_buf [0:3];
-    reg [2:0]  rx_buf_cnt;          // how many DWORDs in buffer (0-4)
-    reg [1:0]  rx_buf_idx;          // current emit index
+    // Keep NVMe-internal MRd tags in the non-extended 5-bit tag space.  The
+    // bridge only has one outstanding read, so a small rotating window is
+    // enough and does not depend on Extended Tag Enable being set by the host.
+    function [7:0] next_rd_tag;
+        input [7:0] value;
+        begin
+            next_rd_tag = (value >= NVME_RD_TAG_LAST) ? NVME_RD_TAG_FIRST : (value + 8'd1);
+        end
+    endfunction
+
+    wire [9:0]  rd_next_index = rd_index + 10'd1;
+    wire [63:0] rd_next_addr  = rd_base_addr + {52'h0, rd_next_index, 2'b00};
+
+    wire [2:0] cpld_status = tlp_rx_tdata[47:45];
+    wire cpld_any = tlp_rx_tvalid &&
+                    tlp_rx_tuser[0] &&
+                    (tlp_rx_tdata[31:25] == 7'b0100101);
+    wire cpld_tag_match = cpld_any && (tlp_rx_tdata[79:72] == rd_active_tag);
+    wire cpld_match = cpld_tag_match &&
+                      (cpld_status == 3'b000);
+    assign dbg_status = {cpld_any, cpld_tag_match, cpld_match, cpld_status,
+                         bstate, rd_active_tag, rd_tag, rd_remaining[5:0]};
+
+    function [15:0] bs16;
+        input [15:0] value;
+        begin
+            bs16 = {value[7:0], value[15:8]};
+        end
+    endfunction
+
+    function [31:0] swap32;
+        input [31:0] value;
+        begin
+            swap32 = {value[7:0], value[15:8], value[23:16], value[31:24]};
+        end
+    endfunction
+
+    function [31:0] tlp_dw0;
+        input [2:0] fmt;
+        input [9:0] length_dw;
+        begin
+            tlp_dw0 = {fmt, 5'b00000, 1'b0, 3'b000, 4'b0000,
+                       1'b0, 1'b0, 2'b00, 2'b00, length_dw};
+        end
+    endfunction
+
+    task load_mwr1;
+        input [63:0] addr;
+        input [31:0] data;
+        input [3:0]  be;
+        begin
+            tlp_tx_tvalid <= 1'b1;
+            tlp_tx_tuser  <= {8'h00, 1'b1};
+
+            // Keep the NVMe DMA path on 4DW TLPs even for <4 GiB host
+            // addresses. The surrounding PCILeech 128-bit path and earlier
+            // stable builds used this layout; switching to 3DW MRd/MWr caused
+            // host SQE fetches to sit in B_RD_WAIT without a CplD.
+            tlp_tx_tdata   <= {
+                {addr[31:2], 2'b00},
+                addr[63:32],
+                // Single-DW requests must use Last DW BE = 0 and put the
+                // byte mask in First DW BE. Some root complexes reject
+                // length-1 requests with Last DW BE set.
+                {bs16(pcie_id), 8'h00, 4'h0, be},
+                tlp_dw0(3'b011, 10'd1)
+            };
+            tlp_tx_tkeepdw <= 4'b1111;
+            tlp_tx_tlast   <= 1'b0;
+        end
+    endtask
+
+    task load_mrd1;
+        input [63:0] addr;
+        input [7:0]  tag;
+        begin
+            tlp_tx_tvalid <= 1'b1;
+            tlp_tx_tlast  <= 1'b1;
+            tlp_tx_tuser  <= {8'h00, 1'b1};
+
+            tlp_tx_tdata   <= {
+                {addr[31:2], 2'b00},
+                addr[63:32],
+                {bs16(pcie_id), tag, 4'h0, 4'hF},
+                tlp_dw0(3'b001, 10'd1)
+            };
+            tlp_tx_tkeepdw <= 4'b1111;
+        end
+    endtask
 
     always @(posedge clk) begin
         if (rst) begin
@@ -82,184 +174,148 @@ module pcileech_nvme_dma_bridge(
             dma_rd_valid    <= 1'b0;
             dma_rd_done     <= 1'b0;
             dma_rd_data     <= 32'h0;
+            tlp_tx_tdata    <= 128'h0;
+            tlp_tx_tkeepdw  <= 4'h0;
             tlp_tx_tvalid   <= 1'b0;
             tlp_tx_tlast    <= 1'b0;
+            tlp_tx_tuser    <= 9'h0;
+            rd_tag          <= NVME_RD_TAG_FIRST;
+            rd_active_tag   <= NVME_RD_TAG_FIRST;
+            rd_base_addr    <= 64'h0;
             rd_remaining    <= 10'h0;
-            rd_tag          <= 8'h80;
-            rx_buf_cnt      <= 3'h0;
-            rx_buf_idx      <= 2'h0;
+            rd_index        <= 10'h0;
+            rd_payload      <= 32'h0;
+            wr_data_hold    <= 32'h0;
+            wr_pending      <= 1'b0;
+            wr_pending_addr <= 64'h0;
+            wr_pending_data <= 32'h0;
+            wr_pending_be   <= 4'hF;
+            rd_pending      <= 1'b0;
+            rd_pending_addr <= 64'h0;
+            rd_pending_len  <= 10'h0;
         end else begin
-            dma_wr_done   <= 1'b0;
-            dma_rd_valid  <= 1'b0;
-            dma_rd_done   <= 1'b0;
-            tlp_tx_tvalid <= 1'b0;
-            tlp_tx_tlast  <= 1'b0;
+            dma_wr_done  <= 1'b0;
+            dma_rd_valid <= 1'b0;
+            dma_rd_done  <= 1'b0;
+
+            // The responder pulses requests for one clock.  If the bridge is
+            // still finishing a TLP, remember one command so the NVMe FSM does
+            // not strand itself waiting for a read/write that was never issued.
+            if (bstate != B_IDLE) begin
+                if (dma_wr_valid && !wr_pending) begin
+                    wr_pending      <= 1'b1;
+                    wr_pending_addr <= dma_wr_addr;
+                    wr_pending_data <= dma_wr_data;
+                    wr_pending_be   <= dma_wr_be;
+                end
+                if (dma_rd_req && (dma_rd_len != 10'd0) && !rd_pending) begin
+                    rd_pending      <= 1'b1;
+                    rd_pending_addr <= dma_rd_addr;
+                    rd_pending_len  <= dma_rd_len;
+                end
+            end
 
             case (bstate)
-
-                // ---- idle: writes take priority --------------------------------
                 B_IDLE: begin
-                    if (dma_wr_valid) begin
-                        if (wr_is_64bit) begin
-                            // 4DW header MWr: first beat = header only
-                            tlp_tx_tdata[31:0]   <= {
-                                3'b011,             // Fmt = 4DW w/ data
-                                5'b00000,           // Type = MWr
-                                1'b0, 3'b000,
-                                4'b0000,
-                                1'b0, 1'b0,
-                                2'b00, 2'b00,
-                                10'h001
-                            };
-                            tlp_tx_tdata[63:32]  <= {pcie_id, 8'h00, 4'hF, dma_wr_be};
-                            tlp_tx_tdata[95:64]  <= dma_wr_addr[63:32];
-                            tlp_tx_tdata[127:96] <= {dma_wr_addr[31:2], 2'b00};
+                    tlp_tx_tvalid <= 1'b0;
+                    tlp_tx_tlast  <= 1'b0;
+                    tlp_tx_tuser  <= 9'h0;
 
-                            tlp_tx_tkeepdw <= 4'b1111;
-                            tlp_tx_tlast   <= 1'b0;
-                            tlp_tx_tuser   <= {8'h00, 1'b1};
-                            tlp_tx_tvalid  <= 1'b1;
+                    if (wr_pending) begin
+                        wr_data_hold <= wr_pending_data;
+                        load_mwr1(wr_pending_addr, wr_pending_data, wr_pending_be);
+                        wr_pending <= 1'b0;
+                        bstate <= B_WR_SEND;
+                    end else if (dma_wr_valid) begin
+                        wr_data_hold <= dma_wr_data;
+                        load_mwr1(dma_wr_addr, dma_wr_data, dma_wr_be);
+                        bstate <= B_WR_SEND;
+                    end else if (rd_pending) begin
+                        rd_base_addr  <= rd_pending_addr;
+                        rd_remaining  <= rd_pending_len;
+                        rd_index      <= 10'd0;
+                        rd_active_tag <= rd_tag;
+                        load_mrd1(rd_pending_addr, rd_tag);
+                        rd_tag <= next_rd_tag(rd_tag);
+                        rd_pending <= 1'b0;
+                        bstate <= B_RD_SEND;
+                    end else if (dma_rd_req && (dma_rd_len != 10'd0)) begin
+                        rd_base_addr  <= dma_rd_addr;
+                        rd_remaining  <= dma_rd_len;
+                        rd_index      <= 10'd0;
+                        rd_active_tag <= rd_tag;
+                        load_mrd1(dma_rd_addr, rd_tag);
+                        rd_tag <= next_rd_tag(rd_tag);
+                        bstate <= B_RD_SEND;
+                    end else if (dma_rd_req) begin
+                        dma_rd_done <= 1'b1;
+                    end
+                end
 
-                            bstate <= B_WR_TLP2;
-                        end else begin
-                            // 3DW header MWr: header + payload in one beat
-                            tlp_tx_tdata[31:0]   <= {
-                                3'b010,             // Fmt = 3DW w/ data
-                                5'b00000,           // Type = MWr
-                                1'b0, 3'b000,
-                                4'b0000,
-                                1'b0, 1'b0,
-                                2'b00, 2'b00,
-                                10'h001
-                            };
-                            tlp_tx_tdata[63:32]  <= {pcie_id, 8'h00, 4'hF, dma_wr_be};
-                            tlp_tx_tdata[95:64]  <= {dma_wr_addr[31:2], 2'b00};
-                            tlp_tx_tdata[127:96] <= dma_wr_data;
-
-                            tlp_tx_tkeepdw <= 4'b1111;
-                            tlp_tx_tlast   <= 1'b1;
-                            tlp_tx_tuser   <= {8'h00, 1'b1};
-                            tlp_tx_tvalid  <= 1'b1;
-
+                B_WR_SEND: begin
+                    if (tlp_tx_tvalid && tlp_tx_tready) begin
+                        if (tlp_tx_tlast) begin
+                            tlp_tx_tvalid <= 1'b0;
                             bstate <= B_WR_DONE;
-                        end
-                    end
-                    else if (dma_rd_req) begin
-                        if (rd_is_64bit) begin
-                            // 4DW header MRd
-                            tlp_tx_tdata[31:0]   <= {
-                                3'b001,             // Fmt = 4DW no data
-                                5'b00000,           // Type = MRd
-                                1'b0, 3'b000,
-                                4'b0000,
-                                1'b0, 1'b0,
-                                2'b00, 2'b00,
-                                dma_rd_len
-                            };
-                            tlp_tx_tdata[63:32]  <= {pcie_id, rd_tag, 4'hF, 4'hF};
-                            tlp_tx_tdata[95:64]  <= dma_rd_addr[63:32];
-                            tlp_tx_tdata[127:96] <= {dma_rd_addr[31:2], 2'b00};
-
-                            tlp_tx_tkeepdw <= 4'b1111;
                         end else begin
-                            // 3DW header MRd
-                            tlp_tx_tdata[31:0]   <= {
-                                3'b000,             // Fmt = 3DW no data
-                                5'b00000,           // Type = MRd
-                                1'b0, 3'b000,
-                                4'b0000,
-                                1'b0, 1'b0,
-                                2'b00, 2'b00,
-                                dma_rd_len
-                            };
-                            tlp_tx_tdata[63:32]  <= {pcie_id, rd_tag, 4'hF, 4'hF};
-                            tlp_tx_tdata[95:64]  <= {dma_rd_addr[31:2], 2'b00};
-                            tlp_tx_tdata[127:96] <= 32'h0;
-
-                            tlp_tx_tkeepdw <= 4'b0111;
+                            tlp_tx_tdata   <= {96'h0, swap32(wr_data_hold)};
+                            tlp_tx_tkeepdw <= 4'b0001;
+                            tlp_tx_tlast   <= 1'b1;
+                            tlp_tx_tuser   <= 9'h0;
+                            tlp_tx_tvalid  <= 1'b1;
+                            bstate <= B_WR_SEND2;
                         end
-
-                        tlp_tx_tlast   <= 1'b1;
-                        tlp_tx_tuser   <= {8'h00, 1'b1};
-                        tlp_tx_tvalid  <= 1'b1;
-
-                        rd_remaining <= dma_rd_len;
-                        rd_tag       <= rd_tag + 1'b1;
-                        bstate       <= B_RD_WAIT;
                     end
                 end
 
-                // ---- 64-bit MWr second beat: payload DWORD --------------------
-                B_WR_TLP2: begin
-                    tlp_tx_tdata[31:0]   <= dma_wr_data;
-                    tlp_tx_tdata[127:32] <= 96'h0;
-                    tlp_tx_tkeepdw <= 4'b0001;
-                    tlp_tx_tlast   <= 1'b1;
-                    tlp_tx_tuser   <= 9'h0;
-                    tlp_tx_tvalid  <= 1'b1;
-                    bstate <= B_WR_DONE;
+                B_WR_SEND2: begin
+                    if (tlp_tx_tvalid && tlp_tx_tready) begin
+                        tlp_tx_tvalid <= 1'b0;
+                        bstate <= B_WR_DONE;
+                    end
                 end
 
-                // ---- write done, signal admin responder -----------------------
                 B_WR_DONE: begin
                     dma_wr_done <= 1'b1;
-                    bstate      <= B_IDLE;
+                    bstate <= B_IDLE;
                 end
 
-                // ---- snoop RX bus for CplD matching our tag -------------------
-                B_RD_WAIT: begin
-                    if (tlp_rx_tvalid && tlp_rx_tuser[0]) begin
-                        // CplD fmt+type = 0100_1010 = 0x4A
-                        if (tlp_rx_tdata[31:24] == 8'h4A) begin
-                            if (tlp_rx_tdata[79:72] == (rd_tag - 8'h01)) begin
-                                // first CplD beat: 3DW header occupies [95:0],
-                                // payload starts at [127:96] = 1 DWORD
-                                rx_buf[0]  <= tlp_rx_tdata[127:96];
-                                rx_buf_cnt <= 3'd1;
-                                rx_buf_idx <= 2'd0;
-                                bstate     <= B_RD_EMIT;
-                            end
-                        end
+                B_RD_SEND: begin
+                    if (tlp_tx_tvalid && tlp_tx_tready) begin
+                        tlp_tx_tvalid <= 1'b0;
+                        bstate <= B_RD_WAIT;
                     end
                 end
 
-                // ---- emit buffered DWORDs one per cycle to admin responder ----
+                B_RD_WAIT: begin
+                    if (cpld_match) begin
+                        rd_payload <= swap32(tlp_rx_tdata[127:96]);
+                        bstate <= B_RD_EMIT;
+                    end
+                end
+
                 B_RD_EMIT: begin
-                    dma_rd_data  <= rx_buf[rx_buf_idx];
+                    dma_rd_data  <= rd_payload;
                     dma_rd_valid <= 1'b1;
-                    rd_remaining <= rd_remaining - 10'd1;
 
                     if (rd_remaining <= 10'd1) begin
-                        dma_rd_done <= 1'b1;
-                        bstate      <= B_IDLE;
-                    end else if (rx_buf_cnt == 3'd0 || {1'b0, rx_buf_idx} >= (rx_buf_cnt - 3'd1)) begin
-                        // buffer emptied (or was never filled), need more data from bus
-                        bstate <= B_RD_DRAIN;
+                        dma_rd_done  <= 1'b1;
+                        rd_remaining <= 10'd0;
+                        bstate <= B_IDLE;
                     end else begin
-                        rx_buf_idx <= rx_buf_idx + 2'd1;
+                        rd_remaining  <= rd_remaining - 10'd1;
+                        rd_index      <= rd_next_index;
+                        rd_active_tag <= rd_tag;
+                        load_mrd1(rd_next_addr, rd_tag);
+                        rd_tag <= next_rd_tag(rd_tag);
+                        bstate <= B_RD_SEND;
                     end
                 end
 
-                // ---- subsequent CplD beats: 4 payload DWORDs per beat ---------
-                B_RD_DRAIN: begin
-                    if (tlp_rx_tvalid) begin
-                        rx_buf[0]  <= tlp_rx_tdata[31:0];
-                        rx_buf[1]  <= tlp_rx_tdata[63:32];
-                        rx_buf[2]  <= tlp_rx_tdata[95:64];
-                        rx_buf[3]  <= tlp_rx_tdata[127:96];
-
-                        // figure out how many valid DWORDs in this beat
-                        if (rd_remaining >= 10'd4)
-                            rx_buf_cnt <= 3'd4;
-                        else
-                            rx_buf_cnt <= rd_remaining[2:0];
-
-                        rx_buf_idx <= 2'd0;
-                        bstate     <= B_RD_EMIT;
-                    end
+                default: begin
+                    tlp_tx_tvalid <= 1'b0;
+                    bstate <= B_IDLE;
                 end
-
-                default: bstate <= B_IDLE;
             endcase
         end
     end

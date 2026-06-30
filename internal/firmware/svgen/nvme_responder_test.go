@@ -5,6 +5,9 @@ import (
 	"testing"
 )
 
+// TestGenerateNVMeResponderSV_UsesPRP2ForPageCrossingAdminData verifies admin
+// data (Identify / log pages / CQE) addresses route through a PRP helper that
+// falls back to PRP2 once the first PRP page is exhausted.
 func TestGenerateNVMeResponderSV_UsesPRP2ForPageCrossingAdminData(t *testing.T) {
 	cfg := testConfig()
 
@@ -13,10 +16,10 @@ func TestGenerateNVMeResponderSV_UsesPRP2ForPageCrossingAdminData(t *testing.T) 
 		t.Fatalf("GenerateNVMeResponderSV failed: %v", err)
 	}
 
-	if !strings.Contains(result, "function [63:0] cmd_prp_addr") {
+	if !strings.Contains(result, "function [63:0] prp_data_addr") {
 		t.Fatal("NVMe responder should compute admin data addresses through a PRP helper")
 	}
-	if !strings.Contains(result, "{cmd_prp2[63:12], 12'h000}") {
+	if !strings.Contains(result, "cmd_prp2 + {32'h00000000, (byte_off - first_span)}") {
 		t.Fatal("NVMe responder should use PRP2 for admin data crossing the first PRP page")
 	}
 	if strings.Contains(result, "dma_wr_addr  <= cmd_prp1 +") {
@@ -24,7 +27,10 @@ func TestGenerateNVMeResponderSV_UsesPRP2ForPageCrossingAdminData(t *testing.T) 
 	}
 }
 
-func TestGenerateNVMeResponderSV_HandlesFormattingIOQueuePath(t *testing.T) {
+// TestGenerateNVMeResponderSV_HandlesIOAndFormatPath verifies the responder
+// exposes the generalized doorbell interface, admin/I/O queue bookkeeping, the
+// Format NVM clear path, and a real disk-backed read path (read-after-write).
+func TestGenerateNVMeResponderSV_HandlesIOAndFormatPath(t *testing.T) {
 	cfg := testConfig()
 
 	result, err := GenerateNVMeResponderSV(cfg)
@@ -33,12 +39,15 @@ func TestGenerateNVMeResponderSV_HandlesFormattingIOQueuePath(t *testing.T) {
 	}
 
 	for _, want := range []string{
-		"input               sq1_doorbell_wr",
-		"iosq_base",
-		"iocq_base",
-		"8'h80: begin",
-		"8'h00, 8'h01, 8'h08, 8'h09: begin",
-		"S_EXEC_READ_ZERO",
+		"input               doorbell_wr",
+		"input [15:0]        doorbell_qid",
+		"io_sq_base",
+		"io_cq_base",
+		"8'h80: begin",          // Format NVM
+		"S_FORMAT_CLEAR",        // ...actually clears the disk
+		"S_IO_READ_DISK_REQ",    // real disk-backed read path
+		"S_IO_WRITE_DMA_REQ",    // real disk-backed write path
+		"disk_req_lba",          // disk backend port
 	} {
 		if !strings.Contains(result, want) {
 			t.Fatalf("NVMe responder should contain %q", want)

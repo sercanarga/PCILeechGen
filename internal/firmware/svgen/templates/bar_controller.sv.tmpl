@@ -241,9 +241,23 @@ module pcileech_tlps128_bar_controller(
     wire        msix_rsp_valid;
     wire        msix_addr_hit;
 {{ if eq .DeviceClass "nvme" }}
-    wire [63:0] msix_vector0_addr;
-    wire [31:0] msix_vector0_data;
-    wire        msix_vector0_masked;
+    // NVMe responder <-> MSI-X table (per-vector select) and <-> BRAM disk cache.
+    wire [15:0] nvme_msix_vector_select;
+    wire [63:0] nvme_msix_vector_addr;
+    wire [31:0] nvme_msix_vector_data;
+    wire        nvme_msix_vector_masked;
+
+    wire        nvme_disk_req_valid;
+    wire        nvme_disk_req_write;
+    wire        nvme_disk_req_flush;
+    wire [63:0] nvme_disk_req_lba;
+    wire [6:0]  nvme_disk_req_word;
+    wire [31:0] nvme_disk_req_wdata;
+    wire        nvme_disk_req_done;
+    wire [31:0] nvme_disk_req_rdata;
+    wire        nvme_disk_req_hit;
+    wire        nvme_disk_busy;
+    wire        nvme_disk_error;
 {{ end }}
 {{ if and (eq .DeviceClass "nvme") .LatencyConfig }}
     // NVMe BAR0 registers are used in tight polling loops during controller
@@ -464,9 +478,15 @@ module pcileech_tlps128_bar_controller(
         .rd_rsp_ctx     ( msix_rsp_ctx                  ),
         .rd_rsp_data    ( msix_rsp_data                 ),
         .rd_rsp_valid   ( msix_rsp_valid                ),
-{{ if eq .DeviceClass "nvme" }}        .vector0_addr   ( msix_vector0_addr             ),
-        .vector0_data   ( msix_vector0_data             ),
-        .vector0_masked ( msix_vector0_masked           ),
+{{ if eq .DeviceClass "nvme" }}        // per-vector read for the NVMe responder (admin=0, IO queue=its IV)
+        .vector_select  ( nvme_msix_vector_select       ),
+        .vector_addr    ( nvme_msix_vector_addr         ),
+        .vector_data    ( nvme_msix_vector_data         ),
+        .vector_masked  ( nvme_msix_vector_masked       ),
+{{ else }}        .vector_select  ( 16'd0                         ),
+        .vector_addr    (                               ),
+        .vector_data    (                               ),
+        .vector_masked  (                               ),
 {{ end }}        .addr_hit       ( msix_addr_hit                 )
     );
 {{ end }}
@@ -539,14 +559,9 @@ module pcileech_tlps128_bar_controller(
 {{ end }}
 
 {{ if eq .DeviceClass "nvme" }}
-    // nvme_msix_trigger wired into intr_req OR for NVMe (driven by responder when NVMeIdentify present)
     wire        nvme_msix_trigger;
-    // MSI-X enable/function-mask originate in PCIe config space
-    // (cfg_interrupt_msixenable / cfg_interrupt_msixfm in pcileech_pcie_cfg_a7)
-    // and are not routed to this controller's port list across board variants.
-    // Static-tie to enabled/unmasked: the device always wants admin-completion
-    // interrupts, and per-vector masking is still honoured via
-    // msix_vector0_masked sourced from the MSI-X table.
+    // Static-tie: enable/function-mask aren't routed to this controller's ports;
+    // per-vector masking is handled by the responder via the indexed MSI-X read.
     wire        msix_enable        = 1'b1;
     wire        msix_function_mask = 1'b0;
 {{ end }}
@@ -570,6 +585,12 @@ module pcileech_tlps128_bar_controller(
     wire nvme_sq1_db_wr = wr_valid && wr_bar[0] && (wr_addr_bar0 == 32'h{{ printf "%08X" .NVMeSQ1DoorbellOffset }});
     wire nvme_cq1_db_wr = wr_valid && wr_bar[0] && (wr_addr_bar0 == 32'h{{ printf "%08X" .NVMeCQ1DoorbellOffset }});
 
+    // qid 0 = admin, qid 1 = I/O; is_cq distinguishes CQ-head vs SQ-tail writes.
+    wire        nvme_db_wr    = nvme_sq0_db_wr | nvme_cq0_db_wr | nvme_sq1_db_wr | nvme_cq1_db_wr;
+    wire        nvme_db_is_cq = nvme_cq0_db_wr | nvme_cq1_db_wr;
+    wire [15:0] nvme_db_qid   = (nvme_sq1_db_wr | nvme_cq1_db_wr) ? 16'd1 : 16'd0;
+    wire [15:0] nvme_db_val   = wr_data[15:0];
+
     // plumbing between the responder and the DMA bridge
     wire        nvme_dma_rd_req;
     wire [63:0] nvme_dma_rd_addr;
@@ -583,7 +604,6 @@ module pcileech_tlps128_bar_controller(
     wire [3:0]  nvme_dma_wr_be;
     wire        nvme_dma_wr_valid;
     wire        nvme_dma_wr_done;
-    // nvme_msix_trigger declared at module scope for NVMe (see wiring below)
 
     wire [12:0] nvme_id_rom_addr;
     wire [31:0] nvme_id_rom_data;
@@ -596,28 +616,29 @@ module pcileech_tlps128_bar_controller(
     wire [8:0]   nvme_tlp_tx_tuser;
     wire         nvme_tlp_tx_tready;
 
+    // CC.EN start/stop are edge-detected inside the responder, so the explicit
+    // enable/disable strobes are unused here.
     pcileech_nvme_admin_responder i_nvme_responder(
         .rst                ( rst                           ),
         .clk                ( clk                           ),
         .cc_en              ( nvme_reg_cc[0]                ),
+        .cc_enable_wr       ( 1'b0                          ),
+        .cc_disable_wr      ( 1'b0                          ),
         .asq_lo             ( nvme_reg_asq_lo               ),
         .asq_hi             ( nvme_reg_asq_hi               ),
         .acq_lo             ( nvme_reg_acq_lo               ),
         .acq_hi             ( nvme_reg_acq_hi               ),
         .aqa                ( nvme_reg_aqa                  ),
-        .sq0_doorbell_wr    ( nvme_sq0_db_wr                ),
-        .sq0_doorbell_val   ( wr_data[15:0]                 ),
-        .cq0_doorbell_wr    ( nvme_cq0_db_wr                ),
-        .cq0_doorbell_val   ( wr_data[15:0]                 ),
-        .sq1_doorbell_wr    ( nvme_sq1_db_wr                ),
-        .sq1_doorbell_val   ( wr_data[15:0]                 ),
-        .cq1_doorbell_wr    ( nvme_cq1_db_wr                ),
-        .cq1_doorbell_val   ( wr_data[15:0]                 ),
+        .doorbell_wr        ( nvme_db_wr                    ),
+        .doorbell_is_cq     ( nvme_db_is_cq                 ),
+        .doorbell_qid       ( nvme_db_qid                   ),
+        .doorbell_val       ( nvme_db_val                   ),
         .msix_enable        ( msix_enable                   ),
         .msix_function_mask ( msix_function_mask            ),
-        .msix_vector0_addr  ( msix_vector0_addr             ),
-        .msix_vector0_data  ( msix_vector0_data             ),
-        .msix_vector0_masked( msix_vector0_masked           ),
+        .msix_vector_select ( nvme_msix_vector_select       ),
+        .msix_vector_addr   ( nvme_msix_vector_addr         ),
+        .msix_vector_data   ( nvme_msix_vector_data         ),
+        .msix_vector_masked ( nvme_msix_vector_masked       ),
         .dma_rd_req         ( nvme_dma_rd_req               ),
         .dma_rd_addr        ( nvme_dma_rd_addr              ),
         .dma_rd_len         ( nvme_dma_rd_len               ),
@@ -630,9 +651,36 @@ module pcileech_tlps128_bar_controller(
         .dma_wr_be          ( nvme_dma_wr_be                ),
         .dma_wr_valid       ( nvme_dma_wr_valid             ),
         .dma_wr_done        ( nvme_dma_wr_done              ),
+        .disk_req_valid     ( nvme_disk_req_valid           ),
+        .disk_req_write     ( nvme_disk_req_write           ),
+        .disk_req_flush     ( nvme_disk_req_flush           ),
+        .disk_req_lba       ( nvme_disk_req_lba             ),
+        .disk_req_word      ( nvme_disk_req_word            ),
+        .disk_req_wdata     ( nvme_disk_req_wdata           ),
+        .disk_req_done      ( nvme_disk_req_done            ),
+        .disk_req_rdata     ( nvme_disk_req_rdata           ),
+        .disk_req_hit       ( nvme_disk_req_hit             ),
+        .disk_busy          ( nvme_disk_busy                ),
+        .disk_error         ( nvme_disk_error               ),
         .msix_trigger       ( nvme_msix_trigger             ),
         .id_rom_addr        ( nvme_id_rom_addr              ),
         .id_rom_data        ( nvme_id_rom_data              )
+    );
+
+    pcileech_bram_disk i_nvme_bram_disk(
+        .rst            ( rst                       ),
+        .clk            ( clk                       ),
+        .req_valid      ( nvme_disk_req_valid       ),
+        .req_write      ( nvme_disk_req_write       ),
+        .req_flush      ( nvme_disk_req_flush       ),
+        .req_lba        ( nvme_disk_req_lba         ),
+        .req_word       ( nvme_disk_req_word        ),
+        .req_wdata      ( nvme_disk_req_wdata       ),
+        .req_done       ( nvme_disk_req_done        ),
+        .req_rdata      ( nvme_disk_req_rdata       ),
+        .req_hit        ( nvme_disk_req_hit         ),
+        .busy           ( nvme_disk_busy            ),
+        .error          ( nvme_disk_error           )
     );
 
     // this guy does the real PCIe legwork

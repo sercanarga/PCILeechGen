@@ -37,7 +37,7 @@ problem: Windows Code 10 "cannot start"  (most common report)
 cause: the clone loads but doesn't behave like the real device BAR0 reads FF,
        MSI-X/interrupt setup fails, or device-type emulation is incomplete.
        Often hidden: stale Windows device history.
-fix: try a network / audio / wifi donor first (NVMe and xHCI hit Code 10 until
+fix: try a nvme / network / audio / wifi donor first (xHCI hit Code 10 until
      done); run tools/cleanup_device_history.ps1 (Admin) then reboot; Core
      Isolation off; correct BIOS.
 
@@ -53,9 +53,6 @@ problem: lone-dma-test shows BAD DTB / can't find ntoskrnl
 cause: usually BIOS / Windows DMA settings, not the firmware.
 fix: recheck BIOS + Windows settings; compare to a known-good firmware.
 
-Note (not a bug): NVMe full disk emulation is still in progress.
-The admin queue and init work, but BRAM cache + IO queues are not done yet, so
-NVMe donors commonly hit Code 10 / stornvme Event 11 until then.
 
 Note (not a bug): xHCI (USB) emulation is partial.
 Clones enumerate, but host read/write + doorbell gaps remain, so USBXHCI often

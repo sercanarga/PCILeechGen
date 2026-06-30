@@ -10,7 +10,7 @@ import (
 )
 
 func testConfig() *SVGeneratorConfig {
-	return &SVGeneratorConfig{
+	cfg := &SVGeneratorConfig{
 		DeviceIDs: firmware.DeviceIDs{
 			VendorID:       0x144D,
 			DeviceID:       0xA808,
@@ -27,6 +27,7 @@ func testConfig() *SVGeneratorConfig {
 		BuildEntropy: 0xDEADBEEF,
 		PRNGSeeds:    BuildPRNGSeeds(0x144D, 0xA808, 0xDEADBEEF),
 	}
+	return cfg
 }
 
 func TestGenerateDeviceConfigSV(t *testing.T) {
@@ -401,18 +402,6 @@ func TestNVMeDoorbellOffsets(t *testing.T) {
 	}
 	if cq0 != 0x1008 {
 		t.Errorf("CQ0 doorbell (stride=1) = 0x%X, want 0x1008", cq0)
-	}
-}
-
-func TestGenerateNVMeResponderSV(t *testing.T) {
-	cfg := testConfig()
-	cfg.NVMeDoorbellStride = 0
-	result, err := GenerateNVMeResponderSV(cfg)
-	if err != nil {
-		t.Fatalf("GenerateNVMeResponderSV failed: %v", err)
-	}
-	if len(result) == 0 {
-		t.Error("NVMe responder SV should not be empty")
 	}
 }
 
