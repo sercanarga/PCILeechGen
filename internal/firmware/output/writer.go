@@ -15,6 +15,7 @@ import (
 	"github.com/sercanarga/pcileechgen/internal/firmware/barmodel"
 	"github.com/sercanarga/pcileechgen/internal/firmware/codegen"
 	"github.com/sercanarga/pcileechgen/internal/firmware/devclass"
+	"github.com/sercanarga/pcileechgen/internal/firmware/ahci"
 	"github.com/sercanarga/pcileechgen/internal/firmware/nvme"
 	"github.com/sercanarga/pcileechgen/internal/firmware/overlay"
 	"github.com/sercanarga/pcileechgen/internal/firmware/scrub"
@@ -623,6 +624,16 @@ func (ow *OutputWriter) writeConditionalArtifacts(cfg *svgen.SVGeneratorConfig, 
 		}
 
 		if err := ow.writeFile("identify_init.hex", nvme.IdentifyDataToHex(cfg.NVMeIdentify)); err != nil {
+			return err
+		}
+	}
+
+	if cfg.DeviceClass == devclass.ClassSATA {
+		model := "PCILeech SATA Disk"
+		serial := fmt.Sprintf("PL%012X", cfg.DeviceIDs.DSN&0xFFFFFFFFFFFF)
+		const sataSectors = uint64(0x1D1C0000) // ~250 GB at 512 B/sector
+		idw := ahci.BuildIdentify(model, serial, "1.0", sataSectors)
+		if err := ow.writeFile("ahci_identify_init.hex", ahci.IdentifyHex(idw)); err != nil {
 			return err
 		}
 	}
