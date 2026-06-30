@@ -23,6 +23,7 @@ red path is verified (a wrong DUT makes the testbench report `FAIL`).
 | `cfg_w1c_shadow.sv` | config-space registers are write-1-to-clear (shadow BRAM stored writes verbatim → detectable). Driven by `pcileech_cfgspace_w1cmask.coe`. |
 | `msix_pba.sv` | MSI-X PBA was a static zero array; pending bits now set on masked requests and deliver on unmask. |
 | `nvme_store.sv` | NVMe IO reads returned zeros and writes were discarded (Event 11); this is the BRAM sector cache the responder writes through. |
+| `ahci_engine.sv` | SATA/AHCI had no command engine — PxCI never cleared, so storahci times out (Code 10 "I/O adapter hardware error"). Implements the slot-0 command FSM: IDENTIFY + READ/WRITE DMA over a sector store, D2H FIS, PxIS/intr, PxCI clear. |
 
 ## Integrating into firmware
 
