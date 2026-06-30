@@ -1,11 +1,7 @@
 //
-// NVMe DMA Bridge
+// NVMe DMA Bridge - converts admin-responder DMA requests into PCIe
+// MRd/MWr TLPs on PCILeech's 128-bit AXI-stream path.
 // {{ hex04 .DeviceIDs.VendorID }}:{{ hex04 .DeviceIDs.DeviceID }}
-//
-// Converts simple admin-responder DMA requests into PCIe MRd/MWr TLPs.
-// The bridge holds outgoing TLP words until the upstream mux accepts them,
-// and keeps all DMA payload DWORDs in the byte order expected by PCILeech's
-// 128-bit TLP path.
 //
 
 `timescale 1ns / 1ps

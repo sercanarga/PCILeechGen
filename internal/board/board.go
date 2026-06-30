@@ -46,6 +46,31 @@ func (b *Board) BRAMSizeOrDefault() int {
 	return DefaultBRAMSize
 }
 
+// BRAM36Capacity returns the FPGA's RAMB36 block count parsed from the part
+// number, used to size the NVMe disk cache. Returns 0 for non-Artix-7 parts.
+func (b *Board) BRAM36Capacity() int {
+	if b == nil {
+		return 0
+	}
+	p := strings.ToLower(b.FPGAPart)
+	switch {
+	case strings.Contains(p, "7a200t"):
+		return 140
+	case strings.Contains(p, "7a100t"):
+		return 135
+	case strings.Contains(p, "7a75t"):
+		return 135
+	case strings.Contains(p, "7a50t"):
+		return 65
+	case strings.Contains(p, "7a35t"):
+		return 50
+	case strings.Contains(p, "7a15t"):
+		return 25
+	default:
+		return 0
+	}
+}
+
 // SourceBasePath returns the directory that contains source and IP folders.
 func (b *Board) SourceBasePath(libDir string) string {
 	if b.SourceSubDir != "" {

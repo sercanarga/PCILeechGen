@@ -34,7 +34,30 @@ type SVGeneratorConfig struct {
 	MSIConfig          *MSIConfig         // MSI capability info (nil = no MSI cap or disabled)
 	NVMeIdentify       *nvme.IdentifyData // NVMe Identify Controller/Namespace data (nil = no responder)
 	NVMeDoorbellStride uint32             // CAP.DSTRD - doorbell stride (0 = 4B, default)
+	NVMeDiskWords      int                // NVMe disk-cache depth (words), board-scaled
 	Bar0Size           int
+}
+
+// NVMeDiskWordsForBRAM36 returns a board-scaled disk-cache depth (32-bit words)
+// for bram36 RAMB36 blocks, or 0 if the board can't fit a useful cache.
+func NVMeDiskWordsForBRAM36(bram36 int) int {
+	const (
+		maxWords  = 32768
+		minWords  = 8192 // smallest cache that still pins metadata
+		rambWords = 1024 // 32-bit words per RAMB36
+	)
+	if bram36 <= 0 {
+		return 0
+	}
+	budget := min(bram36*3/10*rambWords, maxWords) // 30% of block RAM for the cache
+	v := 128
+	for v*2 <= budget {
+		v *= 2
+	}
+	if v < minWords {
+		return 0
+	}
+	return v
 }
 
 // DonorCapabilities summarizes parsed capabilities from donor config space.
@@ -109,8 +132,7 @@ func renderTemplate(name string, data any) (string, error) {
 	return buf.String(), nil
 }
 
-// renderTemplateDelim renders with non-default delimiters (bram_disk uses [[ ]]
-// because its Verilog replication {{N{...}}} clashes with {{ }}).
+// renderTemplateDelim is renderTemplate with custom delimiters.
 func renderTemplateDelim(name, leftDelim, rightDelim string, data any) (string, error) {
 	tmplStr := mustReadTemplate(name + ".sv.tmpl")
 	tmpl, err := template.New(name).Delims(leftDelim, rightDelim).Funcs(svFuncMap()).Parse(tmplStr)
@@ -153,8 +175,8 @@ func GenerateNVMeDMABridgeSV(cfg *SVGeneratorConfig) (string, error) {
 	return renderTemplate("nvme_dma_bridge", cfg)
 }
 
-// GenerateNVMeBRAMDiskSV renders the BRAM-backed LBA cache ([[ ]] delimiters;
-// the body's Verilog {{N{...}}} clashes with {{ }}).
+// GenerateNVMeBRAMDiskSV renders the disk cache. Uses [[ ]] delimiters because
+// the body's Verilog {{N{...}}} replication clashes with {{ }}.
 func GenerateNVMeBRAMDiskSV(cfg *SVGeneratorConfig) (string, error) {
 	return renderTemplateDelim("nvme_bram_disk", "[[", "]]", cfg)
 }

@@ -8,9 +8,8 @@ import (
 )
 
 // TestGenerateBarControllerSV_WiresNVMeDoorbellsAndDisk verifies the bar
-// controller folds the four decoded doorbell strobes into the responder's
-// generalized doorbell interface and instantiates the BRAM disk cache wired to
-// the responder's disk_req_* path with the generator-configured pinned windows.
+// controller folds the four doorbell strobes into the responder's generalized
+// doorbell interface and instantiates the BRAM disk cache on disk_req_*.
 func TestGenerateBarControllerSV_WiresNVMeDoorbellsAndDisk(t *testing.T) {
 	cfg := testConfig()
 	cfg.NVMeIdentify = &nvme.IdentifyData{}
@@ -21,24 +20,23 @@ func TestGenerateBarControllerSV_WiresNVMeDoorbellsAndDisk(t *testing.T) {
 		t.Fatalf("GenerateBarControllerSV failed: %v", err)
 	}
 
-	// The four per-queue doorbell address decoders are still emitted...
 	for _, want := range []string{
-		"wire nvme_sq0_db_wr",
-		"wire nvme_cq0_db_wr",
-		"wire nvme_sq1_db_wr",
-		"wire nvme_cq1_db_wr",
-		// ...folded into the generalized doorbell interface:
-		"wire        nvme_db_wr",
-		"wire        nvme_db_is_cq",
-		"wire [15:0] nvme_db_qid",
+		// range-based doorbell decode
+		"nvme_db_base",
+		"nvme_db_wr",
+		"nvme_db_is_cq",
+		"nvme_db_qid",
+		// CC.EN explicit pulses
+		"nvme_cc_enable_wr",
+		".cc_enable_wr",
+		// generalized doorbell interface to responder
 		".doorbell_wr",
 		".doorbell_is_cq",
 		".doorbell_qid",
-		// ...and the BRAM disk cache is instantiated + wired to the responder.
-		"pcileech_bram_disk i_nvme_bram_disk",
+		// BRAM disk cache
+		"i_nvme_bram_disk",
 		".disk_req_valid",
 		".disk_req_lba",
-		".req_done       ( nvme_disk_req_done",
 	} {
 		if !strings.Contains(result, want) {
 			t.Fatalf("NVMe bar controller should contain %q", want)

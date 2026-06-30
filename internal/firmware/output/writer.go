@@ -499,6 +499,14 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 			capHI := util.ReadLE32(barData, 0x04)
 			cfg.NVMeDoorbellStride = capHI & 0x0F
 		}
+		// refuse early if board can't fit a cache
+		cfg.NVMeDiskWords = svgen.NVMeDiskWordsForBRAM36(b.BRAM36Capacity())
+		if cfg.NVMeDiskWords == 0 {
+			return nil, fmt.Errorf(
+				"board %q (%s) has insufficient block RAM for NVMe disk emulation; "+
+					"use a supported Artix-7 board (35T minimum, 75T+ recommended)",
+				b.Name, b.FPGAPart)
+		}
 	}
 
 	if ctx.MSIXData != nil && ctx.MSIXData.TableSize > 0 {

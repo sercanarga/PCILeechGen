@@ -16,9 +16,10 @@ module pcileech_tlps128_bar_controller(
     input [15:0]            pcie_id,
     IfAXIS128.sink_lite     tlps_in,
     IfAXIS128.source        tlps_out,
-    // HDA MSI interrupt — aggregated request from all BARs.
+    IfAXIS128.source        tlps_dma_out,
+    // HDA MSI interrupt - aggregated request from all BARs.
     // A single-cycle pulse that gets OR'd into cfg_interrupt by the
-    // cfg module (pcileech_pcie_cfg_a7). Unused for non-HDA devices —
+    // cfg module (pcileech_pcie_cfg_a7). Unused for non-HDA devices -
     // synthesis prunes it.
     output                  intr_req
 );
@@ -162,7 +163,7 @@ module pcileech_tlps128_bar_controller(
     // Sizing: the BAR produces responses at 1/cycle (pipelined 2-cycle latency).
     // The emulator drains at 1 per MIN_LATENCY cycles (default MIN=2, drain=0.5/cycle).
     // Net fill rate = 0.5 entries/cycle. For a max 32-DWORD BAR read (128 bytes),
-    // the worst-case peak is 16 entries — hence 16-deep.
+    // the worst-case peak is 16 entries - hence 16-deep.
     //
     // AXI-style handshake:
     //   Push: bar0_raw_valid && !full  (unconditional capture)
@@ -213,7 +214,7 @@ module pcileech_tlps128_bar_controller(
             bar0_spill_ctx   <= 88'h0;
             bar0_spill_data  <= 32'h0;
         end else if (bar0_spill_valid && !bar0_buf_full) begin
-            // Drain spill to buffer — takes priority over new data
+            // Drain spill to buffer - takes priority over new data
             bar0_spill_valid <= 1'b0;
         end else if (!bar0_spill_valid && bar0_raw_valid && bar0_buf_full) begin
             // Only capture new response in spill when spill slot is empty.
@@ -226,7 +227,7 @@ module pcileech_tlps128_bar_controller(
     end
 
     // Push to buffer: either new response or retry from spill.
-    // Spill drain takes priority — new data is only accepted when spill is empty.
+    // Spill drain takes priority - new data is only accepted when spill is empty.
     wire bar0_buf_write = (bar0_spill_valid && !bar0_buf_full) ||
                           (!bar0_spill_valid && bar0_raw_valid && !bar0_buf_full);
 {{ end }}
@@ -268,6 +269,7 @@ module pcileech_tlps128_bar_controller(
     assign bar0_base_data  = bar0_raw_data;
     assign bar0_base_valid = bar0_raw_valid;
 {{ end }}
+
 {{ end }}
 
     wire [87:0] bar_rsp_ctx[7];
@@ -432,7 +434,7 @@ module pcileech_tlps128_bar_controller(
             end
 
             // Push tail: bar0_buf_write covers both spill drain and new data.
-            // Use the correct data source — spill data gets its own address
+            // Use the correct data source - spill data gets its own address
             // reconstruction since ctx fields come from a different source.
             if (bar0_buf_write) begin
                 if (bar0_spill_valid) begin
@@ -538,7 +540,7 @@ module pcileech_tlps128_bar_controller(
     // ========================================================================
     // HDA MSI Interrupt Generator
     // Fires an intr_req pulse when RIRBINTSTS.INTFL transitions 0->1.
-    // The cfg module routes this to cfg_interrupt for MSI TLP generation —
+    // The cfg module routes this to cfg_interrupt for MSI TLP generation -
     // without MSI, the hdaudio.sys driver polls RIRBWP endlessly and
     // eventually times out with Code 10.
     // ========================================================================
@@ -567,10 +569,8 @@ module pcileech_tlps128_bar_controller(
 {{ end }}
 {{ if and (eq .DeviceClass "nvme") .NVMeIdentify }}
     // NVMe admin responder + DMA bridge
-    // - responder handles what the driver throws at us during init
-    // - bridge turns those simple DMA ops into actual PCIe TLPs
 
-    // Stub HDA TLP signals — unused in NVME-only builds but referenced
+    // Stub HDA TLP signals - unused in NVME-only builds but referenced
     // by the TLP mux below. In HDA+NVME builds, real signals override these.
 {{ if not (eq .DeviceClass "audio") }}    wire        hda_tlp_tx_tvalid = 1'b0;
     wire [127:0] hda_tlp_tx_tdata = 128'h0;
@@ -579,17 +579,21 @@ module pcileech_tlps128_bar_controller(
     wire [8:0]   hda_tlp_tx_tuser = 9'h0;
 {{ end }}
 
-    // catch doorbell writes -- offset derived from CAP.DSTRD + computed from (variable) Bar0Size
-    wire nvme_sq0_db_wr = wr_valid && wr_bar[0] && (wr_addr_bar0 == 32'h{{ printf "%08X" .NVMeSQ0DoorbellOffset }});
-    wire nvme_cq0_db_wr = wr_valid && wr_bar[0] && (wr_addr_bar0 == 32'h{{ printf "%08X" .NVMeCQ0DoorbellOffset }});
-    wire nvme_sq1_db_wr = wr_valid && wr_bar[0] && (wr_addr_bar0 == 32'h{{ printf "%08X" .NVMeSQ1DoorbellOffset }});
-    wire nvme_cq1_db_wr = wr_valid && wr_bar[0] && (wr_addr_bar0 == 32'h{{ printf "%08X" .NVMeCQ1DoorbellOffset }});
-
-    // qid 0 = admin, qid 1 = I/O; is_cq distinguishes CQ-head vs SQ-tail writes.
-    wire        nvme_db_wr    = nvme_sq0_db_wr | nvme_cq0_db_wr | nvme_sq1_db_wr | nvme_cq1_db_wr;
-    wire        nvme_db_is_cq = nvme_cq0_db_wr | nvme_cq1_db_wr;
-    wire [15:0] nvme_db_qid   = (nvme_sq1_db_wr | nvme_cq1_db_wr) ? 16'd1 : 16'd0;
+    // doorbell page: bit[2]=SQ/CQ, bits[13:3]=QID
+    wire [31:0] nvme_db_base  = 32'h{{ printf "%08X" .NVMeSQ0DoorbellOffset }};
+    wire        nvme_db_wr    = wr_valid && wr_bar[0] &&
+                                (wr_addr_bar0 >= nvme_db_base) &&
+                                (wr_addr_bar0 <  nvme_db_base + 32'h00001000);
+    wire [31:0] nvme_db_off   = wr_addr_bar0 - nvme_db_base;
+    wire        nvme_db_is_cq = nvme_db_off[2];
+    wire [15:0] nvme_db_qid   = {5'h00, nvme_db_off[13:3]};
     wire [15:0] nvme_db_val   = wr_data[15:0];
+
+    // CC register write -> enable/disable strobes
+    wire        nvme_cc_wr         = wr_valid && wr_bar[0] &&
+                                     ((wr_addr_bar0 & 32'hFFFFFFFC) == 32'h00000014);
+    wire        nvme_cc_enable_wr  = nvme_cc_wr && wr_data[0];
+    wire        nvme_cc_disable_wr = nvme_cc_wr && !wr_data[0];
 
     // plumbing between the responder and the DMA bridge
     wire        nvme_dma_rd_req;
@@ -605,8 +609,15 @@ module pcileech_tlps128_bar_controller(
     wire        nvme_dma_wr_valid;
     wire        nvme_dma_wr_done;
 
+    wire [7:0]  nvme_resp_dbg_state;
+    wire [15:0] nvme_resp_dbg_qid;
+    wire [7:0]  nvme_resp_dbg_opcode;
+    (* keep = "true" *) wire [31:0] nvme_resp_dbg_admin_queues;
+    (* keep = "true" *) wire [31:0] nvme_resp_dbg_cmd_info;
+    wire [7:0]  nvme_disk_dbg_state;
+    wire [31:0] nvme_disk_dbg_info;
+    (* keep = "true" *) wire [31:0] nvme_dma_dbg_status;
     wire [12:0] nvme_id_rom_addr;
-    wire [31:0] nvme_id_rom_data;
 
     // TLP wires coming out of the DMA bridge
     wire [127:0] nvme_tlp_tx_tdata;
@@ -616,14 +627,12 @@ module pcileech_tlps128_bar_controller(
     wire [8:0]   nvme_tlp_tx_tuser;
     wire         nvme_tlp_tx_tready;
 
-    // CC.EN start/stop are edge-detected inside the responder, so the explicit
-    // enable/disable strobes are unused here.
     pcileech_nvme_admin_responder i_nvme_responder(
         .rst                ( rst                           ),
         .clk                ( clk                           ),
         .cc_en              ( nvme_reg_cc[0]                ),
-        .cc_enable_wr       ( 1'b0                          ),
-        .cc_disable_wr      ( 1'b0                          ),
+        .cc_enable_wr       ( nvme_cc_enable_wr             ),
+        .cc_disable_wr      ( nvme_cc_disable_wr            ),
         .asq_lo             ( nvme_reg_asq_lo               ),
         .asq_hi             ( nvme_reg_asq_hi               ),
         .acq_lo             ( nvme_reg_acq_lo               ),
@@ -664,10 +673,17 @@ module pcileech_tlps128_bar_controller(
         .disk_error         ( nvme_disk_error               ),
         .msix_trigger       ( nvme_msix_trigger             ),
         .id_rom_addr        ( nvme_id_rom_addr              ),
-        .id_rom_data        ( nvme_id_rom_data              )
+        .id_rom_data        ( nvme_id_rom_data              ),
+        .dbg_state          ( nvme_resp_dbg_state           ),
+        .dbg_active_qid     ( nvme_resp_dbg_qid             ),
+        .dbg_opcode         ( nvme_resp_dbg_opcode          ),
+        .dbg_admin_queues   ( nvme_resp_dbg_admin_queues    ),
+        .dbg_cmd_info       ( nvme_resp_dbg_cmd_info        )
     );
 
-    pcileech_bram_disk i_nvme_bram_disk(
+    pcileech_bram_disk #(
+        .DISK_WORDS ( {{ if .NVMeDiskWords }}{{ .NVMeDiskWords }}{{ else }}32768{{ end }} )
+    ) i_nvme_bram_disk(
         .rst            ( rst                       ),
         .clk            ( clk                       ),
         .req_valid      ( nvme_disk_req_valid       ),
@@ -680,10 +696,11 @@ module pcileech_tlps128_bar_controller(
         .req_rdata      ( nvme_disk_req_rdata       ),
         .req_hit        ( nvme_disk_req_hit         ),
         .busy           ( nvme_disk_busy            ),
-        .error          ( nvme_disk_error           )
+        .error          ( nvme_disk_error           ),
+        .dbg_state      ( nvme_disk_dbg_state       ),
+        .dbg_info       ( nvme_disk_dbg_info        )
     );
 
-    // this guy does the real PCIe legwork
     pcileech_nvme_dma_bridge i_nvme_dma_bridge(
         .rst                ( rst                           ),
         .clk                ( clk                           ),
@@ -709,10 +726,11 @@ module pcileech_tlps128_bar_controller(
         .tlp_rx_tdata       ( tlps_in.tdata                 ),
         .tlp_rx_tkeepdw     ( tlps_in.tkeepdw               ),
         .tlp_rx_tvalid      ( tlps_in.tvalid                ),
-        .tlp_rx_tuser       ( tlps_in.tuser                 )
+        .tlp_rx_tuser       ( tlps_in.tuser                 ),
+        .dbg_status         ( nvme_dma_dbg_status           )
     );
 
-    // identify data ROM – loaded from hex at synthesis, read with 1-cycle latency
+    // identify data ROM - loaded from hex at synthesis, read with 1-cycle latency
     reg [31:0] nvme_identify_rom [0:2047];
     initial $readmemh("identify_init.hex", nvme_identify_rom);
 
@@ -721,34 +739,122 @@ module pcileech_tlps128_bar_controller(
         nvme_id_rom_data_r <= nvme_identify_rom[nvme_id_rom_addr[12:2]];
     assign nvme_id_rom_data = nvme_id_rom_data_r;
 
-    // mux DMA bridge TLPs with rdengine BAR responses onto tlps_out
-    // bridge gets priority -- its MWr/MRd TLPs can't wait
-    // HDA takes priority over NVME (both can fire, HDA RIRB writes are time-critical)
-    //
-    // fairness: after 8 consecutive DMA TLP words a 1-cycle gap is forced so
-    // BAR read completions cannot be starved by sustained DMA bursts
-    reg [2:0] dma_burst_cnt;
-    wire dma_active = hda_tlp_tx_tvalid || nvme_tlp_tx_tvalid;
-    wire dma_yield = (dma_burst_cnt == 3'd7);
-    wire dma_tx    = dma_active && tlps_out.tready && !dma_yield;
-    assign nvme_tlp_tx_tready = tlps_out.tready && !dma_yield && !hda_tlp_tx_tvalid;
+    // NVMe DMA TLPs -> separate tlps_dma_out stream via FIFO (no BAR contention).
+    wire         nvme_dma_fifo_full;
+    wire         nvme_dma_fifo_first;
+    wire         nvme_dma_fifo_tlast;
+    wire [3:0]   nvme_dma_fifo_tkeepdw;
+    wire [127:0] nvme_dma_fifo_tdata;
+    wire         nvme_dma_fifo_tvalid;
+    reg  [10:0]  nvme_dma_pkt_count;
+
+    wire nvme_dma_fifo_wr_en = nvme_tlp_tx_tvalid && !nvme_dma_fifo_full;
+    wire nvme_dma_pkt_inc    = nvme_dma_fifo_wr_en && nvme_tlp_tx_tlast;
+    wire nvme_dma_pkt_dec    = nvme_dma_fifo_tvalid && nvme_dma_fifo_tlast;
+    wire [10:0] nvme_dma_pkt_count_next = nvme_dma_pkt_count +
+                                          {10'h000, nvme_dma_pkt_inc} -
+                                          {10'h000, nvme_dma_pkt_dec};
+    wire nvme_dma_fifo_rd_en = tlps_dma_out.tready && (nvme_dma_pkt_count_next != 11'd0);
+
+    assign nvme_tlp_tx_tready = !nvme_dma_fifo_full;
+
+    fifo_134_134_clk1_bar_rdrsp i_fifo_nvme_dma(
+        .srst       ( rst                                                        ),
+        .clk        ( clk                                                        ),
+        .din        ( { nvme_tlp_tx_tuser[0], nvme_tlp_tx_tlast,
+                        nvme_tlp_tx_tkeepdw, nvme_tlp_tx_tdata }                ),
+        .wr_en      ( nvme_dma_fifo_wr_en                                        ),
+        .rd_en      ( nvme_dma_fifo_rd_en                                        ),
+        .dout       ( { nvme_dma_fifo_first, nvme_dma_fifo_tlast,
+                        nvme_dma_fifo_tkeepdw, nvme_dma_fifo_tdata }            ),
+        .full       ( nvme_dma_fifo_full                                         ),
+        .empty      (                                                            ),
+        .prog_empty (                                                            ),
+        .valid      ( nvme_dma_fifo_tvalid                                       )
+    );
 
     always @(posedge clk) begin
-        if (dma_yield)
-            dma_burst_cnt <= 3'd0;
-        else if (dma_tx && dma_burst_cnt != 3'd7)
-            dma_burst_cnt <= dma_burst_cnt + 3'd1;
-        else if (!dma_active)
-            dma_burst_cnt <= 3'd0;
+        nvme_dma_pkt_count <= rst ? 11'd0 : nvme_dma_pkt_count_next;
     end
 
-    assign tlps_out.tdata    = (hda_tlp_tx_tvalid && !dma_yield) ? hda_tlp_tx_tdata    : (nvme_tlp_tx_tvalid && !dma_yield) ? nvme_tlp_tx_tdata    : tlps_rdeng.tdata;
-    assign tlps_out.tkeepdw  = (hda_tlp_tx_tvalid && !dma_yield) ? hda_tlp_tx_tkeepdw  : (nvme_tlp_tx_tvalid && !dma_yield) ? nvme_tlp_tx_tkeepdw  : tlps_rdeng.tkeepdw;
-    assign tlps_out.tvalid   = (dma_active && !dma_yield) || tlps_rdeng.tvalid;
-    assign tlps_out.tlast    = (hda_tlp_tx_tvalid && !dma_yield) ? hda_tlp_tx_tlast    : (nvme_tlp_tx_tvalid && !dma_yield) ? nvme_tlp_tx_tlast    : tlps_rdeng.tlast;
-    assign tlps_out.tuser    = (hda_tlp_tx_tvalid && !dma_yield) ? hda_tlp_tx_tuser    : (nvme_tlp_tx_tvalid && !dma_yield) ? nvme_tlp_tx_tuser    : tlps_rdeng.tuser;
-    assign tlps_out.has_data = (dma_active && !dma_yield) || tlps_rdeng.has_data;
-    assign tlps_rdeng.tready = tlps_out.tready && (dma_yield || !dma_active);
+    assign tlps_dma_out.tdata    = nvme_dma_fifo_tdata;
+    assign tlps_dma_out.tkeepdw  = nvme_dma_fifo_tkeepdw;
+    assign tlps_dma_out.tvalid   = nvme_dma_fifo_tvalid;
+    assign tlps_dma_out.tlast    = nvme_dma_fifo_tlast;
+    assign tlps_dma_out.tuser    = {7'h00, nvme_dma_fifo_tlast, nvme_dma_fifo_first};
+    assign tlps_dma_out.has_data = (nvme_dma_pkt_count_next != 11'd0);
+
+{{ if not (eq .DeviceClass "audio") }}
+    // NVMe-only: tlps_out serves rdengine; NVMe DMA on tlps_dma_out.
+    assign tlps_out.tdata    = tlps_rdeng.tdata;
+    assign tlps_out.tkeepdw  = tlps_rdeng.tkeepdw;
+    assign tlps_out.tvalid   = tlps_rdeng.tvalid;
+    assign tlps_out.tlast    = tlps_rdeng.tlast;
+    assign tlps_out.tuser    = tlps_rdeng.tuser;
+    assign tlps_out.has_data = tlps_rdeng.has_data;
+    assign tlps_rdeng.tready = tlps_out.tready;
+{{ else }}
+    // HDA+NVMe: HDA mux onto tlps_out; NVMe DMA on tlps_dma_out.
+    assign tlps_out.tdata    = hda_tlp_tx_tvalid ? hda_tlp_tx_tdata    : tlps_rdeng.tdata;
+    assign tlps_out.tkeepdw  = hda_tlp_tx_tvalid ? hda_tlp_tx_tkeepdw  : tlps_rdeng.tkeepdw;
+    assign tlps_out.tvalid   = hda_tlp_tx_tvalid || tlps_rdeng.tvalid;
+    assign tlps_out.tlast    = hda_tlp_tx_tvalid ? hda_tlp_tx_tlast    : tlps_rdeng.tlast;
+    assign tlps_out.tuser    = hda_tlp_tx_tvalid ? hda_tlp_tx_tuser    : tlps_rdeng.tuser;
+    assign tlps_out.has_data = hda_tlp_tx_tvalid || tlps_rdeng.has_data;
+    assign tlps_rdeng.tready = tlps_out.tready && !hda_tlp_tx_tvalid;
+
+
+{{ end }}
+`ifdef NVME_ENABLE_ILA
+    wire bar0_wr      = wr_valid && wr_bar[0];
+    wire bar0_rd_req  = rd_req_valid && rd_req_bar[0];
+    wire bar0_wr_cc   = nvme_cc_wr;
+    wire bar0_rd_cc   = bar0_rd_req && ((rd_req_addr_bar0 & 32'hFFFFFFFC) == 32'h00000014);
+    wire bar0_rd_csts = bar0_rd_req && ((rd_req_addr_bar0 & 32'hFFFFFFFC) == 32'h0000001C);
+
+    (* keep = "true" *) wire [63:0] nvme_ila_events;
+    assign nvme_ila_events[0]  = rst;
+    assign nvme_ila_events[1]  = bar_en;
+    assign nvme_ila_events[2]  = tlps_in.tvalid;
+    assign nvme_ila_events[3]  = tlps_in.tuser[0];
+    assign nvme_ila_events[4]  = in_is_bar;
+    assign nvme_ila_events[5]  = in_is_rd;
+    assign nvme_ila_events[6]  = in_is_wr;
+    assign nvme_ila_events[7]  = wr_valid;
+    assign nvme_ila_events[8]  = bar0_wr;
+    assign nvme_ila_events[9]  = bar0_wr_cc;
+    assign nvme_ila_events[10] = nvme_cc_enable_wr;
+    assign nvme_ila_events[11] = nvme_cc_disable_wr;
+    assign nvme_ila_events[15] = rd_req_valid;
+    assign nvme_ila_events[16] = bar0_rd_req;
+    assign nvme_ila_events[17] = bar0_rd_cc;
+    assign nvme_ila_events[18] = bar0_rd_csts;
+    assign nvme_ila_events[19] = bar0_raw_valid;
+    assign nvme_ila_events[23] = nvme_reg_cc[0];
+    assign nvme_ila_events[27] = nvme_dma_rd_req;
+    assign nvme_ila_events[28] = nvme_dma_rd_valid;
+    assign nvme_ila_events[29] = nvme_dma_rd_done;
+    assign nvme_ila_events[30] = nvme_dma_wr_req;
+    assign nvme_ila_events[31] = nvme_dma_wr_valid;
+    assign nvme_ila_events[32] = nvme_dma_wr_done;
+    assign nvme_ila_events[33] = nvme_tlp_tx_tvalid;
+    assign nvme_ila_events[34] = nvme_tlp_tx_tready;
+    assign nvme_ila_events[35] = nvme_tlp_tx_tlast;
+    assign nvme_ila_events[40] = msix_enable;
+    assign nvme_ila_events[41] = msix_function_mask;
+    assign nvme_ila_events[42] = msix_vector_masked;
+    assign nvme_ila_events[43] = nvme_msix_trigger;
+    assign nvme_ila_events[53:50] = nvme_dma_dbg_status[25:22];
+    assign nvme_ila_events[59:54] = nvme_resp_dbg_state[5:0];
+    assign nvme_ila_events[63:60] = nvme_resp_dbg_qid[3:0];
+
+    ila_nvme_debug i_ila_nvme_debug(
+        .clk    ( clk                           ),
+        .probe0 ( nvme_ila_events               ),
+        .probe1 ( {nvme_resp_dbg_opcode, nvme_resp_dbg_qid[7:0], nvme_disk_dbg_info[15:0]} ),
+        .probe2 ( (nvme_resp_dbg_state[5:0] == 6'd1) ? nvme_dma_rd_addr[31:0] : nvme_resp_dbg_cmd_info )
+    );
+`endif
 {{ end }}
 
 {{ if and (eq .DeviceClass "audio") .BARModel }}{{ if not (and (eq .DeviceClass "nvme") .NVMeIdentify) }}
@@ -775,7 +881,15 @@ module pcileech_tlps128_bar_controller(
     assign tlps_out.tuser    = (hda_tlp_tx_tvalid && !dma_yield) ? hda_tlp_tx_tuser    : tlps_rdeng.tuser;
     assign tlps_out.has_data = (hda_tlp_tx_tvalid && !dma_yield) || tlps_rdeng.has_data;
     assign tlps_rdeng.tready = tlps_out.tready && (dma_yield || !hda_tlp_tx_tvalid);
-{{ end }}{{ end }}
+    assign tlps_dma_out.tdata    = 128'h0;
+    assign tlps_dma_out.tkeepdw  = 4'h0;
+    assign tlps_dma_out.tvalid   = 1'b0;
+    assign tlps_dma_out.tlast    = 1'b0;
+    assign tlps_dma_out.tuser    = 9'h0;
+    assign tlps_dma_out.has_data = 1'b0;
+
+{{ end }}{{
+ end }}
 
 {{ if not (or (and (eq .DeviceClass "nvme") .NVMeIdentify) (and (eq .DeviceClass "audio") .BARModel)) }}
     // no DMA bridge: rdengine output goes straight to tlps_out
@@ -804,7 +918,7 @@ module pcileech_tlps128_bar_controller(
         .rd_rsp_valid   ( bar_rsp_valid[1]              )
     );
 
-    // BAR2: MSI doorbell interrupt — write to offset 0x00 triggers MSI
+    // BAR2: MSI doorbell interrupt - write to offset 0x00 triggers MSI
     wire        bar2_intr_req;
 
     pcileech_bar_impl_msi i_bar2(

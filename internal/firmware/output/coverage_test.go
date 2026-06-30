@@ -89,7 +89,7 @@ func TestBuildSVConfig(t *testing.T) {
 			ow := NewOutputWriter(t.TempDir(), "", 0, 0)
 			ids := firmware.ExtractDeviceIDs(ctx.ConfigSpace, ctx.ExtCapabilities)
 
-			cfg, err := ow.buildSVConfig(ctx, ctx.ConfigSpace, ids, 0xDEAD, &board.Board{}); if err != nil { t.Fatal(err) }
+			cfg, err := ow.buildSVConfig(ctx, ctx.ConfigSpace, ids, 0xDEAD, &board.Board{FPGAPart: "xc7a75tfgg484-2"}); if err != nil { t.Fatal(err) }
 			if cfg == nil {
 				t.Fatal("config should not be nil")
 			}
@@ -108,7 +108,7 @@ func TestBuildSVConfig_NVMeHasIdentify(t *testing.T) {
 	ow := NewOutputWriter(t.TempDir(), "", 0, 0)
 	ids := firmware.ExtractDeviceIDs(ctx.ConfigSpace, ctx.ExtCapabilities)
 
-	cfg, err := ow.buildSVConfig(ctx, ctx.ConfigSpace, ids, 0xBEEF, &board.Board{}); if err != nil { t.Fatal(err) }
+	cfg, err := ow.buildSVConfig(ctx, ctx.ConfigSpace, ids, 0xBEEF, &board.Board{FPGAPart: "xc7a75tfgg484-2"}); if err != nil { t.Fatal(err) }
 	if cfg.NVMeIdentify == nil {
 		t.Error("NVMe class should have Identify data")
 	}
@@ -139,7 +139,7 @@ func TestWriteCoreSVArtifacts(t *testing.T) {
 	ow := NewOutputWriter(dir, "", 0, 0)
 	ids := firmware.ExtractDeviceIDs(ctx.ConfigSpace, ctx.ExtCapabilities)
 
-	cfg, err := ow.buildSVConfig(ctx, ctx.ConfigSpace, ids, 0x42, &board.Board{}); if err != nil { t.Fatal(err) }
+	cfg, err := ow.buildSVConfig(ctx, ctx.ConfigSpace, ids, 0x42, &board.Board{FPGAPart: "xc7a75tfgg484-2"}); if err != nil { t.Fatal(err) }
 	scrubbed := ctx.ConfigSpace.Clone()
 
 	if err := ow.writeCoreSVArtifacts(cfg, scrubbed); err != nil {
@@ -172,7 +172,7 @@ func TestWriteConditionalArtifacts_NVMe(t *testing.T) {
 	ow := NewOutputWriter(dir, "", 0, 0)
 	ids := firmware.ExtractDeviceIDs(ctx.ConfigSpace, ctx.ExtCapabilities)
 
-	cfg, err := ow.buildSVConfig(ctx, ctx.ConfigSpace, ids, 0x42, &board.Board{}); if err != nil { t.Fatal(err) }
+	cfg, err := ow.buildSVConfig(ctx, ctx.ConfigSpace, ids, 0x42, &board.Board{FPGAPart: "xc7a75tfgg484-2"}); if err != nil { t.Fatal(err) }
 
 	if err := ow.writeConditionalArtifacts(cfg, ctx); err != nil {
 		t.Fatalf("writeConditionalArtifacts failed: %v", err)
@@ -222,7 +222,7 @@ func TestLogSVSummary(t *testing.T) {
 	ow := NewOutputWriter(t.TempDir(), "", 0, 0)
 	ids := firmware.ExtractDeviceIDs(ctx.ConfigSpace, ctx.ExtCapabilities)
 
-	cfg, err := ow.buildSVConfig(ctx, ctx.ConfigSpace, ids, 0x42, &board.Board{}); if err != nil { t.Fatal(err) }
+	cfg, err := ow.buildSVConfig(ctx, ctx.ConfigSpace, ids, 0x42, &board.Board{FPGAPart: "xc7a75tfgg484-2"}); if err != nil { t.Fatal(err) }
 	// should not panic
 	ow.logSVSummary(cfg)
 }

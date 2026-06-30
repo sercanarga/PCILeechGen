@@ -10,7 +10,7 @@
 module pcileech_nvme_admin_responder #(
     // Must match the Identify Namespace NSZE (nvme.BuildIdentifyData) so IO
     // LBA-range validation agrees with what the host was told.
-    parameter [63:0]    NVME_ADVERTISED_LBAS = 64'd1953525168,
+    parameter [63:0]    NVME_ADVERTISED_LBAS = 64'd2000409264,
     parameter           NVME_ENABLE_IO_QUEUES = 1'b1,
     parameter           NVME_STUB_IO_DATA = 1'b0,
     parameter           NVME_ZERO_IO_READS = 1'b0,

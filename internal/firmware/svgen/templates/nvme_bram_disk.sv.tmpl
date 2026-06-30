@@ -5,7 +5,9 @@
 
 `timescale 1ns / 1ps
 
-module pcileech_bram_disk (
+module pcileech_bram_disk #(
+    parameter integer DISK_WORDS = 32768   // cache depth in 32-bit words (board-scaled at instantiation)
+) (
     input               rst,
     input               clk,
 
@@ -29,7 +31,6 @@ module pcileech_bram_disk (
     localparam [2:0] S_CLEAR = 3'd2;
     localparam [2:0] S_RAM   = 3'd3;
     localparam [2:0] S_RAM_WAIT = 3'd4;
-    localparam integer DISK_WORDS = 32768;   // 128 KiB = 256 cacheable LBAs
     localparam integer BACKING_LBAS = (DISK_WORDS < 128) ? 1 : (DISK_WORDS / 128);
     localparam integer SLOT_WIDTH = (BACKING_LBAS <= 2) ? 1 : $clog2(BACKING_LBAS);
     localparam integer ADDR_WIDTH = SLOT_WIDTH + 7;
@@ -41,7 +42,8 @@ module pcileech_bram_disk (
     localparam integer PIN_WINDOW_LBAS =
         (BACKING_LBAS >= 512) ? 128 :
         (BACKING_LBAS >= 256) ? 64  :
-        (BACKING_LBAS >= 128) ? 32  : 0;
+        (BACKING_LBAS >= 128) ? 32  :
+        (BACKING_LBAS >= 64)  ? 16  : 0;
     localparam integer PINNED_SLOTS = PIN_WINDOW_LBAS * 2;
     localparam [63:0]  WIN64 = {32'h0, PIN_WINDOW_LBAS[31:0]}; // window width for 64-bit offset compares
     localparam integer HASH_SLOTS = (BACKING_LBAS > PINNED_SLOTS) ?
@@ -66,8 +68,7 @@ module pcileech_bram_disk (
     (* ram_style = "distributed" *) reg [63:0] cache_tag   [0:BACKING_LBAS-1];
     reg [BANK_BITS-1:0] read_bank_q;
 
-    // NTFS boot-sector snoop: pin the partition start (= boot sector LBA) and
-    // the $MFT region derived from the boot sector's BPB.
+    // NTFS boot sector snoop: pin boot sector + $MFT from BPB
     //   BPB byte offsets / 32-bit LE word (= byte>>2):
     //   w0[7:0]=jump(EB/E9)  w0[31:24]='N'  w1[23:0]="TFS"  w3[15:8]=sectors/cluster
     //   w12=MFT_LCN[31:0]  w13=MFT_LCN[63:32]  w127[31:16]=0xAA55
@@ -78,14 +79,12 @@ module pcileech_bram_disk (
     reg        mft_armed;
     reg [63:0] pin_mft_lba;
 
-    // Route the boot sector's word 0 to the boot slot the cycle it is detected;
-    // the registered pin only catches up from word 1.
+    // word 0 routes to boot slot same cycle (registered pin lags 1)
     wire boot_detect_now = req_valid && req_write && !req_flush &&
                            (req_word == 7'd0) &&
                            ((req_wdata[7:0] == 8'hEB) || (req_wdata[7:0] == 8'hE9)) &&
                            (req_wdata[31:24] == 8'h4E);   // 'N'
-    // Once a boot sector is armed, ignore further jump+'N' word-0 writes so
-    // stray data can't reroute or clobber the discovered pin.
+    // after first boot sector, ignore stray jump+'N' writes
     wire        boot_route_now = boot_detect_now && !boot_armed;
     wire        eff_boot_armed = boot_armed || boot_route_now;
     wire [63:0] eff_pin_boot   = boot_route_now ? req_lba : pin_boot_lba;
@@ -101,15 +100,14 @@ module pcileech_bram_disk (
         end else if (req_valid && req_write && !req_flush) begin
             if (req_word == 7'd0) begin
                 if (boot_route_now) begin
-                    // First boot sector: latch its LBA, reset BPB fields so the
-                    // $MFT pin recomputes from this format.
+                    // latch LBA + reset BPB
                     boot_armed   <= 1'b1;
                     pin_boot_lba <= req_lba;
                     fmt_spc      <= 8'd0;
                     fmt_mft_lcn  <= 64'd0;
                 end
             end else if (pin_boot_lba == req_lba) begin
-                // Accumulate BPB only while streaming this very boot sector.
+                // accumulate BPB fields
                 if (req_word == 7'd1) begin
                     // Confirm "TFS" at bytes 0x004..0x006; else it isn't NTFS.
                     if (req_wdata[23:0] != 24'h534654)
