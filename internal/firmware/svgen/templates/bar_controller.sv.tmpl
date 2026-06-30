@@ -782,12 +782,10 @@ module pcileech_tlps128_bar_controller(
     wire nvme_dma_fifo_rd_en = (nvme_dma_pkt_count_next != 11'd0) && tlps_out.tready && !dma_yield;
 
     always @(posedge clk) begin
-        if (dma_yield)
+        if (rst || dma_yield || !dma_active)
             dma_burst_cnt <= 3'd0;
-        else if (nvme_dma_fifo_rd_en && dma_burst_cnt != 3'd7)
+        else if (dma_active && nvme_dma_fifo_rd_en && dma_burst_cnt != 3'd7)
             dma_burst_cnt <= dma_burst_cnt + 3'd1;
-        else if (!dma_active)
-            dma_burst_cnt <= 3'd0;
     end
 
     assign tlps_out.tdata    = (dma_active && !dma_yield) ? nvme_dma_fifo_tdata    : tlps_rdeng.tdata;
