@@ -16,7 +16,6 @@ module pcileech_tlps128_bar_controller(
     input [15:0]            pcie_id,
     IfAXIS128.sink_lite     tlps_in,
     IfAXIS128.source        tlps_out,
-    IfAXIS128.source        tlps_dma_out,
     // HDA MSI interrupt - aggregated request from all BARs.
     // A single-cycle pulse that gets OR'd into cfg_interrupt by the
     // cfg module (pcileech_pcie_cfg_a7). Unused for non-HDA devices -
@@ -739,7 +738,7 @@ module pcileech_tlps128_bar_controller(
         nvme_id_rom_data_r <= nvme_identify_rom[nvme_id_rom_addr[12:2]];
     assign nvme_id_rom_data = nvme_id_rom_data_r;
 
-    // NVMe DMA TLPs -> separate tlps_dma_out stream via FIFO (no BAR contention).
+// FIFO buffers DMA bridge TLPs before muxing onto tlps_out.
     wire         nvme_dma_fifo_full;
     wire         nvme_dma_fifo_first;
     wire         nvme_dma_fifo_tlast;
@@ -754,7 +753,6 @@ module pcileech_tlps128_bar_controller(
     wire [10:0] nvme_dma_pkt_count_next = nvme_dma_pkt_count +
                                           {10'h000, nvme_dma_pkt_inc} -
                                           {10'h000, nvme_dma_pkt_dec};
-    wire nvme_dma_fifo_rd_en = tlps_dma_out.tready && (nvme_dma_pkt_count_next != 11'd0);
 
     assign nvme_tlp_tx_tready = !nvme_dma_fifo_full;
 
@@ -777,34 +775,28 @@ module pcileech_tlps128_bar_controller(
         nvme_dma_pkt_count <= rst ? 11'd0 : nvme_dma_pkt_count_next;
     end
 
-    assign tlps_dma_out.tdata    = nvme_dma_fifo_tdata;
-    assign tlps_dma_out.tkeepdw  = nvme_dma_fifo_tkeepdw;
-    assign tlps_dma_out.tvalid   = nvme_dma_fifo_tvalid;
-    assign tlps_dma_out.tlast    = nvme_dma_fifo_tlast;
-    assign tlps_dma_out.tuser    = {7'h00, nvme_dma_fifo_tlast, nvme_dma_fifo_first};
-    assign tlps_dma_out.has_data = (nvme_dma_pkt_count_next != 11'd0);
+    // mux: FIFO output (priority) + rdengine onto tlps_out
+    reg [2:0] dma_burst_cnt;
+    wire dma_active = nvme_dma_fifo_tvalid;
+    wire dma_yield  = (dma_burst_cnt == 3'd7);
+    wire nvme_dma_fifo_rd_en = dma_active && tlps_out.tready && !dma_yield;
 
-{{ if not (eq .DeviceClass "audio") }}
-    // NVMe-only: tlps_out serves rdengine; NVMe DMA on tlps_dma_out.
-    assign tlps_out.tdata    = tlps_rdeng.tdata;
-    assign tlps_out.tkeepdw  = tlps_rdeng.tkeepdw;
-    assign tlps_out.tvalid   = tlps_rdeng.tvalid;
-    assign tlps_out.tlast    = tlps_rdeng.tlast;
-    assign tlps_out.tuser    = tlps_rdeng.tuser;
-    assign tlps_out.has_data = tlps_rdeng.has_data;
-    assign tlps_rdeng.tready = tlps_out.tready;
-{{ else }}
-    // HDA+NVMe: HDA mux onto tlps_out; NVMe DMA on tlps_dma_out.
-    assign tlps_out.tdata    = hda_tlp_tx_tvalid ? hda_tlp_tx_tdata    : tlps_rdeng.tdata;
-    assign tlps_out.tkeepdw  = hda_tlp_tx_tvalid ? hda_tlp_tx_tkeepdw  : tlps_rdeng.tkeepdw;
-    assign tlps_out.tvalid   = hda_tlp_tx_tvalid || tlps_rdeng.tvalid;
-    assign tlps_out.tlast    = hda_tlp_tx_tvalid ? hda_tlp_tx_tlast    : tlps_rdeng.tlast;
-    assign tlps_out.tuser    = hda_tlp_tx_tvalid ? hda_tlp_tx_tuser    : tlps_rdeng.tuser;
-    assign tlps_out.has_data = hda_tlp_tx_tvalid || tlps_rdeng.has_data;
-    assign tlps_rdeng.tready = tlps_out.tready && !hda_tlp_tx_tvalid;
+    always @(posedge clk) begin
+        if (dma_yield)
+            dma_burst_cnt <= 3'd0;
+        else if (nvme_dma_fifo_rd_en && dma_burst_cnt != 3'd7)
+            dma_burst_cnt <= dma_burst_cnt + 3'd1;
+        else if (!dma_active)
+            dma_burst_cnt <= 3'd0;
+    end
 
-
-{{ end }}
+    assign tlps_out.tdata    = (dma_active && !dma_yield) ? nvme_dma_fifo_tdata    : tlps_rdeng.tdata;
+    assign tlps_out.tkeepdw  = (dma_active && !dma_yield) ? nvme_dma_fifo_tkeepdw  : tlps_rdeng.tkeepdw;
+    assign tlps_out.tvalid   = (dma_active && !dma_yield) || tlps_rdeng.tvalid;
+    assign tlps_out.tlast    = (dma_active && !dma_yield) ? nvme_dma_fifo_tlast    : tlps_rdeng.tlast;
+    assign tlps_out.tuser    = (dma_active && !dma_yield) ? {7'h00, nvme_dma_fifo_tlast, nvme_dma_fifo_first} : tlps_rdeng.tuser;
+    assign tlps_out.has_data = (nvme_dma_pkt_count_next != 11'd0) || tlps_rdeng.has_data;
+    assign tlps_rdeng.tready = tlps_out.tready && (dma_yield || !dma_active);
 `ifdef NVME_ENABLE_ILA
     wire bar0_wr      = wr_valid && wr_bar[0];
     wire bar0_rd_req  = rd_req_valid && rd_req_bar[0];
@@ -881,12 +873,6 @@ module pcileech_tlps128_bar_controller(
     assign tlps_out.tuser    = (hda_tlp_tx_tvalid && !dma_yield) ? hda_tlp_tx_tuser    : tlps_rdeng.tuser;
     assign tlps_out.has_data = (hda_tlp_tx_tvalid && !dma_yield) || tlps_rdeng.has_data;
     assign tlps_rdeng.tready = tlps_out.tready && (dma_yield || !hda_tlp_tx_tvalid);
-    assign tlps_dma_out.tdata    = 128'h0;
-    assign tlps_dma_out.tkeepdw  = 4'h0;
-    assign tlps_dma_out.tvalid   = 1'b0;
-    assign tlps_dma_out.tlast    = 1'b0;
-    assign tlps_dma_out.tuser    = 9'h0;
-    assign tlps_dma_out.has_data = 1'b0;
 
 {{ end }}{{
  end }}
