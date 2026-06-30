@@ -98,6 +98,7 @@ set all_ips [get_ips -quiet *]
 if {[llength $all_ips] > 0} {
   upgrade_ip $all_ips
 }
+{{ .ILABlock }}
 
 # Point BRAM IPs to the generated COE files (library defaults are all-zero)
 set bar_bram [get_ips -quiet bram_bar_zero4k]

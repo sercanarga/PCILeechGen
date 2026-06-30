@@ -69,10 +69,10 @@ func (p *scrubPMCapPass) Apply(cs *pci.ConfigSpace, b *board.Board, om *overlay.
 
 		// PMCSR (cap+4): force D0, NoSoftReset, clear PME_Status + PME_Enable
 		pmcsr := cs.ReadU16(cap.Offset + 4)
-		pmcsr &= 0xFFFC  // bits [1:0] = 00 (D0)
-		pmcsr &= ^uint16(1 << 8)  // bit 8 = PME_Enable off
-		pmcsr &= 0x7FFF  // bit 15 = PME_Status clear
-		pmcsr |= 0x0008  // bit 3 = NoSoftReset
+		pmcsr &= 0xFFFC          // bits [1:0] = 00 (D0)
+		pmcsr &= ^uint16(1 << 8) // bit 8 = PME_Enable off
+		pmcsr &= 0x7FFF          // bit 15 = PME_Status clear
+		pmcsr |= 0x0008          // bit 3 = NoSoftReset
 		om.WriteU16(cap.Offset+4, pmcsr, "PM: D0, NoSoftReset, PME disabled")
 	}
 }
@@ -190,8 +190,8 @@ func (p *scrubASPMPass) Apply(cs *pci.ConfigSpace, b *board.Board, om *overlay.M
 		// bits 1:0 = ASPM enable, bit 8 = Clock PM enable
 		if cap.Offset+0x10+2 <= pci.ConfigSpaceLegacySize {
 			linkCtl := cs.ReadU16(cap.Offset + 0x10)
-			linkCtl &= 0xFFFC           // bits 1:0 = ASPM enable
-			linkCtl &= ^uint16(1 << 8)  // bit 8 = Enable Clock PM
+			linkCtl &= 0xFFFC          // bits 1:0 = ASPM enable
+			linkCtl &= ^uint16(1 << 8) // bit 8 = Enable Clock PM
 			om.WriteU16(cap.Offset+0x10, linkCtl, "disable ASPM L0s/L1 + Clock PM")
 		}
 		// clear LTR Mechanism Enable in Device Control 2 (cap+0x28)
@@ -229,21 +229,4 @@ type normalizeAERMasksPass struct{}
 
 func (p *normalizeAERMasksPass) Name() string { return "normalize AER masks" }
 func (p *normalizeAERMasksPass) Apply(cs *pci.ConfigSpace, b *board.Board, om *overlay.Map, ctx *ScrubContext) {
-	if cs.Size < pci.ConfigSpaceSize {
-		return
-	}
-	for _, cap := range ctx.ExtCaps {
-		if cap.ID != pci.ExtCapIDAER {
-			continue
-		}
-		if cap.Offset+0x0C <= pci.ConfigSpaceSize {
-			om.WriteU32(cap.Offset+0x08, 0x00462030, "set AER uncorrectable mask (spec defaults)")
-		}
-		if cap.Offset+0x18 <= pci.ConfigSpaceSize {
-			om.WriteU32(cap.Offset+0x14, 0x00002000, "set AER correctable mask (spec defaults)")
-		}
-		if cap.Offset+0x10 <= pci.ConfigSpaceSize {
-			om.WriteU32(cap.Offset+0x0C, 0x0045E011, "set AER uncorrectable severity (CT non-fatal per spec)")
-		}
-	}
 }

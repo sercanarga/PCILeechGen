@@ -23,9 +23,9 @@ var unsafeStandardCaps = map[uint8]string{
 	pci.CapIDEnhancedAlloc:     "Enhanced Allocation",
 	pci.CapIDFlatteningPortal:  "Flattening Portal",
 	pci.CapIDPCIX:              "PCI-X",
-	pci.CapIDBridgeSubsysVID:  "Bridge Subsystem VID",
-	pci.CapIDSecureDevice:     "Secure Device",
-	pci.CapIDAdvancedFeatures: "Advanced Features",
+	pci.CapIDBridgeSubsysVID:   "Bridge Subsystem VID",
+	pci.CapIDSecureDevice:      "Secure Device",
+	pci.CapIDAdvancedFeatures:  "Advanced Features",
 }
 
 // PruneStandardCaps unlinks unsupported caps and returns what was removed.
@@ -52,8 +52,14 @@ func PruneStandardCaps(cs *pci.ConfigSpace, om *overlay.Map) []string {
 			om.WriteU8(prevNextOff, uint8(nextPtr),
 				fmt.Sprintf("prune cap 0x%02X (%s): relink", capID, name))
 
-			om.WriteU8(ptr, 0, "zero pruned cap header")
-			om.WriteU8(ptr+1, 0, "zero pruned cap next ptr")
+			size := capSizeAt(cs, capID, ptr)
+			if nextPtr > ptr {
+				size = nextPtr - ptr
+			}
+			if ptr+size > pci.ConfigSpaceLegacySize {
+				size = pci.ConfigSpaceLegacySize - ptr
+			}
+			om.ZeroRange(ptr, ptr+size, fmt.Sprintf("zero pruned cap body 0x%02X (%s)", capID, name))
 
 			removed = append(removed, fmt.Sprintf("%s (0x%02X) at 0x%02X", name, capID, ptr))
 		} else {

@@ -6,6 +6,7 @@ import (
 
 	"github.com/sercanarga/pcileechgen/internal/board"
 	"github.com/sercanarga/pcileechgen/internal/donor"
+	"github.com/sercanarga/pcileechgen/internal/donor/behavior"
 	"github.com/sercanarga/pcileechgen/internal/firmware"
 	"github.com/sercanarga/pcileechgen/internal/pci"
 	"github.com/sercanarga/pcileechgen/internal/vivado"
@@ -25,6 +26,9 @@ type buildFlags struct {
 	fromJSON   string
 	stockBar   bool
 	force      bool
+	mmioTrace  string
+	ila        bool
+	ilaDepth   int
 }
 
 var buildOpts buildFlags
@@ -78,7 +82,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		slog.Warn("donor largest BAR exceeds board BRAM (forced)", "donor_bar", donorDemand, "board_bram", boardBRAM)
 	}
 
-	builder := vivado.NewBuilder(b, vivado.BuildOptions{
+	bopts := vivado.BuildOptions{
 		VivadoPath: buildOpts.vivadoPath,
 		OutputDir:  buildOpts.output,
 		LibDir:     buildOpts.libDir,
@@ -87,9 +91,49 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		SkipVivado: buildOpts.skipVivado,
 		StockBar:   buildOpts.stockBar,
 		Force:      buildOpts.force,
-	})
+	}
 
-	return builder.Build(ctx)
+	if buildOpts.mmioTrace != "" {
+		h, err := donorTimingHistogram(buildOpts.mmioTrace, ctx)
+		if err != nil {
+			return fmt.Errorf("load donor timing trace: %w", err)
+		}
+		bopts.TimingHistogram = h
+		slog.Info("donor latency profile loaded", "trace", buildOpts.mmioTrace, "samples", h.SampleCount)
+	}
+
+	if buildOpts.ila {
+		depth := buildOpts.ilaDepth
+		if depth <= 0 {
+			depth = firmware.DefaultILADepth
+		}
+		bopts.ILADepth = depth
+		slog.Info("ILA debug core enabled", "depth", depth, "probes", len(firmware.ILAProbes()))
+	}
+
+	return vivado.NewBuilder(b, bopts).Build(ctx)
+}
+
+func donorTimingHistogram(traceFile string, ctx *donor.DeviceContext) (*behavior.TimingHistogram, error) {
+	idx := firmware.LargestBarIndex(ctx.BARContents)
+	var size int
+	var base uint64
+	for _, bar := range ctx.BARs {
+		if bar.Index == idx {
+			size = int(bar.Size)
+			base = bar.Address
+		}
+	}
+	trace, err := loadMMIOTrace(mmioTraceOptions{
+		bdf:       ctx.Device.BDF.String(),
+		barIndex:  idx,
+		barSize:   size,
+		traceFile: traceFile,
+	}, base)
+	if err != nil {
+		return nil, err
+	}
+	return behavior.ExtractTimingHistogram(trace), nil
 }
 
 // loadDonorContext loads device context from JSON or live device.
@@ -149,6 +193,7 @@ func init() {
 	buildCmd.Flags().StringVar(&buildOpts.bdf, "bdf", "", "donor device BDF address (e.g. 0000:03:00.0)")
 	buildCmd.Flags().StringVar(&buildOpts.board, "board", "", "target FPGA board name (required, e.g. PCIeSquirrel)")
 	buildCmd.Flags().StringVar(&buildOpts.fromJSON, "from-json", "", "load donor device data from JSON file (offline build)")
+	buildCmd.Flags().StringVar(&buildOpts.mmioTrace, "mmio-trace", "", "donor MMIO trace file; drives TLP latency emulation off the donor's real timing")
 	buildCmd.Flags().StringVar(&buildOpts.vivadoPath, "vivado-path", "", "path to Vivado installation")
 	buildCmd.Flags().StringVar(&buildOpts.output, "output", "pcileech_datastore", "output directory")
 	buildCmd.Flags().BoolVar(&buildOpts.skipVivado, "skip-vivado", false, "skip Vivado synthesis (only generate artifacts)")
@@ -157,6 +202,8 @@ func init() {
 	buildCmd.Flags().StringVar(&buildOpts.libDir, "lib-dir", "lib/pcileech-fpga", "path to pcileech-fpga library")
 	buildCmd.Flags().BoolVar(&buildOpts.stockBar, "stock-bar", false, "use stock bar controller (diagnostic: skip custom SV modules)")
 	buildCmd.Flags().BoolVar(&buildOpts.force, "force", false, "ignore donor BAR > board BRAM check")
+	buildCmd.Flags().BoolVar(&buildOpts.ila, "ila", false, "insert a Vivado ILA debug core probing BAR/TLP/interrupt signals")
+	buildCmd.Flags().IntVar(&buildOpts.ilaDepth, "ila-depth", firmware.DefaultILADepth, "ILA capture depth in samples (with --ila)")
 
 	_ = buildCmd.MarkFlagRequired("board")
 

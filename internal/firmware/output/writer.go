@@ -10,6 +10,7 @@ import (
 
 	"github.com/sercanarga/pcileechgen/internal/board"
 	"github.com/sercanarga/pcileechgen/internal/donor"
+	"github.com/sercanarga/pcileechgen/internal/donor/behavior"
 	"github.com/sercanarga/pcileechgen/internal/firmware"
 	"github.com/sercanarga/pcileechgen/internal/firmware/barmodel"
 	"github.com/sercanarga/pcileechgen/internal/firmware/codegen"
@@ -32,6 +33,9 @@ type OutputWriter struct {
 	Timeout   int
 	StockBar  bool
 	Force     bool
+
+	TimingHistogram *behavior.TimingHistogram
+	ILADepth        int
 }
 
 func NewOutputWriter(outputDir, libDir string, jobs, timeout int) *OutputWriter {
@@ -94,6 +98,8 @@ func (ow *OutputWriter) WriteAll(ctx *donor.DeviceContext, b *board.Board) error
 		}
 	}
 
+	ow.writeCode10Report(ctx, b, ids)
+
 	ow.writeManifest(ctx, ids)
 	return nil
 }
@@ -140,6 +146,10 @@ func (ow *OutputWriter) writeConfigSpaceArtifacts(ctx *donor.DeviceContext, scru
 		codegen.GenerateWritemaskCOE(scrubbedCS)); err != nil {
 		return fmt.Errorf("failed to write writemask COE: %w", err)
 	}
+	if err := ow.writeFile("pcileech_cfgspace_w1cmask.coe",
+		codegen.GenerateW1CMaskCOE(scrubbedCS)); err != nil {
+		return fmt.Errorf("failed to write W1C mask COE: %w", err)
+	}
 
 	msixTableSize := 0
 	if ctx.MSIXData != nil && ctx.MSIXData.TableSize > 0 {
@@ -158,12 +168,17 @@ func (ow *OutputWriter) writeConfigSpaceArtifacts(ctx *donor.DeviceContext, scru
 // writeTCLScripts generates Vivado project and build TCL scripts.
 func (ow *OutputWriter) writeTCLScripts(ctx *donor.DeviceContext, b *board.Board) error {
 	if err := ow.writeFile("vivado_generate_project.tcl",
-		tclgen.GenerateProjectTCL(ctx, b, ow.LibDir, ow.StockBar)); err != nil {
+		tclgen.GenerateProjectTCL(ctx, b, ow.LibDir, ow.StockBar, ow.ILADepth)); err != nil {
 		return fmt.Errorf("failed to write project TCL: %w", err)
 	}
 	if err := ow.writeFile("vivado_build.tcl",
 		tclgen.GenerateBuildTCL(b, ow.Jobs, ow.Timeout)); err != nil {
 		return fmt.Errorf("failed to write build TCL: %w", err)
+	}
+	if ow.ILADepth > 0 {
+		if err := ow.writeFile("ila_debug.txt", firmware.ILADebugDoc()); err != nil {
+			return fmt.Errorf("failed to write ILA debug doc: %w", err)
+		}
 	}
 	return nil
 }
@@ -334,6 +349,7 @@ func ListOutputFiles() []string {
 		"device_context.json",
 		"pcileech_cfgspace.coe",
 		"pcileech_cfgspace_writemask.coe",
+		"pcileech_cfgspace_w1cmask.coe",
 		"pcileech_bar_zero4k.coe",
 		"bar_behavior_profile.json",
 		"vivado_generate_project.tcl",
@@ -350,6 +366,8 @@ func ListOutputFiles() []string {
 		"config_space_init.hex",
 		"msix_table_init.hex",
 		"scrub_diff_report.txt",
+		"code10_report.txt",
+		"ila_debug.txt",
 		"build_manifest.json",
 	}
 }
@@ -484,12 +502,16 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 		DonorCapabilities: extractDonorCapabilities(scrubbedCS),
 		BARModel:          bm,
 		ClassCode:         ctx.Device.ClassCode,
-		LatencyConfig:     svgen.DefaultLatencyConfig(ctx.Device.ClassCode),
+		LatencyConfig:     svgen.LatencyConfigFromHistogram(ow.TimingHistogram, ctx.Device.ClassCode),
 		HasMSIX:           bm != nil,
 		BuildEntropy:      entropy,
 		PRNGSeeds:         svgen.BuildPRNGSeeds(ids.VendorID, ids.DeviceID, entropy),
 		DeviceClass:       devClass,
 		Bar0Size:          bar0Size,
+	}
+
+	if ow.ILADepth > 0 {
+		cfg.ILAInstanceSV = firmware.ILAInstanceSV()
 	}
 
 	if devClass == devclass.ClassNVMe {
