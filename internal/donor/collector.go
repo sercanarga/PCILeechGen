@@ -22,18 +22,24 @@ const (
 // Collector gathers donor PCI data from sysfs.
 type Collector struct {
 	sysfs *SysfsReader
+	// ProbeBARs enables destructive write-readback BAR profiling. Network-class
+	// donors are never probed regardless, since writing live NIC registers
+	// (e.g. Aquantia firmware-mailbox 10GbE chips) hangs the device on BAR.
+	ProbeBARs bool
 }
 
 func NewCollector() *Collector {
 	return &Collector{
-		sysfs: NewSysfsReader(),
+		sysfs:     NewSysfsReader(),
+		ProbeBARs: true,
 	}
 }
 
 // NewCollectorWithSysfs lets tests inject a fake sysfs reader.
 func NewCollectorWithSysfs(sr *SysfsReader) *Collector {
 	return &Collector{
-		sysfs: sr,
+		sysfs:     sr,
+		ProbeBARs: true,
 	}
 }
 
@@ -65,7 +71,7 @@ func (c *Collector) Collect(bdf pci.BDF) (*DeviceContext, error) {
 	ctx.BARs = bars
 
 	ctx.BARContents = c.collectBARMemory(bdf, bars)
-	ctx.BARProfiles = c.collectBARProfiles(bdf, bars, ctx.BARContents)
+	ctx.BARProfiles = c.collectBARProfiles(bdf, bars, ctx.BARContents, ctx.Device.ClassCode)
 	ctx.Capabilities = pci.ParseCapabilities(cs)
 	ctx.ExtCapabilities = pci.ParseExtCapabilities(cs)
 	ctx.MSIXData = c.collectMSIXData(cs, ctx.BARContents)
@@ -413,14 +419,19 @@ func (c *Collector) readBARs(bdf pci.BDF, eligible []pci.BAR, contents map[int][
 	}
 }
 
-func (c *Collector) collectBARProfiles(bdf pci.BDF, bars []pci.BAR, barContents map[int][]byte) map[int]*BARProfile {
+func (c *Collector) collectBARProfiles(bdf pci.BDF, bars []pci.BAR, barContents map[int][]byte, classCode uint32) map[int]*BARProfile {
 	profiler := NewBARProfiler()
 	profiles := make(map[int]*BARProfile)
 
+	if isNetworkClass(classCode) {
+		slog.Info("BAR profiling skipped: network-class donor (write-probing hangs NIC firmware, e.g. Aquantia)", "class", fmt.Sprintf("0x%06X", classCode))
+		return profiles
+	}
+
 	for _, bar := range eligibleBARs(bars) {
-		// don't probe unresponsive BARs, writes can brick the device
-		if data, ok := barContents[bar.Index]; ok && isAllFF(data) {
-			slog.Info("BAR profiling skipped: content is all 0xFF", "bar", bar.Index)
+		// don't probe unresponsive BARs or when disabled, writes can brick the device
+		if !shouldProbeBAR(c.ProbeBARs, classCode, barContents[bar.Index]) {
+			slog.Info("BAR profiling skipped", "bar", bar.Index, "probe_enabled", c.ProbeBARs)
 			continue
 		}
 

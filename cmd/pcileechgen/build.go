@@ -29,6 +29,7 @@ type buildFlags struct {
 	mmioTrace  string
 	ila        bool
 	ilaDepth   int
+	probeBars  bool
 }
 
 var buildOpts buildFlags
@@ -156,6 +157,7 @@ func loadDonorContext() (*donor.DeviceContext, error) {
 	slog.Info("collecting donor device data")
 
 	collector := donor.NewCollector()
+	collector.ProbeBARs = buildOpts.probeBars
 	ctx, err := collector.Collect(bdf)
 	if err != nil {
 		return nil, fmt.Errorf("device data collection failed: %w", err)
@@ -204,6 +206,7 @@ func init() {
 	buildCmd.Flags().BoolVar(&buildOpts.force, "force", false, "ignore donor BAR > board BRAM check")
 	buildCmd.Flags().BoolVar(&buildOpts.ila, "ila", false, "insert a Vivado ILA debug core probing BAR/TLP/interrupt signals")
 	buildCmd.Flags().IntVar(&buildOpts.ilaDepth, "ila-depth", firmware.DefaultILADepth, "ILA capture depth in samples (with --ila)")
+	buildCmd.Flags().BoolVar(&buildOpts.probeBars, "probe-bars", true, "write-probe BAR registers to map RW/W1C bits (always skipped for network cards; set false if a donor hangs on BAR)")
 
 	_ = buildCmd.MarkFlagRequired("board")
 
