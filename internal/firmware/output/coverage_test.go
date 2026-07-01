@@ -188,6 +188,35 @@ func TestWriteConditionalArtifacts_NVMe(t *testing.T) {
 	}
 }
 
+func TestWriteConditionalArtifacts_XHCI(t *testing.T) {
+	dir := t.TempDir()
+	ctx := makeDonorContext(0x8086, 0xA36D, 0x0C0330)
+	ow := NewOutputWriter(dir, "", 0, 0)
+	ids := firmware.ExtractDeviceIDs(ctx.ConfigSpace, ctx.ExtCapabilities)
+
+	cfg, err := ow.buildSVConfig(ctx, ctx.ConfigSpace, ids, 0x42, &board.Board{}); if err != nil { t.Fatal(err) }
+	if cfg.BARModel == nil {
+		t.Fatal("xHCI should have a BARModel")
+	}
+
+	if err := ow.writeConditionalArtifacts(cfg, ctx); err != nil {
+		t.Fatalf("writeConditionalArtifacts failed: %v", err)
+	}
+
+	// Regression check for the "no Go code ever renders xhci_ring_engine"
+	// showstopper: bar_controller.sv.tmpl instantiates pcileech_xhci_ring_engine
+	// and pcileech_xhci_dma_bridge, so the file defining them must exist.
+	data, err := os.ReadFile(filepath.Join(dir, "pcileech_xhci_ring_engine.sv"))
+	if err != nil {
+		t.Fatalf("pcileech_xhci_ring_engine.sv not created: %v", err)
+	}
+	for _, module := range []string{"module pcileech_xhci_ring_engine", "module pcileech_xhci_dma_bridge"} {
+		if !strings.Contains(string(data), module) {
+			t.Errorf("pcileech_xhci_ring_engine.sv missing %q", module)
+		}
+	}
+}
+
 func TestWriteConditionalArtifacts_MSIXDonor(t *testing.T) {
 	dir := t.TempDir()
 	ctx := makeDonorContext(0x8086, 0x15B7, 0x020000)

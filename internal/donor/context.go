@@ -22,48 +22,68 @@ type MSIXData struct {
 	Entries     []pci.MSIXEntry `json:"entries"`
 }
 
+// SiblingFunction captures the identity of another PCI function found at the
+// same bus:slot as the primary donor device (e.g. a TB3/TB4 controller's
+// bridge and NHI functions). Metadata only - siblings never get BAR or
+// capability collection, just enough to know they exist.
+//
+// ponytail: not firmware.DeviceIDs - internal/firmware already imports
+// internal/donor (see helpers.go), so importing it back here would cycle.
+type SiblingFunction struct {
+	Function  uint8  `json:"function"`
+	VendorID  uint16 `json:"vendor_id"`
+	DeviceID  uint16 `json:"device_id"`
+	ClassCode uint32 `json:"class_code"`
+}
+
 // DeviceContext is the full snapshot of a donor device.
 type DeviceContext struct {
 	CollectedAt time.Time `json:"collected_at"`
 	ToolVersion string    `json:"tool_version"`
 	Hostname    string    `json:"hostname"`
 
-	Device          pci.PCIDevice       `json:"device"`
-	ConfigSpace     *pci.ConfigSpace    `json:"config_space"`
-	BARs            []pci.BAR           `json:"bars"`
-	BARContents     map[int][]byte      `json:"-"` // BAR memory contents, keyed by BAR index
-	BARProfiles     map[int]*BARProfile `json:"-"` // probing results, keyed by BAR index
-	Capabilities    []pci.Capability    `json:"capabilities"`
-	ExtCapabilities []pci.ExtCapability `json:"ext_capabilities,omitempty"`
-	MSIXData        *MSIXData           `json:"msix_data,omitempty"`
+	Device           pci.PCIDevice       `json:"device"`
+	ConfigSpace      *pci.ConfigSpace    `json:"config_space"`
+	BARs             []pci.BAR           `json:"bars"`
+	BARContents      map[int][]byte      `json:"-"` // BAR memory contents, keyed by BAR index
+	BARProfiles      map[int]*BARProfile `json:"-"` // probing results, keyed by BAR index
+	Capabilities     []pci.Capability    `json:"capabilities"`
+	ExtCapabilities  []pci.ExtCapability `json:"ext_capabilities,omitempty"`
+	MSIXData         *MSIXData           `json:"msix_data,omitempty"`
+	IsMultiFunction  bool                `json:"is_multi_function,omitempty"`
+	SiblingFunctions []SiblingFunction   `json:"sibling_functions,omitempty"`
 }
 
 // JSON wire format - config space as hex words, BARs as base64.
 type deviceContextJSON struct {
-	CollectedAt     time.Time              `json:"collected_at"`
-	ToolVersion     string                 `json:"tool_version"`
-	Hostname        string                 `json:"hostname"`
-	Device          pci.PCIDevice          `json:"device"`
-	ConfigSpaceHex  []string               `json:"config_space_hex"`
-	ConfigSpaceSize int                    `json:"config_space_size"`
-	BARs            []pci.BAR              `json:"bars"`
-	BARContents     map[string]string      `json:"bar_contents,omitempty"` // key: BAR index, value: base64
-	BARProfiles     map[string]*BARProfile `json:"bar_profiles,omitempty"`
-	Capabilities    []pci.Capability       `json:"capabilities"`
-	ExtCapabilities []pci.ExtCapability    `json:"ext_capabilities,omitempty"`
-	MSIXData        *MSIXData              `json:"msix_data,omitempty"`
+	CollectedAt      time.Time              `json:"collected_at"`
+	ToolVersion      string                 `json:"tool_version"`
+	Hostname         string                 `json:"hostname"`
+	Device           pci.PCIDevice          `json:"device"`
+	ConfigSpaceHex   []string               `json:"config_space_hex"`
+	ConfigSpaceSize  int                    `json:"config_space_size"`
+	BARs             []pci.BAR              `json:"bars"`
+	BARContents      map[string]string      `json:"bar_contents,omitempty"` // key: BAR index, value: base64
+	BARProfiles      map[string]*BARProfile `json:"bar_profiles,omitempty"`
+	Capabilities     []pci.Capability       `json:"capabilities"`
+	ExtCapabilities  []pci.ExtCapability    `json:"ext_capabilities,omitempty"`
+	MSIXData         *MSIXData              `json:"msix_data,omitempty"`
+	IsMultiFunction  bool                   `json:"is_multi_function,omitempty"`
+	SiblingFunctions []SiblingFunction      `json:"sibling_functions,omitempty"`
 }
 
 func (dc *DeviceContext) MarshalJSON() ([]byte, error) {
 	j := deviceContextJSON{
-		CollectedAt:     dc.CollectedAt,
-		ToolVersion:     dc.ToolVersion,
-		Hostname:        dc.Hostname,
-		Device:          dc.Device,
-		BARs:            dc.BARs,
-		Capabilities:    dc.Capabilities,
-		ExtCapabilities: dc.ExtCapabilities,
-		MSIXData:        dc.MSIXData,
+		CollectedAt:      dc.CollectedAt,
+		ToolVersion:      dc.ToolVersion,
+		Hostname:         dc.Hostname,
+		Device:           dc.Device,
+		BARs:             dc.BARs,
+		Capabilities:     dc.Capabilities,
+		ExtCapabilities:  dc.ExtCapabilities,
+		MSIXData:         dc.MSIXData,
+		IsMultiFunction:  dc.IsMultiFunction,
+		SiblingFunctions: dc.SiblingFunctions,
 	}
 
 	if dc.ConfigSpace != nil {
@@ -111,6 +131,8 @@ func (dc *DeviceContext) UnmarshalJSON(data []byte) error {
 	dc.Capabilities = j.Capabilities
 	dc.ExtCapabilities = j.ExtCapabilities
 	dc.MSIXData = j.MSIXData
+	dc.IsMultiFunction = j.IsMultiFunction
+	dc.SiblingFunctions = j.SiblingFunctions
 
 	// Reconstruct config space from hex words
 	if len(j.ConfigSpaceHex) > 0 {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	_ "embed"
 	"fmt"
 	"log/slog"
 
@@ -8,28 +9,48 @@ import (
 	"github.com/sercanarga/pcileechgen/internal/donor"
 	"github.com/sercanarga/pcileechgen/internal/donor/behavior"
 	"github.com/sercanarga/pcileechgen/internal/firmware"
+	"github.com/sercanarga/pcileechgen/internal/firmware/fallback"
+	"github.com/sercanarga/pcileechgen/internal/firmware/output"
 	"github.com/sercanarga/pcileechgen/internal/pci"
 	"github.com/sercanarga/pcileechgen/internal/vivado"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 )
+
+//go:embed fallback_defaults.yaml
+var fallbackDefaultsYAML []byte
+
+// loadFallbackConfig loads --fallback-config if given, otherwise falls back
+// to the built-in embedded defaults (fallback recovery is on by default).
+func loadFallbackConfig(path string) (*fallback.Config, error) {
+	if path != "" {
+		return fallback.LoadConfig(path)
+	}
+	var cfg fallback.Config
+	if err := yaml.Unmarshal(fallbackDefaultsYAML, &cfg); err != nil {
+		return nil, fmt.Errorf("failed to parse embedded fallback defaults: %w", err)
+	}
+	return &cfg, nil
+}
 
 // buildFlags groups all build command flags.
 type buildFlags struct {
-	bdf        string
-	board      string
-	vivadoPath string
-	output     string
-	skipVivado bool
-	jobs       int
-	timeout    int
-	libDir     string
-	fromJSON   string
-	stockBar   bool
-	force      bool
-	mmioTrace  string
-	ila        bool
-	ilaDepth   int
-	probeBars  bool
+	bdf            string
+	board          string
+	vivadoPath     string
+	output         string
+	skipVivado     bool
+	jobs           int
+	timeout        int
+	libDir         string
+	fromJSON       string
+	stockBar       bool
+	force          bool
+	mmioTrace      string
+	ila            bool
+	ilaDepth       int
+	probeBars      bool
+	fallbackConfig string
 }
 
 var buildOpts buildFlags
@@ -111,6 +132,12 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		bopts.ILADepth = depth
 		slog.Info("ILA debug core enabled", "depth", depth, "probes", len(firmware.ILAProbes()))
 	}
+
+	fbCfg, err := loadFallbackConfig(buildOpts.fallbackConfig)
+	if err != nil {
+		return fmt.Errorf("load fallback config: %w", err)
+	}
+	output.DefaultFallbackConfig = fbCfg
 
 	return vivado.NewBuilder(b, bopts).Build(ctx)
 }
@@ -207,6 +234,7 @@ func init() {
 	buildCmd.Flags().BoolVar(&buildOpts.ila, "ila", false, "insert a Vivado ILA debug core probing BAR/TLP/interrupt signals")
 	buildCmd.Flags().IntVar(&buildOpts.ilaDepth, "ila-depth", firmware.DefaultILADepth, "ILA capture depth in samples (with --ila)")
 	buildCmd.Flags().BoolVar(&buildOpts.probeBars, "probe-bars", true, "write-probe BAR registers to map RW/W1C bits (always skipped for network cards; set false if a donor hangs on BAR)")
+	buildCmd.Flags().StringVar(&buildOpts.fallbackConfig, "fallback-config", "", "path to a custom fallback defaults YAML (fills zeroed BAR registers by device class); empty uses the built-in embedded defaults")
 
 	_ = buildCmd.MarkFlagRequired("board")
 

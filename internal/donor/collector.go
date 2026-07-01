@@ -64,6 +64,11 @@ func (c *Collector) Collect(bdf pci.BDF) (*DeviceContext, error) {
 	}
 	ctx.ConfigSpace = cs
 
+	if cs.IsMultiFunction() {
+		ctx.IsMultiFunction = true
+		ctx.SiblingFunctions = c.collectSiblingFunctions(bdf)
+	}
+
 	bars, err := c.sysfs.ReadResourceFile(bdf)
 	if err != nil {
 		bars = pci.ParseBARsFromConfigSpace(cs)
@@ -344,6 +349,33 @@ func (c *Collector) collectConfigSpace(bdf pci.BDF) (*pci.ConfigSpace, error) {
 		}
 	}
 	return cs, nil
+}
+
+// collectSiblingFunctions enumerates other PCI functions at the same
+// bus:slot as bdf (function 0-7, excluding bdf itself). Real TB3/TB4
+// controllers commonly split bridge/NHI across sibling functions, and this
+// captures just their identity - no BAR/capability collection is repeated
+// for them. Siblings that don't exist or aren't accessible (permission
+// denied, e.g. not bound to vfio-pci) are skipped rather than failing.
+func (c *Collector) collectSiblingFunctions(bdf pci.BDF) []SiblingFunction {
+	var siblings []SiblingFunction
+	for fn := 0; fn < 8; fn++ {
+		if uint8(fn) == bdf.Function {
+			continue
+		}
+		sibBDF := pci.BDF{Domain: bdf.Domain, Bus: bdf.Bus, Device: bdf.Device, Function: uint8(fn)}
+		dev, err := c.sysfs.ReadDeviceInfo(sibBDF)
+		if err != nil {
+			continue
+		}
+		siblings = append(siblings, SiblingFunction{
+			Function:  uint8(fn),
+			VendorID:  dev.VendorID,
+			DeviceID:  dev.DeviceID,
+			ClassCode: dev.ClassCode,
+		})
+	}
+	return siblings
 }
 
 func (c *Collector) collectBARMemory(bdf pci.BDF, bars []pci.BAR) map[int][]byte {

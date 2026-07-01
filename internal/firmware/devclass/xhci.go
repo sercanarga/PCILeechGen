@@ -22,14 +22,12 @@ func (s *xhciStrategy) ScrubBAR(data []byte) {
 	}
 
 	if len(data) > 0x1C {
-		dboff := util.ReadLE32(data, 0x14)
-		if dboff > 0x800 {
-			util.WriteLE32(data, 0x14, 0x00000100)
-		}
-		rtsoff := util.ReadLE32(data, 0x18)
-		if rtsoff > 0xC00 {
-			util.WriteLE32(data, 0x18, 0x00000200)
-		}
+		// DBOFF/RTSOFF are internal wiring constants, not donor-identity
+		// fields: bar_controller.sv.tmpl and barmodel's buildXHCIBARModel
+		// hardcode the doorbell/runtime layout at 0x100/0x200, so any donor
+		// value must be forced to match regardless of what the donor reports.
+		util.WriteLE32(data, 0x14, 0x00000100)
+		util.WriteLE32(data, 0x18, 0x00000200)
 	}
 }
 
@@ -90,14 +88,27 @@ func xhciProfile() *DeviceProfile {
 			{Offset: 0x28, Width: 4, Name: "PAGESIZE", Reset: 0x00000001, RWMask: 0x00000000},
 			// DNCTRL - device notification control
 			{Offset: 0x34, Width: 4, Name: "DNCTRL", Reset: 0x00000000, RWMask: 0x0000FFFF},
-			// CRCR - command ring control
-			{Offset: 0x38, Width: 4, Name: "CRCR_LO", Reset: 0x00000000, RWMask: 0xFFFFFFF0},
+			// CRCR - command ring control. bits[2:0]=RCS/CS/CA (RW), bit3=CRR
+			// (RO), bits[5:4] reserved, bits[31:6]=pointer (RW). Reconciled
+			// with barmodel/model.go's buildXHCIBARModel, which is what
+			// actually drives the generated SV (this profile's RWMask is
+			// only a donor-scrub/name-hint value, see barmodel.classRegisterNames).
+			{Offset: 0x38, Width: 4, Name: "CRCR_LO", Reset: 0x00000000, RWMask: 0xFFFFFFC7},
 			{Offset: 0x3C, Width: 4, Name: "CRCR_HI", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
 			// DCBAAP - device context base address
 			{Offset: 0x50, Width: 4, Name: "DCBAAP_LO", Reset: 0x00000000, RWMask: 0xFFFFFFC0},
 			{Offset: 0x54, Width: 4, Name: "DCBAAP_HI", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
 			// CONFIG - max device slots enabled
 			{Offset: 0x58, Width: 4, Name: "CONFIG", Reset: 0x00000000, RWMask: 0x000000FF},
+			// Primary interrupter (Runtime Register Space, RTSOFF+0x20 -- see
+			// ScrubBAR/PostInitRegisters fixing RTSOFF at 0x200 above).
+			{Offset: 0x220, Width: 4, Name: "IMAN", Reset: 0x00000000, RWMask: 0x00000002, W1CMask: 0x00000001},
+			{Offset: 0x224, Width: 4, Name: "IMOD", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
+			{Offset: 0x228, Width: 4, Name: "ERSTSZ", Reset: 0x00000000, RWMask: 0x0000FFFF},
+			{Offset: 0x230, Width: 4, Name: "ERSTBA_LO", Reset: 0x00000000, RWMask: 0xFFFFFFF0},
+			{Offset: 0x234, Width: 4, Name: "ERSTBA_HI", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
+			{Offset: 0x238, Width: 4, Name: "ERDP_LO", Reset: 0x00000000, RWMask: 0xFFFFFFF7},
+			{Offset: 0x23C, Width: 4, Name: "ERDP_HI", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
 			// PORTSC1 - port 1 status/control (powered, no device)
 			{Offset: 0x420, Width: 4, Name: "PORTSC1", Reset: 0x000002A0, RWMask: 0x8EFFC3F2},
 			// PORTSC2 - port 2 status/control

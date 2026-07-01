@@ -186,7 +186,7 @@ func TestXhciSetOperationalState(t *testing.T) {
 func TestXhciClampDBOFF_FitsInBRAM(t *testing.T) {
 	data := make([]byte, 4096)
 	util.WriteLE32(data, 0x14, 0x00000400) // DBOFF = 0x400
-	slots := xhciClampDBOFF(data, 0x20, 32, 4096)
+	slots := xhciClampDBOFF(data, 32, 4096)
 	if slots != 32 {
 		t.Errorf("slots should stay 32 when it fits, got %d", slots)
 	}
@@ -194,21 +194,23 @@ func TestXhciClampDBOFF_FitsInBRAM(t *testing.T) {
 
 func TestXhciClampDBOFF_TooLarge(t *testing.T) {
 	data := make([]byte, 4096)
-	util.WriteLE32(data, 0x14, 0x00000F00) // DBOFF = 0xF00
-	slots := xhciClampDBOFF(data, 0x20, 64, 1024)
+	util.WriteLE32(data, 0x14, 0x00000100) // canonical DBOFF (see devclass/xhci.go ScrubBAR)
+	slots := xhciClampDBOFF(data, 64, 300)
 	if slots < 1 {
 		t.Errorf("slots should be >= 1, got %d", slots)
 	}
-	dboff := util.ReadLE32(data, 0x14)
-	if int(dboff)+(slots+1)*4 > 1024 {
-		t.Errorf("DBOFF + doorbell area exceeds BRAM: dboff=0x%X slots=%d bram=1024", dboff, slots)
+	if slots >= 64 {
+		t.Errorf("slots should shrink when the doorbell area doesn't fit, got %d", slots)
+	}
+	if dboff := util.ReadLE32(data, 0x14); dboff != 0x100 {
+		t.Errorf("DBOFF must never be relocated, got 0x%X", dboff)
 	}
 }
 
 func TestXhciClampDBOFF_VerySmallBRAM(t *testing.T) {
 	data := make([]byte, 4096)
 	util.WriteLE32(data, 0x14, 0x00000100)
-	slots := xhciClampDBOFF(data, 0x20, 128, 128)
+	slots := xhciClampDBOFF(data, 128, 128)
 	if slots < 1 {
 		t.Errorf("slots should be >= 1 even with tiny BRAM, got %d", slots)
 	}
@@ -217,7 +219,7 @@ func TestXhciClampDBOFF_VerySmallBRAM(t *testing.T) {
 func TestXhciClampRTSOFF_FitsInBRAM(t *testing.T) {
 	data := make([]byte, 4096)
 	util.WriteLE32(data, 0x18, 0x00000200) // RTSOFF = 0x200
-	intrs := xhciClampRTSOFF(data, 0x20, 8, 4096)
+	intrs := xhciClampRTSOFF(data, 8, 4096)
 	if intrs != 8 {
 		t.Errorf("intrs should stay 8 when it fits, got %d", intrs)
 	}
@@ -225,17 +227,23 @@ func TestXhciClampRTSOFF_FitsInBRAM(t *testing.T) {
 
 func TestXhciClampRTSOFF_TooLarge(t *testing.T) {
 	data := make([]byte, 4096)
-	util.WriteLE32(data, 0x18, 0x00000F00) // RTSOFF = 0xF00
-	intrs := xhciClampRTSOFF(data, 0x20, 64, 1024)
+	util.WriteLE32(data, 0x18, 0x00000200) // canonical RTSOFF (see devclass/xhci.go ScrubBAR)
+	intrs := xhciClampRTSOFF(data, 64, 600)
 	if intrs < 1 {
 		t.Errorf("intrs should be >= 1, got %d", intrs)
+	}
+	if intrs >= 64 {
+		t.Errorf("intrs should shrink when the runtime area doesn't fit, got %d", intrs)
+	}
+	if rtsoff := util.ReadLE32(data, 0x18); rtsoff != 0x200 {
+		t.Errorf("RTSOFF must never be relocated, got 0x%X", rtsoff)
 	}
 }
 
 func TestXhciClampRTSOFF_ZeroIntrs(t *testing.T) {
 	data := make([]byte, 4096)
 	util.WriteLE32(data, 0x18, 0x00000200)
-	intrs := xhciClampRTSOFF(data, 0x20, 0, 4096)
+	intrs := xhciClampRTSOFF(data, 0, 4096)
 	if intrs < 1 {
 		t.Errorf("zero intrs should clamp to >= 1, got %d", intrs)
 	}

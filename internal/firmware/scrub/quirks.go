@@ -21,6 +21,21 @@ var vendorQuirks = []vendorQuirk{
 		Name:      "Renesas xHCI FW status",
 		Apply:     fixRenesasFirmwareStatus,
 	},
+	// ponytail: KNOWN_ISSUES also names ASMedia (0x1B21, e.g. ASM1042A/ASM3142)
+	// and VIA (0x1106, e.g. VL805/VL806) as xHCI Code-10 offenders, but neither
+	// gets an entry here. Checked upstream drivers/usb/host/xhci-pci.c and
+	// pci-quirks.c: every real quirk for both vendors (XHCI_NO_64BIT_SUPPORT,
+	// XHCI_RESET_ON_RESUME, XHCI_ASMEDIA_MODIFY_FLOWCONTROL, XHCI_LPM_SUPPORT,
+	// XHCI_TRB_OVERFETCH, ...) is a driver-side runtime behavior flag with no
+	// PCI config-space counterpart - unlike Renesas's FW-status bits, there is no
+	// static "mark as done" register to poke. The one thing ASMedia does do in
+	// config space (usb_asmedia_modifyflowcontrol, regs 0xE0/0xF8/0xFC) is a live
+	// read-poll-write mailbox to real silicon that a static overlay write can't
+	// reproduce, and it fixes Ethernet-over-USB flow control, not enumeration -
+	// unrelated to Code 10. VIA VL805's only known FW handshake is an out-of-band
+	// SPI/SoC-mailbox load (Raspberry Pi's rpi_firmware_init_vl805), nothing in
+	// PCI config space either. No grounded register write found for either
+	// vendor - add one here if a real config-space fixup ever surfaces.
 	// add new vendors here
 }
 

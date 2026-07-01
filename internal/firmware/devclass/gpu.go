@@ -60,7 +60,135 @@ func gpuProfile() *DeviceProfile {
 			{Offset: 0x9410, Width: 4, Name: "PTIMER_TIME_1", Reset: 0x00000000, RWMask: 0x00000000},
 		},
 
-		Notes: "NVIDIA/AMD GPU profile. Only 4K BRAM window visible - " +
+		Notes: "NVIDIA GPU profile (NV_PMC/NV_PBUS/NV_PTIMER). Only 4K BRAM window visible - " +
 			"driver sees PMC_ENABLE and PTIMER but can't touch VRAM.",
 	}
+}
+
+// --- AMD GPU ---
+
+type amdGPUStrategy struct{ baseStrategy }
+
+// ponytail: no verified AMD MMIO register map (RCC_DEV0_EPF0_STRAP0 family /
+// ASIC revision regs) grounded from a real donor - safe no-op passthrough
+// until a real AMD donor sample is available to reverse the layout.
+func (s *amdGPUStrategy) ScrubBAR(data []byte) {}
+
+func (s *amdGPUStrategy) PostInitRegisters(regs map[uint32]*uint32) {}
+
+func amdGPUProfile() *DeviceProfile {
+	return &DeviceProfile{
+		ClassName:         "GPU (AMD)",
+		PreferredBAR:      0,
+		MinBARSize:        4096,
+		Uses64BitBAR:      true,
+		BARIsPrefetchable: true,
+
+		PrefersMSIX:    true,
+		MinMSIXVectors: 1,
+
+		ExpectedCaps: []uint8{
+			pci.CapIDPowerManagement,
+			pci.CapIDMSIX,
+			pci.CapIDPCIExpress,
+		},
+		ExpectedExtCaps: []uint16{
+			pci.ExtCapIDAER,
+			pci.ExtCapIDLTR,
+		},
+
+		SupportsPME:   true,
+		MaxPowerState: 3,
+
+		// ponytail: no BARDefaults - AMDGPU register offsets not grounded,
+		// injecting fabricated values would be worse than leaving the BAR blank.
+		Notes: "AMD GPU profile. No verified amdgpu MMIO register map - " +
+			"safe passthrough (no BAR register scrub/defaults) until a real donor sample is available.",
+	}
+}
+
+// --- Intel GPU ---
+
+type intelGPUStrategy struct{ baseStrategy }
+
+// ponytail: Intel iGPU register semantics (GTTMMADR, FORCEWAKE/FORCEWAKE_ACK
+// protocol) are documented but nontrivial and not grounded from a real donor
+// here - safe no-op passthrough until a real Intel donor sample is available.
+func (s *intelGPUStrategy) ScrubBAR(data []byte) {}
+
+func (s *intelGPUStrategy) PostInitRegisters(regs map[uint32]*uint32) {}
+
+func intelGPUProfile() *DeviceProfile {
+	return &DeviceProfile{
+		ClassName:         "GPU (Intel)",
+		PreferredBAR:      0,
+		MinBARSize:        4096,
+		Uses64BitBAR:      true,
+		BARIsPrefetchable: true,
+
+		PrefersMSIX:    true,
+		MinMSIXVectors: 1,
+
+		ExpectedCaps: []uint8{
+			pci.CapIDPowerManagement,
+			pci.CapIDMSIX,
+			pci.CapIDPCIExpress,
+		},
+		ExpectedExtCaps: []uint16{
+			pci.ExtCapIDAER,
+			pci.ExtCapIDLTR,
+		},
+
+		SupportsPME:   true,
+		MaxPowerState: 3,
+
+		// ponytail: no BARDefaults - GTTMMADR/forcewake register offsets not
+		// grounded, injecting fabricated values would be worse than leaving the BAR blank.
+		Notes: "Intel GPU profile. No verified i915 MMIO register map - " +
+			"safe passthrough (no BAR register scrub/defaults) until a real donor sample is available.",
+	}
+}
+
+// --- Generic/unknown vendor GPU ---
+
+type genericGPUStrategy struct{ baseStrategy }
+
+// ponytail: unrecognized GPU vendor - never guess a register map, always
+// safe no-op passthrough.
+func (s *genericGPUStrategy) ScrubBAR(data []byte) {}
+
+func (s *genericGPUStrategy) PostInitRegisters(regs map[uint32]*uint32) {}
+
+func genericGPUProfile() *DeviceProfile {
+	return &DeviceProfile{
+		ClassName:         "GPU (Generic)",
+		PreferredBAR:      0,
+		MinBARSize:        4096,
+		Uses64BitBAR:      true,
+		BARIsPrefetchable: true,
+
+		PrefersMSIX:    true,
+		MinMSIXVectors: 1,
+
+		SupportsPME:   true,
+		MaxPowerState: 3,
+
+		Notes: "Unrecognized GPU vendor. No register map to ground against - " +
+			"safe passthrough (no BAR register scrub/defaults).",
+	}
+}
+
+// gpuStrategyForAMD returns the AMD GPU strategy.
+func gpuStrategyForAMD() DeviceStrategy {
+	return &amdGPUStrategy{baseStrategy{"GPU (AMD)", ClassGPU, amdGPUProfile}}
+}
+
+// gpuStrategyForIntel returns the Intel GPU strategy.
+func gpuStrategyForIntel() DeviceStrategy {
+	return &intelGPUStrategy{baseStrategy{"GPU (Intel)", ClassGPU, intelGPUProfile}}
+}
+
+// gpuStrategyGeneric returns the neutral fallback strategy for unrecognized GPU vendors.
+func gpuStrategyGeneric() DeviceStrategy {
+	return &genericGPUStrategy{baseStrategy{"GPU (Generic)", ClassGPU, genericGPUProfile}}
 }

@@ -24,6 +24,7 @@ red path is verified (a wrong DUT makes the testbench report `FAIL`).
 | `msix_pba.sv` | MSI-X PBA was a static zero array; pending bits now set on masked requests and deliver on unmask. |
 | `nvme_store.sv` | NVMe IO reads returned zeros and writes were discarded (Event 11); this is the BRAM sector cache the responder writes through. |
 | `ahci_engine.sv` | SATA/AHCI had no command engine — PxCI never cleared, so storahci times out (Code 10 "I/O adapter hardware error"). Implements the slot-0 command FSM: IDENTIFY + READ/WRITE DMA over a sector store, D2H FIS, PxIS/intr, PxCI clear. |
+| `xhci_ring_engine.sv` | xHCI had no Command/Event Ring engine, so usbxhci.sys hangs waiting for command completions. Implements the Command Ring walk (CRCR-latched dequeue pointer, Link TRB following, cycle-bit consumer state) answering No-Op Command (type 23) and Enable Slot Command (type 9) — plus a generic success fallback for anything else — with Command Completion Events (type 33) posted through the single-segment Event Ring (ERST fetch, producer cycle state), IMAN.IP/interrupt. |
 
 ## Integrating into firmware
 

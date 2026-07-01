@@ -60,6 +60,9 @@ func thunderboltProfile() *DeviceProfile {
 		},
 
 		Notes: "Intel Thunderbolt controller profile. " +
-			"LC_STS.READY=1. SECURITY_LEVEL=0 (no security) for full DMA access.",
+			"LC_STS.READY=1. SECURITY_LEVEL=0 (no security) for full DMA access. " +
+			"Models a single PCIe-tunneling function only - does not emulate the NHI " +
+			"(native host interface) DMA path or a full multi-function TB controller " +
+			"relationship (bridge + NHI as sibling functions).",
 	}
 }

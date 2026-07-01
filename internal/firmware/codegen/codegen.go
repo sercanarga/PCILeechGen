@@ -96,7 +96,22 @@ func GenerateWritemaskCOE(cs *pci.ConfigSpace) string {
 
 	masks[10] = 0x00000000 // 0x28: CardBus CIS (read-only)
 	masks[11] = 0x00000000 // 0x2C: SubsysVID:SubsysDID (read-only identity)
-	masks[12] = 0x00000000 // 0x30: Expansion ROM (not implemented on FPGA)
+
+	// 0x30: Expansion ROM Base Address. Layout is bit0=Enable, bits[10:1]
+	// reserved, bits[31:11]=address/size field. Mirror the BAR loop above:
+	// if the donor's own ROM BAR is enabled with a real address, preserve
+	// its writable bits (Enable + address bits, using the donor's own
+	// alignment as the size mask) so a BAR-sizing probe reads back the same
+	// size-encoding the donor reports. Most donors report 0 here (BIOS
+	// already claims/hides the option ROM at OS-probe time), in which case
+	// masks[12] stays 0 exactly as before - that already matches reality.
+	romVal := cs.ReadU32(0x30)
+	if romVal&0x01 != 0 && romVal&0xFFFFF800 != 0 {
+		masks[12] = (romVal & 0xFFFFF800) | 0x00000001
+	} else {
+		masks[12] = 0x00000000
+	}
+
 	masks[13] = 0x00000000 // 0x34: CapPtr + reserved (read-only)
 	masks[14] = 0x00000000 // 0x38: reserved
 	masks[15] = 0x000000FF // 0x3C: IntLine writable, IntPin/MinGnt/MaxLat RO

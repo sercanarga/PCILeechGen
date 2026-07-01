@@ -207,14 +207,39 @@ func buildXHCIBARModel(barData []byte) *BARModel {
 		{Offset: 0x28, Width: 4, Name: "PAGESIZE", RWMask: 0x00000000},
 		// Device Notification Control
 		{Offset: 0x34, Width: 4, Name: "DNCTRL", RWMask: 0x0000FFFF},
-		// Command Ring Control - 64-bit
-		{Offset: 0x38, Width: 4, Name: "CRCR_LO", RWMask: 0xFFFFFFF7},
+		// Command Ring Control - 64-bit. bits[2:0] = RCS/CS/CA (RW), bit3 = CRR
+		// (RO - not modeled by the ring engine, see xhci_ring_engine.sv.tmpl),
+		// bits[5:4] reserved, bits[31:6] = 64-byte-aligned pointer (RW).
+		{Offset: 0x38, Width: 4, Name: "CRCR_LO", RWMask: 0xFFFFFFC7},
 		{Offset: 0x3C, Width: 4, Name: "CRCR_HI", RWMask: 0xFFFFFFFF},
 		// Device Context Base Address Array Pointer - 64-bit
 		{Offset: 0x50, Width: 4, Name: "DCBAAP_LO", RWMask: 0xFFFFFFC0},
 		{Offset: 0x54, Width: 4, Name: "DCBAAP_HI", RWMask: 0xFFFFFFFF},
 		// Configure (CONFIG)
 		{Offset: 0x58, Width: 4, Name: "CONFIG", RWMask: 0x000000FF},
+
+		// Primary interrupter (Runtime Register Space, RTSOFF fixed at 0x200
+		// per xhci.go's ScrubBAR/PostInitRegisters -- IR0 registers live at
+		// RTSOFF+0x20). Consumed by xhci_ring_engine.sv.tmpl (Command
+		// Completion Event delivery) and bar_impl_device.sv.tmpl.
+		// IMAN: bit0=IP (RW1C, HW-set by the ring engine on event post),
+		// bit1=IE (plain RW). IsFSMDriven because IP is hardware-settable,
+		// not just software-clearable, so it needs the same hand-rolled
+		// write path as USBCMD/USBSTS above.
+		{Offset: 0x220, Width: 4, Name: "IMAN", RWMask: 0x00000002, W1CMask: 0x00000001, IsFSMDriven: true},
+		// IMOD: interrupt moderation - accepted, not enforced (no rate limiting emulated).
+		{Offset: 0x224, Width: 4, Name: "IMOD", RWMask: 0xFFFFFFFF},
+		// ERSTSZ: number of segments in the Event Ring Segment Table.
+		{Offset: 0x228, Width: 4, Name: "ERSTSZ", RWMask: 0x0000FFFF},
+		// ERSTBA - 64-bit, 16-byte aligned pointer to the (single-segment) ERST.
+		{Offset: 0x230, Width: 4, Name: "ERSTBA_LO", RWMask: 0xFFFFFFF0},
+		{Offset: 0x234, Width: 4, Name: "ERSTBA_HI", RWMask: 0xFFFFFFFF},
+		// ERDP - 64-bit. bit0 = EHB (Event Handler Busy); left as plain RW
+		// (ponytail: the ring engine never throttles on EHB -- a handful of
+		// init-time commands never overrun a driver that hasn't drained
+		// events yet, so there's no real backpressure to model here).
+		{Offset: 0x238, Width: 4, Name: "ERDP_LO", RWMask: 0xFFFFFFF7},
+		{Offset: 0x23C, Width: 4, Name: "ERDP_HI", RWMask: 0xFFFFFFFF},
 	}
 
 	populateResetValues(regs, barData)

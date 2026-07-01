@@ -1,6 +1,8 @@
 package scrub
 
 import (
+	"math/bits"
+
 	"github.com/sercanarga/pcileechgen/internal/firmware"
 	"github.com/sercanarga/pcileechgen/internal/firmware/devclass"
 	"github.com/sercanarga/pcileechgen/internal/util"
@@ -29,6 +31,9 @@ func ScrubBarContentWithBRAM(barContents map[int][]byte, classCode uint32, vendo
 	if strategy.DeviceClass() == devclass.ClassXHCI {
 		scrubXHCIBar0(data, bramSize)
 	}
+	if strategy.DeviceClass() == devclass.ClassSATA {
+		scrubSATABar0(data, bramSize)
+	}
 }
 
 // scrubXHCIBar0 clamps xHCI BAR0 registers to fit BRAM and fakes a running controller.
@@ -48,8 +53,8 @@ func scrubXHCIBar0(data []byte, bramSize int) {
 	xhciClampScratchpads(data)
 	xhciClampXECP(data, bramSize)
 
-	maxSlots = xhciClampDBOFF(data, capLen, maxSlots, bramSize)
-	maxIntrs = xhciClampRTSOFF(data, capLen, maxIntrs, bramSize)
+	maxSlots = xhciClampDBOFF(data, maxSlots, bramSize)
+	maxIntrs = xhciClampRTSOFF(data, maxIntrs, bramSize)
 	maxPorts = xhciClampPorts(capLen, maxPorts, bramSize)
 
 	// write back clamped HCSPARAMS1
@@ -103,97 +108,45 @@ func xhciClampXECP(data []byte, bramSize int) {
 	}
 }
 
-// xhciClampDBOFF clamps doorbell offset to fit BRAM, shrinking MaxSlots if needed.
-func xhciClampDBOFF(data []byte, capLen, maxSlots, bramSize int) int {
-	dboff := util.ReadLE32(data, 0x14) & ^uint32(0x03)
-	doorbellSize := (maxSlots + 1) * 4
+// clampCountToFit shrinks claimed to the largest count whose region
+// [base, base+claimed*itemSize) fits within bramSize, floored at 1.
+func clampCountToFit(base, itemSize, claimed, bramSize int) int {
+	if base < bramSize {
+		maxFit := (bramSize - base) / itemSize
+		if claimed > maxFit {
+			claimed = maxFit
+		}
+	}
+	if claimed < 1 {
+		claimed = 1
+	}
+	return claimed
+}
 
-	if int(dboff)+doorbellSize > bramSize {
-		newDBOFF := bramSize - doorbellSize
-		if newDBOFF < 0 {
-			newDBOFF = capLen + 0x20
-		}
-		newDBOFF = newDBOFF & ^0x1F
-		if newDBOFF < capLen+0x20 {
-			// can't fit, shrink MaxSlots
-			available := bramSize - (capLen + 0x20)
-			if available < 8 {
-				available = 8
-			}
-			maxSlots = available/4 - 1
-			if maxSlots < 1 {
-				maxSlots = 1
-			}
-			doorbellSize = (maxSlots + 1) * 4
-			newDBOFF = bramSize - doorbellSize
-			if newDBOFF < 0 {
-				newDBOFF = capLen + 0x20
-			}
-			newDBOFF = newDBOFF & ^0x1F
-		}
-		util.WriteLE32(data, 0x14, uint32(newDBOFF))
+// xhciClampDBOFF shrinks MaxSlots so the doorbell array fits within BRAM.
+// DBOFF itself is never relocated: bar_controller.sv.tmpl and barmodel's
+// buildXHCIBARModel hardcode the doorbell array at a fixed offset (see
+// devclass/xhci.go's ScrubBAR), so moving it here would desync the SV
+// wiring from what the driver was told.
+func xhciClampDBOFF(data []byte, maxSlots, bramSize int) int {
+	dboff := int(util.ReadLE32(data, 0x14) & ^uint32(0x03))
+	maxSlots = clampCountToFit(dboff, 4, maxSlots+1, bramSize) - 1
+	if maxSlots < 1 {
+		maxSlots = 1
 	}
 	return maxSlots
 }
 
-func xhciClampRTSOFF(data []byte, capLen, maxIntrs, bramSize int) int {
+// xhciClampRTSOFF shrinks MaxIntrs so the runtime interrupter register sets
+// (starting at RTSOFF+0x20) fit within BRAM. RTSOFF itself is never
+// relocated, for the same reason DBOFF isn't -- see xhciClampDBOFF.
+func xhciClampRTSOFF(data []byte, maxIntrs, bramSize int) int {
 	rtsoff := int(util.ReadLE32(data, 0x18) & ^uint32(0x1F))
-
-	if rtsoff > 0 && maxIntrs > 0 {
-		remaining := bramSize - rtsoff - 0x20
-		if remaining < 0x20 {
-			remaining = 0x20
-		}
-		maxFit := remaining / 0x20
-		if maxFit < 1 {
-			maxFit = 1
-		}
-		if maxIntrs > maxFit {
-			maxIntrs = maxFit
-		}
-	}
-	if maxIntrs < 1 {
-		maxIntrs = 1
-	}
-
-	runtimeSize := 0x20 + maxIntrs*0x20
-	if rtsoff+runtimeSize > bramSize {
-		newRTSOFF := capLen + 0x20
-		newRTSOFF = (newRTSOFF + 0x1F) & ^0x1F
-		if newRTSOFF+runtimeSize > bramSize {
-			newRTSOFF = bramSize - runtimeSize
-			newRTSOFF = newRTSOFF & ^0x1F
-		}
-		rtsoff = newRTSOFF
-		util.WriteLE32(data, 0x18, uint32(rtsoff))
-
-		remaining := bramSize - rtsoff - 0x20
-		if remaining < 0x20 {
-			remaining = 0x20
-		}
-		maxFit := remaining / 0x20
-		if maxFit < 1 {
-			maxFit = 1
-		}
-		if maxIntrs > maxFit {
-			maxIntrs = maxFit
-		}
-	}
-	return maxIntrs
+	return clampCountToFit(rtsoff+0x20, 0x20, maxIntrs, bramSize)
 }
 
 func xhciClampPorts(capLen, maxPorts, bramSize int) int {
-	portBase := capLen + 0x400
-	if portBase < bramSize {
-		maxPortsFit := (bramSize - portBase) / 0x10
-		if maxPorts > maxPortsFit {
-			maxPorts = maxPortsFit
-		}
-	}
-	if maxPorts < 1 {
-		maxPorts = 1
-	}
-	return maxPorts
+	return clampCountToFit(capLen+0x400, 0x10, maxPorts, bramSize)
 }
 
 // xhciSetOperationalState makes the controller look like it's running.
@@ -217,4 +170,62 @@ func xhciSetOperationalState(data []byte, capLen, maxSlots int) {
 	usbsts := util.ReadLE32(data, capLen+4)
 	usbsts &= ^uint32(0x01 | 0x04)
 	util.WriteLE32(data, capLen+4, usbsts)
+}
+
+// scrubSATABar0 clamps AHCI PI (Ports Implemented) to fit BRAM and fakes
+// "no device present" for any port that fits but has no real donor data.
+func scrubSATABar0(data []byte, bramSize int) {
+	if len(data) < 0x10 {
+		return
+	}
+
+	pi := util.ReadLE32(data, 0x0C)
+	claimedPorts := bits.OnesCount32(pi)
+	if claimedPorts == 0 {
+		return
+	}
+
+	maxPorts := sataClampPorts(claimedPorts, bramSize)
+	if maxPorts < claimedPorts {
+		// shrink to only the low N ports (0..maxPorts-1) that fit
+		pi &= (uint32(1) << uint(maxPorts)) - 1
+		util.WriteLE32(data, 0x0C, pi)
+	}
+
+	// Port 0 always has real profile/donor data. Any other implemented
+	// port that fits in BRAM but was never actually captured (its PxSSTS
+	// block is still zero) needs an explicit "no device" state, otherwise
+	// the host driver sees a phantom drive with garbage register content.
+	for port := 1; port < 32; port++ {
+		if pi&(1<<uint(port)) == 0 {
+			continue
+		}
+		base := 0x100 + port*0x80
+		if base+0x80 > len(data) {
+			break
+		}
+		if util.ReadLE32(data, base+0x28) != 0 {
+			continue // real donor data already shows a device here
+		}
+		sataMarkPortEmpty(data, base)
+	}
+}
+
+// sataClampPorts clamps the AHCI port count to what fits within BRAM. Each
+// port block is 0x80 bytes starting at 0x100.
+// ponytail: assumes PI is the common contiguous 0..N-1 port bitmask; a
+// sparse PI (spec-legal but rare) would need per-bit offset checks instead
+// of a popcount-derived port count.
+func sataClampPorts(claimedPorts, bramSize int) int {
+	return clampCountToFit(0x100, 0x80, claimedPorts, bramSize)
+}
+
+// sataMarkPortEmpty writes the canonical "no device" register state for an
+// AHCI port block that has no real donor data backing it.
+func sataMarkPortEmpty(data []byte, base int) {
+	util.WriteLE32(data, base+0x28, 0x00000000) // PxSSTS - no device detected
+	util.WriteLE32(data, base+0x24, 0xFFFFFFFF) // PxSIG - no device signature
+	tfd := util.ReadLE32(data, base+0x20)
+	tfd &^= 0x81 // PxTFD - clear BSY/ERR so driver doesn't hang on phantom port
+	util.WriteLE32(data, base+0x20, tfd)
 }

@@ -14,7 +14,8 @@
 //   0x0A  Get Features  – number of queues, interrupt coalescing
 //   0x0C  AER           – queued silently, never completed (that's legal)
 //   0x80  Format NVM   – accept format requests
-//   IO Q1 Flush/Write/Read/Write Zeroes/Dataset Mgmt – minimal disk emulation
+//   IO Q1 Read/Write     – backed by a small BRAM sector cache (nvme_store)
+//   IO Q1 Flush/Write Zeroes/Dataset Mgmt – accepted, no data movement needed
 
 `timescale 1ns / 1ps
 
@@ -90,6 +91,7 @@ module pcileech_nvme_admin_responder(
     localparam [3:0] S_EXEC_LOGPAGE = 4'hA;
     localparam [3:0] S_SHUTDOWN     = 4'hB;
     localparam [3:0] S_EXEC_READ_ZERO = 4'hC;
+    localparam [3:0] S_EXEC_WRITE_STORE = 4'hD;
 
     reg [3:0]   state;
     reg [3:0]   return_state;       // where to go after DMA wait completes
@@ -143,6 +145,29 @@ module pcileech_nvme_admin_responder(
     reg [10:0]  data_dw_cnt;
     reg [10:0]  io_zero_dw_limit;
     reg [12:0]  id_rom_offset;
+
+    // ---- IO backing store: small BRAM sector cache for IO Read/Write --------
+    // ponytail: NVME_STORE_NSECT x NVME_STORE_SECT_DW is a small fixed-size
+    // cache window (2KB), not a full-capacity disk backing store. LBAs beyond
+    // the window wrap (mod NVME_STORE_NSECT) instead of growing unbounded or
+    // corrupting an adjacent sector's data. Addressing scheme and NSECT=4
+    // scale match sim/nvme_store.sv + sim/ahci_engine.sv.
+    localparam NVME_STORE_NSECT   = 4;    // sectors cached
+    localparam NVME_STORE_SECT_DW = 128;  // dwords/sector (512B) - matches the
+                                           // block size io_zero_dw_limit already assumes
+    reg [31:0] nvme_store [0:(NVME_STORE_NSECT*NVME_STORE_SECT_DW)-1];
+    integer    nvme_store_init_idx;
+    initial begin
+        for (nvme_store_init_idx = 0; nvme_store_init_idx < NVME_STORE_NSECT*NVME_STORE_SECT_DW; nvme_store_init_idx = nvme_store_init_idx + 1)
+            nvme_store[nvme_store_init_idx] = 32'h00000000;
+    end
+
+    // current dword's address within the store: sector = starting LBA
+    // (cmd_cdw10, mod NSECT via truncation) + which 512B block of this
+    // multi-block transfer we're on; dw = offset within that block.
+    wire [1:0] io_store_sector = cmd_cdw10[1:0] + data_dw_cnt[10:7];
+    wire [6:0] io_store_dw     = data_dw_cnt[6:0];
+    wire [8:0] io_store_addr   = {io_store_sector, io_store_dw};
 
     // edge detect for CC.EN so we can do a clean shutdown
     reg         cc_en_prev;
@@ -274,7 +299,15 @@ module pcileech_nvme_admin_responder(
                                         io_zero_dw_limit <= ({8'h0, cmd_cdw12[2:0]} + 11'd1) << 7;
                                     state <= S_EXEC_READ_ZERO;
                                 end
-                                8'h00, 8'h01, 8'h08, 8'h09: begin
+                                8'h01: begin
+                                    data_dw_cnt <= 11'h0;
+                                    if (cmd_cdw12[15:0] >= 16'd7)
+                                        io_zero_dw_limit <= 11'd1024;
+                                    else
+                                        io_zero_dw_limit <= ({8'h0, cmd_cdw12[2:0]} + 11'd1) << 7;
+                                    state <= S_EXEC_WRITE_STORE;
+                                end
+                                8'h00, 8'h08, 8'h09: begin
                                     cqe[0] <= 32'h0;
                                     cqe[1] <= 32'h0;
                                     cqe[2] <= {cmd_cid, iosq_head};
@@ -537,12 +570,12 @@ module pcileech_nvme_admin_responder(
                         state <= S_WAIT_DMA_WR;
                     end
 
-                    // ---- IO read: return zeroed sectors for an empty disk ----
+                    // ---- IO read: stream sectors back from the BRAM store ----
                     S_EXEC_READ_ZERO: begin
                         dma_wr_req   <= 1'b1;
                         dma_wr_valid <= 1'b1;
                         dma_wr_addr  <= cmd_prp_addr({data_dw_cnt, 2'b00});
-                        dma_wr_data  <= 32'h00000000;
+                        dma_wr_data  <= nvme_store[io_store_addr];
                         dma_wr_be    <= 4'hF;
 
                         if (data_dw_cnt >= io_zero_dw_limit - 11'd1) begin
@@ -552,6 +585,29 @@ module pcileech_nvme_admin_responder(
                             return_state <= S_EXEC_READ_ZERO;
                         end
                         state <= S_WAIT_DMA_WR;
+                    end
+
+                    // ---- IO write: pull one DWORD from host into the store ---
+                    S_EXEC_WRITE_STORE: begin
+                        dma_rd_req  <= 1'b1;
+                        dma_rd_addr <= cmd_prp_addr({data_dw_cnt, 2'b00});
+                        dma_rd_len  <= 10'd1;
+                        state       <= S_WAIT_DMA_RD;
+                    end
+
+                    // ---- park here until the host DWORD comes back -----------
+                    S_WAIT_DMA_RD: begin
+                        if (dma_rd_valid)
+                            nvme_store[io_store_addr] <= dma_rd_data;
+
+                        if (dma_rd_done) begin
+                            if (data_dw_cnt >= io_zero_dw_limit - 11'd1) begin
+                                state <= S_WRITE_DATA;
+                            end else begin
+                                data_dw_cnt <= data_dw_cnt + 1'b1;
+                                state       <= S_EXEC_WRITE_STORE;
+                            end
+                        end
                     end
 
                     // ---- all data has been sent, pack a success CQE ---------

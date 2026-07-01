@@ -1,6 +1,7 @@
 package svgen
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -89,6 +90,49 @@ func TestGenerateBarControllerSV(t *testing.T) {
 	}
 	if !strings.Contains(result, "tlp_latency_emulator") {
 		t.Error("output should contain latency emulator instantiation")
+	}
+}
+
+func TestGenerateBarControllerSV_ExtraBARs(t *testing.T) {
+	cfg := testConfig()
+	cfg.LatencyConfig = DefaultLatencyConfig(cfg.ClassCode)
+	cfg.ExtraBARPresent = [4]bool{true, false, true, false} // BAR3, BAR4, BAR5, BAR6
+	result, err := GenerateBarControllerSV(cfg)
+	if err != nil {
+		t.Fatalf("GenerateBarControllerSV failed: %v", err)
+	}
+	if !strings.Contains(result, "pcileech_bar_impl_loopaddr i_bar3(") {
+		t.Error("populated donor BAR3 should get a real loopaddr aperture")
+	}
+	if !strings.Contains(result, "pcileech_bar_impl_none i_bar4_none(") {
+		t.Error("absent donor BAR4 should stay unimplemented")
+	}
+	if !strings.Contains(result, "pcileech_bar_impl_loopaddr i_bar5(") {
+		t.Error("populated donor BAR5 should get a real loopaddr aperture")
+	}
+	if !strings.Contains(result, "pcileech_bar_impl_none i_bar6_none(") {
+		t.Error("absent donor BAR6 should stay unimplemented")
+	}
+}
+
+func TestGenerateBarControllerSV_NoExtraBARs(t *testing.T) {
+	cfg := testConfig()
+	cfg.LatencyConfig = DefaultLatencyConfig(cfg.ClassCode)
+	// zero-value ExtraBARs: no donor BAR3-6 populated, matches prior behavior.
+	result, err := GenerateBarControllerSV(cfg)
+	if err != nil {
+		t.Fatalf("GenerateBarControllerSV failed: %v", err)
+	}
+	if strings.Contains(result, "pcileech_bar_impl_loopaddr i_bar3(") ||
+		strings.Contains(result, "pcileech_bar_impl_loopaddr i_bar4(") ||
+		strings.Contains(result, "pcileech_bar_impl_loopaddr i_bar5(") ||
+		strings.Contains(result, "pcileech_bar_impl_loopaddr i_bar6(") {
+		t.Error("no donor BAR3-6 populated: should not instantiate any real apertures")
+	}
+	for i := 3; i <= 6; i++ {
+		if !strings.Contains(result, fmt.Sprintf("pcileech_bar_impl_none i_bar%d_none(", i)) {
+			t.Errorf("BAR%d should stay unimplemented when absent from donor", i)
+		}
 	}
 }
 

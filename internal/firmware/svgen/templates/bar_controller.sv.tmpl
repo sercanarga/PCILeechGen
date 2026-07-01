@@ -306,6 +306,16 @@ module pcileech_tlps128_bar_controller(
     wire [31:0] nvme_reg_csts;
 {{ end }}
 
+{{ if and (eq .DeviceClass "xhci") .BARModel }}
+    // xHCI register wires -- from bar_impl_device to the ring engine
+    wire [31:0] xhci_reg_crcr_lo;
+    wire [31:0] xhci_reg_crcr_hi;
+    wire [31:0] xhci_reg_erstba_lo;
+    wire [31:0] xhci_reg_erstba_hi;
+    wire        xhci_reg_iman_ie;
+    wire        xhci_cmd_complete_pulse;
+{{ end }}
+
 {{ if .BARModel }}
     pcileech_bar_impl_device #(
         .BAR_SIZE       ( {{ .BARModel.Size }} ) // var Bar0Size
@@ -357,6 +367,13 @@ module pcileech_tlps128_bar_controller(
         .msi_trigger     ( hda_msi_trigger               ),
         .rirbintsts      ( hda_rirbintsts                ),
         .crst_falling    ( hda_crst_falling              )
+{{ end }}{{ if and (eq .DeviceClass "xhci") .BARModel }}        ,
+        .xhci_crcr_lo      ( xhci_reg_crcr_lo          ),
+        .xhci_crcr_hi      ( xhci_reg_crcr_hi          ),
+        .xhci_erstba_lo    ( xhci_reg_erstba_lo        ),
+        .xhci_erstba_hi    ( xhci_reg_erstba_hi        ),
+        .xhci_iman_ie      ( xhci_reg_iman_ie          ),
+        .xhci_cmd_complete ( xhci_cmd_complete_pulse   )
 {{ end }}
     );
 
@@ -729,7 +746,119 @@ module pcileech_tlps128_bar_controller(
     assign tlps_rdeng.tready = tlps_out.tready && (dma_yield || !hda_tlp_tx_tvalid);
 {{ end }}{{ end }}
 
-{{ if not (or (and (eq .DeviceClass "nvme") .NVMeIdentify) (and (eq .DeviceClass "audio") .BARModel)) }}
+{{ if and (eq .DeviceClass "xhci") .BARModel }}
+    // ========================================================================
+    // xHCI Command Ring + Event Ring engine + DMA bridge
+    // - ring engine walks the Command Ring and answers with Command
+    //   Completion Events on the (single-segment) Event Ring
+    // - bridge turns those DMA ops into actual PCIe TLPs
+    // ========================================================================
+
+    // catch the Command doorbell (DB0, DBOFF fixed 0x100 per xhci.go)
+    wire xhci_cmd_db_wr = wr_valid && wr_bar[0] && (wr_addr_bar0 == 32'h00000100);
+
+    wire        xhci_dma_rd_req;
+    wire [63:0] xhci_dma_rd_addr;
+    wire [9:0]  xhci_dma_rd_len;
+    wire        xhci_dma_rd_valid;
+    wire [31:0] xhci_dma_rd_data;
+    wire        xhci_dma_rd_done;
+    wire        xhci_dma_wr_req;
+    wire [63:0] xhci_dma_wr_addr;
+    wire [31:0] xhci_dma_wr_data;
+    wire [3:0]  xhci_dma_wr_be;
+    wire        xhci_dma_wr_valid;
+    wire        xhci_dma_wr_done;
+    wire        xhci_msix_trigger;
+
+    wire [127:0] xhci_tlp_tx_tdata;
+    wire [3:0]   xhci_tlp_tx_tkeepdw;
+    wire         xhci_tlp_tx_tvalid;
+    wire         xhci_tlp_tx_tlast;
+    wire [8:0]   xhci_tlp_tx_tuser;
+    wire         xhci_tlp_tx_tready;
+
+    pcileech_xhci_ring_engine i_xhci_ring_engine(
+        .rst                 ( rst                        ),
+        .clk                 ( clk                        ),
+        .crcr_lo             ( xhci_reg_crcr_lo           ),
+        .crcr_hi             ( xhci_reg_crcr_hi           ),
+        .erstba_lo           ( xhci_reg_erstba_lo         ),
+        .erstba_hi           ( xhci_reg_erstba_hi         ),
+        .iman_ie             ( xhci_reg_iman_ie           ),
+        .cmd_doorbell_wr     ( xhci_cmd_db_wr             ),
+        .cmd_complete_pulse  ( xhci_cmd_complete_pulse    ),
+        .msix_trigger        ( xhci_msix_trigger          ),
+        .dma_rd_req          ( xhci_dma_rd_req            ),
+        .dma_rd_addr         ( xhci_dma_rd_addr           ),
+        .dma_rd_len          ( xhci_dma_rd_len            ),
+        .dma_rd_valid        ( xhci_dma_rd_valid          ),
+        .dma_rd_data         ( xhci_dma_rd_data           ),
+        .dma_rd_done         ( xhci_dma_rd_done           ),
+        .dma_wr_req          ( xhci_dma_wr_req            ),
+        .dma_wr_addr         ( xhci_dma_wr_addr           ),
+        .dma_wr_data         ( xhci_dma_wr_data           ),
+        .dma_wr_be           ( xhci_dma_wr_be             ),
+        .dma_wr_valid        ( xhci_dma_wr_valid          ),
+        .dma_wr_done         ( xhci_dma_wr_done           )
+    );
+
+    pcileech_xhci_dma_bridge i_xhci_dma_bridge(
+        .rst                ( rst                           ),
+        .clk                ( clk                           ),
+        .pcie_id            ( pcie_id                       ),
+        .dma_wr_req         ( xhci_dma_wr_req               ),
+        .dma_wr_addr        ( xhci_dma_wr_addr              ),
+        .dma_wr_data        ( xhci_dma_wr_data              ),
+        .dma_wr_be          ( xhci_dma_wr_be                ),
+        .dma_wr_valid       ( xhci_dma_wr_valid             ),
+        .dma_wr_done        ( xhci_dma_wr_done              ),
+        .dma_rd_req         ( xhci_dma_rd_req               ),
+        .dma_rd_addr        ( xhci_dma_rd_addr              ),
+        .dma_rd_len         ( xhci_dma_rd_len               ),
+        .dma_rd_valid       ( xhci_dma_rd_valid             ),
+        .dma_rd_data        ( xhci_dma_rd_data              ),
+        .dma_rd_done        ( xhci_dma_rd_done              ),
+        .tlp_tx_tdata       ( xhci_tlp_tx_tdata             ),
+        .tlp_tx_tkeepdw     ( xhci_tlp_tx_tkeepdw           ),
+        .tlp_tx_tvalid      ( xhci_tlp_tx_tvalid            ),
+        .tlp_tx_tlast       ( xhci_tlp_tx_tlast             ),
+        .tlp_tx_tuser       ( xhci_tlp_tx_tuser             ),
+        .tlp_tx_tready      ( xhci_tlp_tx_tready            ),
+        .tlp_rx_tdata       ( tlps_in.tdata                 ),
+        .tlp_rx_tkeepdw     ( tlps_in.tkeepdw               ),
+        .tlp_rx_tvalid      ( tlps_in.tvalid                ),
+        .tlp_rx_tuser       ( tlps_in.tuser                 )
+    );
+
+    // mux DMA bridge TLPs with rdengine BAR responses onto tlps_out
+    //
+    // fairness: after 8 consecutive DMA TLP words a 1-cycle gap is forced so
+    // BAR read completions cannot be starved by sustained DMA bursts
+    reg [2:0] xhci_dma_burst_cnt;
+    wire xhci_dma_yield = (xhci_dma_burst_cnt == 3'd7);
+    wire xhci_dma_tx    = xhci_tlp_tx_tvalid && tlps_out.tready && !xhci_dma_yield;
+    assign xhci_tlp_tx_tready = tlps_out.tready && !xhci_dma_yield;
+
+    always @(posedge clk) begin
+        if (xhci_dma_yield)
+            xhci_dma_burst_cnt <= 3'd0;
+        else if (xhci_dma_tx && xhci_dma_burst_cnt != 3'd7)
+            xhci_dma_burst_cnt <= xhci_dma_burst_cnt + 3'd1;
+        else if (!xhci_tlp_tx_tvalid)
+            xhci_dma_burst_cnt <= 3'd0;
+    end
+
+    assign tlps_out.tdata    = (xhci_tlp_tx_tvalid && !xhci_dma_yield) ? xhci_tlp_tx_tdata    : tlps_rdeng.tdata;
+    assign tlps_out.tkeepdw  = (xhci_tlp_tx_tvalid && !xhci_dma_yield) ? xhci_tlp_tx_tkeepdw  : tlps_rdeng.tkeepdw;
+    assign tlps_out.tvalid   = (xhci_tlp_tx_tvalid && !xhci_dma_yield) || tlps_rdeng.tvalid;
+    assign tlps_out.tlast    = (xhci_tlp_tx_tvalid && !xhci_dma_yield) ? xhci_tlp_tx_tlast    : tlps_rdeng.tlast;
+    assign tlps_out.tuser    = (xhci_tlp_tx_tvalid && !xhci_dma_yield) ? xhci_tlp_tx_tuser    : tlps_rdeng.tuser;
+    assign tlps_out.has_data = (xhci_tlp_tx_tvalid && !xhci_dma_yield) || tlps_rdeng.has_data;
+    assign tlps_rdeng.tready = tlps_out.tready && (xhci_dma_yield || !xhci_tlp_tx_tvalid);
+{{ end }}
+
+{{ if not (or (and (eq .DeviceClass "nvme") .NVMeIdentify) (and (eq .DeviceClass "audio") .BARModel) (and (eq .DeviceClass "xhci") .BARModel)) }}
     // no DMA bridge: rdengine output goes straight to tlps_out
     assign tlps_out.tdata    = tlps_rdeng.tdata;
     assign tlps_out.tkeepdw  = tlps_rdeng.tkeepdw;
@@ -775,27 +904,41 @@ module pcileech_tlps128_bar_controller(
         .intr_req       ( bar2_intr_req                 )
     );
 
-    // BAR3-6: unimplemented
-    genvar gi;
-    generate
-        for (gi = 3; gi < 7; gi = gi + 1) begin : gen_bar_none
-            pcileech_bar_impl_none i_bar_none(
-                .rst            ( rst                           ),
-                .clk            ( clk                           ),
-                .wr_addr        ( wr_addr                       ),
-                .wr_be          ( wr_be                         ),
-                .wr_data        ( wr_data                       ),
-                .wr_valid       ( wr_valid && wr_bar[gi]        ),
-                .rd_req_ctx     ( rd_req_ctx                    ),
-                .rd_req_addr    ( rd_req_addr                   ),
-                .rd_req_valid   ( rd_req_valid && rd_req_bar[gi]),
-                .rd_rsp_ctx     ( bar_rsp_ctx[gi]               ),
-                .rd_rsp_data    ( bar_rsp_data[gi]              ),
-                .rd_rsp_valid   ( bar_rsp_valid[gi]             )
-            );
-        end
-    endgenerate
+    // BAR3-6: real aperture (loopaddr stub, same as BAR1) for any index the
+    // donor's own BAR layout actually has populated, otherwise unimplemented
+    // (genuinely no BAR there on the real hardware).
+{{ range $i, $present := .ExtraBARPresent }}{{ $idx := add $i 3 }}{{ if $present }}
+    pcileech_bar_impl_loopaddr i_bar{{ $idx }}(
+        .rst            ( rst                              ),
+        .clk            ( clk                              ),
+        .wr_addr        ( wr_addr                          ),
+        .wr_be          ( wr_be                             ),
+        .wr_data        ( wr_data                           ),
+        .wr_valid       ( wr_valid && wr_bar[{{ $idx }}]         ),
+        .rd_req_ctx     ( rd_req_ctx                        ),
+        .rd_req_addr    ( rd_req_addr                       ),
+        .rd_req_valid   ( rd_req_valid && rd_req_bar[{{ $idx }}] ),
+        .rd_rsp_ctx     ( bar_rsp_ctx[{{ $idx }}]                ),
+        .rd_rsp_data    ( bar_rsp_data[{{ $idx }}]               ),
+        .rd_rsp_valid   ( bar_rsp_valid[{{ $idx }}]              )
+    );
+{{ else }}
+    pcileech_bar_impl_none i_bar{{ $idx }}_none(
+        .rst            ( rst                              ),
+        .clk            ( clk                              ),
+        .wr_addr        ( wr_addr                          ),
+        .wr_be          ( wr_be                             ),
+        .wr_data        ( wr_data                           ),
+        .wr_valid       ( wr_valid && wr_bar[{{ $idx }}]         ),
+        .rd_req_ctx     ( rd_req_ctx                        ),
+        .rd_req_addr    ( rd_req_addr                       ),
+        .rd_req_valid   ( rd_req_valid && rd_req_bar[{{ $idx }}] ),
+        .rd_rsp_ctx     ( bar_rsp_ctx[{{ $idx }}]                ),
+        .rd_rsp_data    ( bar_rsp_data[{{ $idx }}]               ),
+        .rd_rsp_valid   ( bar_rsp_valid[{{ $idx }}]              )
+    );
+{{ end }}{{ end }}
 
-    assign intr_req = bar2_intr_req{{ if eq .DeviceClass "audio" }} | hda_intr_req{{ end }}{{ if eq .DeviceClass "nvme" }} | nvme_msix_trigger{{ end }};
+    assign intr_req = bar2_intr_req{{ if eq .DeviceClass "audio" }} | hda_intr_req{{ end }}{{ if eq .DeviceClass "nvme" }} | nvme_msix_trigger{{ end }}{{ if eq .DeviceClass "xhci" }} | xhci_msix_trigger{{ end }};
 {{ .ILAInstanceSV }}
 endmodule

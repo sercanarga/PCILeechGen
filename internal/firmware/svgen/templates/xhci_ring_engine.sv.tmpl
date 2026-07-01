@@ -1,0 +1,539 @@
+//
+// xHCI Command Ring + Event Ring engine
+// {{ hex04 .DeviceIDs.VendorID }}:{{ hex04 .DeviceIDs.DeviceID }}
+//
+// This sits behind the BAR controller and answers whatever xhci.sys throws
+// at the Command Ring during controller init. PORTSC1/PORTSC2 report
+// "powered, no device attached" (see xhci.go's xhciProfile) -- there is no
+// downstream USB device to enumerate, so this emulates the HOST CONTROLLER
+// surviving its own init handshake, not a device's GET_DESCRIPTOR dance.
+// Same philosophy as pcileech_nvme_admin_responder: it doesn't pretend to
+// be a full xHC, it just needs the driver to get past init.
+//
+//   No-Op Command (type 23)          -> Command Completion Event, success
+//   Enable Slot Command (type 9)     -> success, Slot ID = FIXED_SLOT_ID
+//   anything else                    -> success anyway, echoing the TRB's
+//                                        own Slot ID field (bits[31:24] of
+//                                        DW3) so a command never just hangs
+//   Link TRB (type 6)                -> followed (with Toggle Cycle), not
+//                                        treated as a command
+//
+// Proven in sim/xhci_ring_engine.sv + sim/xhci_ring_engine_tb.sv (raw
+// register/memory-bus interface); this module is the same FSM adapted to
+// the DMA-bridge (TLP) convention used by pcileech_nvme_admin_responder +
+// pcileech_nvme_dma_bridge.
+//
+
+`timescale 1ns / 1ps
+
+module pcileech_xhci_ring_engine #(
+    parameter [7:0] FIXED_SLOT_ID = 8'h01
+    // ponytail: single fixed Slot ID -- zero devices attached means at most
+    // one plausible in-flight Enable Slot Command, not a real free-list
+    // across HCSPARAMS1.MaxSlots.
+)(
+    input               rst,
+    input               clk,
+
+    // CRCR / ERSTBA — driver-programmed, plain RW registers read straight
+    // from bar_impl_device (not IsFSMDriven; see barmodel's buildXHCIBARModel).
+    input [31:0]        crcr_lo,
+    input [31:0]        crcr_hi,
+    input [31:0]        erstba_lo,
+    input [31:0]        erstba_hi,
+    input               iman_ie,        // IMAN.IE — gates the interrupt pulse
+
+    // Command doorbell pulse from the BAR write engine (DBOFF fixed 0x100,
+    // doorbell 0 = Command Ring, same detection style as NVMe's SQ/CQ doorbells).
+    input               cmd_doorbell_wr,
+
+    // pulse telling bar_impl_device to set IMAN.IP (bit0) — HW-set, SW W1C.
+    output reg          cmd_complete_pulse,
+    // one-cycle pulse to fire the MSI-X interrupt (routed like NVMe's msix_trigger).
+    output reg          msix_trigger,
+
+    // DMA read — fetch TRBs / the ERST entry from host memory
+    output reg          dma_rd_req,
+    output reg [63:0]   dma_rd_addr,
+    output reg [9:0]    dma_rd_len,
+    input               dma_rd_valid,
+    input [31:0]        dma_rd_data,
+    input               dma_rd_done,
+
+    // DMA write — post Command Completion Events back to the Event Ring
+    output reg          dma_wr_req,
+    output reg [63:0]   dma_wr_addr,
+    output reg [31:0]   dma_wr_data,
+    output reg [3:0]    dma_wr_be,
+    output reg          dma_wr_valid,
+    input               dma_wr_done
+);
+
+    localparam [5:0] TRB_LINK      = 6'd6;
+    localparam [5:0] TRB_ENSLOT    = 6'd9;
+    localparam [5:0] TRB_NOOP      = 6'd23;
+    localparam [5:0] TRB_CMD_EVENT = 6'd33;
+
+    localparam [3:0] S_IDLE        = 4'h0;
+    localparam [3:0] S_FETCH_ISSUE = 4'h1;
+    localparam [3:0] S_FETCH_WAIT  = 4'h2;
+    localparam [3:0] S_DECODE      = 4'h3;
+    localparam [3:0] S_ERST_ISSUE  = 4'h4;
+    localparam [3:0] S_ERST_WAIT   = 4'h5;
+    localparam [3:0] S_EVT_WRITE   = 4'h6;
+    localparam [3:0] S_WAIT_DMA_WR = 4'h7;
+    localparam [3:0] S_POST        = 4'h8;
+
+    reg [3:0]  state;
+    reg [3:0]  return_state;
+    reg [1:0]  dw_idx;
+
+    // command ring consumer state
+    reg        cr_started;
+    reg [63:0] crdp;
+    reg        ccs;
+
+    // event ring producer state
+    reg        erst_valid;
+    reg [63:0] erst_base;
+    reg [15:0] erst_size;
+    reg [15:0] evt_idx;
+    reg        ecs;
+    reg [31:0] erstba_lo_prev, erstba_hi_prev;
+
+    reg [31:0] trb0, trb1, trb2, trb3;
+    reg [63:0] cmd_trb_addr;
+    reg [7:0]  slot_id_out;
+
+    wire [63:0] evt_addr = erst_base + ({48'h0, evt_idx} << 4);
+
+    always @(posedge clk) begin
+        if (rst) begin
+            state <= S_IDLE;
+            dw_idx <= 2'h0;
+            cr_started <= 1'b0; crdp <= 64'h0; ccs <= 1'b1;
+            erst_valid <= 1'b0; erst_base <= 64'h0; erst_size <= 16'h0;
+            evt_idx <= 16'h0; ecs <= 1'b1;
+            erstba_lo_prev <= 32'h0; erstba_hi_prev <= 32'h0;
+            dma_rd_req <= 1'b0; dma_wr_req <= 1'b0; dma_wr_valid <= 1'b0;
+            cmd_complete_pulse <= 1'b0; msix_trigger <= 1'b0;
+        end else begin
+            dma_rd_req <= 1'b0; dma_wr_req <= 1'b0; dma_wr_valid <= 1'b0;
+            cmd_complete_pulse <= 1'b0; msix_trigger <= 1'b0;
+
+            // driver reprogrammed the Event Ring Segment Table -- refetch
+            // the (single) segment descriptor before posting the next event.
+            erstba_lo_prev <= erstba_lo;
+            erstba_hi_prev <= erstba_hi;
+            if ((erstba_lo != erstba_lo_prev) || (erstba_hi != erstba_hi_prev))
+                erst_valid <= 1'b0;
+
+            case (state)
+                // ---- wait for a Command doorbell ring ------------------
+                S_IDLE: if (cmd_doorbell_wr) begin
+                    if (!cr_started) begin
+                        crdp       <= {crcr_hi, crcr_lo[31:6], 6'b0};
+                        ccs        <= crcr_lo[0];
+                        cr_started <= 1'b1;
+                    end
+                    state <= S_FETCH_ISSUE;
+                end
+
+                // ---- pull 16 bytes (one TRB) from the command ring -----
+                S_FETCH_ISSUE: begin
+                    dma_rd_req  <= 1'b1;
+                    dma_rd_addr <= crdp;
+                    dma_rd_len  <= 10'd4;
+                    dw_idx      <= 2'h0;
+                    state       <= S_FETCH_WAIT;
+                end
+                S_FETCH_WAIT: begin
+                    if (dma_rd_valid) begin
+                        case (dw_idx)
+                            2'd0: trb0 <= dma_rd_data;
+                            2'd1: trb1 <= dma_rd_data;
+                            2'd2: trb2 <= dma_rd_data;
+                            2'd3: trb3 <= dma_rd_data;
+                        endcase
+                        dw_idx <= dw_idx + 2'd1;
+                    end
+                    if (dma_rd_done)
+                        state <= S_DECODE;
+                end
+
+                // ---- ring caught up, follow Link, or execute a command -
+                S_DECODE: begin
+                    if (trb3[0] != ccs) begin
+                        // cycle bit doesn't match -- nothing new queued
+                        state <= S_IDLE;
+                    end else if (trb3[15:10] == TRB_LINK) begin
+                        crdp  <= {trb1, trb0} & 64'hFFFFFFFFFFFFFFF0;
+                        if (trb3[1]) ccs <= ~ccs; // Toggle Cycle
+                        state <= S_FETCH_ISSUE;
+                    end else begin
+                        cmd_trb_addr <= crdp;
+                        crdp         <= crdp + 64'd16;
+                        if (trb3[15:10] == TRB_NOOP)
+                            slot_id_out <= 8'h00;
+                        else if (trb3[15:10] == TRB_ENSLOT)
+                            slot_id_out <= FIXED_SLOT_ID;
+                        else
+                            slot_id_out <= trb3[31:24]; // everything else: echo, say yes
+                        state <= erst_valid ? S_EVT_WRITE : S_ERST_ISSUE;
+                        dw_idx <= 2'h0;
+                    end
+                end
+
+                // ---- fetch the (single) Event Ring Segment Table entry -
+                S_ERST_ISSUE: begin
+                    dma_rd_req  <= 1'b1;
+                    dma_rd_addr <= {erstba_hi, erstba_lo};
+                    dma_rd_len  <= 10'd4;
+                    dw_idx      <= 2'h0;
+                    state       <= S_ERST_WAIT;
+                end
+                S_ERST_WAIT: begin
+                    if (dma_rd_valid) begin
+                        case (dw_idx)
+                            2'd0: erst_base[31:0]  <= dma_rd_data;
+                            2'd1: erst_base[63:32] <= dma_rd_data;
+                            2'd2: erst_size        <= dma_rd_data[15:0];
+                            default: ;
+                        endcase
+                        dw_idx <= dw_idx + 2'd1;
+                    end
+                    if (dma_rd_done) begin
+                        erst_valid <= 1'b1;
+                        dw_idx     <= 2'h0;
+                        state      <= S_EVT_WRITE;
+                    end
+                end
+
+                // ---- write the 16-byte Command Completion Event --------
+                S_EVT_WRITE: begin
+                    dma_wr_req   <= 1'b1;
+                    dma_wr_valid <= 1'b1;
+                    dma_wr_be    <= 4'hF;
+                    dma_wr_addr  <= evt_addr + {60'h0, dw_idx, 2'b00};
+                    case (dw_idx)
+                        2'd0: dma_wr_data <= cmd_trb_addr[31:0];
+                        2'd1: dma_wr_data <= cmd_trb_addr[63:32];
+                        2'd2: dma_wr_data <= {8'h01, 24'h0}; // Completion Code = Success
+                        2'd3: dma_wr_data <= {slot_id_out, 8'h00, TRB_CMD_EVENT, 9'h0, ecs};
+                    endcase
+                    if (dw_idx == 2'd3) begin
+                        dw_idx       <= 2'h0;
+                        return_state <= S_POST;
+                    end else begin
+                        dw_idx       <= dw_idx + 2'd1;
+                        return_state <= S_EVT_WRITE;
+                    end
+                    state <= S_WAIT_DMA_WR;
+                end
+
+                // ---- park here until the DMA bridge says "done" --------
+                S_WAIT_DMA_WR: if (dma_wr_done)
+                    state <= return_state;
+
+                // ---- advance the event ring, raise the interrupt, loop -
+                S_POST: begin
+                    cmd_complete_pulse <= 1'b1;
+                    msix_trigger       <= iman_ie;
+                    if (evt_idx + 16'd1 >= erst_size) begin
+                        evt_idx <= 16'h0;
+                        ecs     <= ~ecs;
+                    end else begin
+                        evt_idx <= evt_idx + 16'd1;
+                    end
+                    state <= S_FETCH_ISSUE; // drain loop: check for more queued TRBs
+                end
+
+                default: state <= S_IDLE;
+            endcase
+        end
+    end
+endmodule
+
+//
+// xHCI DMA Bridge
+// {{ hex04 .DeviceIDs.VendorID }}:{{ hex04 .DeviceIDs.DeviceID }}
+//
+// Identical TLP-wrapping logic to pcileech_nvme_dma_bridge (it is genuinely
+// device-agnostic: plain address/data/len in, MWr/MRd TLPs out) -- copied
+// rather than shared because the writer/generator plumbing that emits
+// pcileech_nvme_dma_bridge.sv only does so for NVMe builds today. Renamed
+// so both bridges can coexist if that plumbing is later unified.
+//
+// ponytail: byte-identical to pcileech_nvme_dma_bridge -- known duplicate,
+// share it in a future pass, not now (deduping touches the well-tested NVMe path).
+//
+
+module pcileech_xhci_dma_bridge(
+    input               rst,
+    input               clk,
+
+    input [15:0]        pcie_id,        // our BDF, goes into requester ID
+
+    // write side – from the ring engine
+    input               dma_wr_req,
+    input [63:0]        dma_wr_addr,
+    input [31:0]        dma_wr_data,
+    input [3:0]         dma_wr_be,
+    input               dma_wr_valid,
+    output reg          dma_wr_done,
+
+    // read side – from the ring engine
+    input               dma_rd_req,
+    input [63:0]        dma_rd_addr,
+    input [9:0]         dma_rd_len,
+    output reg          dma_rd_valid,
+    output reg [31:0]   dma_rd_data,
+    output reg          dma_rd_done,
+
+    // outgoing TLP stream – gets muxed with bar controller responses
+    output reg [127:0]  tlp_tx_tdata,
+    output reg [3:0]    tlp_tx_tkeepdw,
+    output reg          tlp_tx_tvalid,
+    output reg          tlp_tx_tlast,
+    output reg [8:0]    tlp_tx_tuser,
+    input               tlp_tx_tready,    // backpressure from tlps_out mux
+
+    // incoming TLP snoop – we peek at this to catch CplD
+    input [127:0]       tlp_rx_tdata,
+    input [3:0]         tlp_rx_tkeepdw,
+    input               tlp_rx_tvalid,
+    input [8:0]         tlp_rx_tuser
+);
+
+    localparam [3:0] B_IDLE        = 4'h0;
+    localparam [3:0] B_WR_TLP      = 4'h1;  // present write beat 1, hold until tready
+    localparam [3:0] B_WR_DONE     = 4'h2;
+    localparam [3:0] B_RD_TLP      = 4'h3;  // present read request, hold until tready
+    localparam [3:0] B_RD_WAIT     = 4'h4;
+    localparam [3:0] B_RD_HDR      = 4'h5;  // first CplD beat: extract 1 payload DW
+    localparam [3:0] B_RD_DRAIN    = 4'h6;  // subsequent beats: extract up to 4 DW each
+    localparam [3:0] B_RD_EMIT     = 4'h7;  // emit buffered DWORDs one at a time
+    localparam [3:0] B_WR_TLP2     = 4'h8;  // 64-bit MWr second beat
+
+    reg [3:0]  bstate;
+
+    reg [9:0]  rd_remaining;        // how many DWORDs we're still expecting
+    reg [7:0]  rd_tag;              // tags start at 0x80 to stay off host tags
+
+    // 64-bit address detection
+    wire wr_is_64bit = |dma_wr_addr[63:32];
+    wire rd_is_64bit = |dma_rd_addr[63:32];
+
+    // CplD receive buffer: hold up to 4 DWORDs from one 128-bit beat
+    reg [31:0] rx_buf [0:3];
+    reg [2:0]  rx_buf_cnt;          // how many DWORDs in buffer (0-4)
+    reg [1:0]  rx_buf_idx;          // current emit index
+
+    always @(posedge clk) begin
+        if (rst) begin
+            bstate          <= B_IDLE;
+            dma_wr_done     <= 1'b0;
+            dma_rd_valid    <= 1'b0;
+            dma_rd_done     <= 1'b0;
+            dma_rd_data     <= 32'h0;
+            tlp_tx_tvalid   <= 1'b0;
+            tlp_tx_tlast    <= 1'b0;
+            rd_remaining    <= 10'h0;
+            rd_tag          <= 8'h80;
+            rx_buf_cnt      <= 3'h0;
+            rx_buf_idx      <= 2'h0;
+        end else begin
+            dma_wr_done   <= 1'b0;
+            dma_rd_valid  <= 1'b0;
+            dma_rd_done   <= 1'b0;
+            tlp_tx_tvalid <= 1'b0;
+            tlp_tx_tlast  <= 1'b0;
+
+            case (bstate)
+
+                // ---- idle: writes take priority --------------------------------
+                // (dma_wr_addr/data/be and dma_rd_addr/len are held stable by the
+                // ring engine until we signal done, so we only need to remember
+                // *which* transfer this is -- B_WR_TLP/B_RD_TLP re-derive the TLP
+                // from those still-live inputs every cycle they're held.)
+                B_IDLE: begin
+                    if (dma_wr_valid) begin
+                        bstate <= B_WR_TLP;
+                    end else if (dma_rd_req) begin
+                        bstate <= B_RD_TLP;
+                    end
+                end
+
+                // ---- present write beat 1: hold until tlps_out mux accepts ----
+                B_WR_TLP: begin
+                    if (wr_is_64bit) begin
+                        // 4DW header MWr: first beat = header only
+                        tlp_tx_tdata[31:0]   <= {
+                            3'b011,             // Fmt = 4DW w/ data
+                            5'b00000,           // Type = MWr
+                            1'b0, 3'b000,
+                            4'b0000,
+                            1'b0, 1'b0,
+                            2'b00, 2'b00,
+                            10'h001
+                        };
+                        tlp_tx_tdata[63:32]  <= {pcie_id, 8'h00, 4'hF, dma_wr_be};
+                        tlp_tx_tdata[95:64]  <= dma_wr_addr[63:32];
+                        tlp_tx_tdata[127:96] <= {dma_wr_addr[31:2], 2'b00};
+
+                        tlp_tx_tkeepdw <= 4'b1111;
+                        tlp_tx_tlast   <= 1'b0;
+                        tlp_tx_tuser   <= {8'h00, 1'b1};
+                        tlp_tx_tvalid  <= 1'b1;
+
+                        if (tlp_tx_tready)
+                            bstate <= B_WR_TLP2;
+                    end else begin
+                        // 3DW header MWr: header + payload in one beat
+                        tlp_tx_tdata[31:0]   <= {
+                            3'b010,             // Fmt = 3DW w/ data
+                            5'b00000,           // Type = MWr
+                            1'b0, 3'b000,
+                            4'b0000,
+                            1'b0, 1'b0,
+                            2'b00, 2'b00,
+                            10'h001
+                        };
+                        tlp_tx_tdata[63:32]  <= {pcie_id, 8'h00, 4'hF, dma_wr_be};
+                        tlp_tx_tdata[95:64]  <= {dma_wr_addr[31:2], 2'b00};
+                        tlp_tx_tdata[127:96] <= dma_wr_data;
+
+                        tlp_tx_tkeepdw <= 4'b1111;
+                        tlp_tx_tlast   <= 1'b1;
+                        tlp_tx_tuser   <= {8'h00, 1'b1};
+                        tlp_tx_tvalid  <= 1'b1;
+
+                        if (tlp_tx_tready)
+                            bstate <= B_WR_DONE;
+                    end
+                end
+
+                // ---- present read request: hold until tlps_out mux accepts ----
+                B_RD_TLP: begin
+                    if (rd_is_64bit) begin
+                        // 4DW header MRd
+                        tlp_tx_tdata[31:0]   <= {
+                            3'b001,             // Fmt = 4DW no data
+                            5'b00000,           // Type = MRd
+                            1'b0, 3'b000,
+                            4'b0000,
+                            1'b0, 1'b0,
+                            2'b00, 2'b00,
+                            dma_rd_len
+                        };
+                        tlp_tx_tdata[63:32]  <= {pcie_id, rd_tag, 4'hF, 4'hF};
+                        tlp_tx_tdata[95:64]  <= dma_rd_addr[63:32];
+                        tlp_tx_tdata[127:96] <= {dma_rd_addr[31:2], 2'b00};
+
+                        tlp_tx_tkeepdw <= 4'b1111;
+                    end else begin
+                        // 3DW header MRd
+                        tlp_tx_tdata[31:0]   <= {
+                            3'b000,             // Fmt = 3DW no data
+                            5'b00000,           // Type = MRd
+                            1'b0, 3'b000,
+                            4'b0000,
+                            1'b0, 1'b0,
+                            2'b00, 2'b00,
+                            dma_rd_len
+                        };
+                        tlp_tx_tdata[63:32]  <= {pcie_id, rd_tag, 4'hF, 4'hF};
+                        tlp_tx_tdata[95:64]  <= {dma_rd_addr[31:2], 2'b00};
+                        tlp_tx_tdata[127:96] <= 32'h0;
+
+                        tlp_tx_tkeepdw <= 4'b0111;
+                    end
+
+                    tlp_tx_tlast   <= 1'b1;
+                    tlp_tx_tuser   <= {8'h00, 1'b1};
+                    tlp_tx_tvalid  <= 1'b1;
+
+                    if (tlp_tx_tready) begin
+                        rd_remaining <= dma_rd_len;
+                        rd_tag       <= rd_tag + 1'b1;
+                        bstate       <= B_RD_WAIT;
+                    end
+                end
+
+                // ---- 64-bit MWr second beat: payload DWORD, hold until ready ---
+                B_WR_TLP2: begin
+                    tlp_tx_tdata[31:0]   <= dma_wr_data;
+                    tlp_tx_tdata[127:32] <= 96'h0;
+                    tlp_tx_tkeepdw <= 4'b0001;
+                    tlp_tx_tlast   <= 1'b1;
+                    tlp_tx_tuser   <= 9'h0;
+                    tlp_tx_tvalid  <= 1'b1;
+                    if (tlp_tx_tready)
+                        bstate <= B_WR_DONE;
+                end
+
+                // ---- write done, signal ring engine -----------------------
+                B_WR_DONE: begin
+                    dma_wr_done <= 1'b1;
+                    bstate      <= B_IDLE;
+                end
+
+                // ---- snoop RX bus for CplD matching our tag -------------------
+                B_RD_WAIT: begin
+                    if (tlp_rx_tvalid && tlp_rx_tuser[0]) begin
+                        // CplD fmt+type = 0100_1010 = 0x4A
+                        if (tlp_rx_tdata[31:24] == 8'h4A) begin
+                            if (tlp_rx_tdata[79:72] == (rd_tag - 8'h01)) begin
+                                // first CplD beat: 3DW header occupies [95:0],
+                                // payload starts at [127:96] = 1 DWORD
+                                rx_buf[0]  <= tlp_rx_tdata[127:96];
+                                rx_buf_cnt <= 3'd1;
+                                rx_buf_idx <= 2'd0;
+                                bstate     <= B_RD_EMIT;
+                            end
+                        end
+                    end
+                end
+
+                // ---- emit buffered DWORDs one per cycle to ring engine ----
+                B_RD_EMIT: begin
+                    dma_rd_data  <= rx_buf[rx_buf_idx];
+                    dma_rd_valid <= 1'b1;
+                    rd_remaining <= rd_remaining - 10'd1;
+
+                    if (rd_remaining <= 10'd1) begin
+                        dma_rd_done <= 1'b1;
+                        bstate      <= B_IDLE;
+                    end else if (rx_buf_cnt == 3'd0 || {1'b0, rx_buf_idx} >= (rx_buf_cnt - 3'd1)) begin
+                        // buffer emptied (or was never filled), need more data from bus
+                        bstate <= B_RD_DRAIN;
+                    end else begin
+                        rx_buf_idx <= rx_buf_idx + 2'd1;
+                    end
+                end
+
+                // ---- subsequent CplD beats: 4 payload DWORDs per beat ---------
+                B_RD_DRAIN: begin
+                    if (tlp_rx_tvalid) begin
+                        rx_buf[0]  <= tlp_rx_tdata[31:0];
+                        rx_buf[1]  <= tlp_rx_tdata[63:32];
+                        rx_buf[2]  <= tlp_rx_tdata[95:64];
+                        rx_buf[3]  <= tlp_rx_tdata[127:96];
+
+                        // figure out how many valid DWORDs in this beat
+                        if (rd_remaining >= 10'd4)
+                            rx_buf_cnt <= 3'd4;
+                        else
+                            rx_buf_cnt <= rd_remaining[2:0];
+
+                        rx_buf_idx <= 2'd0;
+                        bstate     <= B_RD_EMIT;
+                    end
+                end
+
+                default: bstate <= B_IDLE;
+            endcase
+        end
+    end
+
+endmodule

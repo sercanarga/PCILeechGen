@@ -37,8 +37,10 @@ func TestGenerateNVMeResponderSV_HandlesFormattingIOQueuePath(t *testing.T) {
 		"iosq_base",
 		"iocq_base",
 		"8'h80: begin",
-		"8'h00, 8'h01, 8'h08, 8'h09: begin",
+		"8'h00, 8'h08, 8'h09: begin",
 		"S_EXEC_READ_ZERO",
+		"S_EXEC_WRITE_STORE",
+		"nvme_store[io_store_addr]",
 	} {
 		if !strings.Contains(result, want) {
 			t.Fatalf("NVMe responder should contain %q", want)
