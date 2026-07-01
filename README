@@ -20,8 +20,6 @@ SPECIAL THANKS
 --------------
   FTWDMA         Sponsorship
                  https://ftwdma.com
-  sgorm0         Sponsorship
-                 https://github.com/sgorm0
   TrueTuring     Sponsorship, NVMe and xHCI fixes
                  https://github.com/TrueTuring
   CaptainDMA     Sponsorship
@@ -211,8 +209,8 @@ Windows device-history cleanup
 
 LICENSE
 -------
-  Creative Commons Zero v1.0 Universal (CC0-1.0)
-  https://github.com/sercanarga/PCILeechGen/blob/main/LICENSE
+  PolyForm Noncommercial License 1.0.0
+  https://github.com/sercanarga/PCILeechGen/blob/main/LICENSE.md
 
   Unlicensed (fork pcileech-fpga modules)
   https://github.com/sercanarga/pcileech-fpga
