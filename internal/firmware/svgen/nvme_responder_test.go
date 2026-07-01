@@ -27,6 +27,37 @@ func TestGenerateNVMeResponderSV_UsesPRP2ForPageCrossingAdminData(t *testing.T) 
 	}
 }
 
+// TestGenerateNVMeResponderSV_SMARTSeedsResetCounters verifies the wear
+// counters are seeded from the donor-plausible SMART values, not zero/one.
+func TestGenerateNVMeResponderSV_SMARTSeedsResetCounters(t *testing.T) {
+	cfg := testConfig()
+
+	result, err := GenerateNVMeResponderSV(cfg)
+	if err != nil {
+		t.Fatalf("GenerateNVMeResponderSV failed: %v", err)
+	}
+
+	for _, want := range []string{
+		"power_on_hours          <= 32'h000004D2",        // 1234
+		"power_cycle_count       <= 32'h00000237",        // 567
+		"stat_unsafe_shutdowns   <= 32'h00000003",        // 3
+		"stat_data_units_written <= 64'h00000000000F4240", // 1000000
+	} {
+		if !strings.Contains(result, want) {
+			t.Errorf("reset block should seed from SMART; missing %q", want)
+		}
+	}
+	for _, stale := range []string{
+		"power_cycle_count       <= 32'h00000001",
+		"stat_data_units_written <= 64'h0;",
+		"power_on_hours          <= 32'h0;",
+	} {
+		if strings.Contains(result, stale) {
+			t.Errorf("reset block should no longer use default %q", stale)
+		}
+	}
+}
+
 // TestGenerateNVMeResponderSV_NoHardcodedGigabyteStrings verifies SN/MN/FR are
 // not overridden with hardcoded literals and fall through to the donor ROM.
 func TestGenerateNVMeResponderSV_NoHardcodedGigabyteStrings(t *testing.T) {

@@ -7,6 +7,7 @@ import (
 	"github.com/sercanarga/pcileechgen/internal/donor/behavior"
 	"github.com/sercanarga/pcileechgen/internal/firmware"
 	"github.com/sercanarga/pcileechgen/internal/firmware/barmodel"
+	"github.com/sercanarga/pcileechgen/internal/firmware/nvme"
 )
 
 func testConfig() *SVGeneratorConfig {
@@ -26,6 +27,18 @@ func testConfig() *SVGeneratorConfig {
 		DeviceClass:  "nvme",
 		BuildEntropy: 0xDEADBEEF,
 		PRNGSeeds:    BuildPRNGSeeds(0x144D, 0xA808, 0xDEADBEEF),
+		NVMeSMART: &nvme.SMART{
+			DataUnitsRead:     2000000,
+			DataUnitsWritten:  1000000,
+			HostReadCommands:  10000000,
+			HostWriteCommands: 5000000,
+			ControllerBusyMin: 800,
+			PowerCycles:       567,
+			PowerOnHours:      1234,
+			UnsafeShutdowns:   3,
+			MediaErrors:       0,
+			ErrorLogEntries:   1,
+		},
 	}
 	return cfg
 }

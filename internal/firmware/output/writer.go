@@ -503,6 +503,7 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 			}
 		}
 		cfg.NVMeIdentify = nvme.BuildIdentifyData(ids, barData, identity)
+		cfg.NVMeSMART = nvme.BuildSMART()
 		if len(barData) >= 0x08 {
 			capHI := util.ReadLE32(barData, 0x04)
 			cfg.NVMeDoorbellStride = capHI & 0x0F

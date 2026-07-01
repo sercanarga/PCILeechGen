@@ -103,6 +103,23 @@ func TestBuildSVConfig(t *testing.T) {
 	}
 }
 
+func TestBuildSVConfig_NVMeHasSMART(t *testing.T) {
+	ctx := makeDonorContext(0x144D, 0xA808, 0x010802)
+	ow := NewOutputWriter(t.TempDir(), "", 0, 0)
+	ids := firmware.ExtractDeviceIDs(ctx.ConfigSpace, ctx.ExtCapabilities)
+
+	cfg, err := ow.buildSVConfig(ctx, ctx.ConfigSpace, ids, 0xBEEF, &board.Board{FPGAPart: "xc7a75tfgg484-2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.NVMeSMART == nil {
+		t.Fatal("NVMe class should have SMART wear seeds")
+	}
+	if cfg.NVMeSMART.PowerOnHours == 0 {
+		t.Error("PowerOnHours should be non-zero (random wear)")
+	}
+}
+
 func TestBuildSVConfig_NVMeHasIdentify(t *testing.T) {
 	ctx := makeDonorContext(0x144D, 0xA808, 0x010802)
 	ow := NewOutputWriter(t.TempDir(), "", 0, 0)

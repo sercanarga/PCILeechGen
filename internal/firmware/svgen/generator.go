@@ -33,6 +33,7 @@ type SVGeneratorConfig struct {
 	MSIXConfig         *MSIXConfig        // MSI-X table replication (nil = no MSI-X table)
 	MSIConfig          *MSIConfig         // MSI capability info (nil = no MSI cap or disabled)
 	NVMeIdentify       *nvme.IdentifyData // NVMe Identify Controller/Namespace data (nil = no responder)
+	NVMeSMART          *nvme.SMART        // donor-plausible SMART/Health wear seeds (nil = zero wear)
 	NVMeDoorbellStride uint32             // CAP.DSTRD - doorbell stride (0 = 4B, default)
 	NVMeDiskWords      int                // NVMe disk-cache depth (words), board-scaled
 	Bar0Size           int
@@ -200,6 +201,7 @@ func GenerateBarImplMSISV(cfg *SVGeneratorConfig) (string, error) {
 func svFuncMap() template.FuncMap {
 	return template.FuncMap{
 		"hex08":         func(v uint32) string { return fmt.Sprintf("%08X", v) },
+		"hex16":         func(v uint64) string { return fmt.Sprintf("%016X", v) },
 		"hex04":         func(v uint16) string { return fmt.Sprintf("%04X", v) },
 		"hex02":         func(v uint8) string { return fmt.Sprintf("%02X", v) },
 		"sub":           func(a, b int) int { return a - b },
