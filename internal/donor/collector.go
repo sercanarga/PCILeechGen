@@ -69,6 +69,7 @@ func (c *Collector) Collect(bdf pci.BDF) (*DeviceContext, error) {
 	ctx.Capabilities = pci.ParseCapabilities(cs)
 	ctx.ExtCapabilities = pci.ParseExtCapabilities(cs)
 	ctx.MSIXData = c.collectMSIXData(cs, ctx.BARContents)
+	ctx.NVMeIdentity = c.collectNVMeIdentity(bdf, ctx.Device.ClassCode)
 
 	if err := c.validateBARContents(ctx); err != nil {
 		return nil, err
@@ -323,6 +324,70 @@ func (c *Collector) tryNativeDriverRebind(bdf pci.BDF, bars []pci.BAR, current m
 	}
 
 	return current
+}
+
+// collectNVMeIdentity captures NVMe controller strings for NVMe-class devices.
+// Returns nil for non-NVMe devices or when capture fails (firmware then uses
+// synthesized strings).
+func (c *Collector) collectNVMeIdentity(bdf pci.BDF, classCode uint32) *NVMeIdentity {
+	baseClass := (classCode >> 16) & 0xFF
+	subClass := (classCode >> 8) & 0xFF
+	if baseClass != 0x01 || subClass != 0x08 {
+		return nil // not NVMe
+	}
+
+	if id, err := c.sysfs.ReadNVMeIdentity(bdf); err == nil {
+		slog.Info("captured NVMe identity from bound driver",
+			"model", id.Model, "serial", id.Serial, "firmware", id.FWRev)
+		return id
+	}
+
+	// Under vfio-pci the nvme sysfs is gone; rebind to the native driver,
+	// read, then restore vfio-pci.
+	if !vfio.IsBoundToVFIO(bdf.String()) {
+		slog.Warn("NVMe identity unavailable (nvme driver not bound and not on vfio-pci); " +
+			"firmware will use synthesized strings")
+		return nil
+	}
+	id, err := c.captureNVMeIdentityWithRebind(bdf)
+	if err != nil || id == nil {
+		slog.Warn("NVMe identity capture failed; firmware will use synthesized strings",
+			"error", err)
+		return nil
+	}
+	slog.Info("captured NVMe identity after native rebind",
+		"model", id.Model, "serial", id.Serial, "firmware", id.FWRev)
+	return id
+}
+
+// captureNVMeIdentityWithRebind rebinds to the native nvme driver to read the
+// controller strings, then restores vfio-pci and device power state.
+func (c *Collector) captureNVMeIdentityWithRebind(bdf pci.BDF) (*NVMeIdentity, error) {
+	if err := vfio.UnbindFromVFIO(bdf.String()); err != nil {
+		return nil, fmt.Errorf("unbind vfio-pci: %w", err)
+	}
+
+	slog.Info("waiting for native nvme driver to bind for identity capture...",
+		"delay", nativeDriverInitDelay)
+	time.Sleep(nativeDriverInitDelay)
+
+	id, readErr := c.sysfs.ReadNVMeIdentity(bdf)
+
+	if err := vfio.BindToVFIO(bdf.String()); err != nil {
+		slog.Warn("nvme identity capture: re-bind to vfio-pci failed", "error", err)
+		return nil, fmt.Errorf("rebind vfio-pci: %w", err)
+	}
+	if err := vfio.EnableMemorySpace(bdf.String()); err != nil {
+		slog.Warn("nvme identity capture: could not re-enable memory space", "error", err)
+	} else {
+		time.Sleep(memSpaceSettleDelay)
+	}
+	_ = vfio.WakeToD0(bdf.String())
+
+	if readErr != nil {
+		return nil, fmt.Errorf("read nvme identity after rebind: %w", readErr)
+	}
+	return id, nil
 }
 
 func (c *Collector) collectConfigSpace(bdf pci.BDF) (*pci.ConfigSpace, error) {

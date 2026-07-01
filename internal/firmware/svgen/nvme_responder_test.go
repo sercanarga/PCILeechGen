@@ -27,6 +27,30 @@ func TestGenerateNVMeResponderSV_UsesPRP2ForPageCrossingAdminData(t *testing.T) 
 	}
 }
 
+// TestGenerateNVMeResponderSV_NoHardcodedGigabyteStrings verifies SN/MN/FR are
+// not overridden with hardcoded literals and fall through to the donor ROM.
+func TestGenerateNVMeResponderSV_NoHardcodedGigabyteStrings(t *testing.T) {
+	cfg := testConfig()
+
+	result, err := GenerateNVMeResponderSV(cfg)
+	if err != nil {
+		t.Fatalf("GenerateNVMeResponderSV failed: %v", err)
+	}
+
+	for _, bad := range []string{
+		"32'h41474947", // "GIGA"
+		"GIGABYTE",
+	} {
+		if strings.Contains(result, bad) {
+			t.Fatalf("responder must not hardcode %q; donor ROM must supply SN/MN/FR", bad)
+		}
+	}
+
+	if strings.Contains(result, "11'd1:  identify_data_word =") {
+		t.Fatal("responder must not override SN word (dw_index 1); ROM must supply it")
+	}
+}
+
 // TestGenerateNVMeResponderSV_HandlesIOAndFormatPath verifies the responder
 // exposes the generalized doorbell interface, admin/I/O queue bookkeeping, the
 // Format NVM clear path, and a real disk-backed read path (read-after-write).

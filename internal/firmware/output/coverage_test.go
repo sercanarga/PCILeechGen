@@ -114,6 +114,33 @@ func TestBuildSVConfig_NVMeHasIdentify(t *testing.T) {
 	}
 }
 
+func TestBuildSVConfig_NVMeIdentifyUsesCapturedIdentity(t *testing.T) {
+	ctx := makeDonorContext(0x144D, 0xA808, 0x010802)
+	ctx.NVMeIdentity = &donor.NVMeIdentity{
+		Serial: "S6PXNG0T12345678W",
+		Model:  "Samsung SSD 990 PRO 2TB",
+		FWRev:  "4B2QJXD7",
+	}
+	ow := NewOutputWriter(t.TempDir(), "", 0, 0)
+	ids := firmware.ExtractDeviceIDs(ctx.ConfigSpace, ctx.ExtCapabilities)
+
+	cfg, err := ow.buildSVConfig(ctx, ctx.ConfigSpace, ids, 0xBEEF, &board.Board{FPGAPart: "xc7a75tfgg484-2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.NVMeIdentify == nil {
+		t.Fatal("NVMe class should have Identify data")
+	}
+	sn := strings.TrimRight(string(cfg.NVMeIdentify.Controller[0x04:0x18]), " \x00")
+	if sn != "S6PXNG0T12345678W" {
+		t.Errorf("SN should come from captured identity: got %q", sn)
+	}
+	mn := strings.TrimRight(string(cfg.NVMeIdentify.Controller[0x18:0x40]), " \x00")
+	if mn != "Samsung SSD 990 PRO 2TB" {
+		t.Errorf("MN should come from captured identity: got %q", mn)
+	}
+}
+
 func TestWriteDeviceContext(t *testing.T) {
 	dir := t.TempDir()
 	ctx := makeDonorContext(0x8086, 0x1533, 0x020000)

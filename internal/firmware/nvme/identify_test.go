@@ -2,6 +2,7 @@ package nvme
 
 import (
 	"encoding/binary"
+	"strings"
 	"testing"
 
 	"github.com/sercanarga/pcileechgen/internal/firmware"
@@ -19,14 +20,14 @@ func sampleIDs() firmware.DeviceIDs {
 }
 
 func TestBuildIdentifyData_NotNil(t *testing.T) {
-	id := BuildIdentifyData(sampleIDs(), nil)
+	id := BuildIdentifyData(sampleIDs(), nil, nil)
 	if id == nil {
 		t.Fatal("BuildIdentifyData returned nil")
 	}
 }
 
 func TestIdentifyController_VID(t *testing.T) {
-	id := BuildIdentifyData(sampleIDs(), nil)
+	id := BuildIdentifyData(sampleIDs(), nil, nil)
 	vid := binary.LittleEndian.Uint16(id.Controller[0x000:])
 	if vid != 0x144D {
 		t.Errorf("VID: got 0x%04X, want 0x144D", vid)
@@ -34,7 +35,7 @@ func TestIdentifyController_VID(t *testing.T) {
 }
 
 func TestIdentifyController_SSVID(t *testing.T) {
-	id := BuildIdentifyData(sampleIDs(), nil)
+	id := BuildIdentifyData(sampleIDs(), nil, nil)
 	ssvid := binary.LittleEndian.Uint16(id.Controller[0x002:])
 	if ssvid != 0x144D {
 		t.Errorf("SSVID: got 0x%04X, want 0x144D", ssvid)
@@ -42,7 +43,7 @@ func TestIdentifyController_SSVID(t *testing.T) {
 }
 
 func TestIdentifyController_SN_NonEmpty(t *testing.T) {
-	id := BuildIdentifyData(sampleIDs(), nil)
+	id := BuildIdentifyData(sampleIDs(), nil, nil)
 	sn := id.Controller[0x004:0x018]
 	allSpaces := true
 	for _, b := range sn {
@@ -57,7 +58,7 @@ func TestIdentifyController_SN_NonEmpty(t *testing.T) {
 }
 
 func TestIdentifyController_MN_NonEmpty(t *testing.T) {
-	id := BuildIdentifyData(sampleIDs(), nil)
+	id := BuildIdentifyData(sampleIDs(), nil, nil)
 	mn := id.Controller[0x018:0x040]
 	allSpaces := true
 	for _, b := range mn {
@@ -72,7 +73,7 @@ func TestIdentifyController_MN_NonEmpty(t *testing.T) {
 }
 
 func TestIdentifyController_SQES(t *testing.T) {
-	id := BuildIdentifyData(sampleIDs(), nil)
+	id := BuildIdentifyData(sampleIDs(), nil, nil)
 	sqes := id.Controller[0x200]
 	if sqes != 0x66 {
 		t.Errorf("SQES: got 0x%02X, want 0x66", sqes)
@@ -80,7 +81,7 @@ func TestIdentifyController_SQES(t *testing.T) {
 }
 
 func TestIdentifyController_CQES(t *testing.T) {
-	id := BuildIdentifyData(sampleIDs(), nil)
+	id := BuildIdentifyData(sampleIDs(), nil, nil)
 	cqes := id.Controller[0x201]
 	if cqes != 0x44 {
 		t.Errorf("CQES: got 0x%02X, want 0x44", cqes)
@@ -88,7 +89,7 @@ func TestIdentifyController_CQES(t *testing.T) {
 }
 
 func TestIdentifyController_NN(t *testing.T) {
-	id := BuildIdentifyData(sampleIDs(), nil)
+	id := BuildIdentifyData(sampleIDs(), nil, nil)
 	nn := binary.LittleEndian.Uint32(id.Controller[0x204:])
 	if nn < 1 {
 		t.Errorf("NN: got %d, want >= 1", nn)
@@ -97,7 +98,7 @@ func TestIdentifyController_NN(t *testing.T) {
 
 func TestIdentifyController_Version(t *testing.T) {
 	// nil BAR data -> default NVMe 1.4
-	id := BuildIdentifyData(sampleIDs(), nil)
+	id := BuildIdentifyData(sampleIDs(), nil, nil)
 	ver := binary.LittleEndian.Uint32(id.Controller[0x050:])
 	if ver != 0x00010400 {
 		t.Errorf("VER (nil BAR): got 0x%08X, want 0x00010400", ver)
@@ -109,7 +110,7 @@ func TestIdentifyController_Version_FromBAR(t *testing.T) {
 	barData := make([]byte, 64)
 	binary.LittleEndian.PutUint32(barData[0x08:], 0x00010300)
 
-	id := BuildIdentifyData(sampleIDs(), barData)
+	id := BuildIdentifyData(sampleIDs(), barData, nil)
 	ver := binary.LittleEndian.Uint32(id.Controller[0x050:])
 	if ver != 0x00010300 {
 		t.Errorf("VER (BAR NVMe 1.3): got 0x%08X, want 0x00010300", ver)
@@ -119,7 +120,7 @@ func TestIdentifyController_Version_FromBAR(t *testing.T) {
 func TestIdentifyController_Version_ShortBAR(t *testing.T) {
 	// BAR data shorter than 0x0C -> falls back to default
 	barData := make([]byte, 8)
-	id := BuildIdentifyData(sampleIDs(), barData)
+	id := BuildIdentifyData(sampleIDs(), barData, nil)
 	ver := binary.LittleEndian.Uint32(id.Controller[0x050:])
 	if ver != 0x00010400 {
 		t.Errorf("VER (short BAR): got 0x%08X, want 0x00010400", ver)
@@ -129,7 +130,7 @@ func TestIdentifyController_Version_ShortBAR(t *testing.T) {
 func TestIdentifyController_Version_ZeroVS(t *testing.T) {
 	// BAR data with VS=0 -> falls back to default
 	barData := make([]byte, 64)
-	id := BuildIdentifyData(sampleIDs(), barData)
+	id := BuildIdentifyData(sampleIDs(), barData, nil)
 	ver := binary.LittleEndian.Uint32(id.Controller[0x050:])
 	if ver != 0x00010400 {
 		t.Errorf("VER (zero VS): got 0x%08X, want 0x00010400", ver)
@@ -137,7 +138,7 @@ func TestIdentifyController_Version_ZeroVS(t *testing.T) {
 }
 
 func TestIdentifyController_MDTS_Default(t *testing.T) {
-	id := BuildIdentifyData(sampleIDs(), nil)
+	id := BuildIdentifyData(sampleIDs(), nil, nil)
 	mdts := id.Controller[0x04D]
 	if mdts != 5 {
 		t.Errorf("MDTS (nil BAR): got %d, want 5", mdts)
@@ -148,7 +149,7 @@ func TestIdentifyController_MDTS_WithBAR(t *testing.T) {
 	// MPSMIN=0 (4KB pages) -> MDTS stays 5
 	barData := make([]byte, 64)
 	binary.LittleEndian.PutUint32(barData[0x04:], 0x00000030) // CAP_HI with MPSMIN=0
-	id := BuildIdentifyData(sampleIDs(), barData)
+	id := BuildIdentifyData(sampleIDs(), barData, nil)
 	mdts := id.Controller[0x04D]
 	if mdts != 5 {
 		t.Errorf("MDTS (MPSMIN=0): got %d, want 5", mdts)
@@ -156,7 +157,7 @@ func TestIdentifyController_MDTS_WithBAR(t *testing.T) {
 }
 
 func TestIdentifyNamespace_NSZE(t *testing.T) {
-	id := BuildIdentifyData(sampleIDs(), nil)
+	id := BuildIdentifyData(sampleIDs(), nil, nil)
 	nsze := binary.LittleEndian.Uint64(id.Namespace[0x000:])
 	if nsze == 0 {
 		t.Error("NSZE should be > 0")
@@ -164,7 +165,7 @@ func TestIdentifyNamespace_NSZE(t *testing.T) {
 }
 
 func TestIdentifyNamespace_NCAP(t *testing.T) {
-	id := BuildIdentifyData(sampleIDs(), nil)
+	id := BuildIdentifyData(sampleIDs(), nil, nil)
 	ncap := binary.LittleEndian.Uint64(id.Namespace[0x008:])
 	nsze := binary.LittleEndian.Uint64(id.Namespace[0x000:])
 	if ncap != nsze {
@@ -173,7 +174,7 @@ func TestIdentifyNamespace_NCAP(t *testing.T) {
 }
 
 func TestIdentifyNamespace_LBAF0(t *testing.T) {
-	id := BuildIdentifyData(sampleIDs(), nil)
+	id := BuildIdentifyData(sampleIDs(), nil, nil)
 	lbaf0 := binary.LittleEndian.Uint32(id.Namespace[0x0C0:])
 	// LBADS should be 9 (512B sectors): bits [23:16] = 0x09
 	lbads := (lbaf0 >> 16) & 0xFF
@@ -183,7 +184,7 @@ func TestIdentifyNamespace_LBAF0(t *testing.T) {
 }
 
 func TestIdentifyDataToHex_Size(t *testing.T) {
-	id := BuildIdentifyData(sampleIDs(), nil)
+	id := BuildIdentifyData(sampleIDs(), nil, nil)
 	hex := IdentifyDataToHex(id)
 	if len(hex) == 0 {
 		t.Fatal("IdentifyDataToHex returned empty string")
@@ -220,11 +221,68 @@ func TestPadASCII(t *testing.T) {
 func TestIdentifyController_Samsung_MN(t *testing.T) {
 	ids := sampleIDs()
 	ids.VendorID = 0x144D
-	id := BuildIdentifyData(ids, nil)
+	id := BuildIdentifyData(ids, nil, nil)
 	mn := string(id.Controller[0x018:0x040])
 	if mn[:7] != "Samsung" {
 		t.Errorf("Samsung VID should produce Samsung MN, got: %q", mn)
 	}
+}
+
+// TestBuildIdentifyData_UsesCapturedIdentity checks donor strings override synthesized defaults.
+func TestBuildIdentifyData_UsesCapturedIdentity(t *testing.T) {
+	ids := sampleIDs() // Samsung VID 0x144D
+	captured := &ControllerIdentity{
+		Serial: "S6PXNG0T12345678W",
+		Model:  "Samsung SSD 990 PRO 2TB",
+		FWRev:  "4B2QJXD7",
+	}
+	id := BuildIdentifyData(ids, nil, captured)
+
+	sn := trimCtrlString(id.Controller[0x04:0x18])
+	if sn != captured.Serial {
+		t.Errorf("SN: got %q, want %q (donor-captured)", sn, captured.Serial)
+	}
+	mn := trimCtrlString(id.Controller[0x18:0x40])
+	if mn != captured.Model {
+		t.Errorf("MN: got %q, want %q (donor-captured)", mn, captured.Model)
+	}
+	fr := trimCtrlString(id.Controller[0x40:0x48])
+	if fr != captured.FWRev {
+		t.Errorf("FR: got %q, want %q (donor-captured)", fr, captured.FWRev)
+	}
+}
+
+func TestBuildIdentifyData_NilIdentityFallsBackToSynthesis(t *testing.T) {
+	ids := sampleIDs()
+	ids.VendorID = 0x144D
+	id := BuildIdentifyData(ids, nil, nil)
+
+	mn := trimCtrlString(id.Controller[0x18:0x40])
+	if !strings.HasPrefix(mn, "Samsung") {
+		t.Errorf("nil identity should fall back to Samsung MN, got %q", mn)
+	}
+}
+
+func TestBuildIdentifyData_PartialCapturedIdentityFallsBackPerField(t *testing.T) {
+	ids := sampleIDs()
+	captured := &ControllerIdentity{
+		Serial: "REALSERIAL",
+		Model:  "", // empty -> synthesize
+	}
+	id := BuildIdentifyData(ids, nil, captured)
+
+	sn := trimCtrlString(id.Controller[0x04:0x18])
+	if sn != "REALSERIAL" {
+		t.Errorf("SN: got %q, want REALSERIAL", sn)
+	}
+	mn := trimCtrlString(id.Controller[0x18:0x40])
+	if !strings.HasPrefix(mn, "Samsung") {
+		t.Errorf("empty Model should fall back to synthesized Samsung MN, got %q", mn)
+	}
+}
+
+func trimCtrlString(b []byte) string {
+	return strings.TrimRight(string(b), " \x00")
 }
 
 func TestIdentifyController_DifferentVendors(t *testing.T) {
@@ -233,7 +291,7 @@ func TestIdentifyController_DifferentVendors(t *testing.T) {
 		ids := sampleIDs()
 		ids.VendorID = vid
 		ids.SubsysVendorID = vid
-		id := BuildIdentifyData(ids, nil)
+		id := BuildIdentifyData(ids, nil, nil)
 		gotVID := binary.LittleEndian.Uint16(id.Controller[0x000:])
 		if gotVID != vid {
 			t.Errorf("VID 0x%04X: identify VID mismatch, got 0x%04X", vid, gotVID)

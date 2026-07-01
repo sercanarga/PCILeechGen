@@ -494,7 +494,15 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 	}
 
 	if devClass == devclass.ClassNVMe {
-		cfg.NVMeIdentify = nvme.BuildIdentifyData(ids, barData)
+		var identity *nvme.ControllerIdentity
+		if ctx.NVMeIdentity != nil {
+			identity = &nvme.ControllerIdentity{
+				Serial: ctx.NVMeIdentity.Serial,
+				Model:  ctx.NVMeIdentity.Model,
+				FWRev:  ctx.NVMeIdentity.FWRev,
+			}
+		}
+		cfg.NVMeIdentify = nvme.BuildIdentifyData(ids, barData, identity)
 		if len(barData) >= 0x08 {
 			capHI := util.ReadLE32(barData, 0x04)
 			cfg.NVMeDoorbellStride = capHI & 0x0F

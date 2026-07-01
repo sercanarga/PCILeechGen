@@ -265,28 +265,8 @@ module pcileech_nvme_admin_responder #(
             identify_data_word = rom_data;
             if (base == 13'h0000) begin
                 case (dw_index)
-                    // Keep the donor strings/IDs, but do not advertise optional
-                    // controller features this minimal responder does not emulate.
-                    // SN bytes 4..23: "GIGABYTE000000000001".
-                    11'd1:  identify_data_word = 32'h41474947;
-                    11'd2:  identify_data_word = 32'h45545942;
-                    11'd3:  identify_data_word = 32'h30303030;
-                    11'd4:  identify_data_word = 32'h30303030;
-                    11'd5:  identify_data_word = 32'h31303030;
-                    // MN bytes 24..63: "GIGABYTE GP-GSM2NE3100TNTD".
-                    11'd6:  identify_data_word = 32'h41474947;
-                    11'd7:  identify_data_word = 32'h45545942;
-                    11'd8:  identify_data_word = 32'h2D504720;
-                    11'd9:  identify_data_word = 32'h324D5347;
-                    11'd10: identify_data_word = 32'h3133454E;
-                    11'd11: identify_data_word = 32'h4E543030;
-                    11'd12: identify_data_word = 32'h20204454;
-                    11'd13: identify_data_word = 32'h20202020;
-                    11'd14: identify_data_word = 32'h20202020;
-                    11'd15: identify_data_word = 32'h20202020;
-                    // FR bytes 64..71: "EDFMB0.0".
-                    11'd16: identify_data_word = 32'h4D464445;
-                    11'd17: identify_data_word = 32'h302E3042;
+                    // SN/MN/FR (bytes 4..71) come from the donor identify ROM;
+                    // only optional feature fields are substituted below.
                     11'd64: identify_data_word = 32'h00000002; // OACS: Format NVM only.
                     11'd65: identify_data_word = 32'h00070100; // ELPE/LPA/one power state.
                     11'd66: identify_data_word = 32'h01570000; // WCTEMP=343K.

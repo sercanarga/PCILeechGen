@@ -22,6 +22,13 @@ type MSIXData struct {
 	Entries     []pci.MSIXEntry `json:"entries"`
 }
 
+// NVMeIdentity holds NVMe controller strings captured from the donor device.
+type NVMeIdentity struct {
+	Serial string `json:"serial,omitempty"`
+	Model  string `json:"model,omitempty"`
+	FWRev  string `json:"firmware_rev,omitempty"`
+}
+
 // DeviceContext is the full snapshot of a donor device.
 type DeviceContext struct {
 	CollectedAt time.Time `json:"collected_at"`
@@ -36,6 +43,7 @@ type DeviceContext struct {
 	Capabilities    []pci.Capability    `json:"capabilities"`
 	ExtCapabilities []pci.ExtCapability `json:"ext_capabilities,omitempty"`
 	MSIXData        *MSIXData           `json:"msix_data,omitempty"`
+	NVMeIdentity    *NVMeIdentity       `json:"nvme_identity,omitempty"`
 }
 
 // JSON wire format - config space as hex words, BARs as base64.
@@ -52,6 +60,7 @@ type deviceContextJSON struct {
 	Capabilities    []pci.Capability       `json:"capabilities"`
 	ExtCapabilities []pci.ExtCapability    `json:"ext_capabilities,omitempty"`
 	MSIXData        *MSIXData              `json:"msix_data,omitempty"`
+	NVMeIdentity    *NVMeIdentity          `json:"nvme_identity,omitempty"`
 }
 
 func (dc *DeviceContext) MarshalJSON() ([]byte, error) {
@@ -64,6 +73,7 @@ func (dc *DeviceContext) MarshalJSON() ([]byte, error) {
 		Capabilities:    dc.Capabilities,
 		ExtCapabilities: dc.ExtCapabilities,
 		MSIXData:        dc.MSIXData,
+		NVMeIdentity:    dc.NVMeIdentity,
 	}
 
 	if dc.ConfigSpace != nil {
@@ -111,6 +121,7 @@ func (dc *DeviceContext) UnmarshalJSON(data []byte) error {
 	dc.Capabilities = j.Capabilities
 	dc.ExtCapabilities = j.ExtCapabilities
 	dc.MSIXData = j.MSIXData
+	dc.NVMeIdentity = j.NVMeIdentity
 
 	// Reconstruct config space from hex words
 	if len(j.ConfigSpaceHex) > 0 {

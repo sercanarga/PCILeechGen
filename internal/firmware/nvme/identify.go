@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"fmt"
+	"strings"
 
 	"github.com/sercanarga/pcileechgen/internal/firmware"
 )
@@ -16,16 +17,23 @@ type IdentifyData struct {
 	Namespace  [4096]byte // CNS=0, NSID=1
 }
 
+// ControllerIdentity holds donor-captured NVMe controller strings; empty fields fall back to synthesis.
+type ControllerIdentity struct {
+	Serial string
+	Model  string
+	FWRev  string
+}
+
 // BuildIdentifyData constructs both Identify structures from donor IDs.
-func BuildIdentifyData(ids firmware.DeviceIDs, barData []byte) *IdentifyData {
+func BuildIdentifyData(ids firmware.DeviceIDs, barData []byte, identity *ControllerIdentity) *IdentifyData {
 	d := &IdentifyData{}
-	d.Controller = buildIdentifyController(ids, barData)
+	d.Controller = buildIdentifyController(ids, barData, identity)
 	d.Namespace = buildIdentifyNamespace(barData)
 	return d
 }
 
 // buildIdentifyController - CNS=1, NVMe 1.4 spec Figure 247.
-func buildIdentifyController(ids firmware.DeviceIDs, barData []byte) [4096]byte {
+func buildIdentifyController(ids firmware.DeviceIDs, barData []byte, identity *ControllerIdentity) [4096]byte {
 	var data [4096]byte
 
 	// VID / SSVID
@@ -33,15 +41,33 @@ func buildIdentifyController(ids firmware.DeviceIDs, barData []byte) [4096]byte 
 	binary.LittleEndian.PutUint16(data[0x002:], ids.SubsysVendorID)
 
 	// SN (20B ASCII)
-	sn := generateSerialNumber(ids)
+	sn := ""
+	if identity != nil {
+		sn = strings.TrimSpace(identity.Serial)
+	}
+	if sn == "" {
+		sn = generateSerialNumber(ids)
+	}
 	copy(data[0x004:0x018], padASCII(sn, 20))
 
 	// MN (40B ASCII)
-	mn := modelNumberForVendor(ids.VendorID)
+	mn := ""
+	if identity != nil {
+		mn = strings.TrimSpace(identity.Model)
+	}
+	if mn == "" {
+		mn = modelNumberForVendor(ids.VendorID)
+	}
 	copy(data[0x018:0x040], padASCII(mn, 40))
 
-	// FR (8B ASCII) - vendor-appropriate firmware revision
-	fr := firmwareRevisionForVendor(ids.VendorID)
+	// FR (8B ASCII)
+	fr := ""
+	if identity != nil {
+		fr = strings.TrimSpace(identity.FWRev)
+	}
+	if fr == "" {
+		fr = firmwareRevisionForVendor(ids.VendorID)
+	}
 	copy(data[0x040:0x048], padASCII(fr, 8))
 
 	data[0x048] = 6 // RAB

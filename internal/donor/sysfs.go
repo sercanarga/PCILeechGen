@@ -237,6 +237,14 @@ func (sr *SysfsReader) readSysfsHex(devPath, name string, bitSize int) (uint64, 
 	return strconv.ParseUint(strings.TrimSpace(string(data)), 0, bitSize)
 }
 
+func (sr *SysfsReader) readSysfsString(devPath, name string) (string, error) {
+	data, err := os.ReadFile(filepath.Join(devPath, name))
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(data)), nil
+}
+
 func (sr *SysfsReader) readHex16(devPath, name string) (uint16, error) {
 	v, err := sr.readSysfsHex(devPath, name, 16)
 	return uint16(v), err
@@ -250,4 +258,38 @@ func (sr *SysfsReader) readHex32(devPath, name string) (uint32, error) {
 func (sr *SysfsReader) readHex8(devPath, name string) (uint8, error) {
 	v, err := sr.readSysfsHex(devPath, name, 8)
 	return uint8(v), err
+}
+
+// ReadNVMeIdentity reads NVMe controller strings from the nvme subdir of the
+// PCI device. The subdir exists only while the native nvme driver is bound;
+// it is absent under vfio-pci.
+func (sr *SysfsReader) ReadNVMeIdentity(bdf pci.BDF) (*NVMeIdentity, error) {
+	nvmeDir := filepath.Join(sr.basePath, bdf.String(), "nvme")
+	entries, err := os.ReadDir(nvmeDir)
+	if err != nil {
+		return nil, fmt.Errorf("nvme driver not bound (no %s): %w", nvmeDir, err)
+	}
+	ctrlPath := ""
+	for _, e := range entries {
+		if e.IsDir() && strings.HasPrefix(e.Name(), "nvme") {
+			ctrlPath = filepath.Join(nvmeDir, e.Name())
+			break
+		}
+	}
+	if ctrlPath == "" {
+		return nil, fmt.Errorf("no nvme controller under %s", nvmeDir)
+	}
+	model, err := sr.readSysfsString(ctrlPath, "model")
+	if err != nil {
+		return nil, fmt.Errorf("read nvme model: %w", err)
+	}
+	serial, err := sr.readSysfsString(ctrlPath, "serial")
+	if err != nil {
+		return nil, fmt.Errorf("read nvme serial: %w", err)
+	}
+	fw, err := sr.readSysfsString(ctrlPath, "firmware_rev")
+	if err != nil {
+		return nil, fmt.Errorf("read nvme firmware_rev: %w", err)
+	}
+	return &NVMeIdentity{Serial: serial, Model: model, FWRev: fw}, nil
 }
