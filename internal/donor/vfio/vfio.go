@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 var sysfsBase = "/sys/bus/pci/devices"
@@ -57,6 +58,85 @@ func IsBoundToVFIO(bdf string) bool {
 		return false
 	}
 	return filepath.Base(target) == "vfio-pci"
+}
+
+// BoundDriver returns the basename of the bound driver symlink (e.g. "vfio-pci",
+// "nvme"), or "" if no driver is bound.
+func BoundDriver(bdf string) string {
+	target, err := os.Readlink(filepath.Join(sysfsBase, bdf, "driver"))
+	if err != nil {
+		return ""
+	}
+	return filepath.Base(target)
+}
+
+// WaitForNativeDriver polls until a driver other than vfio-pci binds; otherwise
+// BAR reads return 0xFF. drivers_probe runs probe synchronously, so this returns
+// at once on success and only waits long enough to surface a bind failure.
+func WaitForNativeDriver(bdf string, timeout, interval time.Duration) (string, error) {
+	deadline := time.Now().Add(timeout)
+	var last string
+	for {
+		if last = BoundDriver(bdf); last != "" && last != "vfio-pci" {
+			return last, nil
+		}
+		if time.Now().After(deadline) || interval <= 0 {
+			break
+		}
+		time.Sleep(interval)
+	}
+	if last == "vfio-pci" {
+		return "", fmt.Errorf("device %s still on vfio-pci after %s (driver_override may be pinned)", bdf, timeout)
+	}
+	return "", fmt.Errorf("no native driver bound to %s within %s (is the native module loaded? probe may have failed)", bdf, timeout)
+}
+
+// WaitForNVMeLive polls <bdf>/nvme/nvmeN/state until "live". The driver symlink
+// appears before nvme_probe finishes; "live" means the controller is up and its
+// Identify Controller data is available.
+func WaitForNVMeLive(bdf string, timeout, interval time.Duration) error {
+	nvmeDir := filepath.Join(sysfsBase, bdf, "nvme")
+	deadline := time.Now().Add(timeout)
+	var lastState string
+	for {
+		if state, ok := readNVMeControllerState(nvmeDir); ok {
+			lastState = state
+			switch state {
+			case "live":
+				return nil
+			case "dead", "deleting", "deleting-noio":
+				return fmt.Errorf("nvme controller for %s is %q", bdf, state)
+			}
+		}
+		if time.Now().After(deadline) || interval <= 0 {
+			break
+		}
+		time.Sleep(interval)
+	}
+	if lastState == "" {
+		return fmt.Errorf("nvme controller for %s not found within %s", bdf, timeout)
+	}
+	return fmt.Errorf("nvme controller for %s did not reach live within %s (last state %q)", bdf, timeout, lastState)
+}
+
+// readNVMeControllerState reads state from the first nvmeN entry under nvmeDir.
+// ok is false when the controller is not registered yet.
+func readNVMeControllerState(nvmeDir string) (string, bool) {
+	entries, err := os.ReadDir(nvmeDir)
+	if err != nil {
+		return "", false
+	}
+	for _, e := range entries {
+		if !e.IsDir() || !strings.HasPrefix(e.Name(), "nvme") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(nvmeDir, e.Name(), "state"))
+		if err != nil {
+			continue
+		}
+		return strings.TrimSpace(string(data)), true
+	}
+	return "", false
 }
 
 // ListVFIODevices enumerates BDFs currently on the vfio-pci driver.
@@ -259,7 +339,13 @@ func WakeToD0(bdf string) error {
 // UnbindFromVFIO detaches from vfio-pci and re-probes for the original driver.
 func UnbindFromVFIO(bdf string) error {
 	devPath := filepath.Join(sysfsBase, bdf)
-	_ = os.WriteFile(filepath.Join(devPath, "driver_override"), []byte(""), 0200)
+
+	// Clear with a newline: kernfs ignores zero-length writes, so an empty
+	// slice leaves the override pinned to vfio-pci and drivers_probe re-binds
+	// vfio-pci instead of the native driver. Matches `echo "" > driver_override`.
+	if err := os.WriteFile(filepath.Join(devPath, "driver_override"), []byte("\n"), 0200); err != nil {
+		return fmt.Errorf("failed to clear driver_override: %w", err)
+	}
 
 	if err := os.WriteFile("/sys/bus/pci/drivers/vfio-pci/unbind", []byte(bdf), 0200); err != nil {
 		return fmt.Errorf("failed to unbind from vfio-pci: %w", err)

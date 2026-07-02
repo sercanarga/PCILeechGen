@@ -12,11 +12,13 @@ import (
 )
 
 const (
-	nativeDriverInitDelay  = 5 * time.Second
-	nativeDriverRetryDelay = 1 * time.Second
-	nativeDriverMaxRetries = 3
-	memSpaceSettleDelay    = 200 * time.Millisecond
-	maxBARReadSize         = 65536
+	nativeDriverBindTimeout   = 10 * time.Second
+	nvmeLiveTimeout           = 15 * time.Second
+	nativeDriverPollInterval  = 200 * time.Millisecond
+	nativeDriverBARRetryDelay = 500 * time.Millisecond
+	nativeDriverBARRetries    = 3
+	memSpaceSettleDelay       = 200 * time.Millisecond
+	maxBARReadSize            = 65536
 )
 
 // Collector gathers donor PCI data from sysfs.
@@ -64,12 +66,16 @@ func (c *Collector) Collect(bdf pci.BDF) (*DeviceContext, error) {
 	}
 	ctx.BARs = bars
 
-	ctx.BARContents = c.collectBARMemory(bdf, bars)
+	// One shared native-driver visit for the whole Collect() (see runNativeVisit):
+	// the BAR fallback and the NVMe identity capture reuse a single rebind cycle.
+	visit := &nativeVisitCache{bdf: bdf, bars: bars, nvme: isNVMeClass(ctx.Device.ClassCode)}
+
+	ctx.BARContents = c.collectBARMemory(bdf, bars, visit)
 	ctx.BARProfiles = c.collectBARProfiles(bdf, bars, ctx.BARContents)
 	ctx.Capabilities = pci.ParseCapabilities(cs)
 	ctx.ExtCapabilities = pci.ParseExtCapabilities(cs)
 	ctx.MSIXData = c.collectMSIXData(cs, ctx.BARContents)
-	ctx.NVMeIdentity = c.collectNVMeIdentity(bdf, ctx.Device.ClassCode)
+	ctx.NVMeIdentity = c.collectNVMeIdentity(bdf, ctx.Device.ClassCode, visit)
 
 	if err := c.validateBARContents(ctx); err != nil {
 		return nil, err
@@ -240,100 +246,142 @@ func memBARsAllFF(contents map[int][]byte, bars []pci.BAR) bool {
 	return checked > 0
 }
 
-// tryNativeDriverRebind temporarily switches to the native driver so the
-// device can initialize its BARs, then switches back to vfio-pci.
-func (c *Collector) tryNativeDriverRebind(bdf pci.BDF, bars []pci.BAR, current map[int][]byte) map[int][]byte {
-	if err := vfio.UnbindFromVFIO(bdf.String()); err != nil {
-		slog.Warn("native driver rebind: unbind failed", "error", err)
-		return current
+type nativeVisitResult struct {
+	bars   map[int][]byte
+	nvmeID *NVMeIdentity
+}
+
+// nativeVisitCache runs the native-driver visit at most once per Collect, so
+// the BAR fallback and the NVMe identity capture share a single rebind cycle.
+type nativeVisitCache struct {
+	bdf  pci.BDF
+	bars []pci.BAR
+	nvme bool
+	done bool
+	res  nativeVisitResult
+	err  error
+}
+
+func isNVMeClass(classCode uint32) bool {
+	return classCode>>16 == 0x01 && (classCode>>8)&0xFF == 0x08
+}
+
+func (c *Collector) runNativeVisit(vc *nativeVisitCache) (nativeVisitResult, error) {
+	if !vc.done {
+		vc.done = true
+		vc.res, vc.err = c.captureViaNativeDriver(vc.bdf, vc.bars, vc.nvme)
 	}
+	return vc.res, vc.err
+}
 
-	slog.Info("waiting for native driver to initialize device...",
-		"delay", nativeDriverInitDelay)
-	time.Sleep(nativeDriverInitDelay)
-
-	recovered := make(map[int][]byte)
-	eligible := eligibleBARs(bars)
-
-	for attempt := 0; attempt <= nativeDriverMaxRetries; attempt++ {
-		if attempt > 0 {
-			slog.Info("native driver rebind: retrying BAR reads",
-				"attempt", attempt, "max", nativeDriverMaxRetries)
-			time.Sleep(nativeDriverRetryDelay)
-		}
-
-		for _, bar := range eligible {
-			if _, ok := recovered[bar.Index]; ok {
-				continue // already recovered
-			}
-			readLen := int(bar.Size)
-			if readLen > maxBARReadSize {
-				readLen = maxBARReadSize
-			}
-			data, err := c.sysfs.ReadBARContent(bdf, bar.Index, readLen)
-			if err != nil {
-				slog.Warn("native driver rebind: BAR read failed",
-					"bar", bar.Index, "error", err)
-				continue
-			}
-			if !isAllFF(data) && len(data) > 0 {
-				recovered[bar.Index] = data
-				slog.Info("native driver rebind: BAR read success",
-					"bar", bar.Index, "bytes", len(data))
-			}
-		}
-
-		if len(recovered) == len(eligible) {
-			break // all BARs recovered
-		}
-	}
-
-	// rebind to vfio-pci; discard recovered data on failure
+// restoreVFIO rebinds vfio-pci and re-enables memory space + D0. Only a rebind
+// failure is returned; the rest is best-effort.
+func (c *Collector) restoreVFIO(bdf pci.BDF) error {
 	if err := vfio.BindToVFIO(bdf.String()); err != nil {
-		slog.Warn("native driver rebind: re-bind to vfio-pci failed, discarding recovered BARs",
-			"error", err)
-		return current
+		return fmt.Errorf("rebind vfio-pci: %w", err)
 	}
-
-	// vfio-pci starts with memory space disabled
 	if err := vfio.EnableMemorySpace(bdf.String()); err != nil {
-		slog.Warn("native driver rebind: could not re-enable memory space", "error", err)
+		slog.Warn("could not re-enable memory space after rebind", "bdf", bdf, "error", err)
 	} else {
 		time.Sleep(memSpaceSettleDelay)
 	}
-
 	if err := vfio.WakeToD0(bdf.String()); err != nil {
-		slog.Warn("native driver rebind: could not wake device to D0 after rebind",
-			"error", err)
+		slog.Warn("could not wake device to D0 after rebind", "bdf", bdf, "error", err)
 	} else {
 		time.Sleep(memSpaceSettleDelay)
 	}
-	if ps, err := vfio.CheckPowerState(bdf.String()); err == nil {
-		slog.Info("native driver rebind: device power state after wake",
-			"state", ps)
+	return nil
+}
+
+// restoreVFIOOrWarn rebinds vfio-pci and warns on failure, so the device is not
+// left unbound silently.
+func (c *Collector) restoreVFIOOrWarn(bdf pci.BDF) {
+	if err := c.restoreVFIO(bdf); err != nil {
+		slog.Warn("could not restore vfio-pci; device may be unbound", "bdf", bdf, "error", err)
+	}
+}
+
+// captureViaNativeDriver runs the single native-driver visit per Collect so the
+// native driver initializes the device (live BAR/identity reads need it under
+// vfio-pci). Returns an error only when no native driver binds.
+func (c *Collector) captureViaNativeDriver(bdf pci.BDF, bars []pci.BAR, nvme bool) (nativeVisitResult, error) {
+	res := nativeVisitResult{bars: make(map[int][]byte)}
+
+	if err := vfio.UnbindFromVFIO(bdf.String()); err != nil {
+		c.restoreVFIOOrWarn(bdf)
+		return res, fmt.Errorf("native visit: %w", err)
 	}
 
-	if len(recovered) > 0 {
-		for idx, data := range recovered {
-			current[idx] = data
+	drv, err := vfio.WaitForNativeDriver(bdf.String(), nativeDriverBindTimeout, nativeDriverPollInterval)
+	if err != nil {
+		c.restoreVFIOOrWarn(bdf)
+		return res, fmt.Errorf("native visit: %w", err)
+	}
+	slog.Info("native driver bound", "bdf", bdf, "driver", drv)
+
+	if nvme {
+		if liveErr := vfio.WaitForNVMeLive(bdf.String(), nvmeLiveTimeout, nativeDriverPollInterval); liveErr != nil {
+			slog.Warn("nvme controller not live; identity capture may fail", "bdf", bdf, "error", liveErr)
 		}
-		slog.Info("native driver rebind cycle succeeded",
-			"bars_recovered", len(recovered))
-	} else {
-		slog.Warn("native driver rebind cycle did not recover any BAR data")
 	}
 
-	return current
+	for _, bar := range eligibleBARs(bars) {
+		readLen := int(bar.Size)
+		if readLen > maxBARReadSize {
+			readLen = maxBARReadSize
+		}
+		data, readErr := c.readBARUntilValid(bdf, bar.Index, readLen)
+		if readErr != nil {
+			slog.Warn("native visit: BAR read failed", "bar", bar.Index, "error", readErr)
+			continue
+		}
+		if isAllFF(data) {
+			slog.Warn("native visit: BAR still 0xFF after native bind", "bar", bar.Index)
+			continue
+		}
+		res.bars[bar.Index] = data
+		slog.Info("native visit: BAR captured", "bar", bar.Index, "bytes", len(data))
+	}
+
+	if nvme {
+		if id, idErr := c.sysfs.ReadNVMeIdentity(bdf); idErr != nil {
+			slog.Warn("native visit: NVMe identity read failed; firmware will use synthesized strings", "error", idErr)
+		} else {
+			res.nvmeID = id
+			slog.Info("native visit: NVMe identity captured",
+				"model", id.Model, "serial", id.Serial, "firmware", id.FWRev)
+		}
+	}
+
+	if err := c.restoreVFIO(bdf); err != nil {
+		return res, fmt.Errorf("native visit: %w", err)
+	}
+	return res, nil
+}
+
+// readBARUntilValid reads a BAR a few times with a settle delay between tries;
+// BAR registers can lag slightly behind driver bind on cold controllers.
+func (c *Collector) readBARUntilValid(bdf pci.BDF, index, readLen int) ([]byte, error) {
+	var data []byte
+	var err error
+	for attempt := 0; attempt < nativeDriverBARRetries; attempt++ {
+		if attempt > 0 {
+			time.Sleep(nativeDriverBARRetryDelay)
+		}
+		data, err = c.sysfs.ReadBARContent(bdf, index, readLen)
+		if err == nil && len(data) > 0 && !isAllFF(data) {
+			return data, nil
+		}
+	}
+	return data, err
 }
 
 // collectNVMeIdentity captures NVMe controller strings for NVMe-class devices.
 // Returns nil for non-NVMe devices or when capture fails (firmware then uses
 // synthesized strings).
-func (c *Collector) collectNVMeIdentity(bdf pci.BDF, classCode uint32) *NVMeIdentity {
-	baseClass := (classCode >> 16) & 0xFF
-	subClass := (classCode >> 8) & 0xFF
-	if baseClass != 0x01 || subClass != 0x08 {
-		return nil // not NVMe
+func (c *Collector) collectNVMeIdentity(bdf pci.BDF, classCode uint32, vc *nativeVisitCache) *NVMeIdentity {
+	if !isNVMeClass(classCode) {
+		return nil
 	}
 
 	if id, err := c.sysfs.ReadNVMeIdentity(bdf); err == nil {
@@ -342,52 +390,22 @@ func (c *Collector) collectNVMeIdentity(bdf pci.BDF, classCode uint32) *NVMeIden
 		return id
 	}
 
-	// Under vfio-pci the nvme sysfs is gone; rebind to the native driver,
-	// read, then restore vfio-pci.
-	if !vfio.IsBoundToVFIO(bdf.String()) {
-		slog.Warn("NVMe identity unavailable (nvme driver not bound and not on vfio-pci); " +
-			"firmware will use synthesized strings")
+	if vc == nil {
+		slog.Warn("NVMe identity unavailable (nvme driver not bound); firmware will use synthesized strings")
 		return nil
 	}
-	id, err := c.captureNVMeIdentityWithRebind(bdf)
-	if err != nil || id == nil {
-		slog.Warn("NVMe identity capture failed; firmware will use synthesized strings",
-			"error", err)
+	res, err := c.runNativeVisit(vc)
+	if err != nil {
+		slog.Warn("NVMe identity capture via native visit failed; firmware will use synthesized strings", "error", err)
 		return nil
 	}
-	slog.Info("captured NVMe identity after native rebind",
-		"model", id.Model, "serial", id.Serial, "firmware", id.FWRev)
-	return id
-}
-
-// captureNVMeIdentityWithRebind rebinds to the native nvme driver to read the
-// controller strings, then restores vfio-pci and device power state.
-func (c *Collector) captureNVMeIdentityWithRebind(bdf pci.BDF) (*NVMeIdentity, error) {
-	if err := vfio.UnbindFromVFIO(bdf.String()); err != nil {
-		return nil, fmt.Errorf("unbind vfio-pci: %w", err)
+	if res.nvmeID == nil {
+		slog.Warn("NVMe identity not captured; firmware will use synthesized strings")
+		return nil
 	}
-
-	slog.Info("waiting for native nvme driver to bind for identity capture...",
-		"delay", nativeDriverInitDelay)
-	time.Sleep(nativeDriverInitDelay)
-
-	id, readErr := c.sysfs.ReadNVMeIdentity(bdf)
-
-	if err := vfio.BindToVFIO(bdf.String()); err != nil {
-		slog.Warn("nvme identity capture: re-bind to vfio-pci failed", "error", err)
-		return nil, fmt.Errorf("rebind vfio-pci: %w", err)
-	}
-	if err := vfio.EnableMemorySpace(bdf.String()); err != nil {
-		slog.Warn("nvme identity capture: could not re-enable memory space", "error", err)
-	} else {
-		time.Sleep(memSpaceSettleDelay)
-	}
-	_ = vfio.WakeToD0(bdf.String())
-
-	if readErr != nil {
-		return nil, fmt.Errorf("read nvme identity after rebind: %w", readErr)
-	}
-	return id, nil
+	slog.Info("captured NVMe identity via native visit",
+		"model", res.nvmeID.Model, "serial", res.nvmeID.Serial, "firmware", res.nvmeID.FWRev)
+	return res.nvmeID
 }
 
 func (c *Collector) collectConfigSpace(bdf pci.BDF) (*pci.ConfigSpace, error) {
@@ -405,7 +423,7 @@ func (c *Collector) collectConfigSpace(bdf pci.BDF) (*pci.ConfigSpace, error) {
 	return cs, nil
 }
 
-func (c *Collector) collectBARMemory(bdf pci.BDF, bars []pci.BAR) map[int][]byte {
+func (c *Collector) collectBARMemory(bdf pci.BDF, bars []pci.BAR, vc *nativeVisitCache) map[int][]byte {
 	eligible := eligibleBARs(bars)
 	if len(eligible) == 0 {
 		return nil
@@ -441,11 +459,23 @@ func (c *Collector) collectBARMemory(bdf pci.BDF, bars []pci.BAR) map[int][]byte
 		}
 	}
 
-	// last resort: let native driver init the device.
+	// last resort: let the native driver init the device (single shared visit).
 	// avoid VFIO sessions here, session close can trigger FLR.
 	if vfio.IsBoundToVFIO(bdf.String()) {
-		slog.Info("all memory BAR contents are 0xFF, attempting native driver rebind cycle")
-		contents = c.tryNativeDriverRebind(bdf, bars, contents)
+		slog.Info("all memory BAR contents are 0xFF, attempting native driver visit")
+		res, vErr := c.runNativeVisit(vc)
+		if vErr != nil {
+			slog.Warn("native driver visit failed; keeping prior BAR contents", "error", vErr)
+		} else {
+			for idx, data := range res.bars {
+				contents[idx] = data
+			}
+			if len(res.bars) > 0 {
+				slog.Info("native visit recovered BAR data", "bars_recovered", len(res.bars))
+			} else {
+				slog.Warn("native visit did not recover any BAR data")
+			}
+		}
 	}
 
 	return contents

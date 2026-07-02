@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestDeviceDump_ToJSON(t *testing.T) {
@@ -73,6 +74,40 @@ func TestUnbindFromVFIO_InvalidDevice(t *testing.T) {
 	err := UnbindFromVFIO("9999:99:99.9")
 	if err == nil {
 		t.Log("UnbindFromVFIO succeeded (unexpected)")
+	}
+}
+
+// driver_override must be cleared with "\n", not an empty write: kernfs ignores
+// zero-length writes, so "" leaves it pinned to vfio-pci and drivers_probe
+// re-binds vfio-pci instead of the native driver.
+func TestUnbindFromVFIO_ClearsDriverOverrideWithNewline(t *testing.T) {
+	tmpDir := t.TempDir()
+	SetSysfsBase(tmpDir)
+	defer ResetSysfsBase()
+
+	bdf := "0000:03:00.0"
+	devDir := filepath.Join(tmpDir, bdf)
+	if err := os.MkdirAll(devDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	overridePath := filepath.Join(devDir, "driver_override")
+	// Simulate the stale override that pins the device to vfio-pci.
+	if err := os.WriteFile(overridePath, []byte("vfio-pci\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// UnbindFromVFIO clears the override first, then writes to the hardcoded
+	// /sys/bus/pci/... paths (absent on the test host) and returns an error.
+	// We only assert the override-clear step here.
+	_ = UnbindFromVFIO(bdf)
+
+	got, err := os.ReadFile(overridePath)
+	if err != nil {
+		t.Fatalf("driver_override was not written: %v", err)
+	}
+	if string(got) != "\n" {
+		t.Errorf("driver_override = %q, want %q (a newline clears the override; "+
+			"an empty/zero-byte write is a no-op on kernfs and leaves it pinned)", got, "\n")
 	}
 }
 
@@ -286,6 +321,181 @@ func TestSetSysfsBase(t *testing.T) {
 	ResetSysfsBase()
 	if sysfsBase != "/sys/bus/pci/devices" {
 		t.Errorf("sysfsBase = %q, want default", sysfsBase)
+	}
+}
+
+func TestBoundDriver(t *testing.T) {
+	tmpDir := t.TempDir()
+	SetSysfsBase(tmpDir)
+	defer ResetSysfsBase()
+
+	bdf := "0000:03:00.0"
+	devDir := filepath.Join(tmpDir, bdf)
+	if err := os.MkdirAll(devDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := BoundDriver(bdf); got != "" {
+		t.Errorf("no driver symlink: BoundDriver = %q, want %q", got, "")
+	}
+
+	if err := os.Symlink("/sys/bus/pci/drivers/nvme", filepath.Join(devDir, "driver")); err != nil {
+		t.Fatal(err)
+	}
+	if got := BoundDriver(bdf); got != "nvme" {
+		t.Errorf("BoundDriver = %q, want %q", got, "nvme")
+	}
+}
+
+func TestWaitForNativeDriver_AlreadyBound(t *testing.T) {
+	tmpDir := t.TempDir()
+	SetSysfsBase(tmpDir)
+	defer ResetSysfsBase()
+
+	bdf := "0000:03:00.0"
+	devDir := filepath.Join(tmpDir, bdf)
+	if err := os.MkdirAll(devDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/sys/bus/pci/drivers/nvme", filepath.Join(devDir, "driver")); err != nil {
+		t.Fatal(err)
+	}
+
+	drv, err := WaitForNativeDriver(bdf, 50*time.Millisecond, 10*time.Millisecond)
+	if err != nil {
+		t.Fatalf("WaitForNativeDriver failed: %v", err)
+	}
+	if drv != "nvme" {
+		t.Errorf("driver = %q, want %q", drv, "nvme")
+	}
+}
+
+func TestWaitForNativeDriver_TimeoutNoDriver(t *testing.T) {
+	tmpDir := t.TempDir()
+	SetSysfsBase(tmpDir)
+	defer ResetSysfsBase()
+
+	bdf := "0000:03:00.0"
+	if err := os.MkdirAll(filepath.Join(tmpDir, bdf), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := WaitForNativeDriver(bdf, 40*time.Millisecond, 10*time.Millisecond); err == nil {
+		t.Fatal("expected timeout error when no driver binds")
+	}
+}
+
+func TestWaitForNativeDriver_StillVFIO(t *testing.T) {
+	tmpDir := t.TempDir()
+	SetSysfsBase(tmpDir)
+	defer ResetSysfsBase()
+
+	bdf := "0000:03:00.0"
+	devDir := filepath.Join(tmpDir, bdf)
+	if err := os.MkdirAll(devDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/sys/bus/pci/drivers/vfio-pci", filepath.Join(devDir, "driver")); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := WaitForNativeDriver(bdf, 40*time.Millisecond, 10*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected error when device stays on vfio-pci")
+	}
+	if !containsStr(err.Error(), "vfio-pci") {
+		t.Errorf("error should mention vfio-pci, got: %v", err)
+	}
+}
+
+func TestWaitForNativeDriver_BindsAfterDelay(t *testing.T) {
+	tmpDir := t.TempDir()
+	SetSysfsBase(tmpDir)
+	defer ResetSysfsBase()
+
+	bdf := "0000:03:00.0"
+	devDir := filepath.Join(tmpDir, bdf)
+	if err := os.MkdirAll(devDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	driverPath := filepath.Join(devDir, "driver")
+
+	go func() {
+		time.Sleep(60 * time.Millisecond)
+		_ = os.Symlink("/sys/bus/pci/drivers/nvme", driverPath)
+	}()
+
+	drv, err := WaitForNativeDriver(bdf, 1*time.Second, 20*time.Millisecond)
+	if err != nil {
+		t.Fatalf("WaitForNativeDriver failed: %v", err)
+	}
+	if drv != "nvme" {
+		t.Errorf("driver = %q, want %q", drv, "nvme")
+	}
+}
+
+func TestWaitForNVMeLive_Live(t *testing.T) {
+	tmpDir := t.TempDir()
+	SetSysfsBase(tmpDir)
+	defer ResetSysfsBase()
+
+	bdf := "0000:03:00.0"
+	nvmeDir := filepath.Join(tmpDir, bdf, "nvme", "nvme0")
+	if err := os.MkdirAll(nvmeDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nvmeDir, "state"), []byte("live\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := WaitForNVMeLive(bdf, 50*time.Millisecond, 10*time.Millisecond); err != nil {
+		t.Fatalf("WaitForNVMeLive failed: %v", err)
+	}
+}
+
+func TestWaitForNVMeLive_Dead(t *testing.T) {
+	tmpDir := t.TempDir()
+	SetSysfsBase(tmpDir)
+	defer ResetSysfsBase()
+
+	bdf := "0000:03:00.0"
+	nvmeDir := filepath.Join(tmpDir, bdf, "nvme", "nvme0")
+	if err := os.MkdirAll(nvmeDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nvmeDir, "state"), []byte("dead\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := WaitForNVMeLive(bdf, 50*time.Millisecond, 10*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected error for dead controller")
+	}
+	if !containsStr(err.Error(), "dead") {
+		t.Errorf("error should mention dead state, got: %v", err)
+	}
+}
+
+func TestWaitForNVMeLive_TimeoutNotLive(t *testing.T) {
+	tmpDir := t.TempDir()
+	SetSysfsBase(tmpDir)
+	defer ResetSysfsBase()
+
+	bdf := "0000:03:00.0"
+	nvmeDir := filepath.Join(tmpDir, bdf, "nvme", "nvme0")
+	if err := os.MkdirAll(nvmeDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nvmeDir, "state"), []byte("connecting\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := WaitForNVMeLive(bdf, 40*time.Millisecond, 10*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected timeout error when controller never goes live")
+	}
+	if !containsStr(err.Error(), "live") {
+		t.Errorf("error should mention live, got: %v", err)
 	}
 }
 
