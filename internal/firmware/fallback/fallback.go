@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/sercanarga/pcileechgen/internal/firmware"
+	"github.com/sercanarga/pcileechgen/internal/firmware/devclass"
 	"gopkg.in/yaml.v3"
 )
 
@@ -72,13 +74,18 @@ func Apply(cfg *Config, classCode uint32, barContents map[int][]byte) []ApplyRes
 	var results []ApplyResult
 	slog.Info("applying fallback defaults", "description", dc.Description, "class", key)
 
-	// Find the target BAR: try each available BAR, preferring larger ones
+	// Prefer the device class's preferred BAR (e.g. BAR5/ABAR for SATA); fall
+	// back to the largest available BAR when the preferred one has no data.
 	var targetBAR []byte
 	var targetIdx int
-	for idx, data := range barContents {
-		if len(data) >= 4 && len(data) > len(targetBAR) {
-			targetBAR = data
-			targetIdx = idx
+	if pref := devclass.ProfileForClass(classCode).PreferredBAR; len(barContents[pref]) >= 4 {
+		targetBAR = barContents[pref]
+		targetIdx = pref
+	} else {
+		targetIdx = firmware.LargestBarIndex(barContents)
+		targetBAR = barContents[targetIdx]
+		if len(targetBAR) < 4 {
+			targetBAR = nil
 		}
 	}
 

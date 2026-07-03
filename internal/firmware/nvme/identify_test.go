@@ -2,6 +2,7 @@ package nvme
 
 import (
 	"encoding/binary"
+	"strings"
 	"testing"
 
 	"github.com/sercanarga/pcileechgen/internal/firmware"
@@ -262,5 +263,48 @@ func TestIdentifyController_DifferentVendors(t *testing.T) {
 		if gotVID != vid {
 			t.Errorf("VID 0x%04X: identify VID mismatch, got 0x%04X", vid, gotVID)
 		}
+	}
+}
+
+func TestModelNumber_DID_Disambiguation(t *testing.T) {
+	ids := sampleIDs()
+	ids.DeviceID = 0xA80D
+	id := BuildIdentifyData(ids, nil)
+	mn := strings.TrimRight(string(id.Controller[0x018:0x040]), " ")
+	if strings.Contains(mn, "980 PRO") {
+		t.Errorf("Samsung DID 0xA80D (990 PRO) MN must not contain '980 PRO', got %q", mn)
+	}
+	if !strings.Contains(mn, "990") {
+		t.Errorf("Samsung DID 0xA80D (990 PRO) MN must contain '990', got %q", mn)
+	}
+}
+
+func TestNamespace_NSZE_2TB(t *testing.T) {
+	ids := sampleIDs()
+	ids.DeviceID = 0xA809
+	id := BuildIdentifyData(ids, nil)
+	nsze := binary.LittleEndian.Uint64(id.Namespace[0x000:])
+	const nsze1TB = uint64(1953525168)
+	if nsze == nsze1TB {
+		t.Errorf("Samsung DID 0xA809 (2TB) NSZE must differ from 1TB default %d, got %d", nsze1TB, nsze)
+	}
+	ncap := binary.LittleEndian.Uint64(id.Namespace[0x008:])
+	nuse := binary.LittleEndian.Uint64(id.Namespace[0x010:])
+	if ncap != nsze {
+		t.Errorf("NCAP %d must equal NSZE %d", ncap, nsze)
+	}
+	if nuse != nsze {
+		t.Errorf("NUSE %d must equal NSZE %d", nuse, nsze)
+	}
+}
+
+func TestOUI_UnknownVID_NotXerox(t *testing.T) {
+	ids := sampleIDs()
+	ids.VendorID = 0xBEEF
+	ids.SubsysVendorID = 0xBEEF
+	id := BuildIdentifyData(ids, nil)
+	oui := id.Controller[0x049:0x04C]
+	if oui[0] == 0 && oui[1] == 0 && oui[2] == 0 {
+		t.Errorf("Unknown VID OUI must not be 00:00:00 (Xerox's real OUI), got %02X:%02X:%02X", oui[0], oui[1], oui[2])
 	}
 }

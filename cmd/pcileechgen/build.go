@@ -1,6 +1,7 @@
 package main
 
 import (
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -11,28 +12,51 @@ import (
 	"github.com/sercanarga/pcileechgen/internal/donor/behavior"
 	"github.com/sercanarga/pcileechgen/internal/donor/mmio"
 	"github.com/sercanarga/pcileechgen/internal/firmware"
+	"github.com/sercanarga/pcileechgen/internal/firmware/fallback"
+	"github.com/sercanarga/pcileechgen/internal/firmware/output"
 	"github.com/sercanarga/pcileechgen/internal/pci"
 	"github.com/sercanarga/pcileechgen/internal/vivado"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 )
+
+//go:embed fallback_defaults.yaml
+var fallbackDefaultsYAML []byte
+
+// loadFallbackConfig loads --fallback-config if given, otherwise falls back
+// to the built-in embedded defaults (fallback recovery is on by default).
+func loadFallbackConfig(path string) (*fallback.Config, error) {
+	if path != "" {
+		return fallback.LoadConfig(path)
+	}
+	var cfg fallback.Config
+	if err := yaml.Unmarshal(fallbackDefaultsYAML, &cfg); err != nil {
+		return nil, fmt.Errorf("failed to parse embedded fallback defaults: %w", err)
+	}
+	return &cfg, nil
+}
 
 // buildFlags groups all build command flags.
 type buildFlags struct {
-	bdf        string
-	board      string
-	vivadoPath string
-	output     string
-	skipVivado bool
-	jobs       int
-	timeout    int
-	libDir     string
-	fromJSON   string
-	stockBar   bool
-	force      bool
-	mmioTrace  string
-	emulatePM  bool
-	noVFIO     bool
-	optionROM  bool
+	bdf            string
+	board          string
+	vivadoPath     string
+	output         string
+	skipVivado     bool
+	jobs           int
+	timeout        int
+	libDir         string
+	fromJSON       string
+	stockBar       bool
+	force          bool
+	mmioTrace      string
+	emulatePM      bool
+	noVFIO         bool
+	optionROM      bool
+	ila            bool
+	ilaDepth       int
+	probeBars      bool
+	fallbackConfig string
 }
 
 var buildOpts buildFlags
@@ -91,7 +115,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		slog.Warn("donor largest BAR exceeds board BRAM (forced)", "donor_bar", donorDemand, "board_bram", boardBRAM)
 	}
 
-	builder := vivado.NewBuilder(b, vivado.BuildOptions{
+	bopts := vivado.BuildOptions{
 		VivadoPath:      buildOpts.vivadoPath,
 		OutputDir:       buildOpts.output,
 		LibDir:          buildOpts.libDir,
@@ -102,9 +126,55 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		Force:           buildOpts.force,
 		EmulatePM:       buildOpts.emulatePM,
 		TimingHistogram: timing,
-	})
+	}
 
-	return builder.Build(ctx)
+	if buildOpts.mmioTrace != "" {
+		h, err := donorTimingHistogram(buildOpts.mmioTrace, ctx)
+		if err != nil {
+			return fmt.Errorf("load donor timing trace: %w", err)
+		}
+		bopts.TimingHistogram = h
+		slog.Info("donor latency profile loaded", "trace", buildOpts.mmioTrace, "samples", h.SampleCount)
+	}
+
+	if buildOpts.ila {
+		depth := buildOpts.ilaDepth
+		if depth <= 0 {
+			depth = firmware.DefaultILADepth
+		}
+		bopts.ILADepth = depth
+		slog.Info("ILA debug core enabled", "depth", depth, "probes", len(firmware.ILAProbes()))
+	}
+
+	fbCfg, err := loadFallbackConfig(buildOpts.fallbackConfig)
+	if err != nil {
+		return fmt.Errorf("load fallback config: %w", err)
+	}
+	output.DefaultFallbackConfig = fbCfg
+
+	return vivado.NewBuilder(b, bopts).Build(ctx)
+}
+
+func donorTimingHistogram(traceFile string, ctx *donor.DeviceContext) (*behavior.TimingHistogram, error) {
+	idx := firmware.LargestBarIndex(ctx.BARContents)
+	var size int
+	var base uint64
+	for _, bar := range ctx.BARs {
+		if bar.Index == idx {
+			size = int(bar.Size)
+			base = bar.Address
+		}
+	}
+	trace, err := loadMMIOTrace(mmioTraceOptions{
+		bdf:       ctx.Device.BDF.String(),
+		barIndex:  idx,
+		barSize:   size,
+		traceFile: traceFile,
+	}, base, mmio.TraceFormatAuto)
+	if err != nil {
+		return nil, err
+	}
+	return behavior.ExtractTimingHistogram(trace), nil
 }
 
 // loadDonorContext loads device context from JSON or live device.
@@ -129,6 +199,7 @@ func loadDonorContext() (*donor.DeviceContext, error) {
 	collector := donor.NewCollector()
 	collector.NoVFIO = buildOpts.noVFIO
 	collector.CaptureOptionROM = buildOpts.optionROM
+	collector.ProbeBARs = buildOpts.probeBars
 	ctx, err := collector.Collect(bdf)
 	if err != nil {
 		return nil, fmt.Errorf("device data collection failed: %w", err)
@@ -191,6 +262,7 @@ func init() {
 	buildCmd.Flags().StringVar(&buildOpts.bdf, "bdf", "", "donor device BDF address (e.g. 0000:03:00.0)")
 	buildCmd.Flags().StringVar(&buildOpts.board, "board", "", "target FPGA board name (required, e.g. PCIeSquirrel)")
 	buildCmd.Flags().StringVar(&buildOpts.fromJSON, "from-json", "", "load donor device data from JSON file (offline build)")
+	buildCmd.Flags().StringVar(&buildOpts.mmioTrace, "mmio-trace", "", "donor MMIO trace file; drives TLP latency emulation off the donor's real timing")
 	buildCmd.Flags().StringVar(&buildOpts.vivadoPath, "vivado-path", "", "path to Vivado installation")
 	buildCmd.Flags().StringVar(&buildOpts.output, "output", "pcileech_datastore", "output directory")
 	buildCmd.Flags().BoolVar(&buildOpts.skipVivado, "skip-vivado", false, "skip Vivado synthesis (only generate artifacts)")
@@ -199,10 +271,13 @@ func init() {
 	buildCmd.Flags().StringVar(&buildOpts.libDir, "lib-dir", "lib/pcileech-fpga", "path to pcileech-fpga library")
 	buildCmd.Flags().BoolVar(&buildOpts.stockBar, "stock-bar", false, "use stock bar controller (diagnostic: skip custom SV modules)")
 	buildCmd.Flags().BoolVar(&buildOpts.force, "force", false, "ignore donor BAR > board BRAM check")
-	buildCmd.Flags().StringVar(&buildOpts.mmioTrace, "mmio-trace", "", "saved donor MMIO trace JSON (from `mmio-trace --output`) for measured TLP latency")
 	buildCmd.Flags().BoolVar(&buildOpts.emulatePM, "emulate-pm", false, "keep donor Power Management capability faithful (cosmetic D-state; IP core stays D0)")
 	buildCmd.Flags().BoolVar(&buildOpts.noVFIO, "no-vfio", false, "sysfs-only donor capture, no vfio-pci bind (for hosts without IOMMU/VFIO)")
 	buildCmd.Flags().BoolVar(&buildOpts.optionROM, "option-rom", false, "capture + serve the donor expansion ROM via BAR6 (needs IP expansion-ROM enable; see docs)")
+	buildCmd.Flags().BoolVar(&buildOpts.ila, "ila", false, "insert a Vivado ILA debug core probing BAR/TLP/interrupt signals")
+	buildCmd.Flags().IntVar(&buildOpts.ilaDepth, "ila-depth", firmware.DefaultILADepth, "ILA capture depth in samples (with --ila)")
+	buildCmd.Flags().BoolVar(&buildOpts.probeBars, "probe-bars", true, "write-probe BAR registers to map RW/W1C bits (always skipped for network cards; set false if a donor hangs on BAR)")
+	buildCmd.Flags().StringVar(&buildOpts.fallbackConfig, "fallback-config", "", "path to a custom fallback defaults YAML (fills zeroed BAR registers by device class); empty uses the built-in embedded defaults")
 
 	_ = buildCmd.MarkFlagRequired("board")
 

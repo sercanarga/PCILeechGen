@@ -1,0 +1,78 @@
+# fallback_defaults.yaml - built-in class-specific BAR register fallbacks.
+#
+# Consumed by internal/firmware/fallback.Apply, which only fills BAR
+# registers that are currently zero (real donor data is never overwritten).
+# Keys under device_classes are fallback.ClassKey(baseClass, subClass), e.g.
+# "0108" for NVMe (base 01 mass storage, sub 08 NVMe).
+#
+# bar0_defaults values are copied verbatim from the .Reset field of the
+# matching internal/firmware/devclass profile's BARDefaults (the same
+# per-class register defaults the scrub strategies already trust), keyed by
+# the register .Offset. Registers whose profile .Reset is 0x00000000 are
+# omitted: Apply() never writes a zero default over a zeroed register anyway.
+device_classes:
+  "0108": # NVMe (devclass/nvme.go: nvmeProfile)
+    description: "NVMe controller"
+    bar0_defaults:
+      "0x00000000": 0x0040FF17 # CAP_LO
+      "0x00000004": 0x00000020 # CAP_HI
+      "0x00000008": 0x00010400 # VS
+      "0x00000014": 0x00460001 # CC
+      "0x0000001C": 0x00000001 # CSTS
+      "0x00000024": 0x001F001F # AQA
+
+  "0C03": # xHCI USB (devclass/xhci.go: xhciProfile)
+    description: "xHCI USB controller"
+    bar0_defaults:
+      "0x00000000": 0x01100020 # CAPLENGTH_HCIVER
+      "0x00000004": 0x02000120 # HCSPARAMS1
+      "0x00000010": 0x00000001 # HCCPARAMS1
+      "0x00000014": 0x00000100 # DBOFF
+      "0x00000018": 0x00000200 # RTSOFF
+      "0x00000020": 0x00000001 # USBCMD
+      "0x00000028": 0x00000001 # PAGESIZE
+      "0x00000420": 0x000002A0 # PORTSC1
+      "0x00000430": 0x000002A0 # PORTSC2
+
+  "0200": # Ethernet (devclass/ethernet.go: ethernetProfile)
+    description: "Ethernet controller"
+    bar0_defaults:
+      "0x00000000": 0xBEADDE02 # MAC0_3
+      "0x00000004": 0x000000EF # MAC4_5
+      "0x00000034": 0x0C000000 # CHIPCMD_DW
+      "0x00000040": 0x2F000000 # TXCONFIG
+      "0x00000044": 0x00000E00 # RXCONFIG
+      "0x00000050": 0x00003FFF # RXMAXSIZE
+      "0x00000058": 0x00002060 # CPLUSCMD
+      "0x0000006C": 0x00003010 # PHYSTATUS
+      "0x000000DC": 0x80000000 # PHYAR
+      "0x000000E0": 0x80000000 # ERIAR
+
+  "0300": # GPU (devclass/gpu.go: gpuProfile)
+    description: "GPU"
+    bar0_defaults:
+      "0x00000200": 0xFFFFFFFF # PMC_ENABLE
+      "0x00001804": 0x00100006 # PBUS_PCI_NV_1
+
+  "0106": # SATA AHCI (devclass/sata.go: sataProfile)
+    description: "SATA AHCI controller"
+    bar0_defaults:
+      "0x00000000": 0x40341F05 # CAP
+      "0x00000004": 0x80000000 # GHC
+      "0x0000000C": 0x00000001 # PI
+      "0x00000010": 0x00010301 # VS
+      "0x00000024": 0x00000004 # CAP2
+      "0x00000124": 0x00000101 # PxSIG (port 0)
+      "0x00000128": 0x00000113 # PxSSTS (port 0)
+
+  "0280": # Wi-Fi (devclass/wifi.go: wifiProfile)
+    description: "Wi-Fi controller"
+    bar0_defaults:
+      "0x00000024": 0x00000080 # GP_CTL
+      "0x00000054": 0x00000001 # UCODE_DRV_GP1
+
+  "0C80": # Thunderbolt (devclass/thunderbolt.go: thunderboltProfile)
+    description: "Thunderbolt controller"
+    bar0_defaults:
+      "0x00000008": 0x00000001 # LC_STS
+      "0x00000014": 0x00000001 # THUNDERBOLT_CAP

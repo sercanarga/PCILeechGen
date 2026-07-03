@@ -133,3 +133,48 @@ func TestValidateCapChain_OutOfBounds(t *testing.T) {
 		t.Error("expected error for out-of-bounds pointer")
 	}
 }
+
+func TestPruneStandardCaps_ZerosPayload(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Data[0x06] = 0x10
+	cs.WriteU8(0x34, 0x40)
+
+	cs.WriteU8(0x40, pci.CapIDPowerManagement)
+	cs.WriteU8(0x41, 0x50)
+
+	cs.WriteU8(0x50, pci.CapIDVPD)
+	cs.WriteU8(0x51, 0x60)
+	for i := 0x52; i < 0x60; i++ {
+		cs.Data[i] = 0xAA
+	}
+
+	cs.WriteU8(0x60, pci.CapIDPCIExpress)
+	cs.WriteU8(0x61, 0x00)
+	cs.Data[0x62] = 0xBB
+
+	cs.Data[0x04] = 0xCC
+
+	om := overlay.NewMap(cs)
+	removed := PruneStandardCaps(cs, om)
+
+	if len(removed) != 1 {
+		t.Fatalf("expected 1 removed cap, got %d", len(removed))
+	}
+
+	for i := 0x50; i < 0x60; i++ {
+		if cs.ReadU8(i) != 0 {
+			t.Errorf("pruned cap byte 0x%02X not zeroed: got 0x%02X", i, cs.ReadU8(i))
+		}
+	}
+
+	if cs.ReadU8(0x60) != pci.CapIDPCIExpress {
+		t.Errorf("PCIe cap ID at 0x60 corrupted: 0x%02X", cs.ReadU8(0x60))
+	}
+	if cs.Data[0x62] != 0xBB {
+		t.Errorf("PCIe payload at 0x62 corrupted: 0x%02X", cs.Data[0x62])
+	}
+
+	if cs.Data[0x04] != 0xCC {
+		t.Errorf("standard header byte 0x04 corrupted: 0x%02X", cs.Data[0x04])
+	}
+}

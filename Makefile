@@ -1,4 +1,4 @@
-.PHONY: build test lint clean install fixtures hdl-lint
+.PHONY: build test lint clean install fixtures hdl-lint sim
 
 BINARY_NAME=pcileechgen
 BUILD_DIR=bin
@@ -34,6 +34,10 @@ clean:
 # generate synthetic donor fixture jsons
 fixtures: build
 	$(BUILD_DIR)/$(BINARY_NAME) fixtures --out testdata/donors
+
+sim:
+	@command -v iverilog >/dev/null 2>&1 || { echo "iverilog not installed (apt-get install iverilog)"; exit 1; }
+	./sim/run.sh
 
 # lint generated sv with verilator
 hdl-lint: build

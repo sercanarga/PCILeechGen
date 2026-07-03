@@ -48,7 +48,8 @@ Example:
 		if err != nil {
 			return fmt.Errorf("failed to load device context: %w", err)
 		}
-		fmt.Printf("Loaded donor context: %s\n\n",
+		out := humanWriter()
+		fmt.Fprintf(out, "Loaded donor context: %s\n\n",
 			color.Bold(fmt.Sprintf("%04x:%04x (rev %02x)", ctx.Device.VendorID, ctx.Device.DeviceID, ctx.Device.RevisionID)))
 
 		var b *board.Board
@@ -57,10 +58,10 @@ Example:
 			if err != nil {
 				return err
 			}
-			fmt.Printf("Board: %s (%s x%d)\n\n", b.Name, b.FPGAPart, b.PCIeLanes)
+			fmt.Fprintf(out, "Board: %s (%s x%d)\n\n", b.Name, b.FPGAPart, b.PCIeLanes)
 		} else {
-			fmt.Println(color.Warn("No --board specified: link speed/width clamping not applied in validation"))
-			fmt.Println()
+			fmt.Fprintln(out, color.Warn("No --board specified: link speed/width clamping not applied in validation"))
+			fmt.Fprintln(out)
 		}
 
 		msixTableSize := 0
@@ -93,16 +94,16 @@ Example:
 
 		// Print results
 		for _, p := range v.result.Passed {
-			fmt.Println(color.OK(p))
+			fmt.Fprintln(out, color.OK(p))
 		}
 		for _, w := range v.result.Warnings {
-			fmt.Println(color.Warn(w))
+			fmt.Fprintln(out, color.Warn(w))
 		}
 		for _, f := range v.result.Failed {
-			fmt.Println(color.Fail(f))
+			fmt.Fprintln(out, color.Fail(f))
 		}
 
-		fmt.Printf("\n%s\n", color.Header(v.result.Summary()))
+		fmt.Fprintf(out, "\n%s\n", color.Header(v.result.Summary()))
 		if v.result.HasFailures() {
 			return fmt.Errorf("%d validation(s) failed", len(v.result.Failed))
 		}

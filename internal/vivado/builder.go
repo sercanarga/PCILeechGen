@@ -27,6 +27,7 @@ type BuildOptions struct {
 	// TimingHistogram, when set, drives the latency emulator with measured donor
 	// timing (from a captured MMIO trace) instead of synthetic defaults.
 	TimingHistogram *behavior.TimingHistogram
+	ILADepth        int
 }
 
 // WithDefaults returns a copy of opts with zero values replaced by sensible defaults.
@@ -67,6 +68,7 @@ func (b *Builder) Build(ctx *donor.DeviceContext) error {
 	ow.Force = b.opts.Force
 	ow.EmulatePM = b.opts.EmulatePM
 	ow.TimingHistogram = b.opts.TimingHistogram
+	ow.ILADepth = b.opts.ILADepth
 	if err := ow.WriteAll(ctx, b.board); err != nil {
 		return fmt.Errorf("artifact generation failed: %w", err)
 	}

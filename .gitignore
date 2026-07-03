@@ -39,3 +39,5 @@ Thumbs.db
 *.str
 *.xpr
 .Xil/
+# iverilog sim build artifacts
+sim/build/

@@ -38,6 +38,13 @@ type SVGeneratorConfig struct {
 	BARInitHexFile     string // generic BRAM fallback: $readmemh seed file ("" = zero-init only)
 	OptionROMHexFile   string // BAR6 expansion ROM responder: $readmemh seed ("" = no ROM served)
 	OptionROMSize      int    // expansion ROM aperture size in bytes (power of 2)
+	ILAInstanceSV      string
+	// ExtraBARPresent flags donor BAR3-6 presence: index 0=BAR3 ... 3=BAR6.
+	// true = donor's real hardware has a populated (nonzero-size) BAR there,
+	// so bar_controller.sv.tmpl presents a real (loopaddr) aperture instead
+	// of pcileech_bar_impl_none. Zero value (all false) preserves the old
+	// always-none behavior.
+	ExtraBARPresent [4]bool
 }
 
 // DonorCapabilities summarizes parsed capabilities from donor config space.
@@ -163,6 +170,12 @@ func GenerateNVMeDMABridgeSV(cfg *SVGeneratorConfig) (string, error) {
 	return renderTemplate("nvme_dma_bridge", cfg)
 }
 
+// GenerateXHCIRingEngineSV renders the xHCI Command/Event ring engine and its
+// DMA bridge (both modules live in the same template file).
+func GenerateXHCIRingEngineSV(cfg *SVGeneratorConfig) (string, error) {
+	return renderTemplate("xhci_ring_engine", cfg)
+}
+
 // GenerateHDARIRBDMASV renders the HDA RIRB DMA bridge module.
 func GenerateHDARIRBDMASV(cfg *SVGeneratorConfig) (string, error) {
 	return renderTemplate("hda_rirb_dma", cfg)
@@ -190,6 +203,7 @@ func svFuncMap() template.FuncMap {
 		"hex04":         func(v uint16) string { return fmt.Sprintf("%04X", v) },
 		"hex02":         func(v uint8) string { return fmt.Sprintf("%02X", v) },
 		"sub":           func(a, b int) int { return a - b },
+		"add":           func(a, b int) int { return a + b },
 		"mul":           func(a, b int) int { return a * b },
 		"alignedOffset": func(off uint32) uint32 { return (off / 4) * 4 },
 		"classBase":     func(cc uint32) uint8 { return uint8((cc >> 16) & 0xFF) },

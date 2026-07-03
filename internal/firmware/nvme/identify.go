@@ -20,7 +20,7 @@ type IdentifyData struct {
 func BuildIdentifyData(ids firmware.DeviceIDs, barData []byte) *IdentifyData {
 	d := &IdentifyData{}
 	d.Controller = buildIdentifyController(ids, barData)
-	d.Namespace = buildIdentifyNamespace(barData)
+	d.Namespace = buildIdentifyNamespace(ids, barData)
 	return d
 }
 
@@ -37,7 +37,7 @@ func buildIdentifyController(ids firmware.DeviceIDs, barData []byte) [4096]byte 
 	copy(data[0x004:0x018], padASCII(sn, 20))
 
 	// MN (40B ASCII)
-	mn := modelNumberForVendor(ids.VendorID)
+	mn := modelNumberForDevice(ids.VendorID, ids.DeviceID)
 	copy(data[0x018:0x040], padASCII(mn, 40))
 
 	// FR (8B ASCII) - vendor-appropriate firmware revision
@@ -131,11 +131,10 @@ func buildIdentifyController(ids firmware.DeviceIDs, barData []byte) [4096]byte 
 }
 
 // buildIdentifyNamespace - CNS=0 NSID=1, NVMe 1.4 spec Figure 245.
-func buildIdentifyNamespace(barData []byte) [4096]byte {
+func buildIdentifyNamespace(ids firmware.DeviceIDs, barData []byte) [4096]byte {
 	var data [4096]byte
 
-	// 1TB / 512B sectors
-	var nsze uint64 = 1953525168
+	nsze := nszeForDevice(ids.VendorID, ids.DeviceID)
 	_ = barData // reserved for future donor extraction
 
 	binary.LittleEndian.PutUint64(data[0x000:], nsze) // NSZE
@@ -195,10 +194,23 @@ func vendorSNPrefix(vid uint16) string {
 	}
 }
 
-func modelNumberForVendor(vid uint16) string {
+func modelNumberForDevice(vid, did uint16) string {
 	switch vid {
 	case 0x144D:
-		return "Samsung SSD 980 PRO 1TB"
+		switch did {
+		case 0xA808:
+			return "Samsung SSD 980 PRO 1TB"
+		case 0xA809:
+			return "Samsung SSD 980 PRO 2TB"
+		case 0xA80C:
+			return "Samsung SSD 980 PRO 512GB"
+		case 0xA80D:
+			return "Samsung SSD 990 PRO 1TB"
+		case 0xA80E:
+			return "Samsung SSD 990 PRO 2TB"
+		default:
+			return "Samsung SSD NVMe 1TB"
+		}
 	case 0x1179:
 		return "TOSHIBA KXG60ZNV1T02"
 	case 0x1987:
@@ -218,6 +230,20 @@ func modelNumberForVendor(vid uint16) string {
 	}
 }
 
+func nszeForDevice(vid, did uint16) uint64 {
+	switch vid {
+	case 0x144D:
+		switch did {
+		case 0xA809, 0xA80E:
+			return 3907029168
+		default:
+			return 1953525168
+		}
+	default:
+		return 1953525168
+	}
+}
+
 func ouiForVendor(vid uint16) [3]byte {
 	switch vid {
 	case 0x144D:
@@ -229,7 +255,7 @@ func ouiForVendor(vid uint16) [3]byte {
 	case 0x1C5C:
 		return [3]byte{0x00, 0xAD, 0x00}
 	default:
-		return [3]byte{0x00, 0x00, 0x00}
+		return [3]byte{0x00, uint8(vid >> 8), uint8(vid)}
 	}
 }
 

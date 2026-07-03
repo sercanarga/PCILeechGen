@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"time"
 
@@ -35,7 +34,7 @@ Example:
 			return fmt.Errorf("invalid BDF: %w", err)
 		}
 
-		c := &checker{bdf: bdf, sysfs: donor.NewSysfsReader(), w: os.Stdout}
+		c := &checker{bdf: bdf, sysfs: donor.NewSysfsReader(), w: humanWriter()}
 		return c.run()
 	},
 }

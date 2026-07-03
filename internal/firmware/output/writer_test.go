@@ -111,3 +111,20 @@ func TestWriteBARBehaviorProfile_writesProfileArtifact(t *testing.T) {
 		t.Fatalf("unexpected BAR profile: %+v", profile.BARs)
 	}
 }
+
+func TestExtraBARPresence(t *testing.T) {
+	bars := []pci.BAR{
+		{Index: 0, Size: 4096, Type: pci.BARTypeMem32},
+		{Index: 3, Size: 65536, Type: pci.BARTypeMem32}, // real, populated
+		{Index: 4, Size: 0, Type: pci.BARTypeDisabled},  // genuinely absent
+		{Index: 5, Size: 256, Type: pci.BARTypeIO},      // real, populated
+		// BAR6 not present at all in the donor's list.
+	}
+
+	present := extraBARPresence(bars)
+
+	want := [4]bool{true, false, true, false} // BAR3, BAR4, BAR5, BAR6
+	if present != want {
+		t.Errorf("extraBARPresence() = %v, want %v", present, want)
+	}
+}

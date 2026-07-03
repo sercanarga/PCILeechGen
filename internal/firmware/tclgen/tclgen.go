@@ -43,6 +43,7 @@ type projectTCLData struct {
 
 	DSNEnabled       bool
 	MSICapVectorsStr string
+	ILABlock         string
 
 	// MSI-X
 	MSIXEnabled     bool
@@ -114,7 +115,7 @@ func buildBAR0Config(bar0Size int, ctx *donor.DeviceContext) bar0Config {
 // generated TCL (no donor content patch into bram_bar_zero4k), while still
 // reporting the correct (donor-demanded) Bar0ByteSize for PCIe IP BAR sizing
 // and other config. This matches --stock-bar CLI semantics.
-func GenerateProjectTCL(ctx *donor.DeviceContext, b *board.Board, libDir string, stockBar bool) string {
+func GenerateProjectTCL(ctx *donor.DeviceContext, b *board.Board, libDir string, stockBar bool, ilaDepth int) string {
 	ids := firmware.ExtractDeviceIDs(ctx.ConfigSpace, ctx.ExtCapabilities)
 
 	// Use the board's max link speed for the Xilinx IP core.
@@ -167,6 +168,10 @@ func GenerateProjectTCL(ctx *donor.DeviceContext, b *board.Board, libDir string,
 		StockBar:         stockBar,
 		DSNEnabled:       ids.HasDSN,
 		MSICapVectorsStr: msiVectorsToTCL(msiVectors),
+	}
+
+	if ilaDepth > 0 {
+		data.ILABlock = firmware.ILACreateIPTCL(ilaDepth)
 	}
 
 	if ctx.MSIXData != nil && ctx.MSIXData.TableSize > 0 {

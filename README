@@ -85,6 +85,16 @@ COMMANDS
     --mmio-trace <f>   saved MMIO trace JSON (mmio-trace --output) for
                        measured TLP latency instead of synthetic defaults
     --output <dir>     output directory (default: pcileech_datastore)
+    --mmio-trace <f>   shape TLP latency emulation from a saved donor MMIO trace
+    --ila              insert a Vivado ILA debug core (probes BAR/TLP/interrupt)
+    --ila-depth <n>    ILA capture depth in samples (default 1024)
+    --probe-bars       write-probe BAR registers (default on; auto-skipped for
+                       network cards; set --probe-bars=false if a donor hangs)
+
+  Global flags (all commands):
+    --log-level <lvl>  debug|info|warn|error (default info)
+    --log-file <f>     tee the full pre/mid/post-generation run to a file
+    --json-logs        structured JSON logs
 
   Offline MMIO trace import:
     pcileechgen mmio-trace --trace-file mmiotrace.txt --bar-base 0xf7800000 \
@@ -158,6 +168,7 @@ OUTPUT
     device_context.json                 donor snapshot
     pcileech_cfgspace.coe               4KB scrubbed config space
     pcileech_cfgspace_writemask.coe     per-register write masks
+    pcileech_cfgspace_w1cmask.coe       per-bit write-1-to-clear mask
     pcileech_bar_zero4k.coe             BAR0 content (sized to donor/BRAM)
     pcileech_bar_impl_device.sv         register-level BAR implementation
     pcileech_tlps128_bar_controller.sv  TLP BAR controller
@@ -171,6 +182,8 @@ OUTPUT
     identify_init.hex                   NVMe Identify ROM (if NVMe)
     vivado_generate_project.tcl         project creation
     vivado_build.tcl                    synthesis script
+    code10_report.txt                   Code-10 risk summary for this build
+    ila_debug.txt                       ILA JTAG capture workflow (if --ila)
     build_manifest.json                 checksums + metadata
     src/                                patched board SV sources
     *.bin                               bitstream (after Vivado)
@@ -182,6 +195,7 @@ DEVELOPMENT
   make test-coverage  tests with coverage report
   make lint           run linter
   make check          vet + lint + test
+  make sim            unit-simulate the behavioral RTL modules (needs iverilog)
 
 
 UTILITIES

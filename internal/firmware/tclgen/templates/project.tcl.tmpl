@@ -112,6 +112,7 @@ foreach ip [get_ips -quiet *] {
   }
 }
 {{ end }}
+{{ .ILABlock }}
 
 # Point BRAM IPs to the generated COE files (library defaults are all-zero)
 set bar_bram [get_ips -quiet bram_bar_zero4k]

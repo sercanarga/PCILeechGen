@@ -31,18 +31,24 @@ type Collector struct {
 	// served from the BAR6 responder. Off by default - enabling the ROM decode
 	// briefly touches the device.
 	CaptureOptionROM bool
+	// ProbeBARs enables destructive write-readback BAR profiling. Network-class
+	// donors are never probed regardless, since writing live NIC registers
+	// (e.g. Aquantia firmware-mailbox 10GbE chips) hangs the device on BAR.
+	ProbeBARs bool
 }
 
 func NewCollector() *Collector {
 	return &Collector{
-		sysfs: NewSysfsReader(),
+		sysfs:     NewSysfsReader(),
+		ProbeBARs: true,
 	}
 }
 
 // NewCollectorWithSysfs lets tests inject a fake sysfs reader.
 func NewCollectorWithSysfs(sr *SysfsReader) *Collector {
 	return &Collector{
-		sysfs: sr,
+		sysfs:     sr,
+		ProbeBARs: true,
 	}
 }
 
@@ -67,6 +73,11 @@ func (c *Collector) Collect(bdf pci.BDF) (*DeviceContext, error) {
 	}
 	ctx.ConfigSpace = cs
 
+	if cs.IsMultiFunction() {
+		ctx.IsMultiFunction = true
+		ctx.SiblingFunctions = c.collectSiblingFunctions(bdf)
+	}
+
 	bars, err := c.sysfs.ReadResourceFile(bdf)
 	if err != nil {
 		bars = pci.ParseBARsFromConfigSpace(cs)
@@ -74,7 +85,7 @@ func (c *Collector) Collect(bdf pci.BDF) (*DeviceContext, error) {
 	ctx.BARs = bars
 
 	ctx.BARContents = c.collectBARMemory(bdf, bars)
-	ctx.BARProfiles = c.collectBARProfiles(bdf, bars, ctx.BARContents)
+	ctx.BARProfiles = c.collectBARProfiles(bdf, bars, ctx.BARContents, ctx.Device.ClassCode)
 	ctx.Capabilities = pci.ParseCapabilities(cs)
 	ctx.ExtCapabilities = pci.ParseExtCapabilities(cs)
 	ctx.MSIXData = c.collectMSIXData(cs, ctx.BARContents)
@@ -361,6 +372,33 @@ func (c *Collector) collectConfigSpace(bdf pci.BDF) (*pci.ConfigSpace, error) {
 	return cs, nil
 }
 
+// collectSiblingFunctions enumerates other PCI functions at the same
+// bus:slot as bdf (function 0-7, excluding bdf itself). Real TB3/TB4
+// controllers commonly split bridge/NHI across sibling functions, and this
+// captures just their identity - no BAR/capability collection is repeated
+// for them. Siblings that don't exist or aren't accessible (permission
+// denied, e.g. not bound to vfio-pci) are skipped rather than failing.
+func (c *Collector) collectSiblingFunctions(bdf pci.BDF) []SiblingFunction {
+	var siblings []SiblingFunction
+	for fn := 0; fn < 8; fn++ {
+		if uint8(fn) == bdf.Function {
+			continue
+		}
+		sibBDF := pci.BDF{Domain: bdf.Domain, Bus: bdf.Bus, Device: bdf.Device, Function: uint8(fn)}
+		dev, err := c.sysfs.ReadDeviceInfo(sibBDF)
+		if err != nil {
+			continue
+		}
+		siblings = append(siblings, SiblingFunction{
+			Function:  uint8(fn),
+			VendorID:  dev.VendorID,
+			DeviceID:  dev.DeviceID,
+			ClassCode: dev.ClassCode,
+		})
+	}
+	return siblings
+}
+
 func (c *Collector) collectBARMemory(bdf pci.BDF, bars []pci.BAR) map[int][]byte {
 	eligible := eligibleBARs(bars)
 	if len(eligible) == 0 {
@@ -434,14 +472,19 @@ func (c *Collector) readBARs(bdf pci.BDF, eligible []pci.BAR, contents map[int][
 	}
 }
 
-func (c *Collector) collectBARProfiles(bdf pci.BDF, bars []pci.BAR, barContents map[int][]byte) map[int]*BARProfile {
+func (c *Collector) collectBARProfiles(bdf pci.BDF, bars []pci.BAR, barContents map[int][]byte, classCode uint32) map[int]*BARProfile {
 	profiler := NewBARProfiler()
 	profiles := make(map[int]*BARProfile)
 
+	if isNetworkClass(classCode) {
+		slog.Info("BAR profiling skipped: network-class donor (write-probing hangs NIC firmware, e.g. Aquantia)", "class", fmt.Sprintf("0x%06X", classCode))
+		return profiles
+	}
+
 	for _, bar := range eligibleBARs(bars) {
-		// don't probe unresponsive BARs, writes can brick the device
-		if data, ok := barContents[bar.Index]; ok && isAllFF(data) {
-			slog.Info("BAR profiling skipped: content is all 0xFF", "bar", bar.Index)
+		// don't probe unresponsive BARs or when disabled, writes can brick the device
+		if !shouldProbeBAR(c.ProbeBARs, classCode, barContents[bar.Index]) {
+			slog.Info("BAR profiling skipped", "bar", bar.Index, "probe_enabled", c.ProbeBARs)
 			continue
 		}
 

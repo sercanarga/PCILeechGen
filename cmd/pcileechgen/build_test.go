@@ -2,12 +2,16 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/sercanarga/pcileechgen/internal/donor"
 	"github.com/sercanarga/pcileechgen/internal/donor/mmio"
+	"github.com/sercanarga/pcileechgen/internal/pci"
 )
 
 func TestLoadTimingHistogram_NoPath(t *testing.T) {
@@ -28,7 +32,7 @@ func TestLoadTimingHistogram_FromTrace(t *testing.T) {
 		BARSize:  4096,
 		Duration: 5 * time.Microsecond,
 	}
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		tr.Records = append(tr.Records, mmio.AccessRecord{
 			Offset:    0x10,
 			Type:      mmio.AccessRead,
@@ -64,5 +68,32 @@ func TestLoadTimingHistogram_BadFile(t *testing.T) {
 	}
 	if _, err := loadTimingHistogram(path); err == nil {
 		t.Error("expected error on malformed trace JSON")
+	}
+}
+
+func TestDonorTimingHistogram_FromTrace(t *testing.T) {
+	var b strings.Builder
+	ts := 1000.0
+	for i := range 64 {
+		ts += 0.000002 * float64(1+(i%5))
+		fmt.Fprintf(&b, "R 4 %.6f 2 0xf780010c 0x%x 0x0 0\n", ts, i)
+	}
+	tracePath := filepath.Join(t.TempDir(), "mmiotrace.txt")
+	if err := os.WriteFile(tracePath, []byte(b.String()), 0o644); err != nil {
+		t.Fatalf("write trace: %v", err)
+	}
+
+	ctx := &donor.DeviceContext{
+		Device:      pci.PCIDevice{VendorID: 0x144D, DeviceID: 0xA808, ClassCode: 0x010802},
+		BARs:        []pci.BAR{{Index: 2, Size: 4096, Address: 0xf7800000}},
+		BARContents: map[int][]byte{2: make([]byte, 4096)},
+	}
+
+	h, err := donorTimingHistogram(tracePath, ctx)
+	if err != nil {
+		t.Fatalf("donorTimingHistogram: %v", err)
+	}
+	if h == nil || h.SampleCount == 0 {
+		t.Fatalf("expected a populated histogram, got %+v", h)
 	}
 }

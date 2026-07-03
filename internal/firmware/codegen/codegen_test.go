@@ -188,3 +188,43 @@ func TestGenerateOptionROMHex(t *testing.T) {
 		t.Errorf("word2 = %s, want 00000000 (zero-padded)", words[2])
 	}
 }
+
+// nthCOEWord returns the raw hex word for masks[idx] from a formatCOE-style
+// vector (one word per line, no per-line offset comment).
+func nthCOEWord(t *testing.T, coe string, idx int) string {
+	t.Helper()
+	lines := strings.Split(coe, "\n")
+	start := -1
+	for i, l := range lines {
+		if l == "memory_initialization_vector=" {
+			start = i + 1
+			break
+		}
+	}
+	if start == -1 || start+idx >= len(lines) {
+		t.Fatalf("could not find word %d in COE", idx)
+	}
+	return strings.TrimRight(lines[start+idx], ",;")
+}
+
+// masks[12] (Expansion ROM, 0x30) must mirror the donor's own ROM BAR state
+// instead of unconditionally hardcoding read-only.
+func TestGenerateWritemaskCOE_ExpansionROM(t *testing.T) {
+	// most donors report no live ROM BAR - masks[12] stays read-only.
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	coe := GenerateWritemaskCOE(cs)
+	if got := nthCOEWord(t, coe, 12); got != "00000000" {
+		t.Errorf("expected masks[12]=00000000 for unused ROM BAR, got %s", got)
+	}
+
+	// donor with an enabled ROM BAR: writemask should preserve Enable + the
+	// address/size bits, not hardcode to zero.
+	cs2 := pci.NewConfigSpace()
+	cs2.Size = pci.ConfigSpaceSize
+	cs2.WriteU32(0x30, 0xFFFF0001) // enabled, 64KB-aligned ROM base
+	coe2 := GenerateWritemaskCOE(cs2)
+	if got := nthCOEWord(t, coe2, 12); got != "ffff0001" {
+		t.Errorf("expected masks[12]=ffff0001 for enabled ROM BAR, got %s", got)
+	}
+}

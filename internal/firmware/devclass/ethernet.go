@@ -101,3 +101,48 @@ func ethernetProfile() *DeviceProfile {
 			"at 2500Mbps full-duplex. TxConfig carries chip version ID.",
 	}
 }
+
+// --- Generic (non-Realtek) fallback ---
+//
+// ponytail: e1000e/tg3/Aquantia/Marvell etc each have their own distinct,
+// incompatible MMIO register layouts. Faking any of them correctly needs
+// per-vendor modeling, out of scope for this pass. Honest passthrough
+// (no writes) beats garbage RTL8168/8125 offsets into unrelated chips.
+
+type ethernetStrategyGenericImpl struct{ baseStrategy }
+
+func ethernetStrategyGeneric() DeviceStrategy {
+	return &ethernetStrategyGenericImpl{baseStrategy{"Ethernet (Generic)", ClassEthernet, ethernetGenericProfile}}
+}
+
+func (s *ethernetStrategyGenericImpl) ScrubBAR(data []byte) {}
+
+func (s *ethernetStrategyGenericImpl) PostInitRegisters(regs map[uint32]*uint32) {}
+
+func ethernetGenericProfile() *DeviceProfile {
+	return &DeviceProfile{
+		ClassName:         "Ethernet (Generic)",
+		PreferredBAR:      0,
+		MinBARSize:        4096,
+		Uses64BitBAR:      true,
+		BARIsPrefetchable: false,
+
+		PrefersMSIX:    true,
+		MinMSIXVectors: 1,
+
+		ExpectedCaps: []uint8{
+			pci.CapIDPowerManagement,
+			pci.CapIDMSIX,
+			pci.CapIDPCIExpress,
+		},
+
+		SupportsPME:   true,
+		MaxPowerState: 3,
+
+		Notes: "Vendor-agnostic Ethernet passthrough. e1000e/tg3/Aquantia/Marvell and " +
+			"other non-Realtek NICs each use distinct, incompatible MMIO register " +
+			"layouts that would need per-vendor modeling to fake correctly, out of " +
+			"scope for this pass, so no BAR writes are made and no register defaults " +
+			"are assumed.",
+	}
+}

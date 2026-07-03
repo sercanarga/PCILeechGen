@@ -378,6 +378,72 @@ func TestValidateCapChainPass(t *testing.T) {
 	p.Apply(cs, nil, om, ctxFor(cs))
 }
 
+func TestNormalizeAERMasksPass_PreservesDonorValues(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	aerHeader := uint32(pci.ExtCapIDAER) | (1 << 16)
+	cs.WriteU32(0x100, aerHeader)
+	const donorUncorrMask = uint32(0xDEAD1000)
+	const donorUncorrSev = uint32(0xCAFE2000)
+	const donorCorrMask = uint32(0x5A5A3000)
+	cs.WriteU32(0x108, donorUncorrMask)
+	cs.WriteU32(0x10C, donorUncorrSev)
+	cs.WriteU32(0x114, donorCorrMask)
+
+	om := overlay.NewMap(cs)
+	p := &normalizeAERMasksPass{}
+	p.Apply(cs, nil, om, ctxFor(cs))
+
+	if got := cs.ReadU32(0x108); got != donorUncorrMask {
+		t.Errorf("AER Uncorrectable Mask overwritten: got 0x%08X, want donor 0x%08X", got, donorUncorrMask)
+	}
+	if got := cs.ReadU32(0x10C); got != donorUncorrSev {
+		t.Errorf("AER Uncorrectable Severity overwritten: got 0x%08X, want donor 0x%08X", got, donorUncorrSev)
+	}
+	if got := cs.ReadU32(0x114); got != donorCorrMask {
+		t.Errorf("AER Correctable Mask overwritten: got 0x%08X, want donor 0x%08X", got, donorCorrMask)
+	}
+}
+
+func TestScrubAERPass_StatusZeroedMasksPreserved(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	aerHeader := uint32(pci.ExtCapIDAER) | (1 << 16)
+	cs.WriteU32(0x100, aerHeader)
+	cs.WriteU32(0x104, 0xFFFFFFFF)
+	cs.WriteU32(0x110, 0xFFFFFFFF)
+	cs.WriteU32(0x11C, 0xFFFFFFFF)
+	const donorUncorrMask = uint32(0xABCD0001)
+	const donorUncorrSev = uint32(0x12340002)
+	const donorCorrMask = uint32(0x56780003)
+	cs.WriteU32(0x108, donorUncorrMask)
+	cs.WriteU32(0x10C, donorUncorrSev)
+	cs.WriteU32(0x114, donorCorrMask)
+
+	om := overlay.NewMap(cs)
+	p := &scrubAERPass{}
+	p.Apply(cs, nil, om, ctxFor(cs))
+
+	if cs.ReadU32(0x104) != 0 {
+		t.Error("AER Uncorrectable Status should be zeroed")
+	}
+	if cs.ReadU32(0x110) != 0 {
+		t.Error("AER Correctable Status should be zeroed")
+	}
+	if cs.ReadU32(0x11C) != 0 {
+		t.Error("AER Root Error Status should be zeroed")
+	}
+	if got := cs.ReadU32(0x108); got != donorUncorrMask {
+		t.Errorf("scrubAERPass must not touch Uncorrectable Mask: got 0x%08X, want 0x%08X", got, donorUncorrMask)
+	}
+	if got := cs.ReadU32(0x10C); got != donorUncorrSev {
+		t.Errorf("scrubAERPass must not touch Uncorrectable Severity: got 0x%08X, want 0x%08X", got, donorUncorrSev)
+	}
+	if got := cs.ReadU32(0x114); got != donorCorrMask {
+		t.Errorf("scrubAERPass must not touch Correctable Mask: got 0x%08X, want 0x%08X", got, donorCorrMask)
+	}
+}
+
 // --- Pass name tests ---
 
 func TestPassNames(t *testing.T) {

@@ -37,7 +37,7 @@ func TestGenerateProjectTCL(t *testing.T) {
 		BARs:            []pci.BAR{},
 	}
 
-	tcl := GenerateProjectTCL(ctx, b, "/tmp/lib", false)
+	tcl := GenerateProjectTCL(ctx, b, "/tmp/lib", false, 0)
 
 	if !strings.Contains(tcl, "8086") {
 		t.Error("TCL should contain vendor ID")

@@ -110,6 +110,37 @@ func TestApply_SkipsNonZero(t *testing.T) {
 	}
 }
 
+func TestApply_PrefersPreferredBAROverLargest(t *testing.T) {
+	cfg := &Config{
+		DeviceClasses: map[string]*DeviceClass{
+			// SATA/AHCI: PreferredBAR is 5 (ABAR).
+			"0106": {
+				Description: "SATA AHCI",
+				BAR0Defaults: map[string]uint32{
+					"0x00000000": 0x00000001,
+				},
+			},
+		},
+	}
+
+	barContents := map[int][]byte{
+		0: make([]byte, 8192), // larger than BAR5, but not the ABAR
+		5: make([]byte, 4096), // smaller, but the class's preferred (ABAR) BAR
+	}
+
+	// class 01:06:01 -> SATA AHCI
+	results := Apply(cfg, 0x010601, barContents)
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Field != "BAR5[0x0000]" {
+		t.Errorf("expected default stamped into BAR5 (preferred/ABAR), got field %s", results[0].Field)
+	}
+	if barContents[0][0] != 0 {
+		t.Errorf("BAR0 should be untouched, got %#v", barContents[0][:4])
+	}
+}
+
 func TestApply_UnknownClass(t *testing.T) {
 	cfg := &Config{
 		DeviceClasses: map[string]*DeviceClass{},

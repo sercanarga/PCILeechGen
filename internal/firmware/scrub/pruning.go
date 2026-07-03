@@ -58,16 +58,14 @@ func PruneStandardCaps(cs *pci.ConfigSpace, om *overlay.Map) []string {
 			// raw scan finds the orphaned structure - a forensic tell real
 			// hardware never leaves. Bound to the next cap (or a small default
 			// for the last cap) so neighbours are untouched.
-			end := nextPtr
-			if end <= ptr {
-				end = ptr + capSizeAt(cs, capID, ptr)
+			size := capSizeAt(cs, capID, ptr)
+			if nextPtr > ptr {
+				size = nextPtr - ptr
 			}
-			if end > pci.ConfigSpaceLegacySize {
-				end = pci.ConfigSpaceLegacySize
+			if ptr+size > pci.ConfigSpaceLegacySize {
+				size = pci.ConfigSpaceLegacySize - ptr
 			}
-			for b := ptr; b < end; b++ {
-				om.WriteU8(b, 0, fmt.Sprintf("zero pruned cap 0x%02X body", capID))
-			}
+			om.ZeroRange(ptr, ptr+size, fmt.Sprintf("zero pruned cap body 0x%02X (%s)", capID, name))
 
 			removed = append(removed, fmt.Sprintf("%s (0x%02X) at 0x%02X", name, capID, ptr))
 		} else {

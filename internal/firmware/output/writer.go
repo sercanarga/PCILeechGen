@@ -12,9 +12,11 @@ import (
 	"github.com/sercanarga/pcileechgen/internal/donor"
 	"github.com/sercanarga/pcileechgen/internal/donor/behavior"
 	"github.com/sercanarga/pcileechgen/internal/firmware"
+	"github.com/sercanarga/pcileechgen/internal/firmware/ahci"
 	"github.com/sercanarga/pcileechgen/internal/firmware/barmodel"
 	"github.com/sercanarga/pcileechgen/internal/firmware/codegen"
 	"github.com/sercanarga/pcileechgen/internal/firmware/devclass"
+	"github.com/sercanarga/pcileechgen/internal/firmware/fallback"
 	"github.com/sercanarga/pcileechgen/internal/firmware/nvme"
 	"github.com/sercanarga/pcileechgen/internal/firmware/overlay"
 	"github.com/sercanarga/pcileechgen/internal/firmware/scrub"
@@ -39,7 +41,18 @@ type OutputWriter struct {
 	// TimingHistogram, when set from a captured donor MMIO trace, drives the
 	// TLP latency emulator with measured timing instead of synthetic defaults.
 	TimingHistogram *behavior.TimingHistogram
+	ILADepth        int
+	FallbackConfig  *fallback.Config
 }
+
+// DefaultFallbackConfig seeds new OutputWriters with the class-specific BAR
+// register fallbacks (see internal/firmware/fallback). cmd/pcileechgen/build.go
+// sets this once, from --fallback-config or the embedded defaults, before the
+// vivado.Builder it invokes constructs an OutputWriter.
+// ponytail: package-level var, not a threaded field on vivado.BuildOptions/Builder
+// (out of scope here) - fine for the CLI's one-build-per-process usage; revisit
+// if concurrent in-process builds are ever needed.
+var DefaultFallbackConfig *fallback.Config
 
 func NewOutputWriter(outputDir, libDir string, jobs, timeout int) *OutputWriter {
 	if jobs <= 0 {
@@ -49,10 +62,11 @@ func NewOutputWriter(outputDir, libDir string, jobs, timeout int) *OutputWriter 
 		timeout = 3600
 	}
 	return &OutputWriter{
-		OutputDir: outputDir,
-		LibDir:    libDir,
-		Jobs:      jobs,
-		Timeout:   timeout,
+		OutputDir:      outputDir,
+		LibDir:         libDir,
+		Jobs:           jobs,
+		Timeout:        timeout,
+		FallbackConfig: DefaultFallbackConfig,
 	}
 }
 
@@ -101,6 +115,8 @@ func (ow *OutputWriter) WriteAll(ctx *donor.DeviceContext, b *board.Board) error
 		}
 	}
 
+	ow.writeCode10Report(ctx, b, ids)
+
 	ow.writeManifest(ctx, ids)
 	return nil
 }
@@ -148,12 +164,20 @@ func (ow *OutputWriter) writeConfigSpaceArtifacts(ctx *donor.DeviceContext, scru
 		codegen.GenerateWritemaskCOE(scrubbedCS)); err != nil {
 		return fmt.Errorf("failed to write writemask COE: %w", err)
 	}
+	if err := ow.writeFile("pcileech_cfgspace_w1cmask.coe",
+		codegen.GenerateW1CMaskCOE(scrubbedCS)); err != nil {
+		return fmt.Errorf("failed to write W1C mask COE: %w", err)
+	}
 
 	msixTableSize := 0
 	if ctx.MSIXData != nil && ctx.MSIXData.TableSize > 0 {
 		msixTableSize = ctx.MSIXData.TableSize
 	}
 	bar0Size := firmware.CappedBAR0Size(ctx, b, msixTableSize)
+
+	if results := fallback.Apply(ow.FallbackConfig, ctx.Device.ClassCode, ctx.BARContents); len(results) > 0 {
+		slog.Info("fallback defaults applied", "modifications", len(results))
+	}
 
 	scrub.ScrubBarContent(ctx.BARContents, ctx.Device.ClassCode, ctx.Device.VendorID, bar0Size)
 	if err := ow.writeFile("pcileech_bar_zero4k.coe",
@@ -166,12 +190,17 @@ func (ow *OutputWriter) writeConfigSpaceArtifacts(ctx *donor.DeviceContext, scru
 // writeTCLScripts generates Vivado project and build TCL scripts.
 func (ow *OutputWriter) writeTCLScripts(ctx *donor.DeviceContext, b *board.Board) error {
 	if err := ow.writeFile("vivado_generate_project.tcl",
-		tclgen.GenerateProjectTCL(ctx, b, ow.LibDir, ow.StockBar)); err != nil {
+		tclgen.GenerateProjectTCL(ctx, b, ow.LibDir, ow.StockBar, ow.ILADepth)); err != nil {
 		return fmt.Errorf("failed to write project TCL: %w", err)
 	}
 	if err := ow.writeFile("vivado_build.tcl",
 		tclgen.GenerateBuildTCL(b, ow.Jobs, ow.Timeout)); err != nil {
 		return fmt.Errorf("failed to write build TCL: %w", err)
+	}
+	if ow.ILADepth > 0 {
+		if err := ow.writeFile("ila_debug.txt", firmware.ILADebugDoc()); err != nil {
+			return fmt.Errorf("failed to write ILA debug doc: %w", err)
+		}
 	}
 	return nil
 }
@@ -342,6 +371,7 @@ func ListOutputFiles() []string {
 		"device_context.json",
 		"pcileech_cfgspace.coe",
 		"pcileech_cfgspace_writemask.coe",
+		"pcileech_cfgspace_w1cmask.coe",
 		"pcileech_bar_zero4k.coe",
 		"bar_behavior_profile.json",
 		"vivado_generate_project.tcl",
@@ -358,6 +388,8 @@ func ListOutputFiles() []string {
 		"config_space_init.hex",
 		"msix_table_init.hex",
 		"scrub_diff_report.txt",
+		"code10_report.txt",
+		"ila_debug.txt",
 		"build_manifest.json",
 	}
 }
@@ -462,6 +494,20 @@ func extractMSIInfo(cs *pci.ConfigSpace) *svgen.MSIConfig {
 	return nil
 }
 
+// extraBARPresence reports, for BAR indices 3-6 (result index 0=BAR3 ...
+// 3=BAR6), whether the donor's real hardware has a populated (nonzero-size)
+// BAR there. Used by bar_controller.sv.tmpl to present a real aperture
+// instead of pcileech_bar_impl_none for donors with genuine extra BARs.
+func extraBARPresence(bars []pci.BAR) [4]bool {
+	var present [4]bool
+	for _, bar := range bars {
+		if idx := bar.Index - 3; idx >= 0 && idx < 4 && !bar.IsDisabled() {
+			present[idx] = true
+		}
+	}
+	return present
+}
+
 // buildSVConfig assembles the SVGeneratorConfig from donor context.
 func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.ConfigSpace, ids firmware.DeviceIDs, entropy uint32, b *board.Board) (*svgen.SVGeneratorConfig, error) {
 	// Use the same BAR index for content data and probe profile to avoid
@@ -518,12 +564,17 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 		ClassCode:         ctx.Device.ClassCode,
 		// measured donor timing when a trace was captured; falls back to
 		// class-appropriate synthetic defaults when TimingHistogram is nil.
-		LatencyConfig: svgen.LatencyConfigFromHistogram(ow.TimingHistogram, ctx.Device.ClassCode),
-		HasMSIX:       bm != nil,
-		BuildEntropy:  entropy,
-		PRNGSeeds:     svgen.BuildPRNGSeeds(ids.VendorID, ids.DeviceID, entropy),
-		DeviceClass:   devClass,
-		Bar0Size:      bar0Size,
+		LatencyConfig:     svgen.LatencyConfigFromHistogram(ow.TimingHistogram, ctx.Device.ClassCode),
+		HasMSIX:           bm != nil,
+		BuildEntropy:      entropy,
+		PRNGSeeds:         svgen.BuildPRNGSeeds(ids.VendorID, ids.DeviceID, entropy),
+		DeviceClass:       devClass,
+		Bar0Size:          bar0Size,
+		ExtraBARPresent:   extraBARPresence(ctx.BARs),
+	}
+
+	if ow.ILADepth > 0 {
+		cfg.ILAInstanceSV = firmware.ILAInstanceSV()
 	}
 
 	if devClass == devclass.ClassNVMe {
@@ -655,6 +706,26 @@ func (ow *OutputWriter) writeConditionalArtifacts(cfg *svgen.SVGeneratorConfig, 
 		}
 	}
 
+	if cfg.DeviceClass == devclass.ClassSATA {
+		model := "PCILeech SATA Disk"
+		serial := fmt.Sprintf("PL%012X", cfg.DeviceIDs.DSN&0xFFFFFFFFFFFF)
+		const sataSectors = uint64(0x1D1C0000) // ~250 GB at 512 B/sector
+		idw := ahci.BuildIdentify(model, serial, "1.0", sataSectors)
+		if err := ow.writeFile("ahci_identify_init.hex", ahci.IdentifyHex(idw)); err != nil {
+			return err
+		}
+	}
+
+	if cfg.DeviceClass == devclass.ClassXHCI && cfg.BARModel != nil {
+		xhciSV, err := svgen.GenerateXHCIRingEngineSV(cfg)
+		if err != nil {
+			return fmt.Errorf("generating pcileech_xhci_ring_engine.sv: %w", err)
+		}
+		if err := ow.writeFile("pcileech_xhci_ring_engine.sv", xhciSV); err != nil {
+			return err
+		}
+	}
+
 	if cfg.DeviceClass == devclass.ClassAudio && cfg.BARModel != nil {
 		hdaSV, err := svgen.GenerateHDARIRBDMASV(cfg)
 		if err != nil {
@@ -689,6 +760,9 @@ func (ow *OutputWriter) logSVSummary(cfg *svgen.SVGeneratorConfig) {
 		}
 	case devclass.ClassXHCI:
 		features = append(features, "xHCI FSM")
+		if cfg.BARModel != nil {
+			features = append(features, "xHCI Ring Engine", "xHCI DMA Bridge")
+		}
 	case devclass.ClassAudio:
 		features = append(features, "HD Audio FSM", "RIRB DMA Bridge")
 		if cfg.MSIConfig != nil {

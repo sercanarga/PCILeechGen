@@ -322,7 +322,7 @@ func TestLargeBAR_CmdPathRepro(t *testing.T) {
 	}
 
 	// === tclgen (called from writer.writeTCLScripts) : StockBar forces zerowrite, reports correct Bar0ByteSize ===
-	tclStock := tclgen.GenerateProjectTCL(ctx, b4k, "/tmp/lib", true /*stock*/)
+	tclStock := tclgen.GenerateProjectTCL(ctx, b4k, "/tmp/lib", true /*stock*/, 0)
 	if !strings.Contains(tclStock, "&& 0") {
 		t.Error("--stock-bar must render &&0 to use zerowrite4k path (no donor coe patch)")
 	}
@@ -331,14 +331,14 @@ func TestLargeBAR_CmdPathRepro(t *testing.T) {
 		t.Error("tcl must report Bar0 config (correct donor Bar0ByteSize even under stock)")
 	}
 
-	tclForceOversz := tclgen.GenerateProjectTCL(ctx, b4k, "/tmp/lib", false)
+	tclForceOversz := tclgen.GenerateProjectTCL(ctx, b4k, "/tmp/lib", false, 0)
 	// Bar0ByteSize demand=16k >4k => &&0 , but correct size used for IP bar config
 	if !strings.Contains(tclForceOversz, "CONFIG.Bar0_Size") {
 		t.Error("oversized (force) must still set correct donor Bar0_Size in PCIe IP")
 	}
 
 	// fitting case on large board still >4k so zerowrite for bram_ip (custom handles)
-	tclFit := tclgen.GenerateProjectTCL(ctx, b16k, "/tmp/lib", false)
+	tclFit := tclgen.GenerateProjectTCL(ctx, b16k, "/tmp/lib", false, 0)
 	if !strings.Contains(tclFit, "&& 0") {
 		t.Log("note: large fitting may or not skip based on size; current >4k always skips patch for bram_ip")
 	}
