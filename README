@@ -70,8 +70,7 @@ COMMANDS
   scan             list PCI devices with VFIO status
   check            validate a donor device (BAR size vs board BRAM)
   build            generate firmware artifacts (+ Vivado)
-  validate         verify artifacts match the donor context
-  verify-manifest  check SHA256 integrity of build output
+  validate         verify artifacts match the donor context (--force for truncated)
   mmio-trace       capture live or import saved BAR MMIO access traces
   boards           list supported FPGA boards
   version          print version
@@ -85,11 +84,21 @@ COMMANDS
     --mmio-trace <f>   saved MMIO trace JSON (mmio-trace --output) for
                        measured TLP latency instead of synthetic defaults
     --output <dir>     output directory (default: pcileech_datastore)
-    --mmio-trace <f>   shape TLP latency emulation from a saved donor MMIO trace
+    --emulate-pm       keep donor PM capability faithful (cosmetic D-state;
+                       IP core stays D0 for DMA stability)
+    --no-vfio          sysfs-only donor capture, no vfio-pci bind (for hosts
+                       without IOMMU/VFIO or when donor can't be unbound)
+    --option-rom       capture + serve the donor expansion ROM via BAR6
     --ila              insert a Vivado ILA debug core (probes BAR/TLP/interrupt)
     --ila-depth <n>    ILA capture depth in samples (default 1024)
     --probe-bars       write-probe BAR registers (default on; auto-skipped for
                        network cards; set --probe-bars=false if a donor hangs)
+    --fallback-config <f>  custom fallback defaults YAML (fills zeroed BAR
+                       registers by device class; empty = built-in defaults)
+    --stock-bar        diagnostic: use stock bar controller (skip custom SV)
+    --vivado-path <p>  path to Vivado installation
+    --jobs <n>         parallel Vivado jobs (default 4)
+    --timeout <s>      Vivado synthesis timeout in seconds (default 3600)
 
   Global flags (all commands):
     --log-level <lvl>  debug|info|warn|error (default info)
@@ -111,29 +120,49 @@ FEATURES
     - dynamic BAR0 sizing from the donor (capped by board bram_size)
     - 64-bit BAR preservation, power-of-2 rounding
     - MSI-X table placement that avoids NVMe doorbell overlap
+    - donor-faithful MSI-X offset (table sits where the donor's does)
+    - generic BRAM BAR fallback seeded from the donor snapshot
+    - option ROM serving via BAR6 (--option-rom)
+    - multi-BAR support: BAR3-6 real aperture where the donor has them
 
-  NVMe
-    - CC.EN -> CSTS.RDY handshake
-    - admin queue responder (Identify, Features, Create IO CQ/SQ)
-    - DMA bridge (doorbell + completion)
+  Device classes (modeled register-level behavior)
+    - NVMe: CC.EN -> CSTS.RDY handshake, admin queue responder (Identify,
+      Get/Set Features, Create IO CQ/SQ, Get Log Page), DMA bridge, IO
+      backing store (BRAM sector cache for read/write round-trip)
+    - xHCI: Command Ring + Event Ring engine (No-Op, Enable Slot, completion
+      events), interrupt via IMAN.IP
+    - Audio (HDA): RIRB DMA bridge, codec response injection, MSI interrupt
+    - SATA/AHCI: donor ATA IDENTIFY block generation (sim-only, not yet
+      integrated into codegen)
+    - Ethernet, GPU, WiFi, Thunderbolt, RAID, SDHCI: class-aware fallback
+      defaults and BAR models
 
   Config space
     - 4KB shadow + 17-pass scrubbing pipeline
-    - per-register write masks, capability filtering/pruning
+    - per-register write masks, per-bit W1C masks (pcileech_cfgspace_w1cmask.coe)
+    - capability filtering/pruning (bodies fully zeroed, not just headers)
     - PCIe cap injection, power-management lock, vendor quirks
+    - spec-accurate read-only locking (write-to-RO-then-readback detection)
+    - AER mask/severity preserved from donor (not overwritten with spec defaults)
 
   Stealth and timing
     - TLP latency emulation (xorshift128+ CDF reproduction)
     - write-completion emulation, completion timeout
-    - ASPM clamping, AER mask normalization, DSN jitter
-    - per-build placement randomization, VSEC entropy embed
+    - ASPM clamping, DSN jitter, per-build placement randomization
+    - VSEC entropy embed
+    - PM emulation (--emulate-pm: cosmetic D-state, IP core stays D0)
 
   Diagnostics
     - VFIO diagnostics, BAR vs BRAM compatibility checks
-    - post-build validation, build manifest, config-space diff report
+    - post-build validation (validate --board --force), build manifest,
+      config-space diff report
+    - Code-10 risk report (code10_report.txt): BAR truncation, FSM gaps,
+      interrupt routing, MSI-X relocation, missing DSN
     - detectability audit: severity-rated residual enumeration tells
       (check --board <name>) - flags link mismatch, stripped caps, etc.
-
+    - ILA debug core (--ila): JTAG capture of BAR/TLP/interrupt signals
+    - iverilog sim harness (make sim): cfg_w1c_shadow, msix_pba, nvme_store,
+      ahci_engine, xhci_ring_engine
 
 SUPPORTED BOARDS
 ----------------
@@ -165,25 +194,31 @@ SUPPORTED BOARDS
 OUTPUT
 ------
   pcileech_datastore/
-    device_context.json                 donor snapshot
+    device_context.json                 donor snapshot (includes build entropy)
     pcileech_cfgspace.coe               4KB scrubbed config space
     pcileech_cfgspace_writemask.coe     per-register write masks
     pcileech_cfgspace_w1cmask.coe       per-bit write-1-to-clear mask
     pcileech_bar_zero4k.coe             BAR0 content (sized to donor/BRAM)
+    bar_behavior_profile.json           BAR probing results (RW/W1C bits)
     pcileech_bar_impl_device.sv         register-level BAR implementation
+    pcileech_bar_impl_msi.sv            MSI interrupt controller (if MSI)
     pcileech_tlps128_bar_controller.sv  TLP BAR controller
-    pcileech_msix_table.sv              MSI-X table + PBA
-    pcileech_nvme_admin_responder.sv    (if NVMe)
-    pcileech_nvme_dma_bridge.sv         (if NVMe)
+    pcileech_msix_table.sv              MSI-X table + PBA (if MSI-X)
+    pcileech_nvme_admin_responder.sv    NVMe admin responder (if NVMe)
+    pcileech_nvme_dma_bridge.sv         NVMe DMA bridge (if NVMe)
+    pcileech_hda_msi.sv                 HDA MSI interrupt gen (if Audio)
+    pcileech_hda_rirb_dma.sv            HDA RIRB DMA bridge (if Audio)
     tlp_latency_emulator.sv             response latency emulation
     device_config.sv                    identity + feature flags
     config_space_init.hex               config space init ($readmemh)
     msix_table_init.hex                 MSI-X table init ($readmemh)
     identify_init.hex                   NVMe Identify ROM (if NVMe)
+    bar_init.hex                        generic BRAM BAR init (if generic class)
     vivado_generate_project.tcl         project creation
     vivado_build.tcl                    synthesis script
     code10_report.txt                   Code-10 risk summary for this build
     ila_debug.txt                       ILA JTAG capture workflow (if --ila)
+    scrub_diff_report.txt               config space scrubbing diff
     build_manifest.json                 checksums + metadata
     src/                                patched board SV sources
     *.bin                               bitstream (after Vivado)
@@ -191,11 +226,18 @@ OUTPUT
 
 DEVELOPMENT
 -----------
-  make test           run all tests
+  make build          build the binary
+  make test           run all tests (with -race)
   make test-coverage  tests with coverage report
-  make lint           run linter
+  make lint           run linter (golangci-lint)
   make check          vet + lint + test
   make sim            unit-simulate the behavioral RTL modules (needs iverilog)
+  make hdl-lint       lint generated SV with verilator
+  make fixtures       generate synthetic donor fixture JSONs
+  make install        install binary to GOPATH/bin
+  make fmt            format code
+  make vet            vet code
+  make clean          clean build artifacts
 
 
 UTILITIES
