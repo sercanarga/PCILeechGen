@@ -343,7 +343,7 @@ module pcileech_tlps128_bar_controller(
     // BAR0 instance drives bar_rsp_*[0] directly — no assign here to avoid
     // a multi-driver conflict (the module output IS the single driver).
 {{ end }}
-
+{{ end }}
     // response mux
     assign rd_rsp_ctx = bar_rsp_valid[0] ? bar_rsp_ctx[0] :
                         bar_rsp_valid[1] ? bar_rsp_ctx[1] :

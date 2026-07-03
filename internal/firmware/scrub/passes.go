@@ -261,38 +261,10 @@ type normalizeAERMasksPass struct{}
 
 func (p *normalizeAERMasksPass) Name() string { return "normalize AER masks" }
 func (p *normalizeAERMasksPass) Apply(cs *pci.ConfigSpace, b *board.Board, om *overlay.Map, ctx *ScrubContext) {
-	if cs.Size < pci.ConfigSpaceSize {
-		return
-	}
-	for _, cap := range ctx.ExtCaps {
-		if cap.ID != pci.ExtCapIDAER {
-			continue
-		}
-		// Donor-faithful masking: preserve the donor's real mask bits but
-		// union-in the protective spec defaults so any protocol slip the
-		// emulation may emit (malformed TLP, completion timeout, ...) stays
-		// suppressed and never surfaces as an AER event. Overwriting with the
-		// bare spec defaults erases donor-specific bits, leaving "mask == spec
-		// default" as a per-device fingerprint for a detector with a donor
-		// reference. The AER cap is only ever parsed from the donor (never
-		// synthesised), so these reads are authentic.
-		if cap.Offset+0x0C <= pci.ConfigSpaceSize {
-			donor := cs.ReadU32(cap.Offset + 0x08)
-			om.WriteU32(cap.Offset+0x08, donor|aerUncorrMaskDefault, "AER uncorrectable mask (donor | protective defaults)")
-		}
-		if cap.Offset+0x18 <= pci.ConfigSpaceSize {
-			donor := cs.ReadU32(cap.Offset + 0x14)
-			om.WriteU32(cap.Offset+0x14, donor|aerCorrMaskDefault, "AER correctable mask (donor | protective defaults)")
-		}
-		if cap.Offset+0x10 <= pci.ConfigSpaceSize {
-			// Severity only classifies fatal vs non-fatal; it does not gate
-			// logging, so keep the donor value verbatim. Fall back to the spec
-			// default only when the donor never set it.
-			sev := cs.ReadU32(cap.Offset + 0x0C)
-			if sev == 0 {
-				sev = aerUncorrSevDefault
-			}
-			om.WriteU32(cap.Offset+0x0C, sev, "AER uncorrectable severity (donor-faithful)")
-		}
-	}
+	// Donor-faithful: preserve the donor's AER mask and severity values
+	// verbatim. Overwriting with spec defaults (or unioning them in) leaves
+	// "mask == spec default" as a per-device fingerprint for a detector with
+	// a donor reference. The AER cap is only ever parsed from the donor
+	// (never synthesised), so these values are authentic and need no
+	// normalisation. Status registers are still cleared by scrubAERPass.
 }

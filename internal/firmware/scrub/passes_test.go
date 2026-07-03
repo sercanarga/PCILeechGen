@@ -273,18 +273,19 @@ func TestNormalizeAERMasksPass_DonorFaithful(t *testing.T) {
 	p := &normalizeAERMasksPass{}
 	p.Apply(cs, nil, om, ctxFor(cs))
 
-	if got, want := cs.ReadU32(0x108), uint32(donorUncorrMask|aerUncorrMaskDefault); got != want {
-		t.Errorf("uncorrectable mask = 0x%08X, want donor|default 0x%08X", got, want)
+	if got, want := cs.ReadU32(0x108), uint32(donorUncorrMask); got != want {
+		t.Errorf("uncorrectable mask = 0x%08X, want donor 0x%08X", got, want)
 	}
-	if got, want := cs.ReadU32(0x114), uint32(donorCorrMask|aerCorrMaskDefault); got != want {
-		t.Errorf("correctable mask = 0x%08X, want donor|default 0x%08X", got, want)
+	if got, want := cs.ReadU32(0x114), uint32(donorCorrMask); got != want {
+		t.Errorf("correctable mask = 0x%08X, want donor 0x%08X", got, want)
 	}
 	if got := cs.ReadU32(0x10C); got != donorSev {
 		t.Errorf("severity = 0x%08X, want donor 0x%08X (faithful)", got, donorSev)
 	}
 }
 
-// When the donor never set the uncorrectable severity, fall back to spec default.
+// When the donor never set the uncorrectable severity, it stays 0 (donor-faithful,
+// no spec-default fallback).
 func TestNormalizeAERMasksPass_SeverityFallback(t *testing.T) {
 	cs := pci.NewConfigSpace()
 	cs.Size = pci.ConfigSpaceSize
@@ -295,8 +296,8 @@ func TestNormalizeAERMasksPass_SeverityFallback(t *testing.T) {
 	p := &normalizeAERMasksPass{}
 	p.Apply(cs, nil, om, ctxFor(cs))
 
-	if got := cs.ReadU32(0x10C); got != aerUncorrSevDefault {
-		t.Errorf("severity = 0x%08X, want spec default 0x%08X", got, aerUncorrSevDefault)
+	if got := cs.ReadU32(0x10C); got != 0 {
+		t.Errorf("severity = 0x%08X, want 0 (donor-faithful, no fallback)", got)
 	}
 }
 
