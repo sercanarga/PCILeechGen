@@ -307,11 +307,23 @@ func (c *Collector) restoreVFIOOrWarn(bdf pci.BDF) {
 func (c *Collector) captureViaNativeDriver(bdf pci.BDF, bars []pci.BAR, nvme bool) (nativeVisitResult, error) {
 	res := nativeVisitResult{bars: make(map[int][]byte)}
 
+	// Fail fast: if config space is unreachable (0xFFFFFFFF), probing risks an
+	// uninterruptible kernel hang. Device is still on vfio-pci, nothing to restore.
+	switch reachable, cfgErr := vfio.ConfigSpaceReachable(bdf.String()); {
+	case cfgErr != nil:
+		slog.Warn("native visit: config space liveness check failed; continuing", "bdf", bdf, "error", cfgErr)
+	case !reachable:
+		return res, fmt.Errorf("native visit: %s is not reachable via config space (vendor/device reads 0xFFFFFFFF); "+
+			"aborting before probe to avoid an uninterruptible kernel hang. Re-seat or reboot the device, or run "+
+			"build with the native nvme driver bound / via --from-json", bdf)
+	}
+
 	if err := vfio.UnbindFromVFIO(bdf.String()); err != nil {
 		c.restoreVFIOOrWarn(bdf)
 		return res, fmt.Errorf("native visit: %w", err)
 	}
 
+	slog.Info("native visit: waiting for native driver to bind", "bdf", bdf, "timeout", nativeDriverBindTimeout)
 	drv, err := vfio.WaitForNativeDriver(bdf.String(), nativeDriverBindTimeout, nativeDriverPollInterval)
 	if err != nil {
 		c.restoreVFIOOrWarn(bdf)
@@ -320,6 +332,7 @@ func (c *Collector) captureViaNativeDriver(bdf pci.BDF, bars []pci.BAR, nvme boo
 	slog.Info("native driver bound", "bdf", bdf, "driver", drv)
 
 	if nvme {
+		slog.Info("native visit: waiting for nvme controller to reach live state", "bdf", bdf, "timeout", nvmeLiveTimeout)
 		if liveErr := vfio.WaitForNVMeLive(bdf.String(), nvmeLiveTimeout, nativeDriverPollInterval); liveErr != nil {
 			slog.Warn("nvme controller not live; identity capture may fail", "bdf", bdf, "error", liveErr)
 		}
@@ -353,6 +366,7 @@ func (c *Collector) captureViaNativeDriver(bdf pci.BDF, bars []pci.BAR, nvme boo
 		}
 	}
 
+	slog.Info("native visit: restoring vfio-pci", "bdf", bdf)
 	if err := c.restoreVFIO(bdf); err != nil {
 		return res, fmt.Errorf("native visit: %w", err)
 	}

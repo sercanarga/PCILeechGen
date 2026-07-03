@@ -138,6 +138,8 @@ module pcileech_tlps128_bar_controller(
     );
 {{ end }}
 
+    wire        wrengine_ready;
+
     pcileech_tlps128_bar_wrengine i_pcileech_tlps128_bar_wrengine(
         .rst            ( rst                           ),
         .clk            ( clk                           ),
@@ -158,13 +160,11 @@ module pcileech_tlps128_bar_controller(
     // during the controller-enable handshake. bar0_wr_ack is still driven by the
     // latency emulator but no longer gates write acceptance.
     wire        bar0_wr_ack;
-    wire        wrengine_ready;
     assign in_is_wr_ready = wrengine_ready;
 {{ else }}
     // Write backpressure: combine wrengine ready with BAR0 write latency ack.
     // New writes are blocked until the previous BAR0 write's emulated latency completes.
     wire        bar0_wr_ack;
-    wire        wrengine_ready;
     assign in_is_wr_ready = wrengine_ready && bar0_wr_ack;
 {{ end }}
 {{ if not (eq .DeviceClass "audio") }}
@@ -175,7 +175,6 @@ module pcileech_tlps128_bar_controller(
     wire        hda_crst_falling = 1'b0;
 {{ end }}
 {{ else }}
-    wire        wrengine_ready;
     assign in_is_wr_ready = wrengine_ready;
 {{ end }}
 
@@ -655,6 +654,7 @@ module pcileech_tlps128_bar_controller(
     wire [31:0] nvme_disk_dbg_info;
     (* keep = "true" *) wire [31:0] nvme_dma_dbg_status;
     wire [12:0] nvme_id_rom_addr;
+    wire [31:0] nvme_id_rom_data;
 
     // TLP wires coming out of the DMA bridge
     wire [127:0] nvme_tlp_tx_tdata;
@@ -732,8 +732,7 @@ module pcileech_tlps128_bar_controller(
     assign flash_hldn_dq3 = 1'b1;
 
     pcileech_bram_disk #(
-        .DISK_WORDS              ( NVME_BRAM_DISK_WORDS ),
-        .DISK_LBAS               ( NVME_ADVERTISED_LBAS )
+        .DISK_WORDS              ( NVME_BRAM_DISK_WORDS )
     ) i_nvme_bram_disk(
         .rst            ( rst                       ),
         .clk            ( clk                       ),

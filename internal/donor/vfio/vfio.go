@@ -5,19 +5,94 @@ package vfio
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 )
 
-var sysfsBase = "/sys/bus/pci/devices"
+var (
+	sysfsBase   = "/sys/bus/pci/devices" // per-device attributes
+	pciBusPath  = "/sys/bus/pci"         // drivers_probe and drivers/ live here
+)
 
-// SetSysfsBase overrides the sysfs path (for testing).
+// sysfsProbeTimeout bounds a probe-triggering sysfs write. It cannot interrupt a
+// D-state kernel hang (SIGKILL can't either) — it just fails fast instead of hanging.
+const sysfsProbeTimeout = 60 * time.Second
+
+const resetSettleDelay = 500 * time.Millisecond
+
+// writeWithDeadline bounds a blocking write. It does NOT interrupt an in-kernel
+// probe parked in D state — it only stops the CLI hanging silently.
+func writeWithDeadline(write func() error, label string, timeout time.Duration) error {
+	type writeResult struct{ err error }
+	ch := make(chan writeResult, 1)
+	go func() { ch <- writeResult{write()} }()
+	select {
+	case r := <-ch:
+		return r.err
+	case <-time.After(timeout):
+		return fmt.Errorf("%s did not complete within %s — the in-kernel driver probe/remove is likely blocked in D state and cannot be interrupted from userspace; REBOOT the machine to recover the device", label, timeout)
+	}
+}
+
+func writeSysfsWithDeadline(path string, data []byte) error {
+	return writeWithDeadline(func() error { return os.WriteFile(path, data, 0200) }, path, sysfsProbeTimeout)
+}
+
+// ConfigSpaceReachable returns false when config offset 0 reads 0xFFFFFFFF
+// (master abort): the function is unreachable and probing it risks a kernel hang.
+func ConfigSpaceReachable(bdf string) (bool, error) {
+	f, err := os.OpenFile(filepath.Join(sysfsBase, bdf, "config"), os.O_RDONLY, 0)
+	if err != nil {
+		return false, fmt.Errorf("cannot open config space for %s: %w", bdf, err)
+	}
+	defer f.Close()
+	var vd [4]byte
+	if _, err := f.ReadAt(vd[:], 0); err != nil {
+		return false, nil
+	}
+	return vd != [4]byte{0xFF, 0xFF, 0xFF, 0xFF}, nil
+}
+
+// ResetDevice issues a Function Level Reset; must run while driverless (after unbind).
+func ResetDevice(bdf string) error {
+	return writeSysfsWithDeadline(filepath.Join(sysfsBase, bdf, "reset"), []byte("1"))
+}
+
+// removeVFIODynamicID clears the vfio-pci dynamic id so it can't race the native
+// driver on reprobe. Best-effort: no-op if bound via driver_override only.
+func removeVFIODynamicID(bdf string) {
+	vendor, err := os.ReadFile(filepath.Join(sysfsBase, bdf, "vendor"))
+	if err != nil {
+		return
+	}
+	device, err := os.ReadFile(filepath.Join(sysfsBase, bdf, "device"))
+	if err != nil {
+		return
+	}
+	idStr := strings.TrimSpace(string(vendor)) + " " + strings.TrimSpace(string(device))
+	_ = os.WriteFile(vfioPCIDriverDir()+"/remove_id", []byte(idStr), 0200)
+}
+
+// SetSysfsBase overrides the per-device sysfs path (for testing).
 func SetSysfsBase(path string) { sysfsBase = path }
 
-// ResetSysfsBase restores the default sysfs path.
-func ResetSysfsBase() { sysfsBase = "/sys/bus/pci/devices" }
+// SetPciBusPath overrides the PCI bus sysfs path for testing.
+func SetPciBusPath(path string) { pciBusPath = path }
+
+// driversProbePath returns the drivers_probe sysfs path.
+func driversProbePath() string { return pciBusPath + "/drivers_probe" }
+
+// vfioPCIDriverDir returns the path to the vfio-pci driver directory.
+func vfioPCIDriverDir() string { return pciBusPath + "/drivers/vfio-pci" }
+
+// ResetSysfsBase restores the default sysfs paths.
+func ResetSysfsBase() {
+	sysfsBase = "/sys/bus/pci/devices"
+	pciBusPath = "/sys/bus/pci"
+}
 
 // DeviceDump is everything we pulled from a single device.
 type DeviceDump struct {
@@ -141,7 +216,7 @@ func readNVMeControllerState(nvmeDir string) (string, bool) {
 
 // ListVFIODevices enumerates BDFs currently on the vfio-pci driver.
 func ListVFIODevices() ([]string, error) {
-	entries, err := os.ReadDir("/sys/bus/pci/drivers/vfio-pci")
+	entries, err := os.ReadDir(vfioPCIDriverDir())
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil // vfio-pci not loaded
@@ -210,23 +285,24 @@ func BindToVFIO(bdf string) error {
 	device := strings.TrimSpace(string(deviceData))
 
 	if driverLink != "" {
+		slog.Info("vfio: unbinding from current driver", "bdf", bdf, "driver", filepath.Base(driverLink))
 		unbindPath := filepath.Join(devPath, "driver", "unbind")
-		if writeErr := os.WriteFile(unbindPath, []byte(bdf), 0200); writeErr != nil {
+		if writeErr := writeSysfsWithDeadline(unbindPath, []byte(bdf)); writeErr != nil {
 			return fmt.Errorf("failed to unbind from current driver: %w", writeErr)
 		}
 	}
 
+	slog.Info("vfio: setting driver_override to vfio-pci", "bdf", bdf)
 	overridePath := filepath.Join(devPath, "driver_override")
 	if writeErr := os.WriteFile(overridePath, []byte("vfio-pci"), 0200); writeErr != nil {
 		return fmt.Errorf("failed to set driver override: %w", writeErr)
 	}
 
-	newIDPath := "/sys/bus/pci/drivers/vfio-pci/new_id"
 	idStr := fmt.Sprintf("%s %s", vendor, device)
-	_ = os.WriteFile(newIDPath, []byte(idStr), 0200)
+	_ = os.WriteFile(vfioPCIDriverDir()+"/new_id", []byte(idStr), 0200)
 
-	probePath := "/sys/bus/pci/drivers_probe"
-	if writeErr := os.WriteFile(probePath, []byte(bdf), 0200); writeErr != nil {
+	slog.Info("vfio: writing drivers_probe (vfio-pci probe runs synchronously in this write)", "bdf", bdf)
+	if writeErr := writeSysfsWithDeadline(driversProbePath(), []byte(bdf)); writeErr != nil {
 		return fmt.Errorf("failed to probe device: %w", writeErr)
 	}
 
@@ -336,22 +412,33 @@ func WakeToD0(bdf string) error {
 	return fmt.Errorf("PM capability not found for %s", bdf)
 }
 
-// UnbindFromVFIO detaches from vfio-pci and re-probes for the original driver.
+// UnbindFromVFIO detaches from vfio-pci, resets, and re-probes the native driver.
 func UnbindFromVFIO(bdf string) error {
 	devPath := filepath.Join(sysfsBase, bdf)
 
-	// Clear with a newline: kernfs ignores zero-length writes, so an empty
-	// slice leaves the override pinned to vfio-pci and drivers_probe re-binds
-	// vfio-pci instead of the native driver. Matches `echo "" > driver_override`.
+	slog.Info("vfio: clearing driver_override", "bdf", bdf)
+	// Newline, not empty: kernfs ignores zero-length writes (echo "" > driver_override).
 	if err := os.WriteFile(filepath.Join(devPath, "driver_override"), []byte("\n"), 0200); err != nil {
 		return fmt.Errorf("failed to clear driver_override: %w", err)
 	}
 
-	if err := os.WriteFile("/sys/bus/pci/drivers/vfio-pci/unbind", []byte(bdf), 0200); err != nil {
+	slog.Info("vfio: unbinding from vfio-pci", "bdf", bdf)
+	if err := writeSysfsWithDeadline(vfioPCIDriverDir()+"/unbind", []byte(bdf)); err != nil {
 		return fmt.Errorf("failed to unbind from vfio-pci: %w", err)
 	}
 
-	if err := os.WriteFile("/sys/bus/pci/drivers_probe", []byte(bdf), 0200); err != nil {
+	removeVFIODynamicID(bdf)
+
+	// FLR before reprobe so nvme_probe sees a clean controller and can't wedge.
+	if err := ResetDevice(bdf); err != nil {
+		slog.Warn("vfio: pre-probe reset failed; continuing (device may lack FLR)", "bdf", bdf, "error", err)
+	} else {
+		slog.Info("vfio: issued pre-probe function reset", "bdf", bdf)
+		time.Sleep(resetSettleDelay)
+	}
+
+	slog.Info("vfio: writing drivers_probe (native probe runs synchronously)", "bdf", bdf)
+	if err := writeSysfsWithDeadline(driversProbePath(), []byte(bdf)); err != nil {
 		return fmt.Errorf("failed to reprobe device: %w", err)
 	}
 	return nil

@@ -507,3 +507,197 @@ func containsStr(s, sub string) bool {
 	}
 	return false
 }
+
+func TestWriteWithDeadline_Completes(t *testing.T) {
+	tmp := t.TempDir()
+	p := filepath.Join(tmp, "out")
+	err := writeWithDeadline(func() error { return os.WriteFile(p, []byte("x"), 0644) }, p, 5*time.Second)
+	if err != nil {
+		t.Fatalf("expected nil error for fast write, got %v", err)
+	}
+	got, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "x" {
+		t.Errorf("wrote %q, want %q", got, "x")
+	}
+}
+
+// The deadline must fire when the write blocks (as a sysfs write that triggers a
+// hung nvme_probe does in TASK_UNINTERRUPTIBLE). The mock blocks on a channel we
+// release afterward so no goroutine leaks.
+func TestWriteWithDeadline_DeadlineFires(t *testing.T) {
+	blocker := make(chan struct{})
+	writeReturned := make(chan struct{})
+	err := writeWithDeadline(func() error {
+		<-blocker // simulate a write parked in a kernel D-state
+		close(writeReturned)
+		return nil
+	}, "test-write", 30*time.Millisecond)
+	if err == nil {
+		close(blocker)
+		t.Fatal("expected a deadline error, got nil")
+	}
+	if !containsStr(err.Error(), "did not complete") {
+		t.Errorf("error should report the write did not complete, got: %v", err)
+	}
+	close(blocker)   // release the leaked goroutine
+	<-writeReturned  // ensure it exits (no leak)
+}
+
+func TestConfigSpaceReachable_AllFF(t *testing.T) {
+	tmp := t.TempDir()
+	SetSysfsBase(tmp)
+	defer ResetSysfsBase()
+	bdf := "0000:03:00.0"
+	devDir := filepath.Join(tmp, bdf)
+	if err := os.MkdirAll(devDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(devDir, "config"), []byte{0xFF, 0xFF, 0xFF, 0xFF}, 0644); err != nil {
+		t.Fatal(err)
+	}
+	reachable, err := ConfigSpaceReachable(bdf)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if reachable {
+		t.Error("all-0xFF vendor/device must report unreachable")
+	}
+}
+
+func TestConfigSpaceReachable_Valid(t *testing.T) {
+	tmp := t.TempDir()
+	SetSysfsBase(tmp)
+	defer ResetSysfsBase()
+	bdf := "0000:03:00.0"
+	devDir := filepath.Join(tmp, bdf)
+	if err := os.MkdirAll(devDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// vendor 0x1e4b, device 0x1202 little-endian
+	if err := os.WriteFile(filepath.Join(devDir, "config"), []byte{0x4b, 0x1e, 0x02, 0x12}, 0644); err != nil {
+		t.Fatal(err)
+	}
+	reachable, err := ConfigSpaceReachable(bdf)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !reachable {
+		t.Error("valid vendor/device must report reachable")
+	}
+}
+
+func TestConfigSpaceReachable_NoConfigFile(t *testing.T) {
+	SetSysfsBase(t.TempDir())
+	defer ResetSysfsBase()
+	if _, err := ConfigSpaceReachable("0000:03:00.0"); err == nil {
+		t.Error("expected error when config file is missing")
+	}
+}
+
+func TestResetDevice_WritesOne(t *testing.T) {
+	tmp := t.TempDir()
+	SetSysfsBase(tmp)
+	defer ResetSysfsBase()
+	bdf := "0000:03:00.0"
+	devDir := filepath.Join(tmp, bdf)
+	if err := os.MkdirAll(devDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	resetPath := filepath.Join(devDir, "reset")
+	if err := os.WriteFile(resetPath, []byte("0"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ResetDevice(bdf); err != nil {
+		t.Fatalf("ResetDevice failed: %v", err)
+	}
+	got, err := os.ReadFile(resetPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "1" {
+		t.Errorf("reset = %q, want %q (FLR must be triggered)", got, "1")
+	}
+}
+
+// Regression for the YMTC native-visit hang: UnbindFromVFIO must (1) clear
+// driver_override with a newline, (2) unbind, (3) remove the dynamic vfio-pci id,
+// (4) issue a Function Level Reset BEFORE the reprobe, and (5) reprobe the native
+// driver — every probe-triggering write bounded by writeSysfsWithDeadline.
+func TestUnbindFromVFIO_FullFlow(t *testing.T) {
+	tmp := t.TempDir()
+	SetSysfsBase(tmp)
+	SetPciBusPath(tmp)
+	defer ResetSysfsBase()
+
+	bdf := "0000:03:00.0"
+	devDir := filepath.Join(tmp, bdf)
+	if err := os.MkdirAll(devDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(devDir, "vendor"), []byte("0x1e4b\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(devDir, "device"), []byte("0x1202\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(devDir, "driver_override"), []byte("vfio-pci\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(devDir, "reset"), []byte("0"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	vfioDriver := filepath.Join(tmp, "drivers", "vfio-pci")
+	if err := os.MkdirAll(vfioDriver, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(vfioDriver, "unbind"), nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(vfioDriver, "remove_id"), nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "drivers_probe"), nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := UnbindFromVFIO(bdf); err != nil {
+		t.Fatalf("UnbindFromVFIO failed: %v", err)
+	}
+
+	if got, _ := os.ReadFile(filepath.Join(devDir, "driver_override")); string(got) != "\n" {
+		t.Errorf("driver_override = %q, want %q (newline clears the override)", got, "\n")
+	}
+	if got, _ := os.ReadFile(filepath.Join(devDir, "reset")); string(got) != "1" {
+		t.Errorf("reset = %q, want %q (FLR must be issued before the native probe)", got, "1")
+	}
+	if got, _ := os.ReadFile(filepath.Join(vfioDriver, "unbind")); string(got) != bdf {
+		t.Errorf("unbind = %q, want %q", got, bdf)
+	}
+	if got, _ := os.ReadFile(filepath.Join(tmp, "drivers_probe")); string(got) != bdf {
+		t.Errorf("drivers_probe = %q, want %q", got, bdf)
+	}
+	removeID, _ := os.ReadFile(filepath.Join(vfioDriver, "remove_id"))
+	if !containsStr(string(removeID), "0x1e4b") || !containsStr(string(removeID), "0x1202") {
+		t.Errorf("remove_id = %q, want the vendor/device pair so vfio-pci cannot race nvme", removeID)
+	}
+}
+
+// The prior zero-byte driver_override bug must stay fixed (kernfs ignores
+// zero-length writes, leaving the override pinned to vfio-pci). Uses the full
+// fake bus so the whole flow runs cleanly.
+func TestUnbindFromVFIO_BusPathsAreConfigurable(t *testing.T) {
+	tmp := t.TempDir()
+	SetSysfsBase(tmp)
+	SetPciBusPath(tmp)
+	defer ResetSysfsBase()
+
+	if driversProbePath() != filepath.Join(tmp, "drivers_probe") {
+		t.Errorf("driversProbePath = %q", driversProbePath())
+	}
+	if vfioPCIDriverDir() != filepath.Join(tmp, "drivers", "vfio-pci") {
+		t.Errorf("driverPath = %q", vfioPCIDriverDir())
+	}
+}

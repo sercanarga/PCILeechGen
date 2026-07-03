@@ -31,10 +31,6 @@ module pcileech_msix_table #(
     output reg [31:0]   rd_rsp_data,
     output reg          rd_rsp_valid,
 
-    output [63:0]       vector0_addr,
-    output [31:0]       vector0_data,
-    output              vector0_masked,
-
     // Indexed vector read for the NVMe responder: admin completions use vector
     // 0, the I/O queue uses its programmed IV.  Registered (1-cycle latency) so
     // it infers the same block RAM as the table; vector_select is stable for
@@ -62,17 +58,11 @@ module pcileech_msix_table #(
 
     wire wr_is_table = (wr_offset >= TABLE_OFFSET) && (wr_offset < TABLE_END);
 
-    // table BRAM
-    (* ram_style = "block" *)
     reg [31:0] msix_table_ram [0:TABLE_ENTRIES-1];
 
     initial begin
         $readmemh("msix_table_init.hex", msix_table_ram);
     end
-
-    assign vector0_addr   = {msix_table_ram[1], msix_table_ram[0]};
-    assign vector0_data   = msix_table_ram[2];
-    assign vector0_masked = msix_table_ram[3][0];
 
     // Indexed vector read (see port comment).  Each vector occupies 4 DWORDs
     // (addr_lo, addr_hi, data, ctrl).  Clamp an out-of-range select to vector 0.

@@ -392,6 +392,18 @@ func TestGenerateMSIXTableSV(t *testing.T) {
 	if !strings.Contains(result, "msix") && !strings.Contains(result, "MSIX") {
 		t.Error("output should contain MSI-X references")
 	}
+
+	// Regression for Synth 8-7071/8-7023: dead vector0_* ports removed.
+	for _, dead := range []string{"vector0_addr", "vector0_data", "vector0_masked"} {
+		if strings.Contains(result, dead) {
+			t.Fatalf("MSI-X table should NOT expose dead fixed-vector port %q", dead)
+		}
+	}
+
+	// Regression for Synth 8-7186: no ram_style attribute (synth can't honor it here).
+	if strings.Contains(result, "ram_style") {
+		t.Fatal("MSI-X table should NOT pin a ram_style attribute the synthesizer cannot honor")
+	}
 }
 
 func TestNVMeDoorbellOffsets(t *testing.T) {
