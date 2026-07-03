@@ -35,9 +35,9 @@ func (ow *OutputWriter) code10Risks(ctx *donor.DeviceContext, b *board.Board, id
 
 	switch devClass {
 	case devclass.ClassNVMe:
-		risks = append(risks, "NVMe donor: the admin + IO-queue FSM exists but there is NO backing store - IO reads return zeros and writes are discarded, so the disk won't mount (stornvme Event 11). A BRAM/host-DMA sector cache is required.")
+		risks = append(risks, "NVMe donor: admin + IO-queue FSM with a small BRAM sector cache (4 sectors) is implemented - IO reads/writes round-trip through the cache. Not yet silicon-validated; cache is small so large transfers may wrap. stornvme Event 11 possible if the driver probes beyond the cache window.")
 	case devclass.ClassXHCI:
-		risks = append(risks, "xHCI (USB) donor: no transfer engine is implemented (no command ring, event ring, doorbell array or DCBAAP) - the controller enumerates then the USB stack hangs (Code 10).")
+		risks = append(risks, "xHCI (USB) donor: Command Ring + Event Ring engine is implemented (answers No-Op and Enable Slot commands with completion events). No downstream USB device or transfer-ring DMA yet - USBXHCI enumerates but cannot transfer data. Not yet silicon-validated.")
 	case devclass.ClassSATA:
 		risks = append(risks, "SATA/AHCI donor: no command-list FSM - PxCI never clears, so storahci commands never complete (Code 10). This class is an identity clone only.")
 	case devclass.ClassWiFi:

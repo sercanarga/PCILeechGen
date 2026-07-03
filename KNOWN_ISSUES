@@ -53,10 +53,14 @@ problem: lone-dma-test shows BAD DTB / can't find ntoskrnl
 cause: usually BIOS / Windows DMA settings, not the firmware.
 fix: recheck BIOS + Windows settings; compare to a known-good firmware.
 
-Note (not a bug): NVMe full disk emulation is still in progress.
-The admin queue, init, and IO submission/completion queues work, but there is no
-backing store yet (IO reads return zeros, writes are discarded), so NVMe donors
-commonly hit Code 10 / stornvme Event 11 until a sector cache is added.
+Note (not a bug): NVMe full disk emulation is progressing but not silicon-proven.
+The admin queue, init, and IO submission/completion queues work, and IO
+reads/writes now round-trip through a small BRAM sector cache (sim/nvme_store.sv -
+proven in iverilog sim, and folded into pcileech_nvme_admin_responder.sv)
+instead of returning zeros / discarding writes. This is simulation-tested
+only, not yet validated on real silicon, and the cache is only a few sectors,
+so NVMe donors can still hit Code 10 / stornvme Event 11 on larger IO until
+it is silicon-validated and the cache is sized up.
 
 problem: NIC "hangs on BAR" during data collection (e.g. Aquantia 10GbE)
 cause: BAR profiling write-probes live device registers to map RW/W1C bits;
@@ -64,6 +68,17 @@ cause: BAR profiling write-probes live device registers to map RW/W1C bits;
 fix: fixed - network-class donors are no longer write-probed. For any other
      card that hangs on BAR, collect read-only with: build --probe-bars=false
 
-Note (not a bug): xHCI (USB) emulation is partial.
-Clones enumerate, but host read/write + doorbell gaps remain, so USBXHCI often
-hits Code 10 (e.g. VIA VL805). Targeted this cycle.
+Note (not a bug): xHCI (USB) emulation is partial but improving.
+Clones enumerate, and a command-ring + event-ring engine (sim/xhci_ring_engine.sv
+- proven in iverilog sim, and folded into pcileech_xhci_ring_engine via
+xhci_ring_engine.sv.tmpl) now answers Command Ring doorbells with real
+completion events instead of hanging. No downstream USB device or
+data-transfer ring is emulated yet, and none of this is validated on real
+silicon, so USBXHCI can still hit Code 10 (e.g. VIA VL805).
+
+Note (not a bug): SATA/AHCI has a sim-only port command engine, not yet wired in.
+sim/ahci_engine.sv implements the PxCI command-list -> command-table -> PRDT
+DMA handshake (IDENTIFY, READ/WRITE DMA EXT) and passes iverilog sim, but it
+is not yet integrated into the generated firmware, so SATA donors are still
+an identity clone (PxCI never clears) until it is wired into codegen and
+validated on real silicon.

@@ -78,11 +78,14 @@ func (ow *OutputWriter) WriteAll(ctx *donor.DeviceContext, b *board.Board) error
 
 	ids := firmware.ExtractDeviceIDs(ctx.ConfigSpace, ctx.ExtCapabilities)
 
+	scrubbedCS, entropy, overlayMap := ow.scrubAndVary(ctx, b, ids)
+
+	// Stamp the build entropy onto the context so the validator can replay
+	// the same variance and reproduce the cfgspace COE exactly.
+	ctx.BuildEntropy = entropy
 	if err := ow.writeDeviceContext(ctx); err != nil {
 		return err
 	}
-
-	scrubbedCS, entropy, overlayMap := ow.scrubAndVary(ctx, b, ids)
 
 	if err := ow.writeConfigSpaceArtifacts(ctx, scrubbedCS, b); err != nil {
 		return err
@@ -520,13 +523,28 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 			barProfile = p
 		}
 	}
+
+	msixTableSize := 0
+	if ctx.MSIXData != nil && ctx.MSIXData.TableSize > 0 {
+		msixTableSize = ctx.MSIXData.TableSize
+	}
+	donorBar := firmware.DonorBAR0Demand(ctx, b, msixTableSize)
+	// bar0Size is the final board-BRAM-capped BAR0 aperture used for every
+	// downstream artifact (scrub, COE, SV). It's computed up front and
+	// threaded into BuildBARModel so the register map's Size reflects the
+	// real aperture from the start - a donor context loaded without raw
+	// BARContents (e.g. --from-json without probed bytes) would otherwise
+	// start the model at Size=0 and log a wave of spurious "register offset
+	// beyond BAR size" warnings before the size got patched up after the fact.
+	bar0Size := firmware.CappedBAR0Size(ctx, b, msixTableSize)
+
 	slog.Info("BAR selection for SV codegen",
 		"bar_index", barIdx,
-		"bar_size", len(barData),
+		"bar_size", bar0Size,
 		"has_profile", barProfile != nil,
 		"class_code", fmt.Sprintf("0x%06X", ctx.Device.ClassCode),
 	)
-	bm := barmodel.BuildBARModel(barData, ctx.Device.ClassCode, barProfile)
+	bm := barmodel.BuildBARModel(barData, ctx.Device.ClassCode, barProfile, bar0Size)
 	slog.Info("BAR model built",
 		"model_nil", bm == nil,
 		"reg_count", func() int {
@@ -544,15 +562,6 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 	}
 	slog.Info("device class resolution", "class", devClass)
 
-	msixTableSize := 0
-	if ctx.MSIXData != nil && ctx.MSIXData.TableSize > 0 {
-		msixTableSize = ctx.MSIXData.TableSize
-	}
-	donorBar := firmware.DonorBAR0Demand(ctx, b, msixTableSize)
-	bar0Size := firmware.CappedBAR0Size(ctx, b, msixTableSize)
-	if bm != nil && bm.Size < bar0Size {
-		bm.Size = bar0Size
-	}
 	if bm == nil && bar0Size > board.DefaultBRAMSize {
 		bm = &barmodel.BARModel{Size: bar0Size}
 	}
@@ -575,6 +584,7 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 
 	if ow.ILADepth > 0 {
 		cfg.ILAInstanceSV = firmware.ILAInstanceSV()
+		cfg.HASILA = true
 	}
 
 	if devClass == devclass.ClassNVMe {

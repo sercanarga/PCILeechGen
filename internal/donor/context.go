@@ -39,8 +39,9 @@ type SiblingFunction struct {
 // DeviceContext is the full snapshot of a donor device.
 type DeviceContext struct {
 	CollectedAt time.Time `json:"collected_at"`
-	ToolVersion string    `json:"tool_version"`
-	Hostname    string    `json:"hostname"`
+	ToolVersion  string  `json:"tool_version"`
+	Hostname     string  `json:"hostname"`
+	BuildEntropy uint32  `json:"build_entropy,omitempty"`
 
 	Device           pci.PCIDevice       `json:"device"`
 	ConfigSpace      *pci.ConfigSpace    `json:"config_space"`
@@ -60,6 +61,7 @@ type deviceContextJSON struct {
 	CollectedAt      time.Time              `json:"collected_at"`
 	ToolVersion      string                 `json:"tool_version"`
 	Hostname         string                 `json:"hostname"`
+	BuildEntropy     uint32                 `json:"build_entropy,omitempty"`
 	Device           pci.PCIDevice          `json:"device"`
 	ConfigSpaceHex   []string               `json:"config_space_hex"`
 	ConfigSpaceSize  int                    `json:"config_space_size"`
@@ -79,6 +81,7 @@ func (dc *DeviceContext) MarshalJSON() ([]byte, error) {
 		CollectedAt:      dc.CollectedAt,
 		ToolVersion:      dc.ToolVersion,
 		Hostname:         dc.Hostname,
+		BuildEntropy:     dc.BuildEntropy,
 		Device:           dc.Device,
 		BARs:             dc.BARs,
 		Capabilities:     dc.Capabilities,
@@ -132,6 +135,7 @@ func (dc *DeviceContext) UnmarshalJSON(data []byte) error {
 	dc.CollectedAt = j.CollectedAt
 	dc.ToolVersion = j.ToolVersion
 	dc.Hostname = j.Hostname
+	dc.BuildEntropy = j.BuildEntropy
 	dc.Device = j.Device
 	dc.BARs = j.BARs
 	dc.Capabilities = j.Capabilities

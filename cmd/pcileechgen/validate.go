@@ -13,6 +13,7 @@ import (
 	"github.com/sercanarga/pcileechgen/internal/firmware/codegen"
 	"github.com/sercanarga/pcileechgen/internal/firmware/output"
 	"github.com/sercanarga/pcileechgen/internal/firmware/scrub"
+	"github.com/sercanarga/pcileechgen/internal/firmware/variance"
 	"github.com/sercanarga/pcileechgen/internal/pci"
 	"github.com/spf13/cobra"
 )
@@ -20,6 +21,7 @@ import (
 var validateJSONPath string
 var validateOutputDir string
 var validateBoard string
+var validateForce bool
 
 // validator bundles state for a single validation run.
 type validator struct {
@@ -77,13 +79,17 @@ Example:
 			ctx:       ctx,
 			b:         b,
 			outputDir: validateOutputDir,
-			scrubbed:  scrub.ScrubConfigSpace(ctx.ConfigSpace, b, bar0Size),
+		scrubbed:  applyVarianceForValidation(scrub.ScrubConfigSpace(ctx.ConfigSpace, b, bar0Size), ctx),
 			result:    &output.ValidationResult{},
 		}
-		if b != nil {
+		if b != nil && !validateForce {
 			if issues := output.ValidateBARSize(donorBar, b.BRAMSizeOrDefault(), 0); len(issues) > 0 {
 				return fmt.Errorf("%s", issues[0])
 			}
+		}
+		if b != nil && validateForce && donorBar > b.BRAMSizeOrDefault() {
+			fmt.Fprintln(out, color.Warn(fmt.Sprintf("donor BAR0 %d bytes exceeds board BRAM %d (--force: validating truncated build)", donorBar, b.BRAMSizeOrDefault())))
+			fmt.Fprintln(out)
 		}
 
 		v.validateCOEFiles()
@@ -240,7 +246,23 @@ func (v *validator) validateFormats() {
 	}
 }
 
+// applyVarianceForValidation replays the same per-build variance the writer
+// applied, using the BuildEntropy stamp stored in device_context.json. Old
+// contexts without the stamp (BuildEntropy == 0) skip variance, preserving
+// backward compatibility.
+func applyVarianceForValidation(scrubbed *pci.ConfigSpace, ctx *donor.DeviceContext) *pci.ConfigSpace {
+	if ctx.BuildEntropy == 0 {
+		return scrubbed
+	}
+	ids := firmware.ExtractDeviceIDs(ctx.ConfigSpace, ctx.ExtCapabilities)
+	varSeed := variance.BuildVarianceSeed(ids.VendorID, ids.DeviceID, ctx.BuildEntropy)
+	varCfg := variance.DefaultConfig(varSeed)
+	varCfg.DonorHasDSN = ids.HasDSN
+	variance.Apply(scrubbed, nil, varCfg)
+	return scrubbed
+}
 func init() {
+	validateCmd.Flags().BoolVar(&validateForce, "force", false, "ignore donor BAR > board BRAM check (validate truncated build)")
 	validateCmd.Flags().StringVar(&validateJSONPath, "json", "", "path to device_context.json (required)")
 	validateCmd.Flags().StringVar(&validateOutputDir, "output-dir", ".", "path to firmware output directory")
 	validateCmd.Flags().StringVar(&validateBoard, "board", "", "target FPGA board (for exact build-matching validation)")

@@ -79,7 +79,7 @@ func TestSynthesizedXHCI_FSMRegExcludedFromGenericWriteCase(t *testing.T) {
 }
 
 func TestAudioHandCodedW1CHandlers_RenderFromRealModel(t *testing.T) {
-	model := barmodel.BuildBARModel(make([]byte, 4096), 0x040300, nil)
+	model := barmodel.BuildBARModel(make([]byte, 4096), 0x040300, nil, 0)
 	if model == nil {
 		t.Fatal("audio model nil")
 	}

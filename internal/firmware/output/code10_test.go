@@ -47,15 +47,16 @@ func mustNotContain(t *testing.T, rs []string, sub string) {
 	}
 }
 
-func TestCode10_NVMe_BackingStoreNotStaleText(t *testing.T) {
+func TestCode10_NVMe_BackingStoreImplemented(t *testing.T) {
 	rs := risksFor(t, ccNVMe, false)
-	mustContain(t, rs, "backing store")
-	mustNotContain(t, rs, "io queues + bram cache are not implemented")
+	mustContain(t, rs, "sector cache")
+	mustNotContain(t, rs, "NO backing store")
 }
 
-func TestCode10_XHCI_NoTransferEngine(t *testing.T) {
+func TestCode10_XHCI_RingEngineImplemented(t *testing.T) {
 	rs := risksFor(t, ccXHCI, false)
-	mustContain(t, rs, "transfer engine")
+	mustContain(t, rs, "Command Ring")
+	mustContain(t, rs, "Event Ring")
 }
 
 func TestCode10_SATA_NoFSM(t *testing.T) {

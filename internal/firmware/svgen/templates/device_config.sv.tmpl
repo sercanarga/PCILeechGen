@@ -88,6 +88,7 @@ package device_config;
     localparam [7:0] DONOR_PCIELINK_SPEED      = 8'd{{ .DonorCapabilities.PCIELinkSpeed }};
     localparam [7:0] DONOR_PCIELINK_WIDTH      = 8'd{{ .DonorCapabilities.PCIELinkWidth }};
     localparam HAS_LATENCY_EMU  = {{ if .LatencyConfig }}1{{ else }}0{{ end }};
+    localparam HAS_ILA          = {{ if .HASILA }}1{{ else }}0{{ end }};
 endpackage
 
 `endif // DEVICE_CONFIG_SV

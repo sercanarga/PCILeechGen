@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 
 	"github.com/sercanarga/pcileechgen/internal/color"
 	"github.com/spf13/cobra"
@@ -59,6 +60,11 @@ func setupLogging(_ *cobra.Command, _ []string) error {
 
 	var w io.Writer = os.Stderr
 	if logFile != "" {
+		if dir := filepath.Dir(logFile); dir != "." && dir != "" {
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				return fmt.Errorf("cannot create --log-file directory: %w", err)
+			}
+		}
 		f, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 		if err != nil {
 			return fmt.Errorf("cannot open --log-file: %w", err)

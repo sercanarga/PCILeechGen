@@ -13,7 +13,7 @@ func TestBuildBARModel_NVMe(t *testing.T) {
 	barData[2] = 0x01
 	barData[3] = 0x00
 
-	model := BuildBARModel(barData, 0x010802, nil)
+	model := BuildBARModel(barData, 0x010802, nil, 0)
 	if model == nil {
 		t.Fatal("NVMe BuildBARModel returned nil")
 	}
@@ -38,7 +38,7 @@ func TestBuildBARModel_NVMe(t *testing.T) {
 }
 
 func TestBuildBARModel_NVMe_AllRegisters(t *testing.T) {
-	model := BuildBARModel(nil, 0x010802, nil)
+	model := BuildBARModel(nil, 0x010802, nil, 0)
 	if model == nil {
 		t.Fatal("nil barData should still create NVMe model")
 	}
@@ -62,7 +62,7 @@ func TestBuildBARModel_NVMe_AllRegisters(t *testing.T) {
 }
 
 func TestBuildBARModel_NVMe_RWMasks(t *testing.T) {
-	model := BuildBARModel(nil, 0x010802, nil)
+	model := BuildBARModel(nil, 0x010802, nil, 0)
 	for _, reg := range model.Registers {
 		switch reg.Name {
 		case "CAP_LO", "CAP_HI", "VS", "CSTS":
@@ -82,7 +82,7 @@ func TestBuildBARModel_NVMe_RWMasks(t *testing.T) {
 }
 
 func TestBuildBARModel_XHCI(t *testing.T) {
-	model := BuildBARModel(nil, 0x0C0330, nil)
+	model := BuildBARModel(nil, 0x0C0330, nil, 0)
 	if model == nil {
 		t.Fatal("xHCI BuildBARModel returned nil")
 	}
@@ -101,7 +101,7 @@ func TestBuildBARModel_XHCI(t *testing.T) {
 }
 
 func TestBuildBARModel_XHCI_PORTSC(t *testing.T) {
-	model := BuildBARModel(nil, 0x0C0330, nil)
+	model := BuildBARModel(nil, 0x0C0330, nil, 0)
 	portFound := 0
 	for _, reg := range model.Registers {
 		if reg.Name == "PORTSC1" || reg.Name == "PORTSC2" {
@@ -113,7 +113,7 @@ func TestBuildBARModel_XHCI_PORTSC(t *testing.T) {
 }
 
 func TestBuildBARModel_XHCI_AllRegisters(t *testing.T) {
-	model := BuildBARModel(nil, 0x0C0330, nil)
+	model := BuildBARModel(nil, 0x0C0330, nil, 0)
 	names := make(map[string]bool)
 	for _, r := range model.Registers {
 		names[r.Name] = true
@@ -127,7 +127,7 @@ func TestBuildBARModel_XHCI_AllRegisters(t *testing.T) {
 
 func TestBuildBARModel_Ethernet(t *testing.T) {
 	barData := make([]byte, 4096)
-	model := BuildBARModel(barData, 0x020000, nil)
+	model := BuildBARModel(barData, 0x020000, nil, 0)
 	if model == nil {
 		t.Fatal("BuildBARModel for Ethernet should not be nil")
 	}
@@ -258,7 +258,7 @@ func TestBuildBARModel_Ethernet_NoDuplicateAlignedOffsets(t *testing.T) {
 }
 
 func TestBuildBARModel_Audio(t *testing.T) {
-	model := BuildBARModel(nil, 0x040300, nil)
+	model := BuildBARModel(nil, 0x040300, nil, 0)
 	if model == nil {
 		t.Fatal("Audio BuildBARModel returned nil")
 	}
@@ -408,7 +408,7 @@ func TestBuildBARModel_Audio_AllFFDonor(t *testing.T) {
 }
 
 func TestBuildBARModel_Unknown(t *testing.T) {
-	model := BuildBARModel(nil, 0xFF0000, nil)
+	model := BuildBARModel(nil, 0xFF0000, nil, 0)
 	if model != nil {
 		t.Error("unknown class without profile should return nil")
 	}
@@ -422,7 +422,7 @@ func TestBuildBARModel_WithProfile(t *testing.T) {
 			{Offset: 0x04, Original: 0x00, RWMask: 0x00},
 		},
 	}
-	model := BuildBARModel(nil, 0x020000, profile)
+	model := BuildBARModel(nil, 0x020000, profile, 0)
 	if model == nil {
 		t.Fatal("BuildBARModel with profile should not be nil")
 	}
@@ -435,7 +435,7 @@ func TestBuildBARModel_ProfileTakesPriority(t *testing.T) {
 			{Offset: 0x00, Original: 0x12345678, RWMask: 0xFFFF0000},
 		},
 	}
-	model := BuildBARModel(nil, 0x010802, profile)
+	model := BuildBARModel(nil, 0x010802, profile, 0)
 	if model == nil {
 		t.Fatal("model should not be nil")
 	}
@@ -627,7 +627,7 @@ func TestBuildBARModel_UnreliableProbe_FallsBackToSpec(t *testing.T) {
 	profile := &donor.BARProfile{Size: 4096, Probes: probes}
 
 	barData := make([]byte, 4096)
-	model := BuildBARModel(barData, 0x010802, profile) // NVMe class
+	model := BuildBARModel(barData, 0x010802, profile, 0) // NVMe class
 
 	if model == nil {
 		t.Fatal("should fall back to spec-based NVMe model, got nil")
@@ -711,7 +711,7 @@ func TestAudioModel_W1CMasksDisjointFromRW(t *testing.T) {
 			t.Fatalf("audio model has overlapping W1C/RW masks: %v", r)
 		}
 	}()
-	model := BuildBARModel(nil, 0x040300, nil)
+	model := BuildBARModel(nil, 0x040300, nil, 0)
 	if model == nil {
 		t.Fatal("audio model nil")
 	}
@@ -723,7 +723,7 @@ func TestAudioModel_W1CMasksDisjointFromRW(t *testing.T) {
 }
 
 func TestXHCIModel_USBSTS_W1CMask(t *testing.T) {
-	model := BuildBARModel(nil, 0x0C0330, nil)
+	model := BuildBARModel(nil, 0x0C0330, nil, 0)
 	for _, r := range model.Registers {
 		if r.Name == "USBSTS" {
 			if r.W1CMask != 0x0000041C {

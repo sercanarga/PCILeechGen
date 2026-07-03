@@ -71,6 +71,8 @@ func TestIntegration_SVTemplateRender_AllClasses(t *testing.T) {
 		{"SATA", 0x8086, 0xA102, 0x010601, devclass.ClassSATA},
 		{"WiFi", 0x8086, 0x2725, 0x028000, devclass.ClassWiFi},
 		{"Thunderbolt", 0x8086, 0x15EF, 0x0C8000, devclass.ClassThunderbolt},
+		{"RAID", 0x1000, 0x005D, 0x010400, devclass.ClassRAID},
+		{"SDHCI", 0x1180, 0xE823, 0x080501, devclass.ClassSDHCI},
 		{"Generic", 0x1234, 0x5678, 0xFF0000, devclass.ClassGeneric},
 	}
 

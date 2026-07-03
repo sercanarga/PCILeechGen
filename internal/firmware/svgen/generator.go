@@ -39,6 +39,7 @@ type SVGeneratorConfig struct {
 	OptionROMHexFile   string // BAR6 expansion ROM responder: $readmemh seed ("" = no ROM served)
 	OptionROMSize      int    // expansion ROM aperture size in bytes (power of 2)
 	ILAInstanceSV      string
+	HASILA             bool // true when ILA debug core is enabled (--ila), gates HAS_ILA localparam
 	// ExtraBARPresent flags donor BAR3-6 presence: index 0=BAR3 ... 3=BAR6.
 	// true = donor's real hardware has a populated (nonzero-size) BAR there,
 	// so bar_controller.sv.tmpl presents a real (loopaddr) aperture instead

@@ -29,28 +29,42 @@ type BARModel struct {
 }
 
 // BuildBARModel returns a register map from probe data or spec tables.
+// barSize is the final BAR0 aperture the caller intends to use (e.g. the
+// board-BRAM-capped size from firmware.CappedBAR0Size). When it exceeds the
+// data-derived size, the returned model's Size is raised to it before
+// validation runs, so a donor loaded without raw BAR contents (e.g.
+// --from-json without probed bytes) doesn't validate register offsets
+// against a not-yet-finalized Size of 0.
 // Returns nil for unknown device classes.
-func BuildBARModel(barData []byte, classCode uint32, profile *donor.BARProfile) *BARModel {
+func BuildBARModel(barData []byte, classCode uint32, profile *donor.BARProfile, barSize int) *BARModel {
 	// Use probe data when available, but bail if VFIO reported
 	// everything as writable (breaks CC->CSTS handshake etc).
 	if profile != nil && len(profile.Probes) > 0 {
 		if !isProbeDataReliable(profile) {
 			slog.Warn("BAR probe data unreliable (all registers report fully writable), falling back to spec-based model",
 				"probes", len(profile.Probes))
-		} else {
-			model := SynthesizeBARModel(profile, classCode)
-			if model != nil {
-				return model
-			}
+		} else if model := SynthesizeBARModel(profile, classCode); model != nil {
+			growToBARSize(model, barSize)
+			return model
 		}
 	}
 
 	// fall back to hardcoded spec tables
 	model := specBARModelForClass(classCode, barData)
 	if model != nil {
+		growToBARSize(model, barSize)
 		validateModel(model)
 	}
 	return model
+}
+
+// growToBARSize raises m.Size to barSize when barSize is the larger of the
+// two, so validateModel (and downstream SV codegen) sees the real
+// board-capped aperture instead of a data-derived size that may still be 0.
+func growToBARSize(m *BARModel, barSize int) {
+	if barSize > m.Size {
+		m.Size = barSize
+	}
 }
 
 // specBARModelForClass returns the hardcoded spec model for a class, or nil.
