@@ -40,6 +40,7 @@ func TestGenerateBarControllerSV_WiresNVMeDoorbellsAndDisk(t *testing.T) {
 	cfg := testConfig()
 	cfg.NVMeIdentify = &nvme.IdentifyData{}
 	cfg.NVMeDoorbellStride = 0
+	cfg.NVMeDiskWords = 8192
 
 	result, err := GenerateBarControllerSV(cfg)
 	if err != nil {
@@ -92,5 +93,11 @@ func TestGenerateBarControllerSV_WiresNVMeDoorbellsAndDisk(t *testing.T) {
 	// Regression for Synth 8-11241: nvme_id_rom_data must be pre-declared before use.
 	if !strings.Contains(result, "wire [31:0] nvme_id_rom_data;") {
 		t.Fatal("NVMe bar controller should pre-declare wire [31:0] nvme_id_rom_data before its use")
+	}
+
+	// Regression: cfg.NVMeDiskWords must reach the SV define (board-scaled cache).
+	// Was a hardcoded 32768 default, blowing the 75T BRAM budget (127 > 105 RAMB36).
+	if !strings.Contains(result, "`define NVME_DISK_WORDS 8192") {
+		t.Fatal("NVMe bar controller should emit `define NVME_DISK_WORDS from cfg.NVMeDiskWords")
 	}
 }

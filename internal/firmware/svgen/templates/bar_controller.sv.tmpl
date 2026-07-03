@@ -68,7 +68,7 @@ module pcileech_tlps128_bar_controller(
 
 
 `ifndef NVME_DISK_WORDS
-`define NVME_DISK_WORDS 32768
+`define NVME_DISK_WORDS {{ if eq .DeviceClass "nvme" }}{{ .NVMeDiskWords }}{{ else }}32768{{ end }}
 `endif
 `ifndef NVME_ENABLE_IO_QUEUES
 `define NVME_ENABLE_IO_QUEUES 1
