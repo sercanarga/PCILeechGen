@@ -99,6 +99,12 @@ func LatencyConfigFromHistogram(h *behavior.TimingHistogram, classCode uint32) *
 	}
 
 	defCfg := DefaultLatencyConfig(classCode)
+	// Prefer measured write timing when the trace had enough writes (WrMinCycles
+	// is 0 when not measured); otherwise keep synthetic write defaults.
+	wrMin, wrMax := defCfg.WrMinCycles, defCfg.WrMaxCycles
+	if h.WrMinCycles > 0 && h.WrMaxCycles >= h.WrMinCycles {
+		wrMin, wrMax = h.WrMinCycles, h.WrMaxCycles
+	}
 	return &LatencyConfig{
 		MinCycles:        h.MinCycles,
 		MaxCycles:        h.MaxCycles,
@@ -108,8 +114,8 @@ func LatencyConfigFromHistogram(h *behavior.TimingHistogram, classCode uint32) *
 		Histogram:        h.Buckets,
 		CDF:              h.CDF,
 		HasHistogram:     true,
-		WrMinCycles:      defCfg.WrMinCycles,
-		WrMaxCycles:      defCfg.WrMaxCycles,
+		WrMinCycles:      wrMin,
+		WrMaxCycles:      wrMax,
 		CplTimeoutCycles: defCfg.CplTimeoutCycles,
 	}
 }

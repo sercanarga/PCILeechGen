@@ -23,9 +23,9 @@ var unsafeStandardCaps = map[uint8]string{
 	pci.CapIDEnhancedAlloc:     "Enhanced Allocation",
 	pci.CapIDFlatteningPortal:  "Flattening Portal",
 	pci.CapIDPCIX:              "PCI-X",
-	pci.CapIDBridgeSubsysVID:  "Bridge Subsystem VID",
-	pci.CapIDSecureDevice:     "Secure Device",
-	pci.CapIDAdvancedFeatures: "Advanced Features",
+	pci.CapIDBridgeSubsysVID:   "Bridge Subsystem VID",
+	pci.CapIDSecureDevice:      "Secure Device",
+	pci.CapIDAdvancedFeatures:  "Advanced Features",
 }
 
 // PruneStandardCaps unlinks unsupported caps and returns what was removed.
@@ -52,8 +52,22 @@ func PruneStandardCaps(cs *pci.ConfigSpace, om *overlay.Map) []string {
 			om.WriteU8(prevNextOff, uint8(nextPtr),
 				fmt.Sprintf("prune cap 0x%02X (%s): relink", capID, name))
 
-			om.WriteU8(ptr, 0, "zero pruned cap header")
-			om.WriteU8(ptr+1, 0, "zero pruned cap next ptr")
+			// Zero the whole pruned cap body, not just the header. The relink
+			// already unlinks it from the chain, but the body bytes (VPD data,
+			// HyperTransport regs, ...) otherwise linger in config space and a
+			// raw scan finds the orphaned structure - a forensic tell real
+			// hardware never leaves. Bound to the next cap (or a small default
+			// for the last cap) so neighbours are untouched.
+			end := nextPtr
+			if end <= ptr {
+				end = ptr + capSizeAt(cs, capID, ptr)
+			}
+			if end > pci.ConfigSpaceLegacySize {
+				end = pci.ConfigSpaceLegacySize
+			}
+			for b := ptr; b < end; b++ {
+				om.WriteU8(b, 0, fmt.Sprintf("zero pruned cap 0x%02X body", capID))
+			}
 
 			removed = append(removed, fmt.Sprintf("%s (0x%02X) at 0x%02X", name, capID, ptr))
 		} else {

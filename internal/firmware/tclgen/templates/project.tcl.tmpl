@@ -98,6 +98,20 @@ set all_ips [get_ips -quiet *]
 if {[llength $all_ips] > 0} {
   upgrade_ip $all_ips
 }
+{{ if .OptionROMEnable }}
+# Expansion ROM: enable the ROM BAR on the PCIe IP so the root complex routes
+# ROM-window memory reads to the device (decoded as BAR6 / i_bar6_optrom), then
+# regenerate the IP. Matched in size to the served ROM image.
+foreach ip [get_ips -quiet *] {
+  if {[string match "*pcie_7x*" [get_property IPDEF $ip]]} {
+    set_property -dict [list \
+      CONFIG.Expansion_Rom_Enabled {true} \
+      CONFIG.Expansion_Rom_Scale {Kilobytes} \
+      CONFIG.Expansion_Rom_Size {{"{"}}{{ .OptionROMSizeKB }}{{"}"}} ] $ip
+    generate_target all $ip
+  }
+}
+{{ end }}
 
 # Point BRAM IPs to the generated COE files (library defaults are all-zero)
 set bar_bram [get_ips -quiet bram_bar_zero4k]

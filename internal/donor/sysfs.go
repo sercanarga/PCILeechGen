@@ -117,6 +117,45 @@ func (sr *SysfsReader) ReadDeviceInfo(bdf pci.BDF) (*pci.PCIDevice, error) {
 }
 
 // ReadConfigSpace reads the full PCI config space from sysfs.
+// ReadOptionROM reads the device's expansion ROM image. The kernel exposes it
+// shadowed: write "1" to enable the ROM decode, read the image, write "0" to
+// disable. Returns nil (no error) when the device has no ROM or the image is
+// empty/all-0xFF. Capped to maxSize. Requires root.
+func (sr *SysfsReader) ReadOptionROM(bdf pci.BDF, maxSize int) ([]byte, error) {
+	romPath := filepath.Join(sr.basePath, bdf.String(), "rom")
+	f, err := os.OpenFile(romPath, os.O_RDWR, 0)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil // device exposes no expansion ROM
+		}
+		return nil, fmt.Errorf("open rom %s: %w", romPath, err)
+	}
+	defer f.Close()
+
+	if _, err := f.WriteString("1"); err != nil {
+		return nil, fmt.Errorf("enable rom decode: %w", err)
+	}
+	defer func() { _, _ = f.WriteString("0") }()
+	if _, err := f.Seek(0, 0); err != nil {
+		return nil, fmt.Errorf("seek rom: %w", err)
+	}
+
+	buf := make([]byte, maxSize)
+	n, err := f.Read(buf)
+	if err != nil && n == 0 {
+		return nil, nil // unreadable / no ROM mapped
+	}
+	data := buf[:n]
+	// trim trailing zero padding; treat empty or all-0xFF as no ROM
+	for len(data) > 0 && data[len(data)-1] == 0x00 {
+		data = data[:len(data)-1]
+	}
+	if len(data) == 0 || isAllFF(data) {
+		return nil, nil
+	}
+	return data, nil
+}
+
 func (sr *SysfsReader) ReadConfigSpace(bdf pci.BDF) (*pci.ConfigSpace, error) {
 	configPath := filepath.Join(sr.basePath, bdf.String(), "config")
 

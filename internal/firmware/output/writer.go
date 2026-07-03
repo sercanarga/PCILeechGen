@@ -10,6 +10,7 @@ import (
 
 	"github.com/sercanarga/pcileechgen/internal/board"
 	"github.com/sercanarga/pcileechgen/internal/donor"
+	"github.com/sercanarga/pcileechgen/internal/donor/behavior"
 	"github.com/sercanarga/pcileechgen/internal/firmware"
 	"github.com/sercanarga/pcileechgen/internal/firmware/barmodel"
 	"github.com/sercanarga/pcileechgen/internal/firmware/codegen"
@@ -32,6 +33,12 @@ type OutputWriter struct {
 	Timeout   int
 	StockBar  bool
 	Force     bool
+	// EmulatePM keeps the donor's Power Management capability faithful instead
+	// of stripping it (cosmetic D-state; IP core stays D0 for DMA stability).
+	EmulatePM bool
+	// TimingHistogram, when set from a captured donor MMIO trace, drives the
+	// TLP latency emulator with measured timing instead of synthetic defaults.
+	TimingHistogram *behavior.TimingHistogram
 }
 
 func NewOutputWriter(outputDir, libDir string, jobs, timeout int) *OutputWriter {
@@ -117,7 +124,8 @@ func (ow *OutputWriter) scrubAndVary(ctx *donor.DeviceContext, b *board.Board, i
 		msixTableSize = ctx.MSIXData.TableSize
 	}
 	bar0Size := firmware.CappedBAR0Size(ctx, b, msixTableSize)
-	scrubbedCS, overlayMap := scrub.ScrubConfigSpaceWithOverlay(ctx.ConfigSpace, b, bar0Size)
+	scrubbedCS, overlayMap := scrub.ScrubConfigSpaceWithOptions(ctx.ConfigSpace, b,
+		scrub.ScrubConfigOptions{EmulatePM: ow.EmulatePM}, bar0Size)
 	if overlayMap.Count() > 0 {
 		slog.Info("config space scrubbed", "modifications", overlayMap.Count())
 	}
@@ -376,6 +384,30 @@ func (ow *OutputWriter) writeSVModules(ctx *donor.DeviceContext, scrubbedCS *pci
 		return err
 	}
 
+	// Emit the generic BRAM seed file when the fallback path requested it.
+	if cfg.BARInitHexFile != "" {
+		barIdx := firmware.LargestBarIndex(ctx.BARContents)
+		if err := ow.writeFile(cfg.BARInitHexFile,
+			codegen.GenerateBarInitHex(ctx.BARContents[barIdx], cfg.Bar0Size)); err != nil {
+			return err
+		}
+	}
+
+	// Emit the expansion ROM image + BAR6 responder when an option ROM was captured.
+	if cfg.OptionROMHexFile != "" {
+		if err := ow.writeFile(cfg.OptionROMHexFile,
+			codegen.GenerateOptionROMHex(ctx.OptionROM, cfg.OptionROMSize)); err != nil {
+			return err
+		}
+		romSV, err := svgen.GenerateOptionROMSV(cfg)
+		if err != nil {
+			return fmt.Errorf("generating pcileech_bar_impl_optrom.sv: %w", err)
+		}
+		if err := ow.writeFile("pcileech_bar_impl_optrom.sv", romSV); err != nil {
+			return err
+		}
+	}
+
 	if err := ow.writeCoreSVArtifacts(cfg, scrubbedCS); err != nil {
 		return err
 	}
@@ -484,12 +516,14 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 		DonorCapabilities: extractDonorCapabilities(scrubbedCS),
 		BARModel:          bm,
 		ClassCode:         ctx.Device.ClassCode,
-		LatencyConfig:     svgen.DefaultLatencyConfig(ctx.Device.ClassCode),
-		HasMSIX:           bm != nil,
-		BuildEntropy:      entropy,
-		PRNGSeeds:         svgen.BuildPRNGSeeds(ids.VendorID, ids.DeviceID, entropy),
-		DeviceClass:       devClass,
-		Bar0Size:          bar0Size,
+		// measured donor timing when a trace was captured; falls back to
+		// class-appropriate synthetic defaults when TimingHistogram is nil.
+		LatencyConfig: svgen.LatencyConfigFromHistogram(ow.TimingHistogram, ctx.Device.ClassCode),
+		HasMSIX:       bm != nil,
+		BuildEntropy:  entropy,
+		PRNGSeeds:     svgen.BuildPRNGSeeds(ids.VendorID, ids.DeviceID, entropy),
+		DeviceClass:   devClass,
+		Bar0Size:      bar0Size,
 	}
 
 	if devClass == devclass.ClassNVMe {
@@ -501,28 +535,44 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 	}
 
 	if ctx.MSIXData != nil && ctx.MSIXData.TableSize > 0 {
-		class := uint32(0)
-		if devClass == devclass.ClassNVMe {
-			class = 0x0108
+		// Single source of truth: the scrubber already wrote the final table/PBA
+		// offsets into the shadow config space (donor-faithful when they fit,
+		// otherwise relocated). Read them back so the RTL parameters match the
+		// config space - and the COE generated from it - exactly. Recomputing
+		// here risked a config-space/RTL desync (different class/dstrd inputs).
+		tableOff, pbaOffset := uint32(board.DefaultBRAMSize), uint32(board.DefaultBRAMSize)+uint32(ctx.MSIXData.TableSize*16)
+		if m := pci.ParseMSIXCap(scrubbedCS); m != nil {
+			tableOff, pbaOffset = m.TableOffset, m.PBAOffset
 		}
-		dstrd := cfg.NVMeDoorbellStride
-		tableOff, pbaOffset, _ := firmware.MSIXPlacement(cfg.Bar0Size, ctx.MSIXData.TableSize, class, dstrd)
 		cfg.MSIXConfig = &svgen.MSIXConfig{
 			NumVectors:  ctx.MSIXData.TableSize,
 			TableOffset: tableOff,
 			PBAOffset:   pbaOffset,
 		}
 		cfg.HasMSIX = true
-		if m := pci.ParseMSIXCap(scrubbedCS); m != nil {
-			scrubbedCS.WriteU32(m.CapOffset+4, tableOff&0xFFFFFFF8)
-			scrubbedCS.WriteU32(m.CapOffset+8, pbaOffset&0xFFFFFFF8)
-		}
 	}
 
 	// Extract MSI capability for interrupt generation.
 	// MSI is the primary interrupt mechanism for HDA devices.
 	if msiInfo := extractMSIInfo(scrubbedCS); msiInfo != nil {
 		cfg.MSIConfig = msiInfo
+	}
+
+	// Generic BRAM fallback (no learned register model): seed it from the donor
+	// BAR snapshot so unknown-class register reads return real donor values
+	// instead of zero. Skip when an MSI-X table shares BAR0 to avoid overlapping
+	// the table region with snapshot data.
+	if cfg.BARModel == nil && cfg.MSIXConfig == nil && len(barData) > 0 {
+		cfg.BARInitHexFile = "pcileech_bar_init.hex"
+	}
+
+	// Expansion ROM: when the donor's option ROM was captured, serve it from the
+	// BAR6 responder so reads to the ROM window return the real image instead of
+	// nothing. Requires the IP's expansion ROM BAR to be enabled (patched into
+	// the .xci) so the root complex routes ROM reads to the device.
+	if len(ctx.OptionROM) > 0 {
+		cfg.OptionROMSize = firmware.OptionROMAperture(len(ctx.OptionROM))
+		cfg.OptionROMHexFile = "option_rom.hex"
 	}
 
 	bram := b.BRAMSizeOrDefault()

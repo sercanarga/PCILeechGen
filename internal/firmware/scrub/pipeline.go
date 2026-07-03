@@ -14,6 +14,12 @@ type ScrubContext struct {
 	VendorID  uint16
 	DeviceID  uint16
 	Bar0Size  int
+	// EmulatePM keeps the donor's Power Management capability faithful (PME
+	// support + D-state support advertised, PMCSR power-state writable) instead
+	// of stripping it. The IP core is still held in D0 for DMA stability, so the
+	// reported D-state is cosmetic - it satisfies config-space readback probes
+	// without the device actually powering down.
+	EmulatePM bool
 }
 
 // ScrubPass is one step in the config space scrubbing pipeline.

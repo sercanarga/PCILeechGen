@@ -1,11 +1,15 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
 
 	"github.com/sercanarga/pcileechgen/internal/board"
 	"github.com/sercanarga/pcileechgen/internal/donor"
+	"github.com/sercanarga/pcileechgen/internal/donor/behavior"
+	"github.com/sercanarga/pcileechgen/internal/donor/mmio"
 	"github.com/sercanarga/pcileechgen/internal/firmware"
 	"github.com/sercanarga/pcileechgen/internal/pci"
 	"github.com/sercanarga/pcileechgen/internal/vivado"
@@ -25,6 +29,10 @@ type buildFlags struct {
 	fromJSON   string
 	stockBar   bool
 	force      bool
+	mmioTrace  string
+	emulatePM  bool
+	noVFIO     bool
+	optionROM  bool
 }
 
 var buildOpts buildFlags
@@ -58,6 +66,11 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	timing, err := loadTimingHistogram(buildOpts.mmioTrace)
+	if err != nil {
+		return err
+	}
+
 	printBuildSummary(ctx, b)
 
 	// Gate using donor demand (BARs sizes + BARContents lens + uncapped MSIX req)
@@ -79,14 +92,16 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	}
 
 	builder := vivado.NewBuilder(b, vivado.BuildOptions{
-		VivadoPath: buildOpts.vivadoPath,
-		OutputDir:  buildOpts.output,
-		LibDir:     buildOpts.libDir,
-		Jobs:       buildOpts.jobs,
-		Timeout:    buildOpts.timeout,
-		SkipVivado: buildOpts.skipVivado,
-		StockBar:   buildOpts.stockBar,
-		Force:      buildOpts.force,
+		VivadoPath:      buildOpts.vivadoPath,
+		OutputDir:       buildOpts.output,
+		LibDir:          buildOpts.libDir,
+		Jobs:            buildOpts.jobs,
+		Timeout:         buildOpts.timeout,
+		SkipVivado:      buildOpts.skipVivado,
+		StockBar:        buildOpts.stockBar,
+		Force:           buildOpts.force,
+		EmulatePM:       buildOpts.emulatePM,
+		TimingHistogram: timing,
 	})
 
 	return builder.Build(ctx)
@@ -112,11 +127,38 @@ func loadDonorContext() (*donor.DeviceContext, error) {
 	slog.Info("collecting donor device data")
 
 	collector := donor.NewCollector()
+	collector.NoVFIO = buildOpts.noVFIO
+	collector.CaptureOptionROM = buildOpts.optionROM
 	ctx, err := collector.Collect(bdf)
 	if err != nil {
 		return nil, fmt.Errorf("device data collection failed: %w", err)
 	}
 	return ctx, nil
+}
+
+// loadTimingHistogram reads a saved MMIO trace (mmio.TraceResult JSON, as
+// emitted by `mmio-trace --output`) and derives the latency histogram used to
+// drive the TLP latency emulator. Returns nil (synthetic defaults) when no
+// trace was supplied.
+func loadTimingHistogram(path string) (*behavior.TimingHistogram, error) {
+	if path == "" {
+		return nil, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read mmio trace %q: %w", path, err)
+	}
+	var tr mmio.TraceResult
+	if err := json.Unmarshal(data, &tr); err != nil {
+		return nil, fmt.Errorf("parse mmio trace %q (expected JSON from `mmio-trace --output`): %w", path, err)
+	}
+	h := behavior.ExtractTimingHistogram(&tr)
+	if h.SampleCount == 0 {
+		slog.Warn("mmio trace yielded no usable read intervals; using synthetic timing", "file", path)
+	} else {
+		slog.Info("loaded donor timing trace", "file", path, "samples", h.SampleCount)
+	}
+	return h, nil
 }
 
 func printBuildSummary(ctx *donor.DeviceContext, b *board.Board) {
@@ -157,6 +199,10 @@ func init() {
 	buildCmd.Flags().StringVar(&buildOpts.libDir, "lib-dir", "lib/pcileech-fpga", "path to pcileech-fpga library")
 	buildCmd.Flags().BoolVar(&buildOpts.stockBar, "stock-bar", false, "use stock bar controller (diagnostic: skip custom SV modules)")
 	buildCmd.Flags().BoolVar(&buildOpts.force, "force", false, "ignore donor BAR > board BRAM check")
+	buildCmd.Flags().StringVar(&buildOpts.mmioTrace, "mmio-trace", "", "saved donor MMIO trace JSON (from `mmio-trace --output`) for measured TLP latency")
+	buildCmd.Flags().BoolVar(&buildOpts.emulatePM, "emulate-pm", false, "keep donor Power Management capability faithful (cosmetic D-state; IP core stays D0)")
+	buildCmd.Flags().BoolVar(&buildOpts.noVFIO, "no-vfio", false, "sysfs-only donor capture, no vfio-pci bind (for hosts without IOMMU/VFIO)")
+	buildCmd.Flags().BoolVar(&buildOpts.optionROM, "option-rom", false, "capture + serve the donor expansion ROM via BAR6 (needs IP expansion-ROM enable; see docs)")
 
 	_ = buildCmd.MarkFlagRequired("board")
 

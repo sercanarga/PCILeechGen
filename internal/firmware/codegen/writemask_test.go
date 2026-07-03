@@ -59,10 +59,10 @@ func TestGenerateWritemaskCOE(t *testing.T) {
 		t.Errorf("IntLine/IntPin mask should be 000000ff, got %s", dwords[15])
 	}
 
-	// capability region (0x40-0xFF) must be fully writable.
-	// the writemask only controls shadow BRAM; the Xilinx IP core
-	// processes config writes independently. locking here would create
-	// a dangerous BRAM/IP-core state mismatch.
+	// With no capabilities present (status cap-list bit unset), the whole
+	// 0x40-0xFF window stays writable - there are no capability registers to
+	// lock. Read-only field locking only applies to actual capabilities; see
+	// TestWritemask_CapabilityReadOnlyFieldsLocked.
 	for i := 0x40 / 4; i < 0x100/4; i++ {
 		if dwords[i] != "ffffffff" {
 			t.Errorf("cap region DWORD[%d] should be ffffffff, got %s", i, dwords[i])
@@ -162,7 +162,7 @@ func TestWritemask_IdentityRegistersReadOnly(t *testing.T) {
 	}
 }
 
-func TestWritemask_CommandStatusWritable(t *testing.T) {
+func TestWritemask_CommandWritableStatusReadOnly(t *testing.T) {
 	cs := pci.NewConfigSpace()
 	cs.Size = pci.ConfigSpaceSize
 	cs.WriteU32(0x10, 0xFFFFF000)
@@ -170,8 +170,10 @@ func TestWritemask_CommandStatusWritable(t *testing.T) {
 	wm := GenerateWritemaskCOE(cs)
 	dwords := parseCOEDwords(t, wm)
 
-	if dwords[1] != "ffffffff" {
-		t.Errorf("Command:Status mask = %s, want ffffffff", dwords[1])
+	// Command (lower 16) is RW; Status (upper 16) is RO/RW1C - writes ignored
+	// like real hardware so a write-then-readback can't change it.
+	if dwords[1] != "0000ffff" {
+		t.Errorf("Command:Status mask = %s, want 0000ffff (Command RW, Status RO)", dwords[1])
 	}
 }
 
@@ -206,6 +208,71 @@ func TestWritemask_MultipleBARs(t *testing.T) {
 	}
 	if dwords[6] != "ffff0000" {
 		t.Errorf("BAR2 mask = %s, want ffff0000", dwords[6])
+	}
+}
+
+// Capability read-only fields must be locked in the shadow so a detector can't
+// write to a cap ID / PMC / PCIe Capabilities / DevCap / LinkCap / MSI-X offset
+// register and read it back changed (real hardware ignores such writes).
+func TestWritemask_CapabilityReadOnlyFieldsLocked(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	cs.WriteU16(0x06, 0x0010) // capabilities list present
+	cs.WriteU8(0x34, 0x40)    // cap pointer
+	// chain: PM (0x40) -> MSI-X (0x50) -> PCIe (0x60, last)
+	cs.WriteU8(0x40, pci.CapIDPowerManagement)
+	cs.WriteU8(0x41, 0x50)
+	cs.WriteU8(0x50, pci.CapIDMSIX)
+	cs.WriteU8(0x51, 0x60)
+	cs.WriteU8(0x60, pci.CapIDPCIExpress)
+	cs.WriteU8(0x61, 0x00)
+
+	dwords := parseCOEDwords(t, GenerateWritemaskCOE(cs))
+
+	checks := map[int]string{
+		16: "00000000", // 0x40 PM header (ID+next+PMC all RO)
+		17: "ffffffff", // 0x44 PMCSR stays writable (power state control)
+		20: "c0000000", // 0x50 MSI-X header: only Enable+FuncMask writable
+		21: "00000000", // 0x54 MSI-X Table Offset/BIR (RO)
+		22: "00000000", // 0x58 MSI-X PBA Offset/BIR (RO)
+		24: "00000000", // 0x60 PCIe header (ID+next+PCIe Caps reg RO)
+		25: "00000000", // 0x64 Device Capabilities (RO)
+		26: "0000ffff", // 0x68 Device Control (RW) / Device Status (RO/RW1C)
+		27: "00000000", // 0x6C Link Capabilities (RO)
+		28: "0000ffff", // 0x70 Link Control (RW) / Link Status (RO/RW1C)
+		30: "0000ffff", // 0x78 Slot Control (RW) / Slot Status (RO/RW1C)
+		31: "0000ffff", // 0x7C Root Control (RW) / Root Capabilities (RO)
+		32: "00000000", // 0x80 Root Status (RO/RW1C)
+		33: "00000000", // 0x84 Device Capabilities 2 (RO)
+		35: "00000000", // 0x8C Link Capabilities 2 (RO)
+	}
+	for dw, want := range checks {
+		if dwords[dw] != want {
+			t.Errorf("DWORD[%d] (0x%02X) mask = %s, want %s", dw, dw*4, dwords[dw], want)
+		}
+	}
+}
+
+// MSI Message Control: only Enable (bit0) + Multiple Message Enable (bits 6:4)
+// are writable; the capable/64-bit/PVM bits are RO. Address/Data stay writable.
+func TestWritemask_MSIMessageControlLocked(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	cs.WriteU16(0x06, 0x0010) // capabilities list present
+	cs.WriteU8(0x34, 0x40)    // cap pointer
+	cs.WriteU8(0x40, pci.CapIDMSI)
+	cs.WriteU8(0x41, 0x00)    // last cap
+	cs.WriteU16(0x42, 0x0080) // Message Control: 64-bit capable
+
+	dwords := parseCOEDwords(t, GenerateWritemaskCOE(cs))
+
+	// DWORD 16 (0x40): [ID|next|MsgCtl]; only bits 16 (Enable) + 20-22 (MME) RW.
+	if dwords[16] != "00710000" {
+		t.Errorf("MSI header mask = %s, want 00710000 (Enable+MME RW, ID/next/MsgCtl-RO locked)", dwords[16])
+	}
+	// MSI Address (0x44) stays writable for the OS to program.
+	if dwords[17] != "ffffffff" {
+		t.Errorf("MSI Address mask = %s, want ffffffff (OS programs it)", dwords[17])
 	}
 }
 

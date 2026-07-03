@@ -56,6 +56,28 @@ func TestGenerateBarImplDeviceSV_NilBARModel(t *testing.T) {
 	if !strings.Contains(result, "bar_mem") {
 		t.Error("nil BARModel should fall back to BRAM-based implementation")
 	}
+	// Without a seed file, the fallback must only zero-init (no $readmemh).
+	if strings.Contains(result, "$readmemh") {
+		t.Error("BRAM fallback should not $readmemh when BARInitHexFile is unset")
+	}
+}
+
+func TestGenerateBarImplDeviceSV_NilBARModel_SeededFromSnapshot(t *testing.T) {
+	cfg := testConfig()
+	cfg.BARModel = nil
+	cfg.BARInitHexFile = "pcileech_bar_init.hex"
+	result, err := GenerateBarImplDeviceSV(cfg)
+	if err != nil {
+		t.Fatalf("GenerateBarImplDeviceSV failed: %v", err)
+	}
+	if !strings.Contains(result, `$readmemh("pcileech_bar_init.hex", bar_mem)`) {
+		t.Error("seeded BRAM fallback should $readmemh the donor snapshot into bar_mem")
+	}
+	// Zero-init must still precede the seed so a short hex file leaves the
+	// remainder defined.
+	if !strings.Contains(result, "bar_mem[i] = 32'h00000000") {
+		t.Error("seeded fallback must still zero-init before $readmemh")
+	}
 }
 
 func TestGenerateBarImplDeviceSV_WithBARModel(t *testing.T) {
@@ -385,7 +407,8 @@ func TestNVMeDoorbellOffsets(t *testing.T) {
 	sq0 := cfg.NVMeSQ0DoorbellOffset()
 	cq0 := cfg.NVMeCQ0DoorbellOffset()
 
-	d := uint32(0x1000); if sq0 != d {
+	d := uint32(0x1000)
+	if sq0 != d {
 		t.Errorf("SQ0 doorbell = 0x%X, want 0x1000", sq0)
 	}
 	if cq0 != 0x1004 {
@@ -396,7 +419,8 @@ func TestNVMeDoorbellOffsets(t *testing.T) {
 	cfg.NVMeDoorbellStride = 1
 	sq0 = cfg.NVMeSQ0DoorbellOffset()
 	cq0 = cfg.NVMeCQ0DoorbellOffset()
-	d = uint32(0x1000); if sq0 != d {
+	d = uint32(0x1000)
+	if sq0 != d {
 		t.Errorf("SQ0 doorbell (stride=1) = 0x%X, want 0x1000", sq0)
 	}
 	if cq0 != 0x1008 {
@@ -497,5 +521,24 @@ func TestBuildEntropyFromTime(t *testing.T) {
 
 	if e1 == 0 && e2 == 0 {
 		t.Error("BuildEntropyFromTime should produce non-zero values")
+	}
+}
+
+func TestGenerateOptionROMSV(t *testing.T) {
+	cfg := testConfig()
+	cfg.OptionROMHexFile = "option_rom.hex"
+	cfg.OptionROMSize = 4096
+	sv, err := GenerateOptionROMSV(cfg)
+	if err != nil {
+		t.Fatalf("GenerateOptionROMSV: %v", err)
+	}
+	if !strings.Contains(sv, `$readmemh("option_rom.hex", rom_mem)`) {
+		t.Error("optrom SV should $readmemh the option ROM image")
+	}
+	if !strings.Contains(sv, "ROM_SIZE = 4096") {
+		t.Error("optrom SV should carry the ROM aperture size")
+	}
+	if !strings.Contains(sv, "module pcileech_bar_impl_optrom") {
+		t.Error("optrom SV missing module")
 	}
 }

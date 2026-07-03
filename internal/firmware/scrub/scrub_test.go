@@ -501,7 +501,7 @@ func TestRelocateMSIXToBRAM_TableInside(t *testing.T) {
 	cs.WriteU8(0x90, pci.CapIDMSIX)
 	cs.WriteU8(0x91, 0x00)
 	cs.WriteU16(0x92, 0x8003)     // 4 vectors, enabled
-	cs.WriteU32(0x94, 0x00000200) // table at BAR0+0x200 (inside default 4KB BRAM)
+	cs.WriteU32(0x94, 0x00000200) // table at BAR0+0x200 (inside BAR, BIR 0)
 	cs.WriteU32(0x98, 0x00000280) // PBA at BAR0+0x280
 
 	scrubbed := ScrubConfigSpace(cs, nil)
@@ -512,12 +512,15 @@ func TestRelocateMSIXToBRAM_TableInside(t *testing.T) {
 		t.Errorf("MSI-X should remain enabled, got 0x%04x", msgCtl)
 	}
 
-	// table still relocated to 0x1000 (consistent placement)
+	// Donor table is in BAR0 and fits, so it is kept at the donor's own offset
+	// (donor-faithful) instead of being relocated.
 	tableReg := scrubbed.ReadU32(0x94)
-	tableOff := tableReg &^ 0x07
-	off := uint32(0x1000)
-	if tableOff != off {
-		t.Errorf("MSI-X table should be relocated to 0x1000, got 0x%X", tableOff)
+	if tableOff := tableReg &^ 0x07; tableOff != 0x200 {
+		t.Errorf("MSI-X table should stay at donor offset 0x200, got 0x%X", tableOff)
+	}
+	pbaReg := scrubbed.ReadU32(0x98)
+	if pbaOff := pbaReg &^ 0x07; pbaOff != 0x280 {
+		t.Errorf("MSI-X PBA should stay at donor offset 0x280, got 0x%X", pbaOff)
 	}
 }
 

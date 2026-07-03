@@ -45,6 +45,40 @@ func TestPruneStandardCaps_RemovesVPD(t *testing.T) {
 	}
 }
 
+// The whole pruned cap body must be zeroed, not just the header, so no
+// orphaned cap structure lingers in config space for a raw scan to find.
+func TestPruneStandardCaps_ZeroesBody(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Data[0x06] = 0x10
+	cs.WriteU8(0x34, 0x40)
+	// PM(0x40) -> VPD(0x50) -> PCIe(0x60)
+	cs.WriteU8(0x40, pci.CapIDPowerManagement)
+	cs.WriteU8(0x41, 0x50)
+	cs.WriteU8(0x50, pci.CapIDVPD)
+	cs.WriteU8(0x51, 0x60)
+	cs.WriteU8(0x60, pci.CapIDPCIExpress)
+	cs.WriteU8(0x61, 0x00)
+	// VPD body bytes (0x52..0x5F) carry leftover donor data.
+	for b := 0x52; b < 0x60; b++ {
+		cs.WriteU8(b, 0xAA)
+	}
+
+	om := overlay.NewMap(cs)
+	if removed := PruneStandardCaps(cs, om); len(removed) != 1 {
+		t.Fatalf("expected 1 removed cap, got %d", len(removed))
+	}
+
+	for b := 0x50; b < 0x60; b++ {
+		if cs.ReadU8(b) != 0 {
+			t.Errorf("pruned VPD body byte 0x%02X = 0x%02X, want 0 (orphan structure must be wiped)", b, cs.ReadU8(b))
+		}
+	}
+	// The following kept cap (PCIe at 0x60) must be untouched.
+	if cs.ReadU8(0x60) != pci.CapIDPCIExpress {
+		t.Errorf("neighbour cap at 0x60 clobbered: 0x%02X", cs.ReadU8(0x60))
+	}
+}
+
 func TestPruneStandardCaps_NothingToRemove(t *testing.T) {
 	cs := pci.NewConfigSpace()
 	cs.Data[0x06] = 0x10
