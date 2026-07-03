@@ -55,7 +55,7 @@ func (b *Board) BRAM36Capacity() int {
 	p := strings.ToLower(b.FPGAPart)
 	switch {
 	case strings.Contains(p, "7a200t"):
-		return 140
+		return 365
 	case strings.Contains(p, "7a100t"):
 		return 135
 	case strings.Contains(p, "7a75t"):

@@ -37,6 +37,32 @@ func TestBuildBARModel_NVMe(t *testing.T) {
 	}
 }
 
+// VS (BAR0 0x08) must equal Identify Controller VER or stornvme raises Code 10.
+// It defaults to 1.4 when the donor VS is 0 or absent, matching identify.go.
+func TestBuildBARModel_NVMe_VSDefault(t *testing.T) {
+	vsReset := func(barData []byte) uint32 {
+		m := BuildBARModel(barData, 0x010802, nil)
+		for _, r := range m.Registers {
+			if r.Name == "VS" {
+				return r.Reset
+			}
+		}
+		t.Fatal("VS register not found")
+		return 0
+	}
+	bd13 := make([]byte, 0x40)
+	bd13[0x08], bd13[0x09], bd13[0x0A] = 0x00, 0x03, 0x01 // 0x00010300 (NVMe 1.3)
+	if got := vsReset(bd13); got != 0x00010300 {
+		t.Errorf("donor VS 1.3: got 0x%08X, want 0x00010300", got)
+	}
+	if got := vsReset(make([]byte, 0x40)); got != 0x00010400 {
+		t.Errorf("donor VS 0: got 0x%08X, want 0x00010400", got)
+	}
+	if got := vsReset(make([]byte, 4)); got != 0x00010400 {
+		t.Errorf("short barData: got 0x%08X, want 0x00010400", got)
+	}
+}
+
 func TestBuildBARModel_NVMe_AllRegisters(t *testing.T) {
 	model := BuildBARModel(nil, 0x010802, nil)
 	if model == nil {

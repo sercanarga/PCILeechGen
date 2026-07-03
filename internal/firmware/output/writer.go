@@ -513,7 +513,8 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 		if cfg.NVMeDiskWords == 0 {
 			return nil, fmt.Errorf(
 				"board %q (%s) has insufficient block RAM for NVMe disk emulation; "+
-					"use a supported Artix-7 board (35T minimum, 75T+ recommended)",
+					"use an Artix-7 75T/100T/200T board (35T/50T lack the block RAM), "+
+					"200T for the full disk cache",
 				b.Name, b.FPGAPart)
 		}
 	}

@@ -7,6 +7,32 @@ import (
 	"github.com/sercanarga/pcileechgen/internal/firmware/nvme"
 )
 
+// TestGenerateBarControllerSV_NVMeLatencyBypassUnconditional guards the Code-10
+// fix: NVMe BAR0 reads must bypass the latency emulator regardless of MSI-X,
+// or a failed MSI-X capture routes CSTS reads through the emulator (stale
+// CSTS=0 -> stornvme fails ControllerEnable -> Code 10).
+func TestGenerateBarControllerSV_NVMeLatencyBypassUnconditional(t *testing.T) {
+	for _, msix := range []bool{true, false} {
+		cfg := testConfig()
+		cfg.LatencyConfig = DefaultLatencyConfig(cfg.ClassCode)
+		cfg.NVMeIdentify = &nvme.IdentifyData{}
+		if msix {
+			cfg.HasMSIX = true
+			cfg.MSIXConfig = &MSIXConfig{NumVectors: 9, TableOffset: 0x2000, PBAOffset: 0x2100}
+		}
+		result, err := GenerateBarControllerSV(cfg)
+		if err != nil {
+			t.Fatalf("msix=%v: %v", msix, err)
+		}
+		if !strings.Contains(result, "assign bar0_base_ctx   = bar0_raw_ctx;") {
+			t.Fatalf("msix=%v: NVMe BAR0 latency bypass must be present", msix)
+		}
+		if strings.Contains(result, "bar_rsp_valid[0]   = bar0_emu_valid") {
+			t.Fatalf("msix=%v: NVMe bar_rsp[0] must not route through the latency emulator", msix)
+		}
+	}
+}
+
 // TestGenerateBarControllerSV_WiresNVMeDoorbellsAndDisk verifies the bar
 // controller folds the four doorbell strobes into the responder's generalized
 // doorbell interface and instantiates the BRAM disk cache on disk_req_*.

@@ -269,12 +269,26 @@ module pcileech_tlps128_bar_controller(
     wire bar0_buf_write = (bar0_spill_valid && !bar0_buf_full) ||
                           (!bar0_spill_valid && bar0_raw_valid && !bar0_buf_full);
 {{ end }}
-{{ if .MSIXConfig }}
-    // MSI-X intermediate wires
+{{ if or .LatencyConfig .MSIXConfig }}
+    // BAR0 into the read mux. NVMe bypasses the latency emulator so CC.EN<->
+    // CSTS.RDY polling sees fresh reads (a stale CSTS=0 fails ControllerEnable).
     wire [87:0] bar0_base_ctx;
     wire [31:0] bar0_base_data;
     wire        bar0_base_valid;
+{{ end }}
+{{ if .LatencyConfig }}
+{{ if eq .DeviceClass "nvme" }}
+    assign bar0_base_ctx   = bar0_raw_ctx;
+    assign bar0_base_data  = bar0_raw_data;
+    assign bar0_base_valid = bar0_raw_valid;
+{{ else }}
+    assign bar0_base_ctx   = bar0_emu_ctx;
+    assign bar0_base_data  = bar0_emu_data;
+    assign bar0_base_valid = bar0_emu_valid;
+{{ end }}
+{{ end }}
 
+{{ if .MSIXConfig }}
     wire [87:0] msix_rsp_ctx;
     wire [31:0] msix_rsp_data;
     wire        msix_rsp_valid;
@@ -298,36 +312,21 @@ module pcileech_tlps128_bar_controller(
     wire        nvme_disk_busy;
     wire        nvme_disk_error;
 {{ end }}
-{{ if and (eq .DeviceClass "nvme") .LatencyConfig }}
-    // NVMe BAR0 registers are used in tight polling loops during controller
-    // enable (CC.EN -> CSTS.RDY). Return those MMIO completions directly; the
-    // artificial latency FIFO may otherwise hold stale CSTS=0 reads long enough
-    // for stornvme to fail ControllerEnable.
-    assign bar0_base_ctx   = bar0_raw_ctx;
-    assign bar0_base_data  = bar0_raw_data;
-    assign bar0_base_valid = bar0_raw_valid;
-{{ end }}
-
 {{ end }}
 
     wire [87:0] bar_rsp_ctx[7];
     wire [31:0] bar_rsp_data[7];
     wire        bar_rsp_valid[7];
 
-{{ if and .LatencyConfig .MSIXConfig }}
-    // latency -> MSI-X mux -> bar_rsp[0]
+{{ if .MSIXConfig }}
+    // MSI-X table read wins, else BAR0 base (raw for NVMe, emu otherwise).
     assign bar_rsp_ctx[0]   = msix_rsp_valid ? msix_rsp_ctx   : bar0_base_ctx;
     assign bar_rsp_data[0]  = msix_rsp_valid ? msix_rsp_data  : bar0_base_data;
     assign bar_rsp_valid[0] = msix_rsp_valid || bar0_base_valid;
 {{ else if .LatencyConfig }}
-    assign bar_rsp_ctx[0]   = bar0_emu_ctx;
-    assign bar_rsp_data[0]  = bar0_emu_data;
-    assign bar_rsp_valid[0] = bar0_emu_valid;
-{{ else if .MSIXConfig }}
-    // MSI-X mux -> bar_rsp[0]
-    assign bar_rsp_ctx[0]   = msix_rsp_valid ? msix_rsp_ctx   : bar0_base_ctx;
-    assign bar_rsp_data[0]  = msix_rsp_valid ? msix_rsp_data  : bar0_base_data;
-    assign bar_rsp_valid[0] = msix_rsp_valid || bar0_base_valid;
+    assign bar_rsp_ctx[0]   = bar0_base_ctx;
+    assign bar_rsp_data[0]  = bar0_base_data;
+    assign bar_rsp_valid[0] = bar0_base_valid;
 {{ end }}
 
     // response mux

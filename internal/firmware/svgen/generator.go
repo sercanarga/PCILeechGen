@@ -45,12 +45,13 @@ func NVMeDiskWordsForBRAM36(bram36 int) int {
 	const (
 		maxWords  = 32768
 		minWords  = 8192 // smallest cache that still pins metadata
-		rambWords = 1024 // 32-bit words per RAMB36
+		rambWords = 1024 // 32-bit words per RAMB36 (1Kx32)
+		reserve   = 125  // PCIe hard block + base/NVMe logic; remainder caches disk
 	)
-	if bram36 <= 0 {
+	if bram36 <= reserve {
 		return 0
 	}
-	budget := min(bram36*3/10*rambWords, maxWords) // 30% of block RAM for the cache
+	budget := min((bram36-reserve)*rambWords, maxWords)
 	v := 128
 	for v*2 <= budget {
 		v *= 2

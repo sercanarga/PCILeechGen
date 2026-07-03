@@ -49,12 +49,12 @@ func TestGenerateNVMeBRAMDiskSV_RendersRuntimeSnoop(t *testing.T) {
 // cache that fits (~8 KiB) and bigger boards get the full 32 KiB.
 func TestNVMeDiskWordsForBRAM36(t *testing.T) {
 	cases := []struct{ bram36, want int }{
-		{0, 0},     // unknown / unsupported part -> refuse
-		{25, 0},    // 15T-class: too small
-		{50, 8192}, // 35T: ~8 KiB (fits 50 RAMB36 with room for the base design)
-		{65, 16384},// 50T
-		{135, 32768}, // 75T/100T: full 32 KiB
-		{140, 32768}, // 200T
+		{0, 0},       // unknown
+		{25, 0},      // 15T
+		{50, 0},      // 35T
+		{65, 0},      // 50T
+		{135, 8192},  // 75T/100T
+		{365, 32768}, // 200T
 	}
 	for _, c := range cases {
 		if got := NVMeDiskWordsForBRAM36(c.bram36); got != c.want {
