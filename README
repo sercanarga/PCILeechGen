@@ -135,7 +135,7 @@ SUPPORTED BOARDS
   NeTV2_35T         XC7A35T-484    x1     M.2
   NeTV2_100T        XC7A100T-484   x1     M.2
   PCIeSquirrel      XC7A35T-484    x1     PCIe
-  EnigmaX1          XC7A75T-484    x1     M.2
+  EnigmaX1          XC7A75T-484    x1     PCIe
   ZDMA              XC7A100T-484   x4     PCIe
   GBOX              XC7A35T-484    x1     Mini PCIe
   ac701_ft601       XC7A200T-676   x4     Dev Board
