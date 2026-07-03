@@ -88,11 +88,11 @@ func buildIdentifyController(ids firmware.DeviceIDs, barData []byte) [4096]byte 
 	binary.LittleEndian.PutUint32(data[0x060:], 0x00000000) // CTRATT
 
 	// Admin Command Set Attributes (0x100)
-	binary.LittleEndian.PutUint16(data[0x100:], 0x0006) // OACS - Format + FW Download
+	binary.LittleEndian.PutUint16(data[0x100:], 0x0002) // OACS - Format NVM
 	data[0x102] = 3                                     // ACL
 	data[0x103] = 7                                     // AERL
-	data[0x104] = 0x14                                  // FRMW
-	data[0x105] = 0x0E                                  // LPA
+	data[0x104] = 0x00                                  // FRMW - no firmware slots (FW download not supported)
+	data[0x105] = 0x00                                  // LPA - no optional log-page attributes
 	data[0x106] = 0x3F                                  // ELPE
 	data[0x107] = 0                                     // NPSS (1 power state)
 	data[0x108] = 0x01                                  // AVSCC
@@ -103,7 +103,7 @@ func buildIdentifyController(ids firmware.DeviceIDs, barData []byte) [4096]byte 
 	data[0x201] = 0x44                                  // CQES min=max=16B
 	binary.LittleEndian.PutUint16(data[0x202:], 0x0000) // MAXCMD
 	binary.LittleEndian.PutUint32(data[0x204:], 1)      // NN - 1 namespace
-	binary.LittleEndian.PutUint16(data[0x208:], 0x001F) // ONCS
+	binary.LittleEndian.PutUint16(data[0x208:], 0x000C) // ONCS - Dataset Mgmt + Write Zeroes
 	binary.LittleEndian.PutUint16(data[0x20A:], 0x0000) // FUSES
 	data[0x20C] = 0x00                                  // FNA
 	data[0x20D] = 0x01                                  // VWC present

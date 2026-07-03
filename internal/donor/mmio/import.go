@@ -14,11 +14,27 @@ type TextTraceOptions struct {
 	BARIndex int
 	BARSize  int
 	BARBase  uint64
+	Format   TraceFormat
 }
+
+type TraceFormat string
+
+const (
+	TraceFormatAuto         TraceFormat = "auto"
+	TraceFormatLive         TraceFormat = "mmiotrace"
+	TraceFormatMMIO2Verilog TraceFormat = "mmio2verilog"
+)
 
 func ParseTextTrace(r io.Reader, opts TextTraceOptions) (*TraceResult, error) {
 	if r == nil {
 		return nil, fmt.Errorf("trace reader is nil")
+	}
+	format := opts.Format
+	if format == "" {
+		format = TraceFormatAuto
+	}
+	if !format.Valid() {
+		return nil, fmt.Errorf("unsupported trace format %q", format)
 	}
 
 	trace := &TraceResult{
@@ -31,7 +47,7 @@ func ParseTextTrace(r io.Reader, opts TextTraceOptions) (*TraceResult, error) {
 	var last time.Duration
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
-		rec, ok := parseTextTraceLine(scanner.Text(), opts.BARBase)
+		rec, ok := parseTextTraceLine(scanner.Text(), opts.BARBase, format)
 		if !ok {
 			continue
 		}
@@ -54,7 +70,11 @@ func ParseTextTrace(r io.Reader, opts TextTraceOptions) (*TraceResult, error) {
 	return trace, nil
 }
 
-func parseTextTraceLine(line string, barBase uint64) (AccessRecord, bool) {
+func (f TraceFormat) Valid() bool {
+	return f == TraceFormatAuto || f == TraceFormatLive || f == TraceFormatMMIO2Verilog
+}
+
+func parseTextTraceLine(line string, barBase uint64, format TraceFormat) (AccessRecord, bool) {
 	fields := strings.Fields(strings.TrimSpace(line))
 	if len(fields) < 5 {
 		return AccessRecord{}, false
@@ -70,7 +90,7 @@ func parseTextTraceLine(line string, barBase uint64) (AccessRecord, bool) {
 		return AccessRecord{}, false
 	}
 
-	addrField, valueField, ok := traceAddressValueFields(fields)
+	addrField, valueField, ok := traceAddressValueFields(fields, format)
 	if !ok {
 		return AccessRecord{}, false
 	}
@@ -93,11 +113,11 @@ func parseTextTraceLine(line string, barBase uint64) (AccessRecord, bool) {
 	return rec, true
 }
 
-func traceAddressValueFields(fields []string) (string, string, bool) {
-	if strings.HasPrefix(fields[3], "0x") {
+func traceAddressValueFields(fields []string, format TraceFormat) (string, string, bool) {
+	if format != TraceFormatMMIO2Verilog && strings.HasPrefix(fields[3], "0x") {
 		return fields[3], fields[4], true
 	}
-	if len(fields) >= 6 && strings.HasPrefix(fields[4], "0x") {
+	if format != TraceFormatLive && len(fields) >= 6 && strings.HasPrefix(fields[4], "0x") {
 		return fields[4], fields[5], true
 	}
 	return "", "", false

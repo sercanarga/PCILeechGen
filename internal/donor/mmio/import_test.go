@@ -36,6 +36,30 @@ func TestParseTextTrace_Ret2cShapeWithBARBase(t *testing.T) {
 	}
 }
 
+func TestParseTextTrace_RejectsLiveShapeWhenFormatIsMMIO2Verilog(t *testing.T) {
+	input := strings.NewReader("R 4 1234567.890 0xfee00100 0x00000001 extra\n")
+
+	_, err := ParseTextTrace(input, TextTraceOptions{
+		Format: TraceFormatMMIO2Verilog,
+	})
+
+	if err == nil {
+		t.Fatal("expected explicit MMIO2Verilog format to reject live trace shape")
+	}
+}
+
+func TestParseTextTrace_RejectsMMIO2VerilogShapeWhenFormatIsLive(t *testing.T) {
+	input := strings.NewReader("R 4 2456.105919 2 0xf780010c 0x4c02 0x0 0\n")
+
+	_, err := ParseTextTrace(input, TextTraceOptions{
+		Format: TraceFormatLive,
+	})
+
+	if err == nil {
+		t.Fatal("expected explicit live format to reject MMIO2Verilog trace shape")
+	}
+}
+
 func TestParseTextTrace_LiveTracePipeShape(t *testing.T) {
 	input := strings.NewReader("R 4 1234567.890 0xfee00100 0x00000001 extra\n")
 

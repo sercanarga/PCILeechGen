@@ -41,6 +41,12 @@ func ProfileForClass(classCode uint32) *DeviceProfile {
 	return StrategyForClass(classCode).Profile()
 }
 
+// ProfileForDevice is ProfileForClass with vendor/device context, letting
+// generation-specific classes (e.g. MegaRAID) report per-donor geometry.
+func ProfileForDevice(classCode uint32, vendorID, deviceID uint16) *DeviceProfile {
+	return StrategyForDevice(classCode, vendorID, deviceID).Profile()
+}
+
 // AllProfiles lists every known device profile.
 func AllProfiles() []*DeviceProfile {
 	return []*DeviceProfile{
@@ -50,6 +56,7 @@ func AllProfiles() []*DeviceProfile {
 		audioProfile(),
 		gpuProfile(),
 		sataProfile(),
+		raidProfile(),
 		wifiProfile(),
 		mediatekWifiProfile(),
 		thunderboltProfile(),

@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/sercanarga/pcileechgen/internal/donor/mmio"
 )
 
 func TestParseTraceBARBase(t *testing.T) {
@@ -28,7 +30,7 @@ func TestLoadMMIOTrace_FromTraceFile(t *testing.T) {
 		barIndex:  2,
 		barSize:   4096,
 		traceFile: tracePath,
-	}, 0xf7800000)
+	}, 0xf7800000, mmio.TraceFormatMMIO2Verilog)
 
 	if err != nil {
 		t.Fatalf("loadMMIOTrace returned error: %v", err)

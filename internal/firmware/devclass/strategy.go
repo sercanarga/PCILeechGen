@@ -7,6 +7,7 @@ const (
 	ClassAudio       = "audio"
 	ClassGPU         = "gpu"
 	ClassSATA        = "sata"
+	ClassRAID        = "raid"
 	ClassWiFi        = "wifi"
 	ClassThunderbolt = "thunderbolt"
 	ClassGeneric     = "generic"
@@ -16,7 +17,7 @@ const (
 func AllClasses() []string {
 	return []string{
 		ClassNVMe, ClassXHCI, ClassEthernet, ClassAudio, ClassGPU,
-		ClassSATA, ClassWiFi, ClassThunderbolt, ClassGeneric,
+		ClassSATA, ClassRAID, ClassWiFi, ClassThunderbolt, ClassGeneric,
 	}
 }
 
@@ -42,12 +43,19 @@ func (s *baseStrategy) Profile() *DeviceProfile { return s.profileFn() }
 // StrategyForClass returns a strategy for the given PCI class code.
 // Returns a generic fallback for unrecognized classes.
 func StrategyForClass(classCode uint32) DeviceStrategy {
-	return StrategyForClassAndVendor(classCode, 0)
+	return StrategyForDevice(classCode, 0, 0)
 }
 
 // StrategyForClassAndVendor returns a strategy based on class code and vendor ID.
 // vendor-specific dispatch is used for classes with multiple vendors (e.g. WiFi).
 func StrategyForClassAndVendor(classCode uint32, vendorID uint16) DeviceStrategy {
+	return StrategyForDevice(classCode, vendorID, 0)
+}
+
+// StrategyForDevice returns a strategy based on class code, vendor ID and device
+// ID. The device ID selects per-generation register geometry for classes that
+// need it (e.g. MegaRAID Gen2 MFI vs Gen3+ Fusion).
+func StrategyForDevice(classCode uint32, vendorID, deviceID uint16) DeviceStrategy {
 	baseClass := (classCode >> 16) & 0xFF
 	subClass := (classCode >> 8) & 0xFF
 
@@ -64,6 +72,8 @@ func StrategyForClassAndVendor(classCode uint32, vendorID uint16) DeviceStrategy
 		return &gpuStrategy{baseStrategy{"GPU", ClassGPU, gpuProfile}}
 	case baseClass == 0x01 && subClass == 0x06:
 		return &sataStrategy{baseStrategy{"SATA AHCI", ClassSATA, sataProfile}}
+	case baseClass == 0x01 && subClass == 0x04:
+		return newRAIDStrategy(deviceID)
 	case baseClass == 0x02 && subClass == 0x80:
 		return wifiStrategyForVendor(vendorID)
 	case baseClass == 0x0C && subClass == 0x80:

@@ -260,20 +260,88 @@ module pcileech_tlps128_bar_controller(
     wire [31:0] bar_rsp_data[7];
     wire        bar_rsp_valid[7];
 
+{{ if and (eq .DeviceClass "nvme") .NVMeIdentify }}
+    wire [31:0] nvme_debug_status;
+    wire [31:0] nvme_debug_last_cmd;
+    wire [31:0] nvme_debug_last_nsid;
+    wire [31:0] nvme_debug_last_cdw10;
+    wire [31:0] nvme_debug_queue_state;
+{{ end }}
+{{ if and (eq .DeviceClass "nvme") .NVMeIdentify .BARModel }}
+    // Diagnostic registers are read-only and sit immediately after all four
+    // admin + IO queue doorbells (SQ0/CQ0/SQ1/CQ1), using the same DSTRD spacing.
+    wire        nvme_diag_addr_hit = rd_req_valid && rd_req_bar[0] &&
+                                     (rd_req_addr_bar0 >= 32'h{{ printf "%08X" .NVMeDiagBaseOffset }}) &&
+                                     (rd_req_addr_bar0 <= 32'h{{ printf "%08X" .NVMeDiagQueueStateOffset }});
+    wire        nvme_diag_wr_addr_hit = wr_valid && wr_bar[0] &&
+                                        (wr_addr_bar0 >= 32'h{{ printf "%08X" .NVMeDiagBaseOffset }}) &&
+                                        (wr_addr_bar0 <= 32'h{{ printf "%08X" .NVMeDiagQueueStateOffset }});
+    wire [87:0] nvme_diag_ctx   = rd_req_ctx;
+    wire        nvme_diag_valid = nvme_diag_addr_hit;
+    reg  [31:0] nvme_diag_data;
+
+    always @(*) begin
+        case (rd_req_addr_bar0)
+            32'h{{ printf "%08X" .NVMeDiagBaseOffset }}: nvme_diag_data = nvme_debug_status;
+            32'h{{ printf "%08X" .NVMeDiagLastCommandOffset }}: nvme_diag_data = nvme_debug_last_cmd;
+            32'h{{ printf "%08X" .NVMeDiagLastNSIDOffset }}: nvme_diag_data = nvme_debug_last_nsid;
+            32'h{{ printf "%08X" .NVMeDiagLastCDW10Offset }}: nvme_diag_data = nvme_debug_last_cdw10;
+            32'h{{ printf "%08X" .NVMeDiagQueueStateOffset }}: nvme_diag_data = nvme_debug_queue_state;
+            default: nvme_diag_data = 32'h0;
+        endcase
+    end
+{{ end }}
+
 {{ if and .LatencyConfig .MSIXConfig }}
     // latency -> MSI-X mux -> bar_rsp[0]
+{{ if and (eq .DeviceClass "nvme") .NVMeIdentify .BARModel }}
+    assign bar_rsp_ctx[0]   = nvme_diag_valid ? nvme_diag_ctx :
+                              msix_rsp_valid ? msix_rsp_ctx   : bar0_base_ctx;
+    assign bar_rsp_data[0]  = nvme_diag_valid ? nvme_diag_data :
+                              msix_rsp_valid ? msix_rsp_data  : bar0_base_data;
+    assign bar_rsp_valid[0] = nvme_diag_valid || msix_rsp_valid || bar0_base_valid;
+{{ else }}
     assign bar_rsp_ctx[0]   = msix_rsp_valid ? msix_rsp_ctx   : bar0_base_ctx;
     assign bar_rsp_data[0]  = msix_rsp_valid ? msix_rsp_data  : bar0_base_data;
     assign bar_rsp_valid[0] = msix_rsp_valid || bar0_base_valid;
+{{ end }}
 {{ else if .LatencyConfig }}
+{{ if and (eq .DeviceClass "nvme") .NVMeIdentify .BARModel }}
+    assign bar_rsp_ctx[0]   = nvme_diag_valid ? nvme_diag_ctx : bar0_emu_ctx;
+    assign bar_rsp_data[0]  = nvme_diag_valid ? nvme_diag_data : bar0_emu_data;
+    assign bar_rsp_valid[0] = nvme_diag_valid || bar0_emu_valid;
+{{ else }}
     assign bar_rsp_ctx[0]   = bar0_emu_ctx;
     assign bar_rsp_data[0]  = bar0_emu_data;
     assign bar_rsp_valid[0] = bar0_emu_valid;
+{{ end }}
 {{ else if .MSIXConfig }}
     // MSI-X mux -> bar_rsp[0]
+{{ if and (eq .DeviceClass "nvme") .NVMeIdentify .BARModel }}
+    assign bar_rsp_ctx[0]   = nvme_diag_valid ? nvme_diag_ctx :
+                              msix_rsp_valid ? msix_rsp_ctx   : bar0_base_ctx;
+    assign bar_rsp_data[0]  = nvme_diag_valid ? nvme_diag_data :
+                              msix_rsp_valid ? msix_rsp_data  : bar0_base_data;
+    assign bar_rsp_valid[0] = nvme_diag_valid || msix_rsp_valid || bar0_base_valid;
+{{ else }}
     assign bar_rsp_ctx[0]   = msix_rsp_valid ? msix_rsp_ctx   : bar0_base_ctx;
     assign bar_rsp_data[0]  = msix_rsp_valid ? msix_rsp_data  : bar0_base_data;
     assign bar_rsp_valid[0] = msix_rsp_valid || bar0_base_valid;
+{{ end }}
+{{ else }}
+    // Neither latency nor MSI-X config — direct BAR0 passthrough.
+{{ if and (eq .DeviceClass "nvme") .NVMeIdentify .BARModel }}
+    wire [87:0] bar0_direct_ctx;
+    wire [31:0] bar0_direct_data;
+    wire        bar0_direct_valid;
+    assign bar_rsp_ctx[0]   = nvme_diag_valid ? nvme_diag_ctx  : bar0_direct_ctx;
+    assign bar_rsp_data[0]  = nvme_diag_valid ? nvme_diag_data : bar0_direct_data;
+    assign bar_rsp_valid[0] = nvme_diag_valid || bar0_direct_valid;
+{{ else }}
+    assign bar_rsp_ctx[0]   = 0;
+    assign bar_rsp_data[0]  = 32'h0;
+    assign bar_rsp_valid[0] = 1'b0;
+{{ end }}
 {{ end }}
 
     // response mux
@@ -318,10 +386,10 @@ module pcileech_tlps128_bar_controller(
         .wr_addr        ( {{ if .BARModel }}wr_addr_bar0{{ else }}wr_addr{{ end }}                       ),
         .wr_be          ( wr_be                         ),
         .wr_data        ( wr_data                       ),
-        .wr_valid       ( wr_valid && wr_bar[0]         ),
+        .wr_valid       ( wr_valid && wr_bar[0]{{ if and (eq .DeviceClass "nvme") .NVMeIdentify .BARModel }} && !nvme_diag_wr_addr_hit{{ end }} ),
         .rd_req_ctx     ( rd_req_ctx                    ),
         .rd_req_addr    ( {{ if .BARModel }}rd_req_addr_bar0{{ else }}rd_req_addr{{ end }}                   ),
-        .rd_req_valid   ( rd_req_valid && rd_req_bar[0]{{ if .MSIXConfig }} && !msix_addr_hit{{ end }} ),
+        .rd_req_valid   ( rd_req_valid && rd_req_bar[0]{{ if .MSIXConfig }} && !msix_addr_hit{{ end }}{{ if and (eq .DeviceClass "nvme") .NVMeIdentify .BARModel }} && !nvme_diag_addr_hit{{ end }} ),
 {{ if .LatencyConfig }}
         .rd_rsp_ctx     ( bar0_raw_ctx                  ),
         .rd_rsp_data    ( bar0_raw_data                 ),
@@ -331,9 +399,15 @@ module pcileech_tlps128_bar_controller(
         .rd_rsp_data    ( bar0_base_data                ),
         .rd_rsp_valid   ( bar0_base_valid               )
 {{ else }}
+{{ if and (eq .DeviceClass "nvme") .NVMeIdentify .BARModel }}
+        .rd_rsp_ctx     ( bar0_direct_ctx               ),
+        .rd_rsp_data    ( bar0_direct_data              ),
+        .rd_rsp_valid   ( bar0_direct_valid             )
+{{ else }}
         .rd_rsp_ctx     ( bar_rsp_ctx[0]                ),
         .rd_rsp_data    ( bar_rsp_data[0]               ),
         .rd_rsp_valid   ( bar_rsp_valid[0]              )
+{{ end }}
 {{ end }}
 {{ if and (eq .DeviceClass "nvme") .BARModel }}        ,
         .nvme_cc        ( nvme_reg_cc                   ),
@@ -632,7 +706,12 @@ module pcileech_tlps128_bar_controller(
         .dma_wr_done        ( nvme_dma_wr_done              ),
         .msix_trigger       ( nvme_msix_trigger             ),
         .id_rom_addr        ( nvme_id_rom_addr              ),
-        .id_rom_data        ( nvme_id_rom_data              )
+        .id_rom_data        ( nvme_id_rom_data              ),
+        .debug_status       ( nvme_debug_status             ),
+        .debug_last_cmd     ( nvme_debug_last_cmd           ),
+        .debug_last_nsid    ( nvme_debug_last_nsid          ),
+        .debug_last_cdw10   ( nvme_debug_last_cdw10         ),
+        .debug_queue_state  ( nvme_debug_queue_state        )
     );
 
     // this guy does the real PCIe legwork
