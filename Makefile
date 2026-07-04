@@ -1,4 +1,4 @@
-.PHONY: build test lint clean install fixtures hdl-lint
+.PHONY: build test lint clean install fixtures hdl-lint early-access
 
 BINARY_NAME=pcileechgen
 BUILD_DIR=bin
@@ -30,6 +30,7 @@ lint:
 clean:
 	rm -rf $(BUILD_DIR)
 	rm -f coverage.out coverage.html
+	rm -f PCILeechGen-EarlyAccess-*.zip
 
 # generate synthetic donor fixture jsons
 fixtures: build
@@ -58,3 +59,17 @@ release-build:
 
 # Run all checks (vet + lint + test)
 check: vet lint test
+
+# Early access
+EARLYACCESS_NAME  ?= PCILeechGen-EarlyAccess
+EARLYACCESS_STAMP ?= $(shell date +%m%d%y)
+EARLYACCESS_ZIP   ?= $(EARLYACCESS_NAME)-$(EARLYACCESS_STAMP).zip
+
+early-access:
+	@rm -f "$(EARLYACCESS_ZIP)"
+	@zip -r "$(EARLYACCESS_ZIP)" . \
+		-x '.git/*' 'analysis/*' 'bin/*' 'dist/*' 'pcileech_datastore/*' \
+		   '*.zip' '.DS_Store' '*/.DS_Store' '.idea/*' '.vscode/*' \
+		   'coverage.out' 'coverage.html' '*.swp' '*.swo' '*~' \
+		> /dev/null
+	@echo "$(EARLYACCESS_ZIP)"

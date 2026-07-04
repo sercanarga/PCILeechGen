@@ -30,6 +30,7 @@ coverage.html
 *~
 
 /analysis/
+PCILeechGen-EarlyAccess-*.zip
 
 # OS
 .DS_Store
