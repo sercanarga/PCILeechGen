@@ -134,8 +134,9 @@ func TestBuildBARModel_XHCI_PORTSC(t *testing.T) {
 			portFound++
 		}
 	}
-	// barmodel builder may not have PORTSC - that's in the profile only.
-	// but the profile builder (xhci.go) does include them.
+	if portFound != 2 {
+		t.Errorf("expected PORTSC1+PORTSC2 in xHCI model, found %d", portFound)
+	}
 }
 
 func TestBuildBARModel_XHCI_AllRegisters(t *testing.T) {

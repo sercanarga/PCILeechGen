@@ -59,7 +59,7 @@ func (b *Board) BRAM36Capacity() int {
 	case strings.Contains(p, "7a100t"):
 		return 135
 	case strings.Contains(p, "7a75t"):
-		return 135
+		return 105
 	case strings.Contains(p, "7a50t"):
 		return 65
 	case strings.Contains(p, "7a35t"):

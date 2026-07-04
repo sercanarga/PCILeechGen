@@ -29,6 +29,8 @@ coverage.html
 *.swo
 *~
 
+/analysis/
+
 # OS
 .DS_Store
 Thumbs.db

@@ -189,17 +189,15 @@ func TestIdentifyDataToHex_Size(t *testing.T) {
 	if len(hex) == 0 {
 		t.Fatal("IdentifyDataToHex returned empty string")
 	}
-	// Should contain 2048 data lines (8KB / 4 bytes per line)
-	// plus 2 header comment lines
+	// 4 KB Identify Controller only (1024 data lines); namespace is runtime-generated.
 	lines := 0
 	for _, c := range hex {
 		if c == '\n' {
 			lines++
 		}
 	}
-	// 2 comment lines + 2048 data lines = 2050
-	if lines != 2050 {
-		t.Errorf("expected 2050 lines, got %d", lines)
+	if lines != 1024 {
+		t.Errorf("expected 1024 lines, got %d", lines)
 	}
 }
 

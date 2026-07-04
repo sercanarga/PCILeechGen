@@ -976,6 +976,8 @@ module pcileech_nvme_admin_responder #(
                                     end
                                 end
                                 default: begin
+                                    // Unhandled IO opcode -> Invalid Command Opcode (SC=0x01).
+                                    cqe_status <= 15'h0001;
                                     state <= S_BUILD_CQE;
                                 end
                             endcase
@@ -1141,6 +1143,8 @@ module pcileech_nvme_admin_responder #(
                                 end
 
                                 default: begin
+                                    // Unhandled admin opcode -> Invalid Command Opcode (SC=0x01).
+                                    cqe_status <= 15'h0001;
                                     state <= S_BUILD_CQE;
                                 end
                             endcase

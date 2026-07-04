@@ -11,6 +11,7 @@ import (
 	"github.com/sercanarga/pcileechgen/internal/donor"
 	"github.com/sercanarga/pcileechgen/internal/firmware"
 	"github.com/sercanarga/pcileechgen/internal/firmware/devclass"
+	"github.com/sercanarga/pcileechgen/internal/firmware/nvme"
 )
 
 // projectTCLData holds template data for Vivado project generation.
@@ -173,7 +174,7 @@ func GenerateProjectTCL(ctx *donor.DeviceContext, b *board.Board, libDir string,
 		data.MSIXTableBIR = barBIRToTCL(bir, is64)
 		dstrd := uint32(0)
 		if bar0d := firmware.LargestBar(ctx.BARContents); len(bar0d) >= 8 {
-			dstrd = binary.LittleEndian.Uint32(bar0d[4:8]) & 0x0F
+			dstrd = nvme.DoorbellStrideFromCAP(binary.LittleEndian.Uint32(bar0d[4:8]))
 		}
 		tableOff, pbaOffset, _ := firmware.MSIXPlacement(bar0Size, ctx.MSIXData.TableSize, ctx.Device.ClassCode, dstrd)
 		data.MSIXTableOffset = fmt.Sprintf("%08X", tableOff)

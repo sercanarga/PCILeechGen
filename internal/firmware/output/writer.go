@@ -436,6 +436,12 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 	// Use the same BAR index for content data and probe profile to avoid
 	// mismatched register maps (e.g. IO BAR0 profile + MMIO BAR2 data).
 	barIdx := firmware.LargestBarIndex(ctx.BARContents)
+	// NVMe CAP/VS/CC/CSTS live in BAR0; force it even when BAR0 isn't the largest.
+	if ctx.Device.ClassCode == devclass.ClassCodeNVMe {
+		if _, ok := ctx.BARContents[0]; ok {
+			barIdx = 0
+		}
+	}
 	barData := ctx.BARContents[barIdx]
 	var barProfile *donor.BARProfile
 	if ctx.BARProfiles != nil {
@@ -505,8 +511,7 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 		cfg.NVMeIdentify = nvme.BuildIdentifyData(ids, barData, identity)
 		cfg.NVMeSMART = nvme.BuildSMART()
 		if len(barData) >= 0x08 {
-			capHI := util.ReadLE32(barData, 0x04)
-			cfg.NVMeDoorbellStride = capHI & 0x0F
+			cfg.NVMeDoorbellStride = nvme.DoorbellStrideFromCAP(util.ReadLE32(barData, 0x04))
 		}
 		// refuse early if board can't fit a cache
 		cfg.NVMeDiskWords = svgen.NVMeDiskWordsForBRAM36(b.BRAM36Capacity())
@@ -520,12 +525,10 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 	}
 
 	if ctx.MSIXData != nil && ctx.MSIXData.TableSize > 0 {
-		class := uint32(0)
-		if devClass == devclass.ClassNVMe {
-			class = 0x0108
-		}
-		dstrd := cfg.NVMeDoorbellStride
-		tableOff, pbaOffset, _ := firmware.MSIXPlacement(cfg.Bar0Size, ctx.MSIXData.TableSize, class, dstrd)
+		// Pass the full class code: MSIXPlacement detects NVMe via
+		// (class>>8)==0x0108, so the truncated 0x0108 would skip the
+		// doorbell-avoidance guard.
+		tableOff, pbaOffset, _ := firmware.MSIXPlacement(cfg.Bar0Size, ctx.MSIXData.TableSize, ctx.Device.ClassCode, cfg.NVMeDoorbellStride)
 		cfg.MSIXConfig = &svgen.MSIXConfig{
 			NumVectors:  ctx.MSIXData.TableSize,
 			TableOffset: tableOff,

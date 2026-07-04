@@ -1,5 +1,9 @@
 package devclass
 
+// ClassCodeNVMe is the 24-bit PCI class code for an NVMe controller
+// (base 0x01 / sub 0x08 / progIF 0x02).
+const ClassCodeNVMe uint32 = 0x010802
+
 const (
 	ClassNVMe        = "nvme"
 	ClassXHCI        = "xhci"

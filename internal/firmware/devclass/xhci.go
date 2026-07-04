@@ -7,6 +7,12 @@ import (
 
 type xhciStrategy struct{ baseStrategy }
 
+// xHCI port status/control: powered port (PP=bit9), no device attached.
+const (
+	XHCIPortscReset  uint32 = 0x000002A0
+	XHCIPortscRWMask uint32 = 0x8EFFC3F2
+)
+
 func (s *xhciStrategy) ScrubBAR(data []byte) {
 	if len(data) < 0x28 {
 		return
@@ -98,10 +104,8 @@ func xhciProfile() *DeviceProfile {
 			{Offset: 0x54, Width: 4, Name: "DCBAAP_HI", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
 			// CONFIG - max device slots enabled
 			{Offset: 0x58, Width: 4, Name: "CONFIG", Reset: 0x00000000, RWMask: 0x000000FF},
-			// PORTSC1 - port 1 status/control (powered, no device)
-			{Offset: 0x420, Width: 4, Name: "PORTSC1", Reset: 0x000002A0, RWMask: 0x8EFFC3F2},
-			// PORTSC2 - port 2 status/control
-			{Offset: 0x430, Width: 4, Name: "PORTSC2", Reset: 0x000002A0, RWMask: 0x8EFFC3F2},
+			{Offset: 0x420, Width: 4, Name: "PORTSC1", Reset: XHCIPortscReset, RWMask: XHCIPortscRWMask},
+			{Offset: 0x430, Width: 4, Name: "PORTSC2", Reset: XHCIPortscReset, RWMask: XHCIPortscRWMask},
 		},
 
 		Notes: "xHCI 1.1 profile. HCCPARAMS1 bit 0 = AC64 (64-bit capable). " +

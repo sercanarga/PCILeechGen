@@ -39,27 +39,18 @@ type SVGeneratorConfig struct {
 	Bar0Size           int
 }
 
-// NVMeDiskWordsForBRAM36 returns a board-scaled disk-cache depth (32-bit words)
-// for bram36 RAMB36 blocks, or 0 if the board can't fit a useful cache.
+// NVMeDiskWordsForBRAM36 returns the NVMe disk-cache depth in 32-bit words for
+// an FPGA with bram36 RAMB36 blocks, or 0 if the board cannot fit a useful
+// cache. Pinned per part to stay within BRAM budget.
 func NVMeDiskWordsForBRAM36(bram36 int) int {
-	const (
-		maxWords  = 32768
-		minWords  = 8192 // smallest cache that still pins metadata
-		rambWords = 1024 // 32-bit words per RAMB36 (1Kx32)
-		reserve   = 125  // PCIe hard block + base/NVMe logic; remainder caches disk
-	)
-	if bram36 <= reserve {
+	switch {
+	case bram36 >= 365: // 200T -> 32 KiB
+		return 32768
+	case bram36 >= 105: // 75T/100T -> 8 KiB
+		return 8192
+	default: // 35T/50T: too small for a disk cache
 		return 0
 	}
-	budget := min((bram36-reserve)*rambWords, maxWords)
-	v := 128
-	for v*2 <= budget {
-		v *= 2
-	}
-	if v < minWords {
-		return 0
-	}
-	return v
 }
 
 // DonorCapabilities summarizes parsed capabilities from donor config space.

@@ -779,13 +779,13 @@ module pcileech_tlps128_bar_controller(
         .dbg_status         ( nvme_dma_dbg_status           )
     );
 
-    // identify data ROM - loaded from hex at synthesis, read with 1-cycle latency
-    reg [31:0] nvme_identify_rom [0:2047];
+    // 4 KB Identify Controller ROM (1024 words); Namespace is generated at runtime by the responder.
+    reg [31:0] nvme_identify_rom [0:1023];
     initial $readmemh("identify_init.hex", nvme_identify_rom);
 
     reg [31:0] nvme_id_rom_data_r;
     always @(posedge clk)
-        nvme_id_rom_data_r <= nvme_identify_rom[nvme_id_rom_addr[12:2]];
+        nvme_id_rom_data_r <= nvme_identify_rom[nvme_id_rom_addr[11:2]];
     assign nvme_id_rom_data = nvme_id_rom_data_r;
 
 // FIFO buffers DMA bridge TLPs before muxing onto tlps_out.

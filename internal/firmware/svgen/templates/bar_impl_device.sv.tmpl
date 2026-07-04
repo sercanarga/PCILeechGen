@@ -134,9 +134,9 @@ module pcileech_bar_impl_device #(
         end else begin
             rs_prev <= reg_0x00000020[0]; // USBCMD.R/S
 
-            // MMIO write forwarding for USBCMD (RWMask=0x00002F0E)
+            // USBCMD byte-0 mask must include R/S (bit 0); dropping it breaks halt/run + HCRST sequencing.
             if (wr_valid && (wr_addr[31:0] & 32'hFFFFFFFC) == 32'h00000020 && !hcrst_pending) begin
-                if (wr_be[0]) reg_0x00000020[7:0]   <= (reg_0x00000020[7:0]   & ~8'h0E) | (wr_data[7:0]   & 8'h0E);
+                if (wr_be[0]) reg_0x00000020[7:0]   <= (reg_0x00000020[7:0]   & ~8'h0F) | (wr_data[7:0]   & 8'h0F);
                 if (wr_be[1]) reg_0x00000020[15:8]  <= (reg_0x00000020[15:8]  & ~8'h2F) | (wr_data[15:8]  & 8'h2F);
             end
 

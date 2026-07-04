@@ -63,7 +63,7 @@ func specBARModelForClass(classCode uint32, barData []byte) *BARModel {
 		return buildNVMeBARModel(barData)
 	case baseClass == 0x0C && subClass == 0x03 && progIF == 0x30:
 		return buildXHCIBARModel(barData)
-	case baseClass == 0x02:
+	case baseClass == 0x02 && subClass == 0x00:
 		return buildEthernetBARModel(barData)
 	case baseClass == 0x04 && subClass == 0x03:
 		return buildAudioBARModel(barData)
@@ -224,6 +224,9 @@ func buildXHCIBARModel(barData []byte) *BARModel {
 		{Offset: 0x54, Width: 4, Name: "DCBAAP_HI", RWMask: 0xFFFFFFFF},
 		// Configure (CONFIG)
 		{Offset: 0x58, Width: 4, Name: "CONFIG", RWMask: 0x000000FF},
+		// PORTSC1/2: powered port (PP=bit9) so the host sees a usable port.
+		{Offset: 0x420, Width: 4, Name: "PORTSC1", Reset: devclass.XHCIPortscReset, RWMask: devclass.XHCIPortscRWMask},
+		{Offset: 0x430, Width: 4, Name: "PORTSC2", Reset: devclass.XHCIPortscReset, RWMask: devclass.XHCIPortscRWMask},
 	}
 
 	populateResetValues(regs, barData)
@@ -235,6 +238,8 @@ func buildXHCIBARModel(barData []byte) *BARModel {
 			regs[i].Reset |= 0x00000001 // R/S bit
 		case 0x24: // USBSTS
 			regs[i].Reset &^= 0x00000001 // clear HCH (halted)
+		case 0x420, 0x430: // populateResetValues clobbers from donor data; re-force the powered reset.
+			regs[i].Reset = devclass.XHCIPortscReset
 		}
 	}
 
