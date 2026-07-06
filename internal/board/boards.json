@@ -98,7 +98,8 @@
         "project_dir": "ZDMA",
         "tcl_file": "vivado_generate_project_100t.tcl",
         "build_tcl": "vivado_build_100t.tcl",
-        "source_sub_dir": "100T"
+        "source_sub_dir": "100T",
+        "import_v_files": true
     },
     {
         "name": "GBOX",
@@ -107,7 +108,8 @@
         "max_link_speed": 2,
         "top_module": "pcileech_gbox_top",
         "project_dir": "GBOX",
-        "tcl_file": "vivado_generate_project.tcl"
+        "tcl_file": "vivado_generate_project.tcl",
+        "import_v_files": true
     },
     {
         "name": "NeTV2_35T",

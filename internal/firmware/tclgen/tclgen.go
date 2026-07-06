@@ -41,6 +41,7 @@ type projectTCLData struct {
 	Bar064bit    bool
 	Bar0ByteSize int
 	StockBar     bool
+	ImportVFiles bool
 
 	DSNEnabled       bool
 	MSICapVectorsStr string
@@ -162,6 +163,7 @@ func GenerateProjectTCL(ctx *donor.DeviceContext, b *board.Board, libDir string,
 		Bar064bit:        bar0.Is64bit,
 		Bar0ByteSize:     bar0Size,
 		StockBar:         stockBar,
+		ImportVFiles:     b.ImportVFiles,
 		DSNEnabled:       ids.HasDSN,
 		MSICapVectorsStr: msiVectorsToTCL(msiVectors),
 	}

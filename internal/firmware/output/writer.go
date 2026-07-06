@@ -214,6 +214,10 @@ func (ow *OutputWriter) patchSVSources(b *board.Board, ids firmware.DeviceIDs) e
 		return fmt.Errorf("board sources not found at %s (is the pcileech-fpga submodule initialized?)", srcDir)
 	}
 
+	if err := os.RemoveAll(dstDir); err != nil {
+		return fmt.Errorf("failed to clear stale src dir %s: %w", dstDir, err)
+	}
+
 	// Copy board sources to local src/ (excluding the top-level bar controller
 	// when generating custom version). The generated vivado_generate_project.tcl
 	// now globs from this local dir so the donor-custom controller is used

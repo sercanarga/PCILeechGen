@@ -57,8 +57,42 @@ func TestGenerateProjectTCL(t *testing.T) {
 	if strings.Contains(tcl, "MORE OPTIONS") {
 		t.Error("TCL should not use MORE OPTIONS for seed")
 	}
-	if !strings.Contains(tcl, "src/*.v") {
-		t.Error("TCL should glob src/*.v (ZDMA/GBOX ship pcileech_com as pcileech_com_e.v)")
+	if strings.Contains(tcl, "src/*.v") {
+		t.Error("TCL must NOT glob src/*.v for ImportVFiles=false (default); that risks binding a stale pcileech_com_e.v netlist over pcileech_com.sv")
+	}
+	if !strings.Contains(tcl, "set v_files") {
+		t.Error("TCL must define `set v_files` even when empty (concat references it)")
+	}
+}
+
+func TestGenerateProjectTCL_ImportVFiles(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	ctx := &donor.DeviceContext{
+		Device:      pci.PCIDevice{VendorID: 0x8086, DeviceID: 0x1533, ClassCode: 0x020000},
+		ConfigSpace: cs,
+	}
+
+	// ImportVFiles=true ZDMA/GBOX
+	bOn := &board.Board{
+		Name:         "ZDMA",
+		FPGAPart:     "xc7a100tfgg484-2",
+		TopModule:    "pcileech_tbx4_100t_top",
+		ImportVFiles: true,
+	}
+	tclOn := GenerateProjectTCL(ctx, bOn, "/tmp/lib", false)
+	if !strings.Contains(tclOn, "src/*.v") {
+		t.Error("ImportVFiles=true: TCL must glob src/*.v (board ships pcileech_com_e.v netlist)")
+	}
+
+	bOff := &board.Board{
+		Name:      "CaptainDMA_75T",
+		FPGAPart:  "xc7a75tfgg484-2",
+		TopModule: "pcileech_75t484_x1_top",
+	}
+	tclOff := GenerateProjectTCL(ctx, bOff, "/tmp/lib", false)
+	if strings.Contains(tclOff, "src/*.v") {
+		t.Error("ImportVFiles=false: TCL must NOT glob src/*.v")
 	}
 }
 

@@ -23,6 +23,8 @@ type Board struct {
 	SourceSubDir string `json:"source_sub_dir"`
 	TCLFile      string `json:"tcl_file"`
 	BuildTCL     string `json:"build_tcl"`
+	// ImportVFiles import src/*.v. Only ZDMA/GBOX
+	ImportVFiles bool `json:"import_v_files"`
 }
 
 // String returns the board name.
