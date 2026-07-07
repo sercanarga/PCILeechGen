@@ -7,19 +7,7 @@ import (
 	"testing"
 )
 
-// These tests exercise the diagnostics surface (diagnostics.go) using the
-// package's own fake-sysfs seam (SetSysfsBase / ResetSysfsBase), the same
-// pattern used by the neighbouring tests in vfio_test.go. No hardware is
-// touched.
-//
-// Note on the two live-host checks: RunDiagnostics calls CheckIOMMU and
-// CheckVFIOModules, which read the *real* /sys/kernel/iommu_groups and
-// /sys/module/* paths (not sysfsBase), so their outcome depends on the host
-// the tests run on. We therefore locate results by Name and only assert on
-// the sysfsBase-controlled checks (IOMMU Group, Group Isolation, Power State,
-// Driver, BARn).
-
-// findDiag returns the DiagnosticResult with the given Name from results.
+// RunDiagnostics includes host-dependent checks, so tests assert by result name.
 func findDiag(results []DiagnosticResult, name string) (DiagnosticResult, bool) {
 	for _, r := range results {
 		if r.Name == name {
@@ -29,8 +17,6 @@ func findDiag(results []DiagnosticResult, name string) (DiagnosticResult, bool) 
 	return DiagnosticResult{}, false
 }
 
-// mkFakeDev creates a fake device directory under base for bdf and returns
-// its path. The returned dir is the handle the other helpers take.
 func mkFakeDev(t *testing.T, base, bdf string) string {
 	t.Helper()
 	devDir := filepath.Join(base, bdf)
@@ -40,9 +26,6 @@ func mkFakeDev(t *testing.T, base, bdf string) string {
 	return devDir
 }
 
-// symlinkDriver creates a fake driver dir named driver under base and points
-// <devDir>/driver at it (so IsBoundToVFIO / BoundDriver resolve it). bdf is
-// derived from devDir's basename.
 func symlinkDriver(t *testing.T, base, devDir, driver string) {
 	t.Helper()
 	dir := filepath.Join(base, "drivers", driver)
@@ -54,10 +37,6 @@ func symlinkDriver(t *testing.T, base, devDir, driver string) {
 	}
 }
 
-// symlinkIOMMUGroup points <devDir>/iommu_group at <base>/iommu_groups/<group>,
-// creates that group's devices/ dir, and adds the device (bdf, derived from
-// devDir) plus each peer into devices/ so GetIOMMUGroup / ListIOMMUGroupDevices
-// resolve correctly.
 func symlinkIOMMUGroup(t *testing.T, base, devDir string, group int, peers ...string) {
 	t.Helper()
 	bdf := filepath.Base(devDir)
@@ -89,7 +68,6 @@ func TestListIOMMUGroupDevices_NoGroup(t *testing.T) {
 
 	mkFakeDev(t, tmpDir, "0000:03:00.0")
 
-	// No iommu_group symlink -> ListIOMMUGroupDevices must error.
 	devs, err := ListIOMMUGroupDevices("0000:03:00.0")
 	if err == nil {
 		t.Fatal("expected error when iommu_group/devices is missing")
@@ -106,8 +84,9 @@ func TestListIOMMUGroupDevices_Populated(t *testing.T) {
 
 	bdf := "0000:03:00.0"
 	devDir := mkFakeDev(t, tmpDir, bdf)
-	mkFakeDev(t, tmpDir, "0000:03:00.1") // peer exists as a symlink target
-	symlinkIOMMUGroup(t, tmpDir, devDir, 42, "0000:03:00.1")
+	peer := "0000:03:00.1"
+	mkFakeDev(t, tmpDir, peer)
+	symlinkIOMMUGroup(t, tmpDir, devDir, 42, peer)
 
 	devs, err := ListIOMMUGroupDevices(bdf)
 	if err != nil {
@@ -134,15 +113,12 @@ func TestCheckBARAccessibility_SkipsDisabledAndMissing(t *testing.T) {
 	bdf := "0000:03:00.0"
 	devDir := mkFakeDev(t, tmpDir, bdf)
 
-	// resource0: present and non-empty -> accessible.
 	if err := os.WriteFile(filepath.Join(devDir, "resource0"), make([]byte, 4096), 0644); err != nil {
 		t.Fatal(err)
 	}
-	// resource1: present but size 0 -> disabled, must be skipped.
 	if err := os.WriteFile(filepath.Join(devDir, "resource1"), []byte{}, 0644); err != nil {
 		t.Fatal(err)
 	}
-	// resource2..resource5: absent -> skipped via Stat error.
 
 	results := CheckBARAccessibility(bdf)
 	if len(results) != 1 {
@@ -166,7 +142,7 @@ func TestRunDiagnostics_AloneD0BoundToVFIO(t *testing.T) {
 
 	bdf := "0000:03:00.0"
 	devDir := mkFakeDev(t, tmpDir, bdf)
-	symlinkIOMMUGroup(t, tmpDir, devDir, 30) // alone in group 30
+	symlinkIOMMUGroup(t, tmpDir, devDir, 30)
 	symlinkDriver(t, tmpDir, devDir, "vfio-pci")
 	if err := os.WriteFile(filepath.Join(devDir, "power_state"), []byte("D0\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -177,7 +153,6 @@ func TestRunDiagnostics_AloneD0BoundToVFIO(t *testing.T) {
 
 	results := RunDiagnostics(bdf)
 
-	// IOMMU Group is sysfsBase-controlled here (fake iommu_group symlink).
 	if r, ok := findDiag(results, "IOMMU Group"); !ok {
 		t.Fatal("missing IOMMU Group result")
 	} else if !r.Passed || r.Message != "group 30" {
@@ -271,7 +246,7 @@ func TestRunDiagnostics_NativeDriverBound(t *testing.T) {
 	bdf := "0000:03:00.0"
 	devDir := mkFakeDev(t, tmpDir, bdf)
 	symlinkIOMMUGroup(t, tmpDir, devDir, 30)
-	symlinkDriver(t, tmpDir, devDir, "nvme") // native driver, not vfio-pci
+	symlinkDriver(t, tmpDir, devDir, "nvme")
 
 	results := RunDiagnostics(bdf)
 	r, ok := findDiag(results, "Driver")
@@ -297,7 +272,6 @@ func TestRunDiagnostics_NoDriverBound(t *testing.T) {
 	bdf := "0000:03:00.0"
 	devDir := mkFakeDev(t, tmpDir, bdf)
 	symlinkIOMMUGroup(t, tmpDir, devDir, 30)
-	// no driver symlink -> ready for vfio-pci
 
 	results := RunDiagnostics(bdf)
 	r, ok := findDiag(results, "Driver")
@@ -320,7 +294,6 @@ func TestRunDiagnostics_MissingPowerStateOmitsEntry(t *testing.T) {
 	bdf := "0000:03:00.0"
 	devDir := mkFakeDev(t, tmpDir, bdf)
 	symlinkIOMMUGroup(t, tmpDir, devDir, 30)
-	// deliberately no power_state file
 
 	results := RunDiagnostics(bdf)
 	if _, ok := findDiag(results, "Power State"); ok {
