@@ -59,10 +59,7 @@ func TestGenerateWritemaskCOE(t *testing.T) {
 		t.Errorf("IntLine/IntPin mask should be 000000ff, got %s", dwords[15])
 	}
 
-	// capability region (0x40-0xFF) must be fully writable.
-	// the writemask only controls shadow BRAM; the Xilinx IP core
-	// processes config writes independently. locking here would create
-	// a dangerous BRAM/IP-core state mismatch.
+	// capability region (0x40-0xFF) must be fully writable; locking desyncs shadow BRAM from the IP core.
 	for i := 0x40 / 4; i < 0x100/4; i++ {
 		if dwords[i] != "ffffffff" {
 			t.Errorf("cap region DWORD[%d] should be ffffffff, got %s", i, dwords[i])
@@ -206,6 +203,42 @@ func TestWritemask_MultipleBARs(t *testing.T) {
 	}
 	if dwords[6] != "ffff0000" {
 		t.Errorf("BAR2 mask = %s, want ffff0000", dwords[6])
+	}
+}
+
+func TestWritemask_64BitMemoryBARPair(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	// 64-bit non-prefetchable memory BAR: lower dword type bits [2:1]=10b (0x4)
+	cs.WriteU32(0x10, 0xFFFFFFF4) // BAR0 lower dword (64-bit, address bits set)
+	cs.WriteU32(0x14, 0x00000000) // BAR1 upper dword
+
+	wm := GenerateWritemaskCOE(cs)
+	dwords := parseCOEDwords(t, wm)
+
+	if dwords[4] != "fffffff0" {
+		t.Errorf("BAR0 lower dword mask = %s, want fffffff0 (type bits [3:0] read-only)", dwords[4])
+	}
+	if dwords[5] != "ffffffff" {
+		t.Errorf("BAR1 upper dword mask = %s, want ffffffff (64-bit upper dword is pure address)", dwords[5])
+	}
+}
+
+func TestWritemask_64BitPrefetchableMemoryBARPair(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	// 64-bit prefetchable memory BAR: type bits [3:0]=0xC (prefetch + 64-bit)
+	cs.WriteU32(0x18, 0xFFFFFFFC) // BAR2 lower dword
+	cs.WriteU32(0x1C, 0x12345678) // BAR3 upper dword (nonzero, must still be fully writable)
+
+	wm := GenerateWritemaskCOE(cs)
+	dwords := parseCOEDwords(t, wm)
+
+	if dwords[6] != "fffffff0" {
+		t.Errorf("BAR2 lower dword mask = %s, want fffffff0", dwords[6])
+	}
+	if dwords[7] != "ffffffff" {
+		t.Errorf("BAR3 upper dword mask = %s, want ffffffff", dwords[7])
 	}
 }
 

@@ -379,6 +379,27 @@ func TestDeriveVER(t *testing.T) {
 	})
 }
 
+func TestDoorbellStrideFromCAP(t *testing.T) {
+	cases := []struct {
+		name  string
+		capHi uint32
+		want  uint32
+	}{
+		{"DSTRD=0 stride 4B", 0x00000000, 0},
+		{"DSTRD=2 stride 16B", 0x00000002, 2},
+		{"DSTRD=5", 0x00000005, 5},
+		{"isolated from MPSMIN/CSS high bits", 0x000F0002, 2},
+		{"max DSTRD=15", 0x0000000F, 15},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := DoorbellStrideFromCAP(c.capHi); got != c.want {
+				t.Errorf("DoorbellStrideFromCAP(0x%08X): got %d, want %d", c.capHi, got, c.want)
+			}
+		})
+	}
+}
+
 // Raw donor Controller blob: SSVID, OAES, CTRATT also forced.
 func TestBuildIdentifyData_RawControllerOverridesAllForced(t *testing.T) {
 	ids := sampleIDs()

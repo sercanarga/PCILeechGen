@@ -1,15 +1,11 @@
 //
-// HDA RIRB DMA Bridge
-// Writes fake RIRB responses to system memory at the address programmed
-// in RIRBLBASE/RIRBUBASE so hdaudio.sys can read codec responses.
+// HDA RIRB DMA Bridge: writes RIRB responses to system memory (RIRBLBASE/RIRBUBASE)
+// since hdaudio.sys reads from the DMA buffer, not MMIO regs 0x70/0x78.
 //
-// Without this, the BAR module writes responses to MMIO registers (0x70/0x78)
-// that hdaudio.sys never reads — it expects responses in the DMA buffer.
-//
-// RIRB buffer entry format (8 bytes per entry, LE):
-//   offset+0 [3:0]   = response type (1=VERB response, 2=unsolicited)
-//   offset+0 [31:4]  = NID (Node ID)
-//   offset+4 [31:0]  = response payload (28-bit codec data)
+// RIRB entry format (8 bytes, LE):
+//   offset+0 [3:0]  = response type (1=VERB, 2=unsolicited)
+//   offset+0 [31:4] = NID
+//   offset+4 [31:0] = response payload (28-bit codec data)
 //
 
 `timescale 1ns / 1ps
@@ -20,8 +16,7 @@ module pcileech_hda_rirb_dma(
 
     input [15:0]        pcie_id,        // our BDF, goes into requester ID
 
-    // CRST falling edge: HDA controller reset. Reset bridge to IDLE to
-    // prevent stale TLP transmission during device re-enumeration.
+    // CRST falling edge: HDA reset; reset bridge to IDLE to avoid stale TLPs during re-enumeration.
     input               crst_falling,
 
     // handshaking with BAR module
@@ -63,6 +58,9 @@ module pcileech_hda_rirb_dma(
     reg [19:0] d_tlp_timeout;       // backpressure timeout counter (max 1M cycles = ~8ms)
     reg        d_tlp_timed_out;     // timeout flag
 
+    // Reorder Xilinx pcie_id {func,dev,bus} -> PCIe Requester ID {bus,dev,func}.
+    wire [15:0] pcie_id_fmt = {pcie_id[12:8], pcie_id[15:13], pcie_id[7:0]};
+
     always @(posedge clk) begin
         if (rst) begin
             dstate          <= D_IDLE;
@@ -78,15 +76,10 @@ module pcileech_hda_rirb_dma(
             d_tlp_timed_out <= 1'b0;
         end else begin
             dma_done      <= 1'b0;
-            // tvalid/tlast/tdata/tkeepdw/tuser are set per-state below.
-            // Don't blanket-reset them — backpressure requires holding values.
+            // tvalid/tlast/tdata/tkeepdw/tuser are set per-state below; don't reset (backpressure needs held values).
 
-            // CRST falling: reset bridge to IDLE and clear ALL latched data.
-            // Prevents stale TLP transmission during device re-enumeration.
-            // CRITICAL: response data and address MUST be cleared. Without this,
-            // if dma_req_valid_r is still asserted (from BAR FSM waiting in state
-            // 0x11), the bridge re-accepts in the next cycle with stale data —
-            // transmitting duplicate/corrupt RIRB entries to system memory.
+            // CRST falling: reset to IDLE and clear ALL latched data. Without clearing,
+            // a still-asserted dma_req_valid_r re-accepts stale data next cycle -> corrupt RIRB entries.
             if (crst_falling) begin
                 dstate          <= D_IDLE;
                 dma_req_ready   <= 1'b1;
@@ -108,8 +101,7 @@ module pcileech_hda_rirb_dma(
                     d_tlp_timed_out <= 1'b0;
 
                     if (dma_req_valid) begin
-                        // Latch all inputs so we're not dependent on live signals
-                        // during the TLP emission sequence.
+                        // Latch inputs; don't depend on live signals during TLP emission.
                         d_resp_lo   <= dma_req_lo;
                         d_resp_hi   <= dma_req_hi;
                         d_addr_lo   <= rirb_lbase + ({24'h0, dma_req_wp} * 8);
@@ -175,9 +167,7 @@ module pcileech_hda_rirb_dma(
         end
     end
 
-    // Combinational TLP output: set tdata/tkeepdw/tlast/tuser/tvalid based on
-    // current state. This ensures values are held correctly during backpressure
-    // (tready=0) since the state doesn't advance until tready=1.
+    // Combinational TLP output per state; values held during backpressure (state advances only on tready=1).
     always @(*) begin
         // Default: inactive
         tlp_tx_tdata    = 128'h0;
@@ -189,9 +179,7 @@ module pcileech_hda_rirb_dma(
         case (dstate)
             D_WR_TLP1: begin
                 if (d_is_64bit) begin
-                    // 64-bit MWr: 4DW header only (data comes in next beats)
-                    // Fmt=011 (4DW with data), Type=00000 (MWr), Length=2 DW
-                    // Last DW BE=0xF, First DW BE=0xF (all bytes valid in both DWs)
+                    // 64-bit MWr: 4DW header (Fmt=011, Type=MWr, Length=2 DW); BE=0xF/0xF.
                     tlp_tx_tdata[31:0]   = {
                         3'b011, 5'b00000,         // Fmt, Type
                         1'b0, 3'b000,             // R, TC
@@ -199,15 +187,13 @@ module pcileech_hda_rirb_dma(
                         1'b0, 1'b0, 2'b00,        // TD, EP, Attr[1:0]
                         2'b00, 10'h002            // AT, Length
                     };
-                    tlp_tx_tdata[63:32]  = {pcie_id, d_tag, 4'hF, 4'hF};
+                    tlp_tx_tdata[63:32]  = {pcie_id_fmt, d_tag, 4'hF, 4'hF};
                     tlp_tx_tdata[95:64]  = d_addr_hi;
                     tlp_tx_tdata[127:96] = {d_addr_lo[31:2], 2'b00};
                     tlp_tx_tkeepdw = 4'b1111;
                     tlp_tx_tuser   = {8'h00, 1'b1};  // first=1
                 end else begin
-                    // 32-bit MWr: 3DW header + 1st data DW
-                    // Fmt=010 (3DW with data), Type=00000 (MWr), Length=2 DW
-                    // Last DW BE=0xF, First DW BE=0xF (all bytes valid in both DWs)
+                    // 32-bit MWr: 3DW header + 1st data DW (Fmt=010, Type=MWr, Length=2 DW); BE=0xF/0xF.
                     tlp_tx_tdata[31:0]   = {
                         3'b010, 5'b00000,         // Fmt, Type
                         1'b0, 3'b000,             // R, TC
@@ -215,7 +201,7 @@ module pcileech_hda_rirb_dma(
                         1'b0, 1'b0, 2'b00,        // TD, EP, Attr[1:0]
                         2'b00, 10'h002            // AT, Length
                     };
-                    tlp_tx_tdata[63:32]  = {pcie_id, d_tag, 4'hF, 4'hF};
+                    tlp_tx_tdata[63:32]  = {pcie_id_fmt, d_tag, 4'hF, 4'hF};
                     tlp_tx_tdata[95:64]  = {d_addr_lo[31:2], 2'b00};
                     tlp_tx_tdata[127:96] = d_resp_lo;
                     tlp_tx_tkeepdw = 4'b1111;

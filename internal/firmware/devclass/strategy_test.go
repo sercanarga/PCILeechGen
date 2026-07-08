@@ -209,7 +209,8 @@ func TestDeviceClassUniqueness(t *testing.T) {
 func TestNVMeStrategy_ScrubBAR(t *testing.T) {
 	s := &nvmeStrategy{}
 	data := make([]byte, 0x38)
-	data[0x14] = 0x00
+	// CC with EN=1 plus CSS/MPS/CQES/SQES bits; scrub must clear EN and keep the rest.
+	binary.LittleEndian.PutUint32(data[0x14:], 0x00460001)
 	data[0x1C] = 0x1E
 	for i := 0x24; i < 0x38; i++ {
 		data[i] = 0xFF
@@ -217,8 +218,12 @@ func TestNVMeStrategy_ScrubBAR(t *testing.T) {
 
 	s.ScrubBAR(data)
 
-	if data[0x14]&0x01 != 0x01 {
-		t.Error("CC.EN should be set after scrub")
+	cc := binary.LittleEndian.Uint32(data[0x14:])
+	if cc&0x01 != 0 {
+		t.Errorf("CC.EN (bit0 of 0x14) must be clear after scrub (NVMe 1.4/2.0 3.1.5), got CC=0x%08X", cc)
+	}
+	if cc&0xFFFFFFF0 != 0x00460000 {
+		t.Errorf("CC non-EN bits must be preserved, got CC=0x%08X (want low bits 0x00460000)", cc)
 	}
 	if data[0x1C] != 0x01 {
 		t.Errorf("CSTS should be 0x01, got 0x%02X", data[0x1C])
@@ -228,6 +233,19 @@ func TestNVMeStrategy_ScrubBAR(t *testing.T) {
 			t.Errorf("offset 0x%02X should be 0, got 0x%02X", i, data[i])
 		}
 	}
+}
+
+// NVMe 1.4/2.0 3.1.5: CC resets to 0h on Controller Reset/FLR/power-on, so spec default must have CC.EN (bit0) clear.
+func TestNVMeProfile_CCResetENClear(t *testing.T) {
+	for _, d := range nvmeProfile().BARDefaults {
+		if d.Offset == 0x14 {
+			if d.Reset&0x01 != 0 {
+				t.Errorf("CC Reset must have EN (bit0) clear, got 0x%08X", d.Reset)
+			}
+			return
+		}
+	}
+	t.Error("CC register (offset 0x14) missing from NVMe BARDefaults")
 }
 
 // CSS_NVM = CAP bit 37 = bit 5 of high dword at 0x04; stornvme Code 10 if clear.

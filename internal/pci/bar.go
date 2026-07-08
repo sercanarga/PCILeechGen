@@ -66,10 +66,7 @@ func (b *BAR) String() string {
 		b.Index, b.Type, b.Address, b.SizeHuman(), pf)
 }
 
-// ParseBARsFromConfigSpace extracts BAR information from a config space.
-// Note: BAR sizes cannot be determined from config space alone without probing;
-// this function only extracts the address and type from raw BAR values.
-// For actual sizes, use sysfs resource file or VFIO probing.
+// ParseBARsFromConfigSpace extracts BAR address/type from config space (sizes need sysfs/VFIO probing).
 func ParseBARsFromConfigSpace(cs *ConfigSpace) []BAR {
 	var bars []BAR
 
@@ -143,11 +140,15 @@ func ParseBARsFromSysfsResource(lines []string) []BAR {
 			bar.Address = start
 			bar.Size = end - start + 1
 
-			if flags&0x01 != 0 {
+			// flags are kernel struct resource->flags (IORESOURCE_*), not raw BAR bits.
+			isIO := flags&0x00000100 != 0   // IORESOURCE_IO
+			isMem64 := flags&0x00100000 != 0 // IORESOURCE_MEM_64
+			isPrefetch := flags&0x00002000 != 0 // IORESOURCE_PREFETCH
+			if isIO {
 				bar.Type = BARTypeIO
 			} else {
-				bar.Prefetchable = (flags & 0x08) != 0
-				if flags&0x04 != 0 {
+				bar.Prefetchable = isPrefetch
+				if isMem64 {
 					bar.Type = BARTypeMem64
 					bar.Is64Bit = true
 				} else {

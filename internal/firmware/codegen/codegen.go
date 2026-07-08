@@ -46,29 +46,17 @@ func GenerateConfigSpaceCOE(cs *pci.ConfigSpace) string {
 }
 
 // GenerateWritemaskCOE outputs the writemask COE (1=writable, 0=read-only).
-//
-// when shadow config space is enabled (cfgtlp_zero=0), the shadow BRAM is the
-// sole source for config space reads. BAR sizing probes (host writes 0xFFFFFFFF
-// then reads back) go through the BRAM, not the IP core. the writemask must
-// limit writable bits to match the BAR size mask so the host reads back the
-// correct size-encoded value (e.g. 0xFFFFF000 for 4KB; variable Bar0Size supported via boards).
-//
-// identity registers (VID/DID, ClassCode, SubsysIDs) are read-only to prevent
-// host writes from corrupting device identity.
+// Shadow BRAM is the sole read source under cfgtlp_zero=0, so masks match BAR
+// sizes (sizing probes return size-encoded values); identity regs stay read-only.
 func GenerateWritemaskCOE(cs *pci.ConfigSpace) string {
 	masks := make([]uint32, shadowCfgSpaceWords)
 
-	// standard config space capabilities (0x40-0xFF): fully writable.
-	// the writemask only controls what goes into shadow BRAM; the Xilinx
-	// IP core processes config writes independently. locking fields here
-	// would create a BRAM/IP-core mismatch (e.g. BRAM shows D0 while IP
-	// core is in D3), confusing the OS and causing completion timeouts.
+	// 0x40-0xFF capabilities: fully writable. Locking here would desync shadow BRAM from the IP core.
 	for i := 0x40 / 4; i < 0x100/4; i++ {
 		masks[i] = 0xFFFFFFFF
 	}
 
-	// extended config space (0x100-0xFFF): read-only.
-	// scrubber already neutralized all writable extended cap fields.
+	// extended config space (0x100-0xFFF): read-only (scrubber already neutralized writable ext caps).
 
 	// header type 0 registers (DWORD index = byte offset / 4)
 	masks[0] = 0x00000000 // 0x00: VID:DID (read-only identity)
@@ -88,9 +76,14 @@ func GenerateWritemaskCOE(cs *pci.ConfigSpace) string {
 		if barVal&0x01 != 0 {
 			// I/O BAR: type bits [1:0] read-only
 			masks[dw] = barVal & 0xFFFFFFFC
-		} else {
-			// memory BAR: type+prefetch bits [3:0] read-only
-			masks[dw] = barVal & 0xFFFFFFF0
+			continue
+		}
+		// memory BAR lower dword: type+prefetch bits [3:0] read-only
+		masks[dw] = barVal & 0xFFFFFFF0
+		// 64-bit memory BAR (bits[2:1]=10b): upper dword is address only, fully writable
+		if barVal&0x06 == 0x04 && i+1 < 6 {
+			masks[dw+1] = 0xFFFFFFFF
+			i++ // upper dword of the 64-bit pair consumed
 		}
 	}
 

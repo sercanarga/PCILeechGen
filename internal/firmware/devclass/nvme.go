@@ -22,7 +22,7 @@ func (s *nvmeStrategy) ScrubBAR(data []byte) {
 	util.WriteLE32(data, 0x1C, csts)
 
 	cc := util.ReadLE32(data, 0x14)
-	cc |= 0x01
+	cc &^= 0x01 // CC.EN must be 0 at reset (NVMe 1.4/2.0 3.1.5); host drives the 0->1 enable edge
 	util.WriteLE32(data, 0x14, cc)
 
 	for _, off := range []int{0x0C, 0x10, 0x20, 0x24, 0x28, 0x2C, 0x30, 0x34} {
@@ -72,7 +72,7 @@ func nvmeProfile() *DeviceProfile {
 			{Offset: 0x0C, Width: 4, Name: "INTMS", Reset: 0x00000000, RWMask: 0x00000000},
 			{Offset: 0x10, Width: 4, Name: "INTMC", Reset: 0x00000000, RWMask: 0x00000000},
 			// Controller Configuration (CC)
-			{Offset: 0x14, Width: 4, Name: "CC", Reset: 0x00460001, RWMask: 0x00FFFFF1},
+			{Offset: 0x14, Width: 4, Name: "CC", Reset: 0x00460000, RWMask: 0x00FFFFF1},
 			// Controller Status (CSTS) - RDY=1
 			{Offset: 0x1C, Width: 4, Name: "CSTS", Reset: 0x00000001, RWMask: 0x00000000},
 			// NVM Subsystem Reset (NSSR)

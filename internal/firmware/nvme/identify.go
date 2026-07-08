@@ -322,15 +322,12 @@ func generateNGUID(buf []byte) {
 	copy(buf, b)
 }
 
-// DoorbellStrideFromCAP extracts DSTRD from an NVMe CAP register's high dword.
-// DSTRD occupies CAP bits [43:40] (bits [11:8] of the dword at BAR0+0x04);
-// masking the dword with 0x0F reads the TO field instead.
+// DoorbellStrideFromCAP returns DSTRD (CAP bits 35:32 = low nibble of the high dword at BAR0+0x04).
 func DoorbellStrideFromCAP(capHi uint32) uint32 {
-	return (capHi >> 8) & 0x0F
+	return capHi & 0x0F
 }
 
-// IdentifyDataToHex emits the 4 KB Identify Controller ROM as Xilinx HEX init
-// text. The Identify Namespace is generated at runtime by the responder.
+// IdentifyDataToHex emits the 4 KB Identify Controller ROM as Xilinx HEX init text (namespace is runtime-generated).
 func IdentifyDataToHex(id *IdentifyData) string {
 	var b strings.Builder
 	b.Grow(4096 / 4 * 9)

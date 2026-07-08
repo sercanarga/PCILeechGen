@@ -14,12 +14,8 @@ type extCapFilter struct {
 	Reason string
 }
 
-// unsafeExtCaps lists extended capabilities requiring active FPGA hardware
-// emulation that the device cannot provide. Read-only / informational caps
-// (AER, DSN, LTR, SecondaryPCIe, …) are safe to keep.
-//
-// Caps whose control registers are neutralised by other scrub passes
-// (e.g. L1PM Substates -> scrubASPMPass) must NOT appear here.
+// unsafeExtCaps: ext caps requiring FPGA hardware emulation we can't provide.
+// Caps neutralised by other scrub passes (e.g. L1PM Substates -> scrubASPMPass) must NOT be listed here.
 var unsafeExtCaps = map[uint16]extCapFilter{
 	pci.ExtCapIDSRIOV:        {"SR-IOV", "VF creation requires FPGA hardware support"},
 	pci.ExtCapIDMRIOV:        {"MR-IOV", "multi-root IOV management unsupported"},
@@ -134,11 +130,15 @@ func relinkExtCapChain(cs *pci.ConfigSpace, om *overlay.Map, entries []extCapEnt
 	if removeSet[0] {
 		surv := entries[firstSurvivor]
 
+		tmp := make([]byte, surv.size)
 		for b := 0; b < surv.size && surv.offset+b < pci.ConfigSpaceSize; b++ {
-			om.WriteU8(0x100+b, cs.ReadU8(surv.offset+b), "relink ext cap chain")
+			tmp[b] = cs.ReadU8(surv.offset + b)
 		}
 		for b := 0; b < surv.size && surv.offset+b < pci.ConfigSpaceSize; b++ {
 			om.WriteU8(surv.offset+b, 0x00, "remove unsafe ext cap")
+		}
+		for b := 0; b < surv.size && 0x100+b < pci.ConfigSpaceSize; b++ {
+			om.WriteU8(0x100+b, tmp[b], "relink ext cap chain")
 		}
 
 		newNext := 0

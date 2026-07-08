@@ -50,12 +50,12 @@ func TestParseBARsFromConfigSpace(t *testing.T) {
 
 func TestParseBARsFromSysfsResource(t *testing.T) {
 	lines := []string{
-		"0x00000000f7d00000 0x00000000f7dfffff 0x0040200", // BAR0: 1MB memory
-		"0x0000000000000000 0x0000000000000000 0x0000000", // BAR1: disabled
-		"0x0000000000006001 0x000000000000601f 0x0040101", // BAR2: IO, 31 bytes
-		"0x0000000000000000 0x0000000000000000 0x0000000", // BAR3: disabled
-		"0x00000000f7c00000 0x00000000f7c3ffff 0x004020c", // BAR4: mem64, prefetch
-		"0x0000000000000000 0x0000000000000000 0x0000000", // BAR5: disabled
+		"0x00000000f7d00000 0x00000000f7dfffff 0x00000200", // BAR0: 1MB mem32 (IORESOURCE_MEM)
+		"0x0000000000000000 0x0000000000000000 0x0000000",  // BAR1: disabled
+		"0x0000000000006001 0x000000000000601f 0x00000101", // BAR2: IO, 31 bytes (IORESOURCE_IO)
+		"0x0000000000000000 0x0000000000000000 0x0000000",  // BAR3: disabled
+		"0x00000000f7c00000 0x00000000f7c3ffff 0x00102200", // BAR4: mem64 prefetch (IORESOURCE_MEM_64|MEM|PREFETCH)
+		"0x0000000000000000 0x0000000000000000 0x0000000",  // BAR5: disabled
 	}
 
 	bars := ParseBARsFromSysfsResource(lines)
@@ -85,6 +85,9 @@ func TestParseBARsFromSysfsResource(t *testing.T) {
 	// BAR4: 64-bit prefetchable
 	if bars[4].Type != BARTypeMem64 {
 		t.Errorf("BAR4 type = %q, want mem64", bars[4].Type)
+	}
+	if !bars[4].Is64Bit {
+		t.Error("BAR4 should be 64-bit")
 	}
 	if !bars[4].Prefetchable {
 		t.Error("BAR4 should be prefetchable")
