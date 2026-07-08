@@ -122,9 +122,9 @@ func buildIdentifyController(ids firmware.DeviceIDs, barData []byte, identity *C
 
 	// IEEE OUI
 	oui := ouiForVendor(ids.VendorID)
-	data[0x049] = oui[0]
+	data[0x049] = oui[2]
 	data[0x04A] = oui[1]
-	data[0x04B] = oui[2]
+	data[0x04B] = oui[0]
 
 	data[0x04C] = 0x00                                  // CMIC
 	data[0x04D] = deriveMDTS(barData)                   // MDTS — clamped to backend-safe
@@ -269,13 +269,13 @@ func modelNumberForVendor(vid uint16) string {
 func ouiForVendor(vid uint16) [3]byte {
 	switch vid {
 	case 0x144D:
-		return [3]byte{0x00, 0x26, 0x2D}
+		return [3]byte{0x00, 0x25, 0x38}
 	case 0x8086:
 		return [3]byte{0x5C, 0xD2, 0xE4}
 	case 0x15B7:
 		return [3]byte{0x00, 0x1B, 0x44}
 	case 0x1C5C:
-		return [3]byte{0x00, 0xAD, 0x00}
+		return [3]byte{0xAC, 0xE4, 0x2E}
 	default:
 		return [3]byte{0x00, 0x00, 0x00}
 	}

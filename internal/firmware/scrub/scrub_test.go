@@ -127,8 +127,25 @@ func TestScrubConfigSpace_ClampBAR0(t *testing.T) {
 		t.Errorf("BAR1 (upper 64-bit) should be preserved (not zeroed): got 0")
 	}
 	bar2 := scrubbed.BAR(2)
-	if bar2 != 0xFFFFF000 {
-		t.Errorf("BAR2 should be clamped to 4 KB (default board BRAM): got 0x%08x, want 0xFFFFF000", bar2)
+	if bar2 != 0xFFFF0000 {
+		t.Errorf("BAR2 should preserve its 64KB size: got 0x%08x, want 0xFFFF0000", bar2)
+	}
+}
+
+func TestScrubConfigSpace_PreserveDonorBARSize(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	cs.WriteU16(0x00, 0x144D)
+	cs.WriteU16(0x06, 0x0010)
+	cs.WriteU32(0x10, 0xFFFFC004) // BAR0 mem64 16KB
+	cs.WriteU32(0x14, 0xFFFFFFFF) // BAR0 upper
+	cs.WriteU32(0x18, 0xF7000000) // BAR2 mem32 carrying an assigned address, not a size mask
+
+	donorBARs := []pci.BAR{{Index: 2, Size: 256 << 10, Type: pci.BARTypeMem32}}
+	scrubbed, _ := ScrubConfigSpaceWithDonor(cs, nil, donorBARs)
+
+	if got, want := scrubbed.BAR(2), uint32(0xFFFC0000); got != want { // ~(256KB-1)
+		t.Errorf("BAR2 should preserve donor 256KB size from address 0xF7000000: got 0x%08x, want 0x%08x", got, want)
 	}
 }
 

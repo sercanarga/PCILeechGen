@@ -1336,9 +1336,7 @@ module pcileech_nvme_admin_responder #(
                             end
                         end
 
-                        // msix_enable/msix_function_mask are undriven (tied 0) on every
-                        // board scaffold — gating on them made this never fire (Code 10).
-                        if (!msix_vector_masked &&
+                        if (msix_enable && !msix_function_mask && !msix_vector_masked &&
                             (msix_vector_addr != 64'h0000000000000000)) begin
                             dma_wr_req   <= 1'b1;
                             dma_wr_valid <= 1'b1;
@@ -1348,12 +1346,14 @@ module pcileech_nvme_admin_responder #(
                             return_state <= S_IDLE;
                             state        <= S_WAIT_DMA_WR;
                         end else begin
-                            // Masked vector: record PBA pending (spec 6.8.3.4), no MemWr.
-                            if (msix_vector_masked) begin
+                            if (msix_enable) begin
+                                // MSI-X on but can't deliver (masked or vector not armed): hold pending in PBA.
                                 pba_set_valid  <= 1'b1;
                                 pba_set_vector <= msix_vector_select;
+                            end else begin
+                                // fallback to MSI when MSI-X is disabled
+                                msix_trigger <= 1'b1;
                             end
-                            msix_trigger <= 1'b1;
                             state <= S_IDLE;
                         end
                     end

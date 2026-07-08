@@ -147,6 +147,21 @@ func ScrubConfigSpace(cs *pci.ConfigSpace, b *board.Board, bar0Size ...int) *pci
 // ScrubConfigSpaceWithOverlay scrubs the config space and returns both the
 // scrubbed copy and an overlay map recording every change.
 func ScrubConfigSpaceWithOverlay(cs *pci.ConfigSpace, b *board.Board, bar0Size ...int) (*pci.ConfigSpace, *overlay.Map) {
+	return scrubConfigSpace(cs, b, [6]int{}, bar0Size...)
+}
+
+// ScrubConfigSpaceWithDonor scrubs and preserves donor-declared BAR sizes (donorBARs) for BAR>=1.
+func ScrubConfigSpaceWithDonor(cs *pci.ConfigSpace, b *board.Board, donorBARs []pci.BAR, bar0Size ...int) (*pci.ConfigSpace, *overlay.Map) {
+	var sizes [6]int
+	for _, br := range donorBARs {
+		if br.Index >= 0 && br.Index < 6 && !br.IsDisabled() {
+			sizes[br.Index] = int(br.Size)
+		}
+	}
+	return scrubConfigSpace(cs, b, sizes, bar0Size...)
+}
+
+func scrubConfigSpace(cs *pci.ConfigSpace, b *board.Board, barSizes [6]int, bar0Size ...int) (*pci.ConfigSpace, *overlay.Map) {
 	scrubbed := cs.Clone()
 	om := overlay.NewMap(scrubbed)
 
@@ -167,6 +182,7 @@ func ScrubConfigSpaceWithOverlay(cs *pci.ConfigSpace, b *board.Board, bar0Size .
 		ExtCaps:   pci.ParseExtCapabilities(scrubbed),
 		ClassCode: cs.ReadU32(0x08) >> 8,
 		Bar0Size:  bar0,
+		BARSizes:  barSizes,
 	}
 
 	for _, pass := range defaultPipeline() {
@@ -177,6 +193,16 @@ func ScrubConfigSpaceWithOverlay(cs *pci.ConfigSpace, b *board.Board, bar0Size .
 }
 
 func barSizeMask(size int) uint32 {
+	return uint32(^(size - 1))
+}
+
+// deriveMaskFromAddr reconstructs a BAR size mask from a size-encoding probe readback (fallback when no donor size is known).
+func deriveMaskFromAddr(addr uint32) uint32 {
+	a := addr & 0xFFFFFFF0
+	if a == 0 {
+		return 0xFFFFF000 // 4KB fallback for unaligned/zero
+	}
+	size := a & (^a + 1)
 	return uint32(^(size - 1))
 }
 
@@ -197,8 +223,26 @@ func clampBARsToFPGA(cs *pci.ConfigSpace, om *overlay.Map, ctx *ScrubContext) {
 			continue
 		}
 
-		newBar := mask | (barVal & 0x0F)
-		om.WriteU32(barOffset, newBar, fmt.Sprintf("clamp BAR%d to %d KB", i, bar0KB))
+		// BAR0 clamps to the FPGA-backed Bar0Size; BAR>=1 preserves the donor-declared size (ctx.BARSizes), else derives from the register.
+		var curMask uint32
+		switch {
+		case i == 0:
+			curMask = mask
+		case ctx.BARSizes[i] > 0:
+			curMask = barSizeMask(ctx.BARSizes[i])
+		default:
+			curMask = deriveMaskFromAddr(barVal)
+		}
+
+		newBar := curMask | (barVal & 0x0F)
+		switch {
+		case i == 0:
+			om.WriteU32(barOffset, newBar, fmt.Sprintf("clamp BAR%d to %d KB", i, bar0KB))
+		case ctx.BARSizes[i] > 0:
+			om.WriteU32(barOffset, newBar, fmt.Sprintf("preserve BAR%d donor size %d KB", i, ctx.BARSizes[i]/1024))
+		default:
+			om.WriteU32(barOffset, newBar, fmt.Sprintf("set BAR%d size mask 0x%08X from register", i, curMask))
+		}
 
 		is64bit := (barVal & 0x06) == 0x04
 		if is64bit && i < 5 {

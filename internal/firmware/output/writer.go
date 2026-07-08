@@ -118,7 +118,7 @@ func (ow *OutputWriter) scrubAndVary(ctx *donor.DeviceContext, b *board.Board, i
 		msixTableSize = ctx.MSIXData.TableSize
 	}
 	bar0Size := firmware.CappedBAR0Size(ctx, b, msixTableSize)
-	scrubbedCS, overlayMap := scrub.ScrubConfigSpaceWithOverlay(ctx.ConfigSpace, b, bar0Size)
+	scrubbedCS, overlayMap := scrub.ScrubConfigSpaceWithDonor(ctx.ConfigSpace, b, ctx.BARs, bar0Size)
 	if overlayMap.Count() > 0 {
 		slog.Info("config space scrubbed", "modifications", overlayMap.Count())
 	}

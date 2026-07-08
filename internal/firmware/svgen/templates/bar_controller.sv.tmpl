@@ -14,8 +14,6 @@ module pcileech_tlps128_bar_controller(
     input                   clk,
     input                   bar_en,
     input [15:0]            pcie_id,
-    input                   msix_enable,
-    input                   msix_function_mask,
     output                  flash_csn,
     output                  flash_sdi_dq0,
     input                   flash_sdo_dq1,
@@ -501,7 +499,30 @@ module pcileech_tlps128_bar_controller(
 
 {{ end }}
 
+    reg msix_enable_reg;        // driven by CfgWr0 snoop when MSI-X present; else 0
+    reg msix_function_mask_reg;
 {{ if .MSIXConfig }}
+    // Snoop CfgWr0 to MSI-X Message Control (cap @ {{ hex04 .DonorCapabilities.MSIXCapOffset }}) for enable/mask bits.
+    
+    wire        cfg_wren = tlps_in.tvalid && tlps_in.tuser[0] && (tlps_in.tdata[31:25] == 7'b0100010);
+    wire [9:0]  cfg_addr = tlps_in.tdata[75:66]; // DWORD address
+    wire [31:0] cfg_data = tlps_in.tdata[127:96];
+    wire [3:0]  cfg_be   = {tlps_in.tdata[32], tlps_in.tdata[33], tlps_in.tdata[34], tlps_in.tdata[35]};
+    
+    localparam [9:0] MSIX_CAP_DWORD = 16'h{{ hex04 .DonorCapabilities.MSIXCapOffset }} >> 2;
+    
+    always @(posedge clk) begin
+        if (rst) begin
+            msix_enable_reg <= 1'b0;
+            msix_function_mask_reg <= 1'b0;
+        end else if (cfg_wren && (cfg_addr == MSIX_CAP_DWORD)) begin
+            if (cfg_be[3]) begin
+                msix_enable_reg <= cfg_data[31];
+                msix_function_mask_reg <= cfg_data[30];
+            end
+        end
+    end
+
     pcileech_msix_table #(
         .NUM_VECTORS    ( {{ .MSIXConfig.NumVectors }}  ),
         .TABLE_OFFSET   ( 32'h{{ printf "%08X" .MSIXConfig.TableOffset }} ),
@@ -605,7 +626,6 @@ module pcileech_tlps128_bar_controller(
 
 {{ if eq .DeviceClass "nvme" }}
     wire        nvme_msix_trigger;
-    // msix_enable/msix_function_mask from module ports; per-vector masking by responder.
 
 {{ end }}
 {{ if and (eq .DeviceClass "nvme") .NVMeIdentify }}
@@ -692,8 +712,8 @@ module pcileech_tlps128_bar_controller(
         .doorbell_is_cq     ( nvme_db_is_cq                 ),
         .doorbell_qid       ( nvme_db_qid                   ),
         .doorbell_val       ( nvme_db_val                   ),
-        .msix_enable        ( msix_enable                   ),
-        .msix_function_mask ( msix_function_mask            ),
+        .msix_enable        ( msix_enable_reg               ),
+        .msix_function_mask ( msix_function_mask_reg        ),
         .msix_vector_select ( nvme_msix_vector_select       ),
         .msix_vector_addr   ( nvme_msix_vector_addr         ),
         .msix_vector_data   ( nvme_msix_vector_data         ),

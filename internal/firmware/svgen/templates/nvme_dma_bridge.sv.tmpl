@@ -60,7 +60,7 @@ module pcileech_nvme_dma_bridge(
     reg [9:0]  rd_remaining;
     reg [9:0]  rd_index;
     reg [31:0] rd_payload;
-    reg [15:0] rd_timeout;
+    reg [23:0] rd_timeout;
 
     reg [31:0] wr_data_hold;
     reg        wr_pending;
@@ -187,7 +187,7 @@ module pcileech_nvme_dma_bridge(
             rd_remaining    <= 10'h0;
             rd_index        <= 10'h0;
             rd_payload      <= 32'h0;
-            rd_timeout      <= 16'h0;
+            rd_timeout      <= 24'h0;
             wr_data_hold    <= 32'h0;
             wr_pending      <= 1'b0;
             wr_pending_addr <= 64'h0;
@@ -286,7 +286,7 @@ module pcileech_nvme_dma_bridge(
                 B_RD_SEND: begin
                     if (tlp_tx_tvalid && tlp_tx_tready) begin
                         tlp_tx_tvalid <= 1'b0;
-                        rd_timeout <= 16'h0;
+                        rd_timeout <= 24'h0;
                         bstate <= B_RD_WAIT;
                     end
                 end
@@ -302,7 +302,7 @@ module pcileech_nvme_dma_bridge(
                         bstate <= B_IDLE;
                     end else begin
                         rd_timeout <= rd_timeout + 1'b1;
-                        if (rd_timeout >= 16'hFFFF) begin
+                        if (rd_timeout >= 24'hFFFFFF) begin
                             rd_payload <= 32'h0;
                             rd_remaining <= 10'h0;
                             dma_rd_done <= 1'b1;
