@@ -10,7 +10,7 @@
 module pcileech_nvme_admin_responder #(
     // Must match the Identify Namespace NSZE (nvme.BuildIdentifyData) so IO
     // LBA-range validation agrees with what the host was told.
-    parameter [63:0]    NVME_ADVERTISED_LBAS = 64'd2000409264,
+    parameter [63:0]    NVME_ADVERTISED_LBAS = 64'd{{ if gt .NVMeAdvertisedLBAs 0 }}{{ .NVMeAdvertisedLBAs }}{{ else }}2000409264{{ end }},
     parameter           NVME_ENABLE_IO_QUEUES = 1'b1,
     parameter           NVME_STUB_IO_DATA = 1'b0,
     parameter           NVME_ZERO_IO_READS = 1'b0,
@@ -43,18 +43,18 @@ module pcileech_nvme_admin_responder #(
     input [31:0]        msix_vector_data,
     input               msix_vector_masked,
 
-    output reg          dma_rd_req,
-    output reg [63:0]   dma_rd_addr,
-    output reg [9:0]    dma_rd_len,
+    (* DONT_TOUCH = "TRUE" *) output reg          dma_rd_req,
+    (* DONT_TOUCH = "TRUE" *) output reg [63:0]   dma_rd_addr,
+    (* DONT_TOUCH = "TRUE" *) output reg [9:0]    dma_rd_len,
     input               dma_rd_valid,
     input [31:0]        dma_rd_data,
     input               dma_rd_done,
 
-    output reg          dma_wr_req,
-    output reg [63:0]   dma_wr_addr,
-    output reg [31:0]   dma_wr_data,
-    output reg [3:0]    dma_wr_be,
-    output reg          dma_wr_valid,
+    (* DONT_TOUCH = "TRUE" *) output reg          dma_wr_req,
+    (* DONT_TOUCH = "TRUE" *) output reg [63:0]   dma_wr_addr,
+    (* DONT_TOUCH = "TRUE" *) output reg [31:0]   dma_wr_data,
+    (* DONT_TOUCH = "TRUE" *) output reg [3:0]    dma_wr_be,
+    (* DONT_TOUCH = "TRUE" *) output reg          dma_wr_valid,
     input               dma_wr_done,
 
     output reg          disk_req_valid,
@@ -70,6 +70,10 @@ module pcileech_nvme_admin_responder #(
     input               disk_error,
 
     output reg          msix_trigger,
+
+    // PBA pending bit for a masked vector (spec 6.8.3.4).
+    output reg          pba_set_valid,
+    output reg [15:0]   pba_set_vector,
 
     output reg [12:0]   id_rom_addr,
     input [31:0]        id_rom_data,
@@ -142,8 +146,8 @@ module pcileech_nvme_admin_responder #(
     localparam [14:0] NVME_SC_LBA_RANGE          = 15'h0080;
     localparam [14:0] NVME_SC_INVALID_FORMAT     = 15'h010A;
 
-    reg [5:0] state;
-    reg [5:0] return_state;
+    (* DONT_TOUCH = "TRUE" *) reg [5:0] state;
+    (* DONT_TOUCH = "TRUE" *) reg [5:0] return_state;
     assign dbg_state = {2'b00, state};
 
     reg [15:0] active_qid;
@@ -621,6 +625,8 @@ module pcileech_nvme_admin_responder #(
             disk_req_word      <= 7'h0;
             disk_req_wdata     <= 32'h0;
             msix_trigger       <= 1'b0;
+            pba_set_valid      <= 1'b0;
+            pba_set_vector     <= 16'h0;
 
             sqe_dw_idx         <= 4'h0;
             cqe_dw_idx         <= 2'h0;
@@ -686,6 +692,7 @@ module pcileech_nvme_admin_responder #(
             dma_wr_valid   <= 1'b0;
             disk_req_valid <= 1'b0;
             msix_trigger   <= 1'b0;
+            pba_set_valid  <= 1'b0;
             if (timing_cmd_active && (timing_elapsed_cycles != 32'hFFFFFFFF))
                 timing_elapsed_cycles <= timing_elapsed_cycles + 1'b1;
 
@@ -1329,8 +1336,9 @@ module pcileech_nvme_admin_responder #(
                             end
                         end
 
-                        if (msix_enable && !msix_function_mask &&
-                            !msix_vector_masked &&
+                        // msix_enable/msix_function_mask are undriven (tied 0) on every
+                        // board scaffold — gating on them made this never fire (Code 10).
+                        if (!msix_vector_masked &&
                             (msix_vector_addr != 64'h0000000000000000)) begin
                             dma_wr_req   <= 1'b1;
                             dma_wr_valid <= 1'b1;
@@ -1340,6 +1348,11 @@ module pcileech_nvme_admin_responder #(
                             return_state <= S_IDLE;
                             state        <= S_WAIT_DMA_WR;
                         end else begin
+                            // Masked vector: record PBA pending (spec 6.8.3.4), no MemWr.
+                            if (msix_vector_masked) begin
+                                pba_set_valid  <= 1'b1;
+                                pba_set_vector <= msix_vector_select;
+                            end
                             msix_trigger <= 1'b1;
                             state <= S_IDLE;
                         end

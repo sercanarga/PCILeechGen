@@ -27,6 +27,9 @@ type NVMeIdentity struct {
 	Serial string `json:"serial,omitempty"`
 	Model  string `json:"model,omitempty"`
 	FWRev  string `json:"firmware_rev,omitempty"`
+
+	RawControllerIdent []byte `json:"raw_controller_ident,omitempty"`
+	RawNamespaceIdent  []byte `json:"raw_namespace_ident,omitempty"`
 }
 
 // DeviceContext is the full snapshot of a donor device.

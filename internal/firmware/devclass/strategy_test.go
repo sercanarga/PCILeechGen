@@ -1,6 +1,7 @@
 package devclass
 
 import (
+	"encoding/binary"
 	"testing"
 )
 
@@ -226,6 +227,23 @@ func TestNVMeStrategy_ScrubBAR(t *testing.T) {
 		if data[i] != 0 {
 			t.Errorf("offset 0x%02X should be 0, got 0x%02X", i, data[i])
 		}
+	}
+}
+
+// CSS_NVM = CAP bit 37 = bit 5 of high dword at 0x04; stornvme Code 10 if clear.
+func TestNVMeStrategy_ScrubBAR_SetsCSSNVM(t *testing.T) {
+	s := &nvmeStrategy{}
+	data := make([]byte, 0x38)
+	binary.LittleEndian.PutUint32(data[0x04:], 0) // donor CAP with CSS_NVM clear
+
+	s.ScrubBAR(data)
+
+	capHi := binary.LittleEndian.Uint32(data[0x04:])
+	if capHi&(1<<5) == 0 {
+		t.Errorf("ScrubBAR must set CAP.CSS_NVM (bit 37 / high dword bit 5), got CAP_HI=0x%08X", capHi)
+	}
+	if capHi&(1<<4) != 0 {
+		t.Errorf("ScrubBAR must not set reserved CAP bit 36 (high dword bit 4), got CAP_HI=0x%08X", capHi)
 	}
 }
 

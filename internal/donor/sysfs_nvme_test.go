@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"unsafe"
 
 	"github.com/sercanarga/pcileechgen/internal/pci"
 )
@@ -61,5 +62,34 @@ func TestSysfsReader_ReadNVMeIdentity_NoNVMeDriver(t *testing.T) {
 	sr := NewSysfsReaderWithPath(tmp)
 	if _, err := sr.ReadNVMeIdentity(bdf); err == nil {
 		t.Fatal("expected error when nvme driver is not bound")
+	}
+}
+
+func TestNVMeIOCAdminCmd_Number(t *testing.T) {
+	if nvmeIOCAdminCmd != uintptr(0xC0484E41) {
+		t.Fatalf("nvmeIOCAdminCmd=0x%X, want 0xC0484E41", uint(nvmeIOCAdminCmd))
+	}
+}
+
+func TestNVMeAdminCmd_ABI(t *testing.T) {
+	const wantSize = uintptr(72)
+	if got := unsafe.Sizeof(nvmeAdminCmd{}); got != wantSize {
+		t.Fatalf("sizeof(nvmeAdminCmd) = %d, want %d", got, wantSize)
+	}
+
+	cases := []struct {
+		name string
+		got  uintptr
+		want uintptr
+	}{
+		{"nsid", unsafe.Offsetof(nvmeAdminCmd{}.nsid), 4},
+		{"addr", unsafe.Offsetof(nvmeAdminCmd{}.addr), 24},
+		{"cdw10", unsafe.Offsetof(nvmeAdminCmd{}.cdw10), 40},
+		{"result", unsafe.Offsetof(nvmeAdminCmd{}.result), 68},
+	}
+	for _, c := range cases {
+		if c.got != c.want {
+			t.Errorf("offsetof(%s) = %d, want %d", c.name, c.got, c.want)
+		}
 	}
 }

@@ -22,14 +22,62 @@ type ControllerIdentity struct {
 	Serial string
 	Model  string
 	FWRev  string
+
+	RawControllerIdent []byte
+	RawNamespaceIdent  []byte
 }
 
 // BuildIdentifyData constructs both Identify structures from donor IDs.
 func BuildIdentifyData(ids firmware.DeviceIDs, barData []byte, identity *ControllerIdentity) *IdentifyData {
 	d := &IdentifyData{}
-	d.Controller = buildIdentifyController(ids, barData, identity)
-	d.Namespace = buildIdentifyNamespace(barData)
+
+	// Use raw donor data if available, otherwise synthesize.
+	if identity != nil && len(identity.RawControllerIdent) == 4096 {
+		d.Controller = [4096]byte(identity.RawControllerIdent)
+		// Force emulator-critical fields: VID/SSVID, MDTS clamp, VER==BAR VS.
+		binary.LittleEndian.PutUint16(d.Controller[0x000:], ids.VendorID)
+		binary.LittleEndian.PutUint16(d.Controller[0x002:], ids.SubsysVendorID)
+		d.Controller[0x04D] = deriveMDTS(barData)
+		binary.LittleEndian.PutUint32(d.Controller[0x050:], deriveVER(barData))
+		binary.LittleEndian.PutUint32(d.Controller[0x05C:], 0) // OAES
+		binary.LittleEndian.PutUint32(d.Controller[0x060:], 0) // CTRATT
+	} else {
+		d.Controller = buildIdentifyController(ids, barData, identity)
+	}
+
+	if identity != nil && len(identity.RawNamespaceIdent) == 4096 {
+		d.Namespace = [4096]byte(identity.RawNamespaceIdent)
+	} else {
+		d.Namespace = buildIdentifyNamespace(barData)
+	}
+
 	return d
+}
+
+// deriveMDTS clamps MDTS to ≤5 from CAP.MPSMIN (backend-safe).
+func deriveMDTS(barData []byte) uint8 {
+	mdts := uint8(5)
+	if len(barData) >= 0x08 {
+		capHi := binary.LittleEndian.Uint32(barData[0x04:0x08])
+		mpsmin := (capHi >> 16) & 0x0F // CAP.MPSMIN: bits 51:48
+		if mpsmin > 0 && mpsmin < 5 && mdts > uint8(5-mpsmin) {
+			mdts = uint8(5 - mpsmin)
+			if mdts == 0 {
+				mdts = 1
+			}
+		}
+	}
+	return mdts
+}
+
+// deriveVER returns VER equal to BAR VS (stornvme Code 10 guard).
+func deriveVER(barData []byte) uint32 {
+	if len(barData) >= 0x0C {
+		if v := binary.LittleEndian.Uint32(barData[0x08:0x0C]); v != 0 {
+			return v
+		}
+	}
+	return 0x00010400 // NVMe 1.4
 }
 
 // buildIdentifyController - CNS=1, NVMe 1.4 spec Figure 247.
@@ -78,36 +126,10 @@ func buildIdentifyController(ids firmware.DeviceIDs, barData []byte, identity *C
 	data[0x04A] = oui[1]
 	data[0x04B] = oui[2]
 
-	data[0x04C] = 0x00 // CMIC
-	// MDTS - derive from donor CAP.MPSMIN when available.
-	// Most NVMe drives use MDTS=5 (2^5 * MPSMIN pages = 128KB at 4KB pages).
-	// Some use higher values; we stay conservative to avoid host-side overruns
-	// that our fake controller can't actually service.
-	mdts := uint8(5)
-	if len(barData) >= 0x08 {
-		capHi := binary.LittleEndian.Uint32(barData[0x04:0x08])
-		mpsmin := (capHi >> 16) & 0x0F // CAP.MPSMIN: bits 51:48
-		// MPSMIN=0 -> 4KB pages -> MDTS=5 is fine (128KB)
-		// MPSMIN=1 -> 8KB pages -> MDTS=4 keeps total ≤128KB
-		if mpsmin > 0 && mpsmin < 5 && mdts > uint8(5-mpsmin) {
-			mdts = uint8(5 - mpsmin)
-			if mdts == 0 {
-				mdts = 1
-			}
-		}
-	}
-	data[0x04D] = mdts                                  // MDTS
+	data[0x04C] = 0x00                                  // CMIC
+	data[0x04D] = deriveMDTS(barData)                   // MDTS — clamped to backend-safe
 	binary.LittleEndian.PutUint16(data[0x04E:], 0x0001) // CNTLID
-	// VER must match BAR VS register - stornvme.sys compares the two and
-	// triggers Code 10 on mismatch (e.g. BAR says 1.3, identify says 1.4).
-	nvmeVer := uint32(0x00010400) // default: NVMe 1.4
-	if len(barData) >= 0x0C {
-		nvmeVer = binary.LittleEndian.Uint32(barData[0x08:0x0C])
-		if nvmeVer == 0 {
-			nvmeVer = 0x00010400
-		}
-	}
-	binary.LittleEndian.PutUint32(data[0x050:], nvmeVer)    // VER
+	binary.LittleEndian.PutUint32(data[0x050:], deriveVER(barData)) // VER — must match BAR VS
 	binary.LittleEndian.PutUint32(data[0x054:], 0x00000064) // RTD3 Resume Latency (100µs)
 	binary.LittleEndian.PutUint32(data[0x058:], 0x00000064) // RTD3 Entry Latency (100µs)
 	binary.LittleEndian.PutUint32(data[0x05C:], 0x00000000) // OAES

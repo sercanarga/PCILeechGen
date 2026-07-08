@@ -11,6 +11,11 @@ func (s *nvmeStrategy) ScrubBAR(data []byte) {
 	if len(data) < 0x38 {
 		return
 	}
+	// Set CAP.CSS_NVM (bit 37) — some donor dumps leave it clear (stornvme Code 10).
+	capHi := util.ReadLE32(data, 0x04)
+	capHi |= (1 << 5)
+	util.WriteLE32(data, 0x04, capHi)
+
 	csts := util.ReadLE32(data, 0x1C)
 	csts |= 0x01
 	csts &= ^uint32(0x1E)

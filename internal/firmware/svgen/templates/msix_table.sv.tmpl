@@ -40,6 +40,10 @@ module pcileech_msix_table #(
     output [31:0]       vector_data,
     output              vector_masked,
 
+    // Device-side PBA pending-bit set for a masked vector (spec 6.8.3.4).
+    input               pba_set_valid,
+    input  [15:0]       pba_set_vector,
+
     output              addr_hit  // request targets MSI-X region
 );
 
@@ -89,7 +93,7 @@ module pcileech_msix_table #(
             msix_pba[k] = 32'h0;
     end
 
-    // write logic - table only (PBA is read-only)
+    // host write logic - table entries only (PBA is host read-only; pending bits are set device-side below)
     always @(posedge clk) begin
         if (!rst && wr_valid && wr_is_table) begin
             if (wr_be[0]) msix_table_ram[(wr_offset - TABLE_OFFSET) >> 2][7:0]   <= wr_data[7:0];
@@ -97,6 +101,12 @@ module pcileech_msix_table #(
             if (wr_be[2]) msix_table_ram[(wr_offset - TABLE_OFFSET) >> 2][23:16] <= wr_data[23:16];
             if (wr_be[3]) msix_table_ram[(wr_offset - TABLE_OFFSET) >> 2][31:24] <= wr_data[31:24];
         end
+    end
+
+    // device-side PBA pending-bit set (set-only; spec 6.8.3.4).
+    always @(posedge clk) begin
+        if (!rst && pba_set_valid && (pba_set_vector < NUM_VECTORS))
+            msix_pba[pba_set_vector >> 5][pba_set_vector & 5'h1f] <= 1'b1;
     end
 
     // read logic - 2-cycle pipeline

@@ -90,7 +90,7 @@ module pcileech_tlps128_bar_controller(
 `endif
 
     localparam integer NVME_BRAM_DISK_WORDS = `NVME_DISK_WORDS;
-    localparam [63:0] NVME_ADVERTISED_LBAS = 64'd2000409264;
+    localparam [63:0] NVME_ADVERTISED_LBAS = 64'd{{ if gt .NVMeAdvertisedLBAs 0 }}{{ .NVMeAdvertisedLBAs }}{{ else }}2000409264{{ end }};
     localparam NVME_IO_QUEUES_ENABLED = (`NVME_ENABLE_IO_QUEUES != 0);
     localparam NVME_IO_DATA_STUBBED = (`NVME_STUB_IO_DATA != 0);
     localparam NVME_IO_READS_ZEROED = (`NVME_ZERO_IO_READS != 0);
@@ -299,6 +299,8 @@ module pcileech_tlps128_bar_controller(
     wire [63:0] nvme_msix_vector_addr;
     wire [31:0] nvme_msix_vector_data;
     wire        nvme_msix_vector_masked;
+    wire        nvme_msix_pba_set_valid;
+    wire [15:0] nvme_msix_pba_set_vector;
 
     wire        nvme_disk_req_valid;
     wire        nvme_disk_req_write;
@@ -522,10 +524,14 @@ module pcileech_tlps128_bar_controller(
         .vector_addr    ( nvme_msix_vector_addr         ),
         .vector_data    ( nvme_msix_vector_data         ),
         .vector_masked  ( nvme_msix_vector_masked       ),
+        .pba_set_valid  ( nvme_msix_pba_set_valid       ),
+        .pba_set_vector ( nvme_msix_pba_set_vector      ),
 {{ else }}        .vector_select  ( 16'd0                         ),
         .vector_addr    (                               ),
         .vector_data    (                               ),
         .vector_masked  (                               ),
+        .pba_set_valid  ( 1'b0                          ),
+        .pba_set_vector (                               ),
 {{ end }}        .addr_hit       ( msix_addr_hit                 )
     );
 {{ end }}
@@ -692,6 +698,8 @@ module pcileech_tlps128_bar_controller(
         .msix_vector_addr   ( nvme_msix_vector_addr         ),
         .msix_vector_data   ( nvme_msix_vector_data         ),
         .msix_vector_masked ( nvme_msix_vector_masked       ),
+        .pba_set_valid      ( nvme_msix_pba_set_valid       ),
+        .pba_set_vector     ( nvme_msix_pba_set_vector      ),
         .dma_rd_req         ( nvme_dma_rd_req               ),
         .dma_rd_addr        ( nvme_dma_rd_addr              ),
         .dma_rd_len         ( nvme_dma_rd_len               ),

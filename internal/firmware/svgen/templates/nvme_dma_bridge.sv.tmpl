@@ -60,6 +60,7 @@ module pcileech_nvme_dma_bridge(
     reg [9:0]  rd_remaining;
     reg [9:0]  rd_index;
     reg [31:0] rd_payload;
+    reg [15:0] rd_timeout;
 
     reg [31:0] wr_data_hold;
     reg        wr_pending;
@@ -72,6 +73,9 @@ module pcileech_nvme_dma_bridge(
 
     localparam [7:0] NVME_RD_TAG_FIRST = 8'h10;
     localparam [7:0] NVME_RD_TAG_LAST  = 8'h1F;
+
+    // Reorder Xilinx pcie_id {func,dev,bus} -> PCIe Requester ID {bus,dev,func}.
+    wire [15:0] pcie_id_fmt = {pcie_id[12:8], pcie_id[15:13], pcie_id[7:0]};
 
     // Keep NVMe-internal MRd tags in the non-extended 5-bit tag space.  The
     // bridge only has one outstanding read, so a small rotating window is
@@ -93,6 +97,8 @@ module pcileech_nvme_dma_bridge(
     wire cpld_tag_match = cpld_any && (tlp_rx_tdata[79:72] == rd_active_tag);
     wire cpld_match = cpld_tag_match &&
                       (cpld_status == 3'b000);
+    wire cpld_error = cpld_tag_match &&
+                      (cpld_status != 3'b000);
     assign dbg_status = {cpld_any, cpld_tag_match, cpld_match, cpld_status,
                          bstate, rd_active_tag, rd_tag, rd_remaining[5:0]};
 
@@ -137,7 +143,7 @@ module pcileech_nvme_dma_bridge(
                 // Single-DW requests must use Last DW BE = 0 and put the
                 // byte mask in First DW BE. Some root complexes reject
                 // length-1 requests with Last DW BE set.
-                {bs16(pcie_id), 8'h00, 4'h0, be},
+                {bs16(pcie_id_fmt), 8'h00, 4'h0, be},
                 tlp_dw0(3'b011, 10'd1)
             };
             tlp_tx_tkeepdw <= 4'b1111;
@@ -156,7 +162,7 @@ module pcileech_nvme_dma_bridge(
             tlp_tx_tdata   <= {
                 {addr[31:2], 2'b00},
                 addr[63:32],
-                {bs16(pcie_id), tag, 4'h0, 4'hF},
+                {bs16(pcie_id_fmt), tag, 4'h0, 4'hF},
                 tlp_dw0(3'b001, 10'd1)
             };
             tlp_tx_tkeepdw <= 4'b1111;
@@ -181,6 +187,7 @@ module pcileech_nvme_dma_bridge(
             rd_remaining    <= 10'h0;
             rd_index        <= 10'h0;
             rd_payload      <= 32'h0;
+            rd_timeout      <= 16'h0;
             wr_data_hold    <= 32'h0;
             wr_pending      <= 1'b0;
             wr_pending_addr <= 64'h0;
@@ -279,6 +286,7 @@ module pcileech_nvme_dma_bridge(
                 B_RD_SEND: begin
                     if (tlp_tx_tvalid && tlp_tx_tready) begin
                         tlp_tx_tvalid <= 1'b0;
+                        rd_timeout <= 16'h0;
                         bstate <= B_RD_WAIT;
                     end
                 end
@@ -287,6 +295,19 @@ module pcileech_nvme_dma_bridge(
                     if (cpld_match) begin
                         rd_payload <= swap32(tlp_rx_tdata[127:96]);
                         bstate <= B_RD_EMIT;
+                    end else if (cpld_error) begin
+                        rd_payload <= 32'h0;
+                        rd_remaining <= 10'h0;
+                        dma_rd_done <= 1'b1;
+                        bstate <= B_IDLE;
+                    end else begin
+                        rd_timeout <= rd_timeout + 1'b1;
+                        if (rd_timeout >= 16'hFFFF) begin
+                            rd_payload <= 32'h0;
+                            rd_remaining <= 10'h0;
+                            dma_rd_done <= 1'b1;
+                            bstate <= B_IDLE;
+                        end
                     end
                 end
 

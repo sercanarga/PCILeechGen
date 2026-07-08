@@ -36,6 +36,7 @@ type SVGeneratorConfig struct {
 	NVMeSMART          *nvme.SMART        // donor-plausible SMART/Health wear seeds (nil = zero wear)
 	NVMeDoorbellStride uint32             // CAP.DSTRD - doorbell stride (0 = 4B, default)
 	NVMeDiskWords      int                // NVMe disk-cache depth (words), board-scaled
+	NVMeAdvertisedLBAs uint64             // actual NSZE from donor (0 = use default 2000409264)
 	Bar0Size           int
 }
 

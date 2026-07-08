@@ -2,6 +2,7 @@
 package output
 
 import (
+	"encoding/binary"
 	"fmt"
 	"log/slog"
 	"os"
@@ -510,10 +511,22 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 				Serial: ctx.NVMeIdentity.Serial,
 				Model:  ctx.NVMeIdentity.Model,
 				FWRev:  ctx.NVMeIdentity.FWRev,
+
+				RawControllerIdent: ctx.NVMeIdentity.RawControllerIdent,
+				RawNamespaceIdent:  ctx.NVMeIdentity.RawNamespaceIdent,
 			}
 		}
 		cfg.NVMeIdentify = nvme.BuildIdentifyData(ids, barData, identity)
 		cfg.NVMeSMART = nvme.BuildSMART()
+
+		// Normalize donor NSZE to 512B units: firmware always serves LBADS=9.
+		if nsze := binary.LittleEndian.Uint64(cfg.NVMeIdentify.Namespace[0x000:0x008]); nsze > 0 {
+			lbaf0 := binary.LittleEndian.Uint32(cfg.NVMeIdentify.Namespace[0x0C0:0x0C4])
+			if donorLBADS := uint((lbaf0 >> 16) & 0xFF); donorLBADS >= 9 {
+				nsze <<= (donorLBADS - 9)
+			}
+			cfg.NVMeAdvertisedLBAs = nsze
+		}
 		if len(barData) >= 0x08 {
 			cfg.NVMeDoorbellStride = nvme.DoorbellStrideFromCAP(util.ReadLE32(barData, 0x04))
 		}

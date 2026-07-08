@@ -250,6 +250,31 @@ func TestBuildIdentifyData_UsesCapturedIdentity(t *testing.T) {
 	}
 }
 
+// Raw donor Controller blob: MDTS clamped, VER==BAR VS, VID overridden.
+func TestBuildIdentifyData_RawControllerClampsMDTSAndAlignsVER(t *testing.T) {
+	ids := sampleIDs()
+	raw := make([]byte, 4096)
+	raw[0x04D] = 6                                              // MDTS too large for backend
+	binary.LittleEndian.PutUint32(raw[0x050:], 0x00010300)      // donor VER 1.3 (would mismatch BAR)
+	binary.LittleEndian.PutUint16(raw[0x000:], 0xBEEF)          // donor VID (must be overridden)
+	captured := &ControllerIdentity{RawControllerIdent: raw}
+
+	barData := make([]byte, 0x10)
+	binary.LittleEndian.PutUint32(barData[0x08:], 0x00010400) // BAR VS 1.4
+
+	id := BuildIdentifyData(ids, barData, captured)
+
+	if got := id.Controller[0x04D]; got > 5 {
+		t.Errorf("raw MDTS must be clamped <=5, got %d", got)
+	}
+	if got := binary.LittleEndian.Uint32(id.Controller[0x050:]); got != 0x00010400 {
+		t.Errorf("VER must equal BAR VS (0x00010400), got 0x%08X", got)
+	}
+	if got := binary.LittleEndian.Uint16(id.Controller[0x000:]); got != ids.VendorID {
+		t.Errorf("VID must be forced to ids (0x%04X), got 0x%04X", ids.VendorID, got)
+	}
+}
+
 func TestBuildIdentifyData_NilIdentityFallsBackToSynthesis(t *testing.T) {
 	ids := sampleIDs()
 	ids.VendorID = 0x144D
@@ -294,5 +319,88 @@ func TestIdentifyController_DifferentVendors(t *testing.T) {
 		if gotVID != vid {
 			t.Errorf("VID 0x%04X: identify VID mismatch, got 0x%04X", vid, gotVID)
 		}
+	}
+}
+
+// CAP_HI at offset 0x04 carries MPSMIN in bits 19:16 of the dword.
+func TestDeriveMDTS(t *testing.T) {
+	t.Run("nil_bar", func(t *testing.T) {
+		if got := deriveMDTS(nil); got != 5 {
+			t.Errorf("nil barData: got %d, want 5", got)
+		}
+	})
+	t.Run("MPSMIN=0", func(t *testing.T) {
+		barData := make([]byte, 0x10)
+		binary.LittleEndian.PutUint32(barData[0x04:], 0x00000000) // MPSMIN=0
+		if got := deriveMDTS(barData); got != 5 {
+			t.Errorf("MPSMIN=0: got %d, want 5", got)
+		}
+	})
+	t.Run("MPSMIN=2", func(t *testing.T) {
+		barData := make([]byte, 0x10)
+		binary.LittleEndian.PutUint32(barData[0x04:], 0x00020000) // MPSMIN=2 in bits 19:16
+		if got := deriveMDTS(barData); got != 3 {
+			t.Errorf("MPSMIN=2: got %d, want 3", got)
+		}
+	})
+	t.Run("MPSMIN=4", func(t *testing.T) {
+		barData := make([]byte, 0x10)
+		binary.LittleEndian.PutUint32(barData[0x04:], 0x00040000) // MPSMIN=4 in bits 19:16
+		if got := deriveMDTS(barData); got != 1 {
+			t.Errorf("MPSMIN=4: got %d, want 1", got)
+		}
+	})
+}
+
+func TestDeriveVER(t *testing.T) {
+	t.Run("nil", func(t *testing.T) {
+		if got := deriveVER(nil); got != 0x00010400 {
+			t.Errorf("nil barData: got 0x%08X, want 0x00010400", got)
+		}
+	})
+	t.Run("short", func(t *testing.T) {
+		if got := deriveVER(make([]byte, 8)); got != 0x00010400 {
+			t.Errorf("short barData: got 0x%08X, want 0x00010400", got)
+		}
+	})
+	t.Run("zero_VS", func(t *testing.T) {
+		barData := make([]byte, 0x10)
+		binary.LittleEndian.PutUint32(barData[0x08:], 0x00000000)
+		if got := deriveVER(barData); got != 0x00010400 {
+			t.Errorf("zero VS: got 0x%08X, want 0x00010400", got)
+		}
+	})
+	t.Run("donor_VS", func(t *testing.T) {
+		barData := make([]byte, 0x10)
+		binary.LittleEndian.PutUint32(barData[0x08:], 0x00010300)
+		if got := deriveVER(barData); got != 0x00010300 {
+			t.Errorf("donor VS: got 0x%08X, want 0x00010300", got)
+		}
+	})
+}
+
+// Raw donor Controller blob: SSVID, OAES, CTRATT also forced.
+func TestBuildIdentifyData_RawControllerOverridesAllForced(t *testing.T) {
+	ids := sampleIDs()
+	raw := make([]byte, 4096)
+	binary.LittleEndian.PutUint16(raw[0x000:], 0xBEEF)                         // donor VID
+	binary.LittleEndian.PutUint16(raw[0x002:], 0xDEAD)                        // donor SSVID
+	binary.LittleEndian.PutUint32(raw[0x05C:], 0xCAFEBABE)                    // donor OAES
+	binary.LittleEndian.PutUint32(raw[0x060:], 0xFEEDFACE)                    // donor CTRATT
+	captured := &ControllerIdentity{RawControllerIdent: raw}
+
+	id := BuildIdentifyData(ids, nil, captured)
+
+	if got := binary.LittleEndian.Uint16(id.Controller[0x000:]); got != ids.VendorID {
+		t.Errorf("VID must be forced to ids (0x%04X), got 0x%04X", ids.VendorID, got)
+	}
+	if got := binary.LittleEndian.Uint16(id.Controller[0x002:]); got != ids.SubsysVendorID {
+		t.Errorf("SSVID must be forced to ids (0x%04X), got 0x%04X", ids.SubsysVendorID, got)
+	}
+	if got := binary.LittleEndian.Uint32(id.Controller[0x05C:]); got != 0 {
+		t.Errorf("OAES must be forced to 0, got 0x%08X", got)
+	}
+	if got := binary.LittleEndian.Uint32(id.Controller[0x060:]); got != 0 {
+		t.Errorf("CTRATT must be forced to 0, got 0x%08X", got)
 	}
 }

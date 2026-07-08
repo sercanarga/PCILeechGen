@@ -363,6 +363,19 @@ func (c *Collector) captureViaNativeDriver(bdf pci.BDF, bars []pci.BAR, nvme boo
 			res.nvmeID = id
 			slog.Info("native visit: NVMe identity captured",
 				"model", id.Model, "serial", id.Serial, "firmware", id.FWRev)
+
+			if rawCtrl, err := c.sysfs.ReadNVMeRawIdentify(bdf, 1, 0); err == nil {
+				id.RawControllerIdent = rawCtrl
+				slog.Info("native visit: raw Identify Controller captured via ioctl")
+			} else {
+				slog.Warn("native visit: raw Identify Controller ioctl failed; will use synthesized data", "error", err)
+			}
+			if rawNS, err := c.sysfs.ReadNVMeRawIdentify(bdf, 0, 1); err == nil {
+				id.RawNamespaceIdent = rawNS
+				slog.Info("native visit: raw Identify Namespace captured via ioctl")
+			} else {
+				slog.Warn("native visit: raw Identify Namespace ioctl failed; will use synthesized data", "error", err)
+			}
 		}
 	}
 
@@ -401,6 +414,21 @@ func (c *Collector) collectNVMeIdentity(bdf pci.BDF, classCode uint32, vc *nativ
 	if id, err := c.sysfs.ReadNVMeIdentity(bdf); err == nil {
 		slog.Info("captured NVMe identity from bound driver",
 			"model", id.Model, "serial", id.Serial, "firmware", id.FWRev)
+
+		if rawCtrl, err := c.sysfs.ReadNVMeRawIdentify(bdf, 1, 0); err == nil {
+			id.RawControllerIdent = rawCtrl
+			slog.Info("captured raw Identify Controller data", "bytes", len(rawCtrl))
+		} else {
+			slog.Warn("raw Identify Controller capture failed", "error", err)
+		}
+
+		if rawNS, err := c.sysfs.ReadNVMeRawIdentify(bdf, 0, 1); err == nil {
+			id.RawNamespaceIdent = rawNS
+			slog.Info("captured raw Identify Namespace data", "bytes", len(rawNS))
+		} else {
+			slog.Warn("raw Identify Namespace capture failed", "error", err)
+		}
+
 		return id
 	}
 
