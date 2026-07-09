@@ -113,7 +113,11 @@ func TestValidateOutputDir_WithFiles(t *testing.T) {
 				t.Fatal(err)
 			}
 		} else {
-			if err := os.WriteFile(filepath.Join(tmpDir, name), []byte("content"), 0644); err != nil {
+			content := []byte("content")
+			if name == "device_model.json" {
+				content = validOutputDeviceModelJSON(t)
+			}
+			if err := os.WriteFile(filepath.Join(tmpDir, name), content, 0644); err != nil {
 				t.Fatal(err)
 			}
 		}
