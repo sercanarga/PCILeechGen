@@ -115,11 +115,23 @@ func (b *Builder) Build(ctx *donor.DeviceContext) error {
 		}
 	}
 
-	// Hand the deliverables to the invoking user after a sudo build.
+	refreshBuildManifest(fwout.WriteBuildManifest, b.opts.OutputDir, ctx, b.board)
+
 	if err := chownOutputs(b.opts.OutputDir); err != nil {
 		slog.Warn("chown output files", "error", err)
 	}
 
 	slog.Info("build completed successfully")
 	return nil
+}
+
+func refreshBuildManifest(
+	writeManifest func(string, *donor.DeviceContext, *board.Board) error,
+	outputDir string,
+	ctx *donor.DeviceContext,
+	b *board.Board,
+) {
+	if err := writeManifest(outputDir, ctx, b); err != nil {
+		slog.Warn("failed to refresh post-synthesis build manifest; bitstream remains available", "error", err)
+	}
 }
