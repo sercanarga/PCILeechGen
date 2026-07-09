@@ -99,6 +99,10 @@ func loadDonorContext() (*donor.DeviceContext, error) {
 		return donor.LoadContext(buildOpts.fromJSON)
 	}
 
+	if err := donor.RequireLiveCollection(); err != nil {
+		return nil, err
+	}
+
 	if buildOpts.bdf == "" {
 		return nil, fmt.Errorf("either --bdf or --from-json is required")
 	}

@@ -28,6 +28,9 @@ as a donor device with VFIO. Also shows board compatibility analysis.
 Example:
   pcileechgen check --bdf 0000:03:00.0`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := donor.RequireLiveCollection(); err != nil {
+			return err
+		}
 		bdf, err := pci.ParseBDF(checkDevice)
 		if err != nil {
 			return fmt.Errorf("invalid BDF: %w", err)

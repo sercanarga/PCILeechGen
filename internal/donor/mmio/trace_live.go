@@ -1,3 +1,5 @@
+//go:build linux
+
 // Live MMIO tracer. Uses kernel mmiotrace via ftrace.
 // Needs root, CONFIG_MMIOTRACE=y, and debugfs at /sys/kernel/debug.
 
@@ -17,6 +19,10 @@ const (
 	tracePipe     = tracingDir + "/trace_pipe"
 	tracingOnPath = tracingDir + "/tracing_on"
 )
+
+func RequireLiveTrace() error {
+	return nil
+}
 
 // LiveTrace enables mmiotrace, records BAR accesses for `duration`, then stops.
 func LiveTrace(bdf string, duration time.Duration) (*TraceResult, error) {

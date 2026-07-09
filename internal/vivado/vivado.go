@@ -15,17 +15,13 @@ import (
 	"time"
 )
 
-// DefaultPaths contains common Vivado installation paths.
-var DefaultPaths = []string{
-	"/tools/Xilinx/Vivado",
-	"/opt/Xilinx/Vivado",
-	"/usr/local/Xilinx/Vivado",
-}
+var DefaultPaths = platformDefaultPaths()
 
 // Vivado represents a Vivado installation.
 type Vivado struct {
-	Path    string // path to Vivado installation (e.g., /tools/Xilinx/Vivado/2023.2)
-	Version string // Vivado version string
+	Path       string
+	Version    string
+	binaryPath string
 }
 
 // Find searches for a Vivado installation.
@@ -35,13 +31,21 @@ func Find(customPath string) (*Vivado, error) {
 		return validateVivado(customPath)
 	}
 
-	// Check PATH first
-	vivadoExec, err := exec.LookPath("vivado")
-	if err == nil {
-		// Resolve to installation directory
-		realPath, _ := filepath.EvalSymlinks(vivadoExec)
+	for _, name := range launcherNames() {
+		vivadoExec, err := exec.LookPath(name)
+		if err != nil {
+			continue
+		}
+		realPath, evalErr := filepath.EvalSymlinks(vivadoExec)
+		if evalErr != nil {
+			realPath = vivadoExec
+		}
 		installDir := filepath.Dir(filepath.Dir(realPath))
-		return validateVivado(installDir)
+		v, validateErr := validateVivado(installDir)
+		if validateErr == nil {
+			v.binaryPath = realPath
+			return v, nil
+		}
 	}
 
 	// Search default paths
@@ -79,22 +83,37 @@ func Find(customPath string) (*Vivado, error) {
 
 // validateVivado checks if a path contains a valid Vivado installation.
 func validateVivado(path string) (*Vivado, error) {
-	binary := filepath.Join(path, "bin", "vivado")
-	if _, err := os.Stat(binary); os.IsNotExist(err) {
-		return nil, fmt.Errorf("Vivado binary not found at %s", binary)
+	info, err := os.Stat(path)
+	if err == nil && !info.IsDir() {
+		path = filepath.Dir(filepath.Dir(path))
 	}
 
-	version := filepath.Base(path)
+	for _, name := range launcherNames() {
+		binary := filepath.Join(path, "bin", name)
+		if info, statErr := os.Stat(binary); statErr == nil && !info.IsDir() {
+			return &Vivado{
+				Path:       path,
+				Version:    filepath.Base(path),
+				binaryPath: binary,
+			}, nil
+		}
+	}
 
-	return &Vivado{
-		Path:    path,
-		Version: version,
-	}, nil
+	return nil, fmt.Errorf("Vivado launcher not found under %s", filepath.Join(path, "bin"))
 }
 
 // BinaryPath returns the path to the Vivado binary.
 func (v *Vivado) BinaryPath() string {
-	return filepath.Join(v.Path, "bin", "vivado")
+	if v.binaryPath != "" {
+		return v.binaryPath
+	}
+	for _, name := range launcherNames() {
+		candidate := filepath.Join(v.Path, "bin", name)
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate
+		}
+	}
+	return filepath.Join(v.Path, "bin", launcherNames()[0])
 }
 
 // RunTCL executes a TCL script in Vivado batch mode with a timeout. Under sudo
@@ -104,7 +123,8 @@ func (v *Vivado) RunTCL(tclScript string, workDir string, timeout time.Duration)
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, v.BinaryPath(), "-mode", "batch", "-notrace", "-source", tclScript)
+	args := []string{"-mode", "batch", "-notrace", "-source", tclScript}
+	cmd := vivadoCommand(ctx, v.BinaryPath(), args)
 	cmd.Dir = workDir
 	var output bytes.Buffer
 	cmd.Stdout = io.MultiWriter(os.Stdout, &output)
@@ -117,7 +137,7 @@ func (v *Vivado) RunTCL(tclScript string, workDir string, timeout time.Duration)
 	}
 	env = applyOverrides(env, ov)
 	env = setEnv(env, "XILINX_VIVADO", v.Path)
-	cmd.Env = env
+	cmd.Env = append(env, cmd.Env...)
 
 	slog.Info("running Vivado", "cmd", strings.Join(cmd.Args, " "), "dir", workDir, "timeout", timeout)
 

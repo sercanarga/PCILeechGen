@@ -40,6 +40,11 @@ func NewCollectorWithSysfs(sr *SysfsReader) *Collector {
 }
 
 func (c *Collector) Collect(bdf pci.BDF) (*DeviceContext, error) {
+	if c.sysfs == nil || c.sysfs.basePath == sysfsBasePath {
+		if err := RequireLiveCollection(); err != nil {
+			return nil, err
+		}
+	}
 	ctx := &DeviceContext{
 		CollectedAt: time.Now(),
 		ToolVersion: version.Version,

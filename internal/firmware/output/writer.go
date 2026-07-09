@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/sercanarga/pcileechgen/internal/board"
@@ -35,6 +37,63 @@ type OutputWriter struct {
 	Force     bool
 }
 
+var boardIPReference = regexp.MustCompile(`(?i)[/\\]ip[/\\]([^/"\\]+\.xci)`)
+
+var generatedRootArtifacts = []string{
+	"pcileech_bar_impl_device.sv",
+	"pcileech_tlps128_bar_controller.sv",
+	"pcileech_bar_impl_msi.sv",
+	"pcileech_msix_table.sv",
+	"pcileech_nvme_admin_responder.sv",
+	"pcileech_nvme_dma_bridge.sv",
+	"pcileech_bram_disk.sv",
+	"pcileech_hda_rirb_dma.sv",
+	"pcileech_hda_msi.sv",
+	"tlp_latency_emulator.sv",
+	"device_config.sv",
+	"config_space_init.hex",
+	"msix_table_init.hex",
+	"identify_init.hex",
+	"scrub_diff_report.txt",
+	"build_manifest.json",
+}
+
+func validateBoardIPs(b *board.Board, libDir string) error {
+	projectTCL := b.TCLPath(libDir)
+	data, err := os.ReadFile(projectTCL)
+	if err != nil {
+		return fmt.Errorf("required board project Tcl not found at %s: %w", projectTCL, err)
+	}
+
+	matches := boardIPReference.FindAllStringSubmatch(string(data), -1)
+	if len(matches) == 0 {
+		return fmt.Errorf("board project Tcl %s does not declare required XCI files", projectTCL)
+	}
+
+	required := make(map[string]struct{}, len(matches))
+	for _, match := range matches {
+		required[match[1]] = struct{}{}
+	}
+	names := make([]string, 0, len(required))
+	for name := range required {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	ipDir := b.IPPath(libDir)
+	for _, name := range names {
+		path := filepath.Join(ipDir, name)
+		info, statErr := os.Stat(path)
+		if statErr != nil || info.IsDir() {
+			if statErr == nil {
+				statErr = fmt.Errorf("path is a directory")
+			}
+			return fmt.Errorf("required board IP file not found at %s: %w", path, statErr)
+		}
+	}
+	return nil
+}
+
 func NewOutputWriter(outputDir, libDir string, jobs, timeout int) *OutputWriter {
 	if jobs <= 0 {
 		jobs = 4
@@ -52,8 +111,20 @@ func NewOutputWriter(outputDir, libDir string, jobs, timeout int) *OutputWriter 
 
 // WriteAll is the main entry point - generates everything.
 func (ow *OutputWriter) WriteAll(ctx *donor.DeviceContext, b *board.Board) error {
+	if err := validateBoardIPs(b, ow.LibDir); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(ow.OutputDir, 0755); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
+	}
+	if err := os.RemoveAll(filepath.Join(ow.OutputDir, b.Name)); err != nil {
+		return fmt.Errorf("failed to remove stale Vivado project: %w", err)
+	}
+
+	for _, name := range generatedRootArtifacts {
+		if err := os.Remove(filepath.Join(ow.OutputDir, name)); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("failed to remove stale artifact %s: %w", name, err)
+		}
 	}
 
 	ids := firmware.ExtractDeviceIDs(ctx.ConfigSpace, ctx.ExtCapabilities)

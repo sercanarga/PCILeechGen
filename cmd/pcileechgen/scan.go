@@ -15,6 +15,9 @@ var scanCmd = &cobra.Command{
 	Short: "Scan and list available PCI devices",
 	Long:  "Scans /sys/bus/pci/devices/ and lists all PCI devices with their VFIO compatibility status.",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := donor.RequireLiveCollection(); err != nil {
+			return err
+		}
 		sr := donor.NewSysfsReader()
 		devices, err := sr.ScanDevices()
 		if err != nil {

@@ -41,6 +41,9 @@ Example:
   pcileechgen mmio-trace --trace-file mmiotrace.txt --bar-base 0xf7800000 --bar-index 2 --json`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if mmioTraceOpts.traceFile == "" {
+			if err := mmio.RequireLiveTrace(); err != nil {
+				return err
+			}
 			if _, err := pci.ParseBDF(mmioTraceOpts.bdf); err != nil {
 				return fmt.Errorf("invalid BDF %q: %w", mmioTraceOpts.bdf, err)
 			}

@@ -1,3 +1,5 @@
+//go:build linux
+
 // Package vfio reads PCI config space and BAR memory from VFIO-bound devices.
 
 package vfio

@@ -2,9 +2,6 @@ package donor
 
 import (
 	"encoding/binary"
-	"fmt"
-	"os"
-	"syscall"
 )
 
 // BARProbeResult is one 4-byte register's probe output.
@@ -27,53 +24,6 @@ type BARProfile struct {
 type BARProfiler struct{}
 
 func NewBARProfiler() *BARProfiler { return &BARProfiler{} }
-
-// ProfileBAR mmaps a sysfs resource file R/W, writes test patterns to
-// each register, reads back, and restores the original value.
-// Returns a per-register RW mask and RW1C flag.
-func (p *BARProfiler) ProfileBAR(resourcePath string, barIndex, maxSize int) (*BARProfile, error) {
-	f, err := os.OpenFile(resourcePath, os.O_RDWR, 0)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open BAR%d for R/W: %w", barIndex, err)
-	}
-	defer f.Close()
-
-	fi, err := f.Stat()
-	if err != nil {
-		return nil, fmt.Errorf("failed to stat BAR%d: %w", barIndex, err)
-	}
-
-	size := int(fi.Size())
-	if size == 0 {
-		return nil, fmt.Errorf("BAR%d resource file is empty", barIndex)
-	}
-	if size > maxSize {
-		size = maxSize
-	}
-	// mmap needs page-aligned size
-	pageSize := os.Getpagesize()
-	mmapSize := ((size + pageSize - 1) / pageSize) * pageSize
-
-	mapped, err := syscall.Mmap(int(f.Fd()), 0, mmapSize,
-		syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_SHARED)
-	if err != nil {
-		return nil, fmt.Errorf("mmap R/W failed for BAR%d: %w", barIndex, err)
-	}
-	defer func() {
-		if unmapErr := syscall.Munmap(mapped); unmapErr != nil {
-			_ = unmapErr
-		}
-	}()
-
-	profile := &BARProfile{
-		BarIndex: barIndex,
-		Size:     size,
-	}
-
-	profile.Probes = probeRegisters(mapped, size)
-
-	return profile, nil
-}
 
 // ProfileBARFromBuffer runs probing against an in-memory buffer (for tests).
 func ProfileBARFromBuffer(buf []byte, barIndex int) *BARProfile {
