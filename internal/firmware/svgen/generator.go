@@ -8,6 +8,7 @@ import (
 
 	"github.com/sercanarga/pcileechgen/internal/board"
 	"github.com/sercanarga/pcileechgen/internal/firmware"
+	"github.com/sercanarga/pcileechgen/internal/donor/behavior"
 	"github.com/sercanarga/pcileechgen/internal/firmware/barmodel"
 	"github.com/sercanarga/pcileechgen/internal/firmware/nvme"
 )
@@ -38,6 +39,8 @@ type SVGeneratorConfig struct {
 	NVMeDiskWords      int                // NVMe disk-cache depth (words), board-scaled
 	NVMeAdvertisedLBAs uint64             // actual NSZE from donor (0 = use default 2000409264)
 	Bar0Size           int
+	BehaviorRules      *behavior.RuleSet
+	CompiledBehavior   *CompiledBehavior
 }
 
 // NVMeDiskWordsForBRAM36 returns the NVMe disk-cache depth in 32-bit words for
@@ -141,7 +144,11 @@ func renderTemplateDelim(name, leftDelim, rightDelim string, data any) (string, 
 }
 
 func GenerateBarImplDeviceSV(cfg *SVGeneratorConfig) (string, error) {
-	return renderTemplate("bar_impl_device", cfg)
+	prepared, err := prepareBehaviorConfig(cfg)
+	if err != nil {
+		return "", err
+	}
+	return renderTemplate("bar_impl_device", prepared)
 }
 
 func GenerateBarControllerSV(cfg *SVGeneratorConfig) (string, error) {

@@ -60,6 +60,73 @@ module pcileech_bar_impl_device #(
 {{ range .BARModel.Registers }}
     reg [{{ sub (mul .Width 8) 1 }}:0] reg_0x{{ hex08 .Offset }};  // {{ .Name }}
 {{ end }}
+{{ if .CompiledBehavior }}
+    reg [{{ sub .CompiledBehavior.StateBits 1 }}:0] behavior_state;
+    wire [31:0] behavior_wr_be_mask = {wr_be[3], wr_be[3], wr_be[3], wr_be[3], wr_be[3], wr_be[3], wr_be[3], wr_be[3], wr_be[2], wr_be[2], wr_be[2], wr_be[2], wr_be[2], wr_be[2], wr_be[2], wr_be[2], wr_be[1], wr_be[1], wr_be[1], wr_be[1], wr_be[1], wr_be[1], wr_be[1], wr_be[1], wr_be[0], wr_be[0], wr_be[0], wr_be[0], wr_be[0], wr_be[0], wr_be[0], wr_be[0]};
+{{ range .CompiledBehavior.Rules }}{{ range .DelayedEvents }}
+    reg rule_delay_pending_{{ .Index }};
+    reg [19:0] rule_delay_counter_{{ .Index }};
+{{ end }}{{ end }}
+{{ range .CompiledBehavior.AllEvents }}    wire rule_event_due_{{ .Index }} = rule_delay_pending_{{ .Index }} &&
+        ((rule_delay_counter_{{ .Index }} + 1'b1) >= 20'd{{ .DelayCycles }});
+{{ end }}    wire behavior_event_due = 1'b0{{ range .CompiledBehavior.AllEvents }} || rule_event_due_{{ .Index }}{{ end }};
+{{ range .CompiledBehavior.DueRegisters }}    wire [31:0] behavior_due_mask_{{ hex08 .Offset }} = 32'h00000000{{ range .Contributions }} |
+        ({32{rule_event_due_{{ .EventIndex }}}} & 32'h{{ hex08 .Mask }}){{ end }};
+    wire [31:0] behavior_due_value_{{ hex08 .Offset }} = 32'h00000000{{ range .Contributions }} |
+        ({32{rule_event_due_{{ .EventIndex }}}} & 32'h{{ hex08 .Value }}){{ end }};
+{{ end }}
+
+    always @(posedge clk) begin
+        if (rst) begin
+            behavior_state <= {{ .CompiledBehavior.StateBits }}'d{{ .CompiledBehavior.InitialState }};
+{{ range .CompiledBehavior.Registers }}            reg_0x{{ hex08 .Offset }} <= 32'h{{ hex08 .Reset }};
+{{ end }}{{ range .CompiledBehavior.Rules }}{{ range .DelayedEvents }}            rule_delay_pending_{{ .Index }} <= 1'b0;
+            rule_delay_counter_{{ .Index }} <= 20'd0;
+{{ end }}{{ end }}        end else begin
+            if (wr_valid) begin
+                case (wr_offset & 32'hFFFFFFFC)
+{{ range .CompiledBehavior.Registers }}{{ if or (ne .RWMask 0) (ne .W1CMask 0) }}                    32'h{{ hex08 .Offset }}: begin
+                        if (wr_be[0]) reg_0x{{ hex08 .Offset }}[7:0]   <= ((reg_0x{{ hex08 .Offset }}[7:0]   & ~(8'h{{ hex02 (index (rwMaskBytes .RWMask) 0) }} | 8'h{{ hex02 (index (w1cMaskBytes .W1CMask) 0) }})) | (wr_data[7:0]   & 8'h{{ hex02 (index (rwMaskBytes .RWMask) 0) }}) | (reg_0x{{ hex08 .Offset }}[7:0]   & ~wr_data[7:0]   & 8'h{{ hex02 (index (w1cMaskBytes .W1CMask) 0) }}));
+                        if (wr_be[1]) reg_0x{{ hex08 .Offset }}[15:8]  <= ((reg_0x{{ hex08 .Offset }}[15:8]  & ~(8'h{{ hex02 (index (rwMaskBytes .RWMask) 1) }} | 8'h{{ hex02 (index (w1cMaskBytes .W1CMask) 1) }})) | (wr_data[15:8]  & 8'h{{ hex02 (index (rwMaskBytes .RWMask) 1) }}) | (reg_0x{{ hex08 .Offset }}[15:8]  & ~wr_data[15:8]  & 8'h{{ hex02 (index (w1cMaskBytes .W1CMask) 1) }}));
+                        if (wr_be[2]) reg_0x{{ hex08 .Offset }}[23:16] <= ((reg_0x{{ hex08 .Offset }}[23:16] & ~(8'h{{ hex02 (index (rwMaskBytes .RWMask) 2) }} | 8'h{{ hex02 (index (w1cMaskBytes .W1CMask) 2) }})) | (wr_data[23:16] & 8'h{{ hex02 (index (rwMaskBytes .RWMask) 2) }}) | (reg_0x{{ hex08 .Offset }}[23:16] & ~wr_data[23:16] & 8'h{{ hex02 (index (w1cMaskBytes .W1CMask) 2) }}));
+                        if (wr_be[3]) reg_0x{{ hex08 .Offset }}[31:24] <= ((reg_0x{{ hex08 .Offset }}[31:24] & ~(8'h{{ hex02 (index (rwMaskBytes .RWMask) 3) }} | 8'h{{ hex02 (index (w1cMaskBytes .W1CMask) 3) }})) | (wr_data[31:24] & 8'h{{ hex02 (index (rwMaskBytes .RWMask) 3) }}) | (reg_0x{{ hex08 .Offset }}[31:24] & ~wr_data[31:24] & 8'h{{ hex02 (index (w1cMaskBytes .W1CMask) 3) }}));
+                    end
+{{ end }}{{ end }}                    default: begin end
+                endcase
+            end
+{{ range .CompiledBehavior.DueRegisters }}            if (behavior_due_mask_{{ hex08 .Offset }} != 32'h00000000) reg_0x{{ hex08 .Offset }} <=
+                (reg_0x{{ hex08 .Offset }} & ~behavior_due_mask_{{ hex08 .Offset }}) |
+                (behavior_due_value_{{ hex08 .Offset }} & behavior_due_mask_{{ hex08 .Offset }});
+{{ end }}
+{{ range .CompiledBehavior.Rules }}{{ range .DelayedEvents }}            if (rule_delay_pending_{{ .Index }}) begin
+                if ((rule_delay_counter_{{ .Index }} + 1'b1) >= 20'd{{ .DelayCycles }}) begin
+{{ if ge .NextState 0 }}                    behavior_state <= {{ $.CompiledBehavior.StateBits }}'d{{ .NextState }};
+{{ end }}                    rule_delay_pending_{{ .Index }} <= 1'b0;
+                end else begin
+                    rule_delay_counter_{{ .Index }} <= rule_delay_counter_{{ .Index }} + 1'b1;
+                end
+            end
+{{ end }}{{ end }}{{ range .CompiledBehavior.Rules }}            if (!behavior_event_due &&
+                behavior_state == {{ $.CompiledBehavior.StateBits }}'d{{ .State }} &&
+                wr_valid && ((wr_offset & 32'hFFFFFFFC) == 32'h{{ hex08 .Offset }}) &&
+                ((wr_be & 4'h{{ hex02 .ByteEnableMask }}) == 4'h{{ hex02 .ByteEnableMask }}) &&
+                (((wr_data ^ 32'h{{ hex08 .Value }}) & 32'h{{ hex08 .ValueMask }}) == 32'h00000000)) begin
+{{ range .Updates }}{{ if .ComposeTriggerWrite }}{{ if and (eq .TriggerRWMask 0xFFFFFFFF) (eq .TriggerW1CMask 0) }}                reg_0x{{ hex08 .Offset }} <= (wr_data & ~32'h{{ hex08 .Mask }}) | (32'h{{ hex08 .Value }} & 32'h{{ hex08 .Mask }});
+{{ else }}                reg_0x{{ hex08 .Offset }} <= (((reg_0x{{ hex08 .Offset }} & ~(32'h{{ hex08 .TriggerRWMask }} & behavior_wr_be_mask)) |
+                    (wr_data & 32'h{{ hex08 .TriggerRWMask }} & behavior_wr_be_mask)) &
+                    ~(wr_data & 32'h{{ hex08 .TriggerW1CMask }} & behavior_wr_be_mask) &
+                    ~32'h{{ hex08 .Mask }}) | (32'h{{ hex08 .Value }} & 32'h{{ hex08 .Mask }});
+{{ end }}
+{{ else }}                reg_0x{{ hex08 .Offset }} <= (reg_0x{{ hex08 .Offset }} & ~32'h{{ hex08 .Mask }}) | (32'h{{ hex08 .Value }} & 32'h{{ hex08 .Mask }});
+{{ end }}{{ end }}                behavior_state <= {{ $.CompiledBehavior.StateBits }}'d{{ .NextState }};
+{{ range .DelayedEvents }}                if (!rule_delay_pending_{{ .Index }}) begin
+                    rule_delay_pending_{{ .Index }} <= 1'b1;
+                    rule_delay_counter_{{ .Index }} <= 20'd0;
+                end
+{{ end }}            end
+{{ end }}        end
+    end
+{{ end }}
 {{ if eq .DeviceClass "nvme" }}
     // ========================================================================
     // NVMe CC -> CSTS State Machine

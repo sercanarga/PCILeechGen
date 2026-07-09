@@ -39,7 +39,7 @@ func TestParseTextTrace_Ret2cShapeWithBARBase(t *testing.T) {
 func TestParseTextTrace_LiveTracePipeShape(t *testing.T) {
 	input := strings.NewReader("R 4 1234567.890 0xfee00100 0x00000001 extra\n")
 
-	trace, err := ParseTextTrace(input, TextTraceOptions{BARSize: 4096})
+	trace, err := ParseTextTrace(input, TextTraceOptions{BARBase: 0xfee00000, BARSize: 4096})
 
 	if err != nil {
 		t.Fatalf("ParseTextTrace returned error: %v", err)
@@ -53,7 +53,7 @@ func TestParseTextTrace_LiveTracePipeShape(t *testing.T) {
 }
 
 func TestParseTextTrace_RejectsEmptyTrace(t *testing.T) {
-	_, err := ParseTextTrace(strings.NewReader("not a trace line\n"), TextTraceOptions{})
+	_, err := ParseTextTrace(strings.NewReader("not a trace line\n"), TextTraceOptions{BARSize: 4096})
 	if err == nil {
 		t.Fatal("expected error for empty trace")
 	}
@@ -65,7 +65,7 @@ func TestParseTextTrace_DurationUsesLastTimestamp(t *testing.T) {
 		"R 4 1.250 0x1004 0x2",
 	}, "\n"))
 
-	trace, err := ParseTextTrace(input, TextTraceOptions{})
+	trace, err := ParseTextTrace(input, TextTraceOptions{BARBase: 0x1000, BARSize: 8})
 
 	if err != nil {
 		t.Fatalf("ParseTextTrace returned error: %v", err)
