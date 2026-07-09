@@ -8,6 +8,7 @@
 
 `timescale 1ns / 1ps
 `include "pcileech_header.svh"
+`default_nettype none
 
 module pcileech_tlps128_bar_controller(
     input                   rst,
@@ -58,10 +59,14 @@ module pcileech_tlps128_bar_controller(
     wire [31:0] rd_rsp_data;
     wire        rd_rsp_valid;
 
+    wire [31:0] wr_addr_bar0     = wr_addr;
+    wire [31:0] rd_req_addr_bar0 = rd_req_addr;
 {{ if .BARModel }}
-    localparam [31:0] BAR0_ADDR_MASK = 32'h{{ printf "%08X" (sub .BARModel.Size 1) }}; // BAR0 aperture mask (Bar0Size)
-    wire [31:0] wr_addr_bar0     = wr_addr     & BAR0_ADDR_MASK;
-    wire [31:0] rd_req_addr_bar0 = rd_req_addr & BAR0_ADDR_MASK;
+    wire        bar0_wr_hit      = wr_addr < {{ .BARModel.Size }};
+    wire        bar0_rd_hit      = rd_req_addr < {{ .BARModel.Size }};
+{{ else }}
+    wire        bar0_wr_hit      = wr_addr < {{ .Bar0Size }};
+    wire        bar0_rd_hit      = rd_req_addr < {{ .Bar0Size }};
 {{ end }}
 
 
@@ -267,6 +272,16 @@ module pcileech_tlps128_bar_controller(
     wire bar0_buf_write = (bar0_spill_valid && !bar0_buf_full) ||
                           (!bar0_spill_valid && bar0_raw_valid && !bar0_buf_full);
 {{ end }}
+    wire [87:0] bar_base_ctx[7];
+    wire [31:0] bar_base_data[7];
+    wire [6:0]  bar_base_valid;
+    wire [87:0] bar_rsp_ctx[7];
+    wire [31:0] bar_rsp_data[7];
+    wire [6:0]  bar_rsp_valid;
+    assign bar_base_ctx[6]   = 88'h0;
+    assign bar_base_data[6]  = 32'h0;
+    assign bar_base_valid[6] = 1'b0;
+
 {{ if or .LatencyConfig .MSIXConfig }}
     // BAR0 into the read mux. NVMe bypasses the latency emulator so CC.EN<->
     // CSTS.RDY polling sees fresh reads (a stale CSTS=0 fails ControllerEnable).
@@ -285,21 +300,26 @@ module pcileech_tlps128_bar_controller(
     assign bar0_base_valid = bar0_emu_valid;
 {{ end }}
 {{ end }}
+{{ if and .BARModel (or .LatencyConfig .MSIXConfig) }}
+    assign bar_base_ctx[{{ .BARModel.BIR }}]   = bar0_base_ctx;
+    assign bar_base_data[{{ .BARModel.BIR }}]  = bar0_base_data;
+    assign bar_base_valid[{{ .BARModel.BIR }}] = bar0_base_valid;
+{{ end }}
 
 {{ if .MSIXConfig }}
     wire [87:0] msix_rsp_ctx;
     wire [31:0] msix_rsp_data;
     wire        msix_rsp_valid;
+    wire [2:0]  msix_rsp_bir;
     wire        msix_addr_hit;
-{{ if eq .DeviceClass "nvme" }}
-    // NVMe responder <-> MSI-X table (per-vector select) and <-> BRAM disk cache.
+{{ end }}
+{{ if and (eq .DeviceClass "nvme") .NVMeIdentify }}
     wire [15:0] nvme_msix_vector_select;
     wire [63:0] nvme_msix_vector_addr;
     wire [31:0] nvme_msix_vector_data;
     wire        nvme_msix_vector_masked;
     wire        nvme_msix_pba_set_valid;
     wire [15:0] nvme_msix_pba_set_vector;
-
     wire        nvme_disk_req_valid;
     wire        nvme_disk_req_write;
     wire        nvme_disk_req_flush;
@@ -311,44 +331,40 @@ module pcileech_tlps128_bar_controller(
     wire        nvme_disk_req_hit;
     wire        nvme_disk_busy;
     wire        nvme_disk_error;
+{{ if not .MSIXConfig }}    assign nvme_msix_vector_addr   = 64'h0;
+    assign nvme_msix_vector_data   = 32'h0;
+    assign nvme_msix_vector_masked = 1'b1;
+{{ end }}{{ end }}
+
+
+{{ range .BARSlots }}
+    assign bar_rsp_ctx[{{ .BIR }}]   = bar_base_ctx[{{ .BIR }}];
+    assign bar_rsp_data[{{ .BIR }}]  = bar_base_data[{{ .BIR }}];
+    assign bar_rsp_valid[{{ .BIR }}] = bar_base_valid[{{ .BIR }}];
 {{ end }}
+{{ if .MSIXConfig }}    assign bar_rsp_ctx[6]   = msix_rsp_ctx;
+    assign bar_rsp_data[6]  = msix_rsp_data;
+    assign bar_rsp_valid[6] = msix_rsp_valid;
+{{ else }}    assign bar_rsp_ctx[6]   = 88'h0;
+    assign bar_rsp_data[6]  = 32'h0;
+    assign bar_rsp_valid[6] = 1'b0;
 {{ end }}
+    wire [6:0] bar_rsp_ready;
+    pcileech_bar_rsp_arbiter i_bar_rsp_arbiter(
+        .clk        ( clk           ),
+        .rst        ( rst           ),
+        .in_valid   ( bar_rsp_valid ),
+        .in_ctx     ( bar_rsp_ctx   ),
+        .in_data    ( bar_rsp_data  ),
+        .in_ready   ( bar_rsp_ready ),
+        .out_valid  ( rd_rsp_valid  ),
+        .out_ctx    ( rd_rsp_ctx    ),
+        .out_data   ( rd_rsp_data   )
+    );
 
-    wire [87:0] bar_rsp_ctx[7];
-    wire [31:0] bar_rsp_data[7];
-    wire        bar_rsp_valid[7];
+{{ if or .BARModel (not .DonorBARTopology) }}
 
-{{ if .MSIXConfig }}
-    // MSI-X table read wins, else BAR0 base (raw for NVMe, emu otherwise).
-    assign bar_rsp_ctx[0]   = msix_rsp_valid ? msix_rsp_ctx   : bar0_base_ctx;
-    assign bar_rsp_data[0]  = msix_rsp_valid ? msix_rsp_data  : bar0_base_data;
-    assign bar_rsp_valid[0] = msix_rsp_valid || bar0_base_valid;
-{{ else if .LatencyConfig }}
-    assign bar_rsp_ctx[0]   = bar0_base_ctx;
-    assign bar_rsp_data[0]  = bar0_base_data;
-    assign bar_rsp_valid[0] = bar0_base_valid;
-{{ end }}
-
-    // response mux
-    assign rd_rsp_ctx = bar_rsp_valid[0] ? bar_rsp_ctx[0] :
-                        bar_rsp_valid[1] ? bar_rsp_ctx[1] :
-                        bar_rsp_valid[2] ? bar_rsp_ctx[2] :
-                        bar_rsp_valid[3] ? bar_rsp_ctx[3] :
-                        bar_rsp_valid[4] ? bar_rsp_ctx[4] :
-                        bar_rsp_valid[5] ? bar_rsp_ctx[5] :
-                        bar_rsp_valid[6] ? bar_rsp_ctx[6] : 0;
-    assign rd_rsp_data = bar_rsp_valid[0] ? bar_rsp_data[0] :
-                        bar_rsp_valid[1] ? bar_rsp_data[1] :
-                        bar_rsp_valid[2] ? bar_rsp_data[2] :
-                        bar_rsp_valid[3] ? bar_rsp_data[3] :
-                        bar_rsp_valid[4] ? bar_rsp_data[4] :
-                        bar_rsp_valid[5] ? bar_rsp_data[5] :
-                        bar_rsp_valid[6] ? bar_rsp_data[6] : 0;
-    assign rd_rsp_valid = bar_rsp_valid[0] || bar_rsp_valid[1] || bar_rsp_valid[2] || bar_rsp_valid[3] || bar_rsp_valid[4] || bar_rsp_valid[5] || bar_rsp_valid[6];
-
-    // BAR0: {{ if .BARModel }}device-specific{{ else }}generic zerowrite4k{{ end }}
-
-{{ if and (eq .DeviceClass "nvme") .BARModel }}
+{{ if and (eq .DeviceClass "nvme") .HasClassEndpoint }}
     // NVMe register wires -- from bar_impl_device to admin responder
     wire [31:0] nvme_reg_cc;
     wire [31:0] nvme_reg_aqa;
@@ -361,20 +377,20 @@ module pcileech_tlps128_bar_controller(
 
 {{ if .BARModel }}
     pcileech_bar_impl_device #(
-        .BAR_SIZE       ( {{ .BARModel.Size }} ) // var Bar0Size
-    ) i_bar0(
+        .BAR_SIZE       ( {{ .BARModel.Size }} )
+    ) i_bar{{ .BARModel.BIR }}(
 {{ else }}
     pcileech_bar_impl_zerowrite4k i_bar0(
 {{ end }}
         .rst            ( rst                           ),
         .clk            ( clk                           ),
-        .wr_addr        ( {{ if .BARModel }}wr_addr_bar0{{ else }}wr_addr{{ end }}                       ),
+        .wr_addr        ( {{ if .BARModel }}wr_addr_bar0{{ else }}wr_addr{{ end }} ),
         .wr_be          ( wr_be                         ),
         .wr_data        ( wr_data                       ),
-        .wr_valid       ( wr_valid && wr_bar[0]         ),
+        .wr_valid       ( wr_valid && wr_bar[{{ if .BARModel }}{{ .BARModel.BIR }}{{ else }}0{{ end }}]{{ if .BARModel }} && bar0_wr_hit{{ end }}{{ if .MSIXConfig }} && !msix_wr_table_select && !msix_wr_pba_select{{ end }} ),
         .rd_req_ctx     ( rd_req_ctx                    ),
-        .rd_req_addr    ( {{ if .BARModel }}rd_req_addr_bar0{{ else }}rd_req_addr{{ end }}                   ),
-        .rd_req_valid   ( rd_req_valid && rd_req_bar[0]{{ if .MSIXConfig }} && !msix_addr_hit{{ end }} ),
+        .rd_req_addr    ( {{ if .BARModel }}rd_req_addr_bar0{{ else }}rd_req_addr{{ end }} ),
+        .rd_req_valid   ( rd_req_valid && rd_req_bar[{{ if .BARModel }}{{ .BARModel.BIR }}{{ else }}0{{ end }}]{{ if .BARModel }} && bar0_rd_hit{{ end }}{{ if .MSIXConfig }} && !msix_addr_hit{{ end }} ),
 {{ if .LatencyConfig }}
         .rd_rsp_ctx     ( bar0_raw_ctx                  ),
         .rd_rsp_data    ( bar0_raw_data                 ),
@@ -384,11 +400,11 @@ module pcileech_tlps128_bar_controller(
         .rd_rsp_data    ( bar0_base_data                ),
         .rd_rsp_valid   ( bar0_base_valid               )
 {{ else }}
-        .rd_rsp_ctx     ( bar_rsp_ctx[0]                ),
-        .rd_rsp_data    ( bar_rsp_data[0]               ),
-        .rd_rsp_valid   ( bar_rsp_valid[0]              )
+        .rd_rsp_ctx     ( bar_base_ctx[{{ if .BARModel }}{{ .BARModel.BIR }}{{ else }}0{{ end }}]   ),
+        .rd_rsp_data    ( bar_base_data[{{ if .BARModel }}{{ .BARModel.BIR }}{{ else }}0{{ end }}]  ),
+        .rd_rsp_valid   ( bar_base_valid[{{ if .BARModel }}{{ .BARModel.BIR }}{{ else }}0{{ end }}] )
 {{ end }}
-{{ if and (eq .DeviceClass "nvme") .BARModel }}        ,
+{{ if and (eq .DeviceClass "nvme") .HasClassEndpoint }}        ,
         .nvme_cc        ( nvme_reg_cc                   ),
         .nvme_aqa       ( nvme_reg_aqa                  ),
         .nvme_asq_lo    ( nvme_reg_asq_lo               ),
@@ -396,7 +412,7 @@ module pcileech_tlps128_bar_controller(
         .nvme_acq_lo    ( nvme_reg_acq_lo               ),
         .nvme_acq_hi    ( nvme_reg_acq_hi               ),
         .nvme_csts      ( nvme_reg_csts                 )
-{{ end }}{{ if and (eq .DeviceClass "audio") .BARModel }}        ,
+{{ end }}{{ if and (eq .DeviceClass "audio") .HasClassEndpoint }}        ,
         // HDA RIRB DMA bridge ports
         .dma_req_valid   ( hda_dma_req_valid             ),
         .dma_resp_lo     ( hda_dma_resp_lo               ),
@@ -412,6 +428,7 @@ module pcileech_tlps128_bar_controller(
         .crst_falling    ( hda_crst_falling              )
 {{ end }}
     );
+{{ end }}
 
 {{ if .LatencyConfig }}
     tlp_latency_emulator i_latency_emu(
@@ -436,8 +453,8 @@ module pcileech_tlps128_bar_controller(
         .rsp_ctx        ( bar0_emu_ctx                  ),
         .rsp_data       ( bar0_emu_data                 ),
 {{ end }}
-        .rsp_ready      ( bar0_emu_ready                ),
-        .wr_valid       ( wr_valid && wr_bar[0]         ),
+        .rsp_ready      ( {{ if eq .DeviceClass "nvme" }}bar0_emu_ready{{ else }}bar_rsp_ready[{{ if .BARModel }}{{ .BARModel.BIR }}{{ else }}0{{ end }}]{{ end }} ),
+        .wr_valid       ( wr_valid && wr_bar[{{ if .BARModel }}{{ .BARModel.BIR }}{{ else }}0{{ end }}]{{ if .BARModel }} && bar0_wr_hit{{ end }}{{ if .MSIXConfig }} && !msix_wr_table_select && !msix_wr_pba_select{{ end }} ),
         .wr_addr        ( {{ if .BARModel }}wr_addr_bar0{{ else }}wr_addr{{ end }} ),
         .wr_ack         ( bar0_wr_ack                   ),
         .busy           ( bar0_emu_busy                 )
@@ -523,24 +540,44 @@ module pcileech_tlps128_bar_controller(
         end
     end
 
+    wire msix_wr_table_select = wr_valid && wr_bar[{{ .MSIXConfig.TableBIR }}] &&
+                                (wr_addr >= {{ .MSIXConfig.TableOffset }}) &&
+                                (wr_addr < {{ .MSIXConfig.TableEnd }});
+    wire msix_wr_pba_select   = wr_valid && wr_bar[{{ .MSIXConfig.PBABIR }}] &&
+                                (wr_addr >= {{ .MSIXConfig.PBAOffset }}) &&
+                                (wr_addr < {{ .MSIXConfig.PBAEnd }});
+    wire msix_rd_table_select = rd_req_valid && rd_req_bar[{{ .MSIXConfig.TableBIR }}] &&
+                                (rd_req_addr >= {{ .MSIXConfig.TableOffset }}) &&
+                                (rd_req_addr < {{ .MSIXConfig.TableEnd }});
+    wire msix_rd_pba_select   = rd_req_valid && rd_req_bar[{{ .MSIXConfig.PBABIR }}] &&
+                                (rd_req_addr >= {{ .MSIXConfig.PBAOffset }}) &&
+                                (rd_req_addr < {{ .MSIXConfig.PBAEnd }});
+
     pcileech_msix_table #(
         .NUM_VECTORS    ( {{ .MSIXConfig.NumVectors }}  ),
+        .TABLE_BIR      ( {{ .MSIXConfig.TableBIR }}     ),
         .TABLE_OFFSET   ( 32'h{{ printf "%08X" .MSIXConfig.TableOffset }} ),
+        .PBA_BIR        ( {{ .MSIXConfig.PBABIR }}       ),
         .PBA_OFFSET     ( 32'h{{ printf "%08X" .MSIXConfig.PBAOffset }}   )
     ) i_msix_table(
         .rst            ( rst                           ),
         .clk            ( clk                           ),
-        .wr_addr        ( {{ if .BARModel }}wr_addr_bar0{{ else }}wr_addr{{ end }}                       ),
+        .wr_addr        ( wr_addr                       ),
         .wr_data        ( wr_data                       ),
         .wr_be          ( wr_be                         ),
-        .wr_valid       ( wr_valid && wr_bar[0]         ),
+        .wr_valid       ( wr_valid                      ),
+        .wr_table_select( msix_wr_table_select          ),
+        .wr_pba_select  ( msix_wr_pba_select            ),
         .rd_req_ctx     ( rd_req_ctx                    ),
-        .rd_req_addr    ( {{ if .BARModel }}rd_req_addr_bar0{{ else }}rd_req_addr{{ end }}                   ),
-        .rd_req_valid   ( rd_req_valid && rd_req_bar[0] ),
+        .rd_req_addr    ( rd_req_addr                   ),
+        .rd_req_valid   ( msix_rd_table_select || msix_rd_pba_select ),
+        .rd_table_select( msix_rd_table_select          ),
+        .rd_pba_select  ( msix_rd_pba_select            ),
         .rd_rsp_ctx     ( msix_rsp_ctx                  ),
         .rd_rsp_data    ( msix_rsp_data                 ),
         .rd_rsp_valid   ( msix_rsp_valid                ),
-{{ if eq .DeviceClass "nvme" }}        // per-vector read for the NVMe responder (admin=0, IO queue=its IV)
+        .rd_rsp_bir     ( msix_rsp_bir                  ),
+{{ if and (eq .DeviceClass "nvme") .NVMeIdentify }}
         .vector_select  ( nvme_msix_vector_select       ),
         .vector_addr    ( nvme_msix_vector_addr         ),
         .vector_data    ( nvme_msix_vector_data         ),
@@ -557,7 +594,7 @@ module pcileech_tlps128_bar_controller(
     );
 {{ end }}
 
-{{ if and (eq .DeviceClass "audio") .BARModel }}
+{{ if and (eq .DeviceClass "audio") .HasClassEndpoint }}
     // ========================================================================
     // HDA RIRB DMA Bridge
     // Writes fake RIRB responses to system memory so hdaudio.sys can read
@@ -624,7 +661,7 @@ module pcileech_tlps128_bar_controller(
 
 {{ end }}
 
-{{ if eq .DeviceClass "nvme" }}
+{{ if and (eq .DeviceClass "nvme") .NVMeIdentify }}
     wire        nvme_msix_trigger;
 
 {{ end }}
@@ -642,7 +679,7 @@ module pcileech_tlps128_bar_controller(
 
     // doorbell page: bit[2]=SQ/CQ, bits[13:3]=QID
     wire [31:0] nvme_db_base  = 32'h{{ printf "%08X" .NVMeSQ0DoorbellOffset }};
-    wire        nvme_db_wr    = wr_valid && wr_bar[0] &&
+    wire        nvme_db_wr    = wr_valid && wr_bar[{{ .PrimaryBIR }}] && bar0_wr_hit &&
                                 (wr_addr_bar0 >= nvme_db_base) &&
                                 (wr_addr_bar0 <  nvme_db_base + 32'h00001000);
     wire [31:0] nvme_db_off   = wr_addr_bar0 - nvme_db_base;
@@ -651,7 +688,7 @@ module pcileech_tlps128_bar_controller(
     wire [15:0] nvme_db_val   = wr_data[15:0];
 
     // CC register write -> enable/disable strobes
-    wire        nvme_cc_wr         = wr_valid && wr_bar[0] &&
+    wire        nvme_cc_wr         = wr_valid && wr_bar[{{ .PrimaryBIR }}] && bar0_wr_hit &&
                                      ((wr_addr_bar0 & 32'hFFFFFFFC) == 32'h00000014);
     wire        nvme_cc_enable_wr  = nvme_cc_wr && wr_data[0];
     wire        nvme_cc_disable_wr = nvme_cc_wr && !wr_data[0];
@@ -871,7 +908,7 @@ module pcileech_tlps128_bar_controller(
     assign tlps_rdeng.tready = tlps_out.tready;
 {{ end }}
 
-{{ if and (eq .DeviceClass "audio") .BARModel }}{{ if not (and (eq .DeviceClass "nvme") .NVMeIdentify) }}
+{{ if and (eq .DeviceClass "audio") .HasClassEndpoint }}{{ if not (and (eq .DeviceClass "nvme") .NVMeIdentify) }}
     // HDA-only build: mux HDA DMA TLPs with rdengine BAR responses
     //
     // fairness: after 8 consecutive DMA TLP words a 1-cycle gap is forced so
@@ -899,7 +936,7 @@ module pcileech_tlps128_bar_controller(
 {{ end }}{{
  end }}
 
-{{ if not (or (and (eq .DeviceClass "nvme") .NVMeIdentify) (and (eq .DeviceClass "audio") .BARModel)) }}
+{{ if not (or (and (eq .DeviceClass "nvme") .NVMeIdentify) (and (eq .DeviceClass "audio") .HasClassEndpoint)) }}
     // no DMA bridge: rdengine output goes straight to tlps_out
     assign tlps_out.tdata    = tlps_rdeng.tdata;
     assign tlps_out.tkeepdw  = tlps_rdeng.tkeepdw;
@@ -910,62 +947,43 @@ module pcileech_tlps128_bar_controller(
     assign tlps_rdeng.tready = tlps_out.tready;
 {{ end }}
 
-    // BAR1: address loopback
-    pcileech_bar_impl_loopaddr i_bar1(
+{{ range .BARSlots }}{{ if not .Primary }}
+{{ if .Model }}
+    {{ .ModuleName }} #(
+        .BAR_SIZE       ( {{ .Model.Size }} )
+    ) i_bar{{ .BIR }}(
         .rst            ( rst                           ),
         .clk            ( clk                           ),
         .wr_addr        ( wr_addr                       ),
         .wr_be          ( wr_be                         ),
         .wr_data        ( wr_data                       ),
-        .wr_valid       ( wr_valid && wr_bar[1]         ),
+        .wr_valid       ( wr_valid && wr_bar[{{ .BIR }}] && (wr_addr < {{ .Model.Size }}){{ if $.MSIXConfig }} && !msix_wr_table_select && !msix_wr_pba_select{{ end }} ),
         .rd_req_ctx     ( rd_req_ctx                    ),
         .rd_req_addr    ( rd_req_addr                   ),
-        .rd_req_valid   ( rd_req_valid && rd_req_bar[1] ),
-        .rd_rsp_ctx     ( bar_rsp_ctx[1]                ),
-        .rd_rsp_data    ( bar_rsp_data[1]               ),
-        .rd_rsp_valid   ( bar_rsp_valid[1]              )
+        .rd_req_valid   ( rd_req_valid && rd_req_bar[{{ .BIR }}] && (rd_req_addr < {{ .Model.Size }}){{ if $.MSIXConfig }} && !msix_addr_hit{{ end }} ),
+        .rd_rsp_ctx     ( bar_base_ctx[{{ .BIR }}]      ),
+        .rd_rsp_data    ( bar_base_data[{{ .BIR }}]     ),
+        .rd_rsp_valid   ( bar_base_valid[{{ .BIR }}]    )
     );
-
-    // BAR2: MSI doorbell interrupt - write to offset 0x00 triggers MSI
-    wire        bar2_intr_req;
-
-    pcileech_bar_impl_msi i_bar2(
+{{ else }}
+    pcileech_bar_impl_none i_bar{{ .BIR }}(
         .rst            ( rst                           ),
         .clk            ( clk                           ),
         .wr_addr        ( wr_addr                       ),
         .wr_be          ( wr_be                         ),
         .wr_data        ( wr_data                       ),
-        .wr_valid       ( wr_valid && wr_bar[2]         ),
+        .wr_valid       ( wr_valid && wr_bar[{{ .BIR }}] ),
         .rd_req_ctx     ( rd_req_ctx                    ),
         .rd_req_addr    ( rd_req_addr                   ),
-        .rd_req_valid   ( rd_req_valid && rd_req_bar[2] ),
-        .rd_rsp_ctx     ( bar_rsp_ctx[2]                ),
-        .rd_rsp_data    ( bar_rsp_data[2]               ),
-        .rd_rsp_valid   ( bar_rsp_valid[2]              ),
-        .intr_req       ( bar2_intr_req                 )
+        .rd_req_valid   ( rd_req_valid && rd_req_bar[{{ .BIR }}] ),
+        .rd_rsp_ctx     ( bar_base_ctx[{{ .BIR }}]      ),
+        .rd_rsp_data    ( bar_base_data[{{ .BIR }}]     ),
+        .rd_rsp_valid   ( bar_base_valid[{{ .BIR }}]    ),
+        .intr_req       (                               )
     );
+{{ end }}{{ end }}{{ end }}
 
-    // BAR3-6: unimplemented
-    genvar gi;
-    generate
-        for (gi = 3; gi < 7; gi = gi + 1) begin : gen_bar_none
-            pcileech_bar_impl_none i_bar_none(
-                .rst            ( rst                           ),
-                .clk            ( clk                           ),
-                .wr_addr        ( wr_addr                       ),
-                .wr_be          ( wr_be                         ),
-                .wr_data        ( wr_data                       ),
-                .wr_valid       ( wr_valid && wr_bar[gi]        ),
-                .rd_req_ctx     ( rd_req_ctx                    ),
-                .rd_req_addr    ( rd_req_addr                   ),
-                .rd_req_valid   ( rd_req_valid && rd_req_bar[gi]),
-                .rd_rsp_ctx     ( bar_rsp_ctx[gi]               ),
-                .rd_rsp_data    ( bar_rsp_data[gi]              ),
-                .rd_rsp_valid   ( bar_rsp_valid[gi]             )
-            );
-        end
-    endgenerate
-
-    assign intr_req = bar2_intr_req{{ if eq .DeviceClass "audio" }} | hda_intr_req{{ end }}{{ if eq .DeviceClass "nvme" }} | nvme_msix_trigger{{ end }};
+    assign intr_req = 1'b0{{ if and (eq .DeviceClass "audio") .HasClassEndpoint }} | hda_intr_req{{ end }}{{ if and (eq .DeviceClass "nvme") .NVMeIdentify }} | nvme_msix_trigger{{ end }};
 
 endmodule
+`default_nettype wire

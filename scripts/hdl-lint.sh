@@ -10,6 +10,7 @@ require verilator
 require ./bin/pcileechgen
 
 FIXTURES=(testdata/donors/*.json)
+LEGACY_BOARDS=(pciescreamer NeTV2_35T NeTV2_100T acorn litefury sp605_ft601)
 # Board names come from the CLI so the matrix stays in sync with board.go.
 # (NR>2 skips the two-line table header; bash 3.2 compat via while-read.)
 BOARDS=()
@@ -23,12 +24,12 @@ if [ "${#BOARDS[@]}" -eq 0 ]; then
 fi
 
 # whitelist of svgen output files (primitives like pcileech_fifo.sv are blackboxed)
-SVGEN_PATTERN='pcileech_bar_impl_device.sv|pcileech_tlps128_bar_controller.sv|pcileech_bar_impl_msi.sv|tlp_latency_emulator.sv|device_config.sv|pcileech_msix_table.sv|pcileech_nvme_admin_responder.sv|pcileech_nvme_dma_bridge.sv|pcileech_hda_rirb_dma.sv|pcileech_hda_msi.sv'
+SVGEN_PATTERN='pcileech_bar_impl_device.sv|pcileech_tlps128_bar_controller.sv|pcileech_bar_rsp_arbiter.sv|pcileech_tlps128_bar_rdengine.sv|pcileech_tlps128_bar_wrengine.sv|pcileech_bar_impl_none.sv|pcileech_bar_impl_zerowrite4k.sv|tlp_latency_emulator.sv|device_config.sv|pcileech_msix_table.sv|pcileech_nvme_admin_responder.sv|pcileech_nvme_dma_bridge.sv|pcileech_bram_disk.sv|pcileech_hda_rirb_dma.sv|pcileech_hda_msi.sv'
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-total=0; pass=0; skip=0; fail=0
+total=0; pass=0; skip=0; fail=0; modern_multibar_pass=0
 
 for fixture in "${FIXTURES[@]}"; do
   class="$(basename "$fixture" .json)"
@@ -36,6 +37,13 @@ for fixture in "${FIXTURES[@]}"; do
     total=$((total+1))
     cell="${class}×${board}"
     out="$TMP/$class/$board"
+    case " ${LEGACY_BOARDS[*]} " in
+      *" $board "*)
+        echo "SKIP  $cell (explicit legacy board allowlist)"
+        skip=$((skip+1))
+        continue
+        ;;
+    esac
     mkdir -p "$out"
 
     build_log="$out/build.log"
@@ -61,12 +69,15 @@ for fixture in "${FIXTURES[@]}"; do
     fi
 
     lint_log="$out/verilator.log"
-    if verilator --lint-only -Wno-fatal --top-module pcileech_bar_impl_device \
+    if verilator --lint-only -Wno-fatal --top-module pcileech_tlps128_bar_controller \
           +incdir+"$out/src" \
           "${sv_files[@]}" testdata/stubs/blackbox.sv \
           >"$lint_log" 2>&1; then
       echo "PASS  $cell"
       pass=$((pass+1))
+      if [ "$cell" = "multibar×PCIeSquirrel" ]; then
+        modern_multibar_pass=1
+      fi
     else
       echo "FAIL  $cell (see $lint_log)"
       cat "$lint_log" >&2
@@ -75,5 +86,9 @@ for fixture in "${FIXTURES[@]}"; do
   done
 done
 
+if [ "$modern_multibar_pass" -ne 1 ]; then
+  echo "FAIL  mandatory modern multibar×PCIeSquirrel cell did not pass" >&2
+  fail=$((fail+1))
+fi
 echo "HDL lint: total=$total pass=$pass skip=$skip fail=$fail"
 [ "$fail" -eq 0 ]

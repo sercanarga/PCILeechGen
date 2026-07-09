@@ -38,12 +38,17 @@ package device_config;
     localparam CLASS_BASE       = 8'h{{ hex02 (classBase .ClassCode) }};
     localparam CLASS_SUB        = 8'h{{ hex02 (classSub .ClassCode) }};
     localparam CLASS_PROGIF     = 8'h{{ hex02 (classProgIF .ClassCode) }};
-{{ if .BARModel }}
-    // BAR0 is device-specific ({{ .Bar0Size }} bytes varsize, {{ len .BARModel.Registers }} registers)
+{{ if .BARModels }}
+{{ range .BARModels }}
+    localparam BAR{{ .BIR }}_PRESENT     = 1;
+    localparam BAR{{ .BIR }}_SIZE        = {{ .Size }};
+    localparam BAR{{ .BIR }}_REGS        = {{ len .Registers }};
+{{ end }}{{ else if .BARModel }}
+    localparam BAR0_PRESENT     = 1;
     localparam BAR0_SIZE        = {{ .Bar0Size }};
     localparam BAR0_REGS        = {{ len .BARModel.Registers }};
 {{ else }}
-    // BAR0 uses generic zerowrite (stock 4KB) or sized impl for computed Bar0Size+MSIX
+    localparam BAR0_PRESENT     = 0;
     localparam BAR0_SIZE        = {{ .Bar0Size }};
     localparam BAR0_REGS        = 0;
 {{ end }}
@@ -57,6 +62,8 @@ package device_config;
     localparam MSIX_NUM_VECTORS = {{ .MSIXConfig.NumVectors }};
     localparam MSIX_TABLE_OFF   = 32'h{{ printf "%08X" .MSIXConfig.TableOffset }};
     localparam MSIX_PBA_OFF     = 32'h{{ printf "%08X" .MSIXConfig.PBAOffset }};
+    localparam MSIX_TABLE_BIR   = {{ .MSIXConfig.TableBIR }};
+    localparam MSIX_PBA_BIR     = {{ .MSIXConfig.PBABIR }};
 {{ end }}
     // Feature flags
     localparam HAS_NVME_FSM     = {{ if eq .DeviceClass "nvme" }}1{{ else }}0{{ end }};

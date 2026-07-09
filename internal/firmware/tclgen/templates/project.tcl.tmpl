@@ -151,16 +151,17 @@ if { $pcie_ip != "" } {
     CONFIG.Link_Speed           {{.LinkSpeed}} \
     CONFIG.Trgt_Link_Speed      {{.TrgtLinkSpeed}} \
   ] $pcie_ip
-{{if .Bar0Enabled}}
-  # BAR0
-  set_property -dict [list \
-    CONFIG.Bar0_Enabled         true \
-    CONFIG.Bar0_Type            Memory \
-    CONFIG.Bar0_Scale           {{.Bar0Scale}} \
-    CONFIG.Bar0_Size            {{.Bar0Size}} \
-    CONFIG.Bar0_64bit {{if .Bar064bit}}true{{else}}false{{end}} \
-  ] $pcie_ip
+{{range .BARs}}
+  set_property CONFIG.Bar{{.Index}}_Enabled {{if .Enabled}}true{{else}}false{{end}} $pcie_ip
+{{if .Enabled}}  set_property -dict [list \
+    CONFIG.Bar{{.Index}}_Type            Memory \
+    CONFIG.Bar{{.Index}}_Scale           {{.Scale}} \
+    CONFIG.Bar{{.Index}}_Size            {{.Size}} \
+{{if lt .Index 5}}    CONFIG.Bar{{.Index}}_64bit           {{if .Is64bit}}true{{else}}false{{end}} \
 {{end}}
+    CONFIG.Bar{{.Index}}_Prefetchable    {{if .Prefetchable}}true{{else}}false{{end}} \
+  ] $pcie_ip
+{{end}}{{end}}
   # Enable or disable DSN based on donor device
   set_property -dict [list \
     CONFIG.DSN_Enabled {{if .DSNEnabled}}true{{else}}false{{end}} \
