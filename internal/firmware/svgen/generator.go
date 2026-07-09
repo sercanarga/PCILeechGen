@@ -38,6 +38,23 @@ type SVGeneratorConfig struct {
 	NVMeDiskWords      int                // NVMe disk-cache depth (words), board-scaled
 	NVMeAdvertisedLBAs uint64             // actual NSZE from donor (0 = use default 2000409264)
 	Bar0Size           int
+	ReadCompletionBoundaryBytes int
+	MaxPayloadBytes             int
+}
+
+func (c *SVGeneratorConfig) ResolvedReadCompletionBoundaryBytes() int {
+	if c != nil && (c.ReadCompletionBoundaryBytes == 64 || c.ReadCompletionBoundaryBytes == 128) {
+		return c.ReadCompletionBoundaryBytes
+	}
+	return 64
+}
+
+func (c *SVGeneratorConfig) ResolvedMaxPayloadBytes() int {
+	if c != nil && c.MaxPayloadBytes >= 128 && c.MaxPayloadBytes <= 4096 &&
+		c.MaxPayloadBytes&(c.MaxPayloadBytes-1) == 0 {
+		return c.MaxPayloadBytes
+	}
+	return 128
 }
 
 // NVMeDiskWordsForBRAM36 returns the NVMe disk-cache depth in 32-bit words for
@@ -146,6 +163,18 @@ func GenerateBarImplDeviceSV(cfg *SVGeneratorConfig) (string, error) {
 
 func GenerateBarControllerSV(cfg *SVGeneratorConfig) (string, error) {
 	return renderTemplate("bar_controller", cfg)
+}
+
+func GenerateTransactionNormalizerSV(cfg *SVGeneratorConfig) (string, error) {
+	return renderTemplate("transaction_normalizer", cfg)
+}
+
+func GenerateBarReadEngineSV(cfg *SVGeneratorConfig) (string, error) {
+	return renderTemplate("bar_read_engine", cfg)
+}
+
+func GenerateURCompleterSV(cfg *SVGeneratorConfig) (string, error) {
+	return renderTemplate("transaction_ur_completer", cfg)
 }
 
 func GenerateDeviceConfigSV(cfg *SVGeneratorConfig) (string, error) {
