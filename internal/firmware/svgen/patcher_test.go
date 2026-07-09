@@ -116,6 +116,101 @@ func TestFormatPatchSummary_WithWarnings(t *testing.T) {
 	}
 }
 
+func TestSVPatcherWiresSharedServicesThroughXilinxWrappers(t *testing.T) {
+	dir := t.TempDir()
+	fixtures := map[string]string{
+		"pcileech_pcie_cfg_a7.sv": `module pcileech_pcie_cfg_a7(
+    input clk
+);
+assign ctx.cfg_interrupt = rw[206];
+endmodule`,
+		"pcileech_pcie_tlp_a7.sv": `module pcileech_pcie_tlp_a7(
+    input clk
+);
+pcileech_tlps128_bar_controller i_bar(
+    .rst(rst)
+);
+endmodule`,
+		"pcileech_pcie_a7.sv": `module pcileech_pcie_a7();
+IfPCIeSignals ctx();
+pcileech_pcie_cfg_a7 i_cfg(
+    .ctx(ctx)
+);
+pcileech_pcie_tlp_a7 i_tlp(
+    .clk(clk)
+);
+endmodule`,
+	}
+	for name, fixture := range fixtures {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(fixture), 0644); err != nil {
+			t.Fatalf("writing %s: %v", name, err)
+		}
+	}
+
+	patcher := NewSVPatcher(firmware.DeviceIDs{}, dir)
+	if err := patcher.patchCfgSV(); err != nil {
+		t.Fatalf("patchCfgSV: %v", err)
+	}
+	if err := patcher.patchCfgInterruptHandshake(); err != nil {
+		t.Fatalf("patchCfgInterruptHandshake: %v", err)
+	}
+	if err := patcher.patchTLPServiceWiring(); err != nil {
+		t.Fatalf("patchTLPServiceWiring: %v", err)
+	}
+	if err := patcher.patchPCIeWrapperServiceWiring(); err != nil {
+		t.Fatalf("patchPCIeWrapperServiceWiring: %v", err)
+	}
+
+	cfg, err := os.ReadFile(filepath.Join(dir, "pcileech_pcie_cfg_a7.sv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"input                   generated_bar_intr_req",
+		"reg intr_req_pending = 1'b0;",
+		"else if (generated_bar_intr_req)",
+		"else if (intr_req_pending && ctx.cfg_interrupt_rdy)",
+		"assign ctx.cfg_interrupt = rw[206] | intr_req_pending;",
+	} {
+		if !contains(string(cfg), want) {
+			t.Errorf("patched cfg wrapper missing %q", want)
+		}
+	}
+
+	tlp, err := os.ReadFile(filepath.Join(dir, "pcileech_pcie_tlp_a7.sv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"IfPCIeSignals           ctx",
+		"output wire             generated_bar_intr_req",
+		".cfg_command     ( ctx.cfg_command",
+		".cfg_power_state ( ctx.cfg_pmcsr_powerstate",
+		".cfg_flr_in_process( ctx.cfg_received_func_lvl_rst",
+		".cfg_to_turnoff  ( ctx.cfg_to_turnoff",
+		".cfg_link_up     ( ctx.pl_phy_lnk_up",
+		".intr_req        ( generated_bar_intr_req",
+	} {
+		if !contains(string(tlp), want) {
+			t.Errorf("patched TLP wrapper missing %q", want)
+		}
+	}
+
+	wrapper, err := os.ReadFile(filepath.Join(dir, "pcileech_pcie_a7.sv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"wire                    generated_bar_intr_req;",
+		".generated_bar_intr_req   ( generated_bar_intr_req",
+		".ctx                        ( ctx",
+	} {
+		if !contains(string(wrapper), want) {
+			t.Errorf("patched PCIe wrapper missing %q", want)
+		}
+	}
+}
+
 func contains(s, sub string) bool {
 	return len(s) >= len(sub) && (s == sub || len(s) > 0 && containsStr(s, sub))
 }

@@ -14,6 +14,14 @@ module pcileech_tlps128_bar_controller(
     input                   clk,
     input                   bar_en,
     input [15:0]            pcie_id,
+    input [15:0]            cfg_command,
+    input [1:0]             cfg_power_state,
+    input                   cfg_flr_in_process,
+    input                   cfg_to_turnoff,
+    input                   cfg_link_up,
+    input                   cfg_msi_enable,
+    input                   cfg_msix_enable,
+    input                   cfg_msix_function_mask,
     output                  flash_csn,
     output                  flash_sdi_dq0,
     input                   flash_sdo_dq1,
@@ -29,16 +37,45 @@ module pcileech_tlps128_bar_controller(
     output                  intr_req
 );
 
+    wire cfg_mse = (cfg_command[1] === 1'b0) ? 1'b0 : 1'b1;
+    wire cfg_bme = (cfg_command[2] === 1'b0) ? 1'b0 : 1'b1;
+    wire [1:0] cfg_dstate = (^cfg_power_state === 1'bx) ? 2'b00 : cfg_power_state;
+    wire cfg_flr = (cfg_flr_in_process === 1'b1);
+    wire cfg_turnoff = (cfg_to_turnoff === 1'b1);
+    wire cfg_link = (cfg_link_up === 1'b0) ? 1'b0 : 1'b1;
+    wire cfg_msi_enabled = (cfg_msi_enable === 1'b0) ? 1'b0 : 1'b1;
+    wire device_reset;
+    wire io_enabled;
+    wire dma_enabled;
+    wire lifecycle_quiesce;
+    wire [31:0] lifecycle_generation;
+
+    pcileech_lifecycle_service i_lifecycle_service(
+        .clk                 ( clk                  ),
+        .fundamental_reset   ( rst                  ),
+        .flr_in_process      ( cfg_flr              ),
+        .pm_dstate           ( cfg_dstate           ),
+        .memory_space_enable ( cfg_mse              ),
+        .bus_master_enable   ( cfg_bme              ),
+        .turnoff_pending     ( cfg_turnoff          ),
+        .link_up             ( cfg_link             ),
+        .device_reset        ( device_reset         ),
+        .io_enabled          ( io_enabled           ),
+        .dma_enabled         ( dma_enabled          ),
+        .quiesce             ( lifecycle_quiesce    ),
+        .generation          ( lifecycle_generation )
+    );
+
     // TLP receive
     wire in_is_wr_ready;
     bit  in_is_wr_last;
     wire in_is_first    = tlps_in.tuser[0];
-    wire in_is_bar      = bar_en && (tlps_in.tuser[8:2] != 0);
+    wire in_is_bar      = io_enabled && bar_en && (tlps_in.tuser[8:2] != 0);
     wire in_is_rd       = (in_is_first && tlps_in.tlast && ((tlps_in.tdata[31:25] == 7'b0000000) || (tlps_in.tdata[31:25] == 7'b0010000) || (tlps_in.tdata[31:24] == 8'b00000010)));
     wire in_is_wr       = in_is_wr_last || (in_is_first && in_is_wr_ready && ((tlps_in.tdata[31:25] == 7'b0100000) || (tlps_in.tdata[31:25] == 7'b0110000) || (tlps_in.tdata[31:24] == 8'b01000010)));
 
     always @ ( posedge clk )
-        if ( rst ) begin
+        if ( device_reset ) begin
             in_is_wr_last <= 0;
         end
         else if ( tlps_in.tvalid ) begin
@@ -101,7 +138,7 @@ module pcileech_tlps128_bar_controller(
     IfAXIS128 tlps_rdeng();
 
     pcileech_tlps128_bar_rdengine i_pcileech_tlps128_bar_rdengine(
-        .rst            ( rst                           ),
+        .rst            ( device_reset                  ),
         .clk            ( clk                           ),
         .pcie_id        ( pcie_id                       ),
         .tlps_in        ( tlps_in                       ),
@@ -120,7 +157,7 @@ module pcileech_tlps128_bar_controller(
     IfAXIS128 tlps_rdeng();
 
     pcileech_tlps128_bar_rdengine i_pcileech_tlps128_bar_rdengine(
-        .rst            ( rst                           ),
+        .rst            ( device_reset                  ),
         .clk            ( clk                           ),
         .pcie_id        ( pcie_id                       ),
         .tlps_in        ( tlps_in                       ),
@@ -139,7 +176,7 @@ module pcileech_tlps128_bar_controller(
     wire        wrengine_ready;
 
     pcileech_tlps128_bar_wrengine i_pcileech_tlps128_bar_wrengine(
-        .rst            ( rst                           ),
+        .rst            ( device_reset                  ),
         .clk            ( clk                           ),
         .tlps_in        ( tlps_in                       ),
         .tlps_in_valid  ( tlps_in.tvalid && in_is_bar && in_is_wr ),
@@ -292,13 +329,18 @@ module pcileech_tlps128_bar_controller(
     wire        msix_rsp_valid;
     wire        msix_addr_hit;
 {{ if eq .DeviceClass "nvme" }}
-    // NVMe responder <-> MSI-X table (per-vector select) and <-> BRAM disk cache.
+    wire [15:0] nvme_irq_event_vector;
+    wire        nvme_irq_event_valid;
     wire [15:0] nvme_msix_vector_select;
     wire [63:0] nvme_msix_vector_addr;
     wire [31:0] nvme_msix_vector_data;
     wire        nvme_msix_vector_masked;
+    wire        nvme_irq_delivery_valid;
+    wire [15:0] nvme_irq_delivery_vector;
+    wire        nvme_irq_delivery_ready;
     wire        nvme_msix_pba_set_valid;
-    wire [15:0] nvme_msix_pba_set_vector;
+    wire        nvme_msix_pba_clear_valid;
+    wire [15:0] nvme_msix_pba_vector;
 
     wire        nvme_disk_req_valid;
     wire        nvme_disk_req_write;
@@ -366,7 +408,7 @@ module pcileech_tlps128_bar_controller(
 {{ else }}
     pcileech_bar_impl_zerowrite4k i_bar0(
 {{ end }}
-        .rst            ( rst                           ),
+        .rst            ( device_reset                  ),
         .clk            ( clk                           ),
         .wr_addr        ( {{ if .BARModel }}wr_addr_bar0{{ else }}wr_addr{{ end }}                       ),
         .wr_be          ( wr_be                         ),
@@ -416,7 +458,7 @@ module pcileech_tlps128_bar_controller(
 {{ if .LatencyConfig }}
     tlp_latency_emulator i_latency_emu(
         .clk            ( clk                           ),
-        .rst            ( rst                           ),
+        .rst            ( device_reset                  ),
         .crst_falling   ( hda_crst_falling              ),
         .req_valid      ( !bar0_buf_empty               ), // data available in buffer
         .req_ctx        ( bar0_buf_ctx_w                ), // read from buffer head
@@ -502,6 +544,12 @@ module pcileech_tlps128_bar_controller(
     reg msix_enable_reg;        // driven by CfgWr0 snoop when MSI-X present; else 0
     reg msix_function_mask_reg;
 {{ if .MSIXConfig }}
+    wire msix_enable_effective =
+        (cfg_msix_enable === 1'b1) ? 1'b1 :
+        (cfg_msix_enable === 1'b0) ? 1'b0 : msix_enable_reg;
+    wire msix_mask_effective =
+        (cfg_msix_function_mask === 1'b1) ? 1'b1 :
+        (cfg_msix_function_mask === 1'b0) ? 1'b0 : msix_function_mask_reg;
     // Snoop CfgWr0 to MSI-X Message Control (cap @ {{ hex04 .DonorCapabilities.MSIXCapOffset }}) for enable/mask bits.
     
     wire        cfg_wren = tlps_in.tvalid && tlps_in.tuser[0] && (tlps_in.tdata[31:25] == 7'b0100010);
@@ -512,7 +560,7 @@ module pcileech_tlps128_bar_controller(
     localparam [9:0] MSIX_CAP_DWORD = 16'h{{ hex04 .DonorCapabilities.MSIXCapOffset }} >> 2;
     
     always @(posedge clk) begin
-        if (rst) begin
+        if (device_reset) begin
             msix_enable_reg <= 1'b0;
             msix_function_mask_reg <= 1'b0;
         end else if (cfg_wren && (cfg_addr == MSIX_CAP_DWORD)) begin
@@ -523,12 +571,36 @@ module pcileech_tlps128_bar_controller(
         end
     end
 
+{{ if eq .DeviceClass "nvme" }}
+    pcileech_interrupt_service #(
+        .NUM_VECTORS    ( {{ .MSIXConfig.NumVectors }} )
+    ) i_nvme_interrupt_service(
+        .clk             ( clk                           ),
+        .rst             ( device_reset                  ),
+        .quiesce         ( lifecycle_quiesce             ),
+        .msix_mode       ( 1'b1                          ),
+        .function_enable ( msix_enable_effective          ),
+        .function_mask   ( msix_mask_effective            ),
+        .event_valid     ( nvme_irq_event_valid          ),
+        .event_vector    ( nvme_irq_event_vector         ),
+        .vector_select   ( nvme_msix_vector_select       ),
+        .vector_masked   ( nvme_msix_vector_masked       ),
+        .delivery_ready  ( nvme_irq_delivery_ready       ),
+        .delivery_valid  ( nvme_irq_delivery_valid       ),
+        .delivery_vector ( nvme_irq_delivery_vector      ),
+        .msi_pulse       ( nvme_msix_trigger             ),
+        .pba_set_valid   ( nvme_msix_pba_set_valid       ),
+        .pba_clear_valid ( nvme_msix_pba_clear_valid     ),
+        .pba_vector      ( nvme_msix_pba_vector          )
+    );
+{{ end }}
+
     pcileech_msix_table #(
         .NUM_VECTORS    ( {{ .MSIXConfig.NumVectors }}  ),
         .TABLE_OFFSET   ( 32'h{{ printf "%08X" .MSIXConfig.TableOffset }} ),
         .PBA_OFFSET     ( 32'h{{ printf "%08X" .MSIXConfig.PBAOffset }}   )
     ) i_msix_table(
-        .rst            ( rst                           ),
+        .rst            ( device_reset                  ),
         .clk            ( clk                           ),
         .wr_addr        ( {{ if .BARModel }}wr_addr_bar0{{ else }}wr_addr{{ end }}                       ),
         .wr_data        ( wr_data                       ),
@@ -546,13 +618,17 @@ module pcileech_tlps128_bar_controller(
         .vector_data    ( nvme_msix_vector_data         ),
         .vector_masked  ( nvme_msix_vector_masked       ),
         .pba_set_valid  ( nvme_msix_pba_set_valid       ),
-        .pba_set_vector ( nvme_msix_pba_set_vector      ),
+        .pba_set_vector ( nvme_msix_pba_vector          ),
+        .pba_clear_valid( nvme_msix_pba_clear_valid     ),
+        .pba_clear_vector( nvme_msix_pba_vector         ),
 {{ else }}        .vector_select  ( 16'd0                         ),
         .vector_addr    (                               ),
         .vector_data    (                               ),
         .vector_masked  (                               ),
         .pba_set_valid  ( 1'b0                          ),
-        .pba_set_vector (                               ),
+        .pba_set_vector ( 16'd0                         ),
+        .pba_clear_valid( 1'b0                          ),
+        .pba_clear_vector( 16'd0                        ),
 {{ end }}        .addr_hit       ( msix_addr_hit                 )
     );
 {{ end }}
@@ -581,8 +657,9 @@ module pcileech_tlps128_bar_controller(
     wire [8:0]   hda_tlp_tx_tuser;
 
     pcileech_hda_rirb_dma i_hda_rirb_dma(
-        .rst            ( rst                           ),
+        .rst            ( device_reset                  ),
         .clk            ( clk                           ),
+        .dma_enabled    ( dma_enabled                   ),
         .pcie_id        ( pcie_id                       ),
         .crst_falling   ( hda_crst_falling              ),
         .dma_req_valid  ( hda_dma_req_valid             ),
@@ -601,25 +678,30 @@ module pcileech_tlps128_bar_controller(
         .tlp_tx_tready  ( tlps_out.tready && !dma_yield  )
     );
 
-    // ========================================================================
-    // HDA MSI Interrupt Generator
-    // Fires an intr_req pulse when RIRBINTSTS.INTFL transitions 0->1.
-    // The cfg module routes this to cfg_interrupt for MSI TLP generation -
-    // without MSI, the hdaudio.sys driver polls RIRBWP endlessly and
-    // eventually times out with Code 10.
-    // ========================================================================
     wire        hda_msi_trigger;
     wire [31:0] hda_rirbintsts;
     wire        hda_intr_req;
 
-    pcileech_hda_msi i_hda_msi(
-        .rst            ( rst                           ),
-        .clk            ( clk                           ),
-        .pcie_id        ( pcie_id                       ),
-        .msi_trigger    ( hda_msi_trigger               ),
-        .rirbintsts     ( hda_rirbintsts                ),
-        .crst_falling   ( hda_crst_falling              ),
-        .intr_req       ( hda_intr_req                  )
+    pcileech_interrupt_service #(
+        .NUM_VECTORS    ( 1 )
+    ) i_hda_interrupt_service(
+        .clk             ( clk                           ),
+        .rst             ( device_reset || hda_crst_falling ),
+        .quiesce         ( lifecycle_quiesce             ),
+        .msix_mode       ( 1'b0                          ),
+        .function_enable ( cfg_msi_enabled                ),
+        .function_mask   ( 1'b0                          ),
+        .event_valid     ( hda_msi_trigger               ),
+        .event_vector    ( 16'd0                         ),
+        .vector_select   (                               ),
+        .vector_masked   ( 1'b0                          ),
+        .delivery_ready  ( 1'b1                          ),
+        .delivery_valid  (                               ),
+        .delivery_vector (                               ),
+        .msi_pulse       ( hda_intr_req                  ),
+        .pba_set_valid   (                               ),
+        .pba_clear_valid (                               ),
+        .pba_vector      (                               )
     );
 
 {{ end }}
@@ -698,8 +780,9 @@ module pcileech_tlps128_bar_controller(
         .NVME_TIMING_ENABLE      ( NVME_TIMING_ENABLED          ),
         .NVME_TIMING_CLK_HZ      ( NVME_TIMING_CLOCK_HZ         )
     ) i_nvme_responder(
-        .rst                ( rst                           ),
+        .rst                ( device_reset                  ),
         .clk                ( clk                           ),
+        .dma_enabled        ( dma_enabled                   ),
         .cc_en              ( nvme_reg_cc[0]                ),
         .cc_enable_wr       ( nvme_cc_enable_wr             ),
         .cc_disable_wr      ( nvme_cc_disable_wr            ),
@@ -712,14 +795,13 @@ module pcileech_tlps128_bar_controller(
         .doorbell_is_cq     ( nvme_db_is_cq                 ),
         .doorbell_qid       ( nvme_db_qid                   ),
         .doorbell_val       ( nvme_db_val                   ),
-        .msix_enable        ( msix_enable_reg               ),
-        .msix_function_mask ( msix_function_mask_reg        ),
-        .msix_vector_select ( nvme_msix_vector_select       ),
+        .msix_vector_select ( nvme_irq_event_vector        ),
         .msix_vector_addr   ( nvme_msix_vector_addr         ),
         .msix_vector_data   ( nvme_msix_vector_data         ),
-        .msix_vector_masked ( nvme_msix_vector_masked       ),
-        .pba_set_valid      ( nvme_msix_pba_set_valid       ),
-        .pba_set_vector     ( nvme_msix_pba_set_vector      ),
+        .irq_delivery_valid ( nvme_irq_delivery_valid       ),
+        .irq_delivery_ready ( nvme_irq_delivery_ready       ),
+        .pba_set_valid      ( nvme_irq_event_valid          ),
+        .pba_set_vector     ( nvme_irq_event_vector         ),
         .dma_rd_req         ( nvme_dma_rd_req               ),
         .dma_rd_addr        ( nvme_dma_rd_addr              ),
         .dma_rd_len         ( nvme_dma_rd_len               ),
@@ -743,7 +825,7 @@ module pcileech_tlps128_bar_controller(
         .disk_req_hit       ( nvme_disk_req_hit             ),
         .disk_busy          ( nvme_disk_busy                ),
         .disk_error         ( nvme_disk_error               ),
-        .msix_trigger       ( nvme_msix_trigger             ),
+        .msix_trigger       (                               ),
         .id_rom_addr        ( nvme_id_rom_addr              ),
         .id_rom_data        ( nvme_id_rom_data              ),
         .dbg_state          ( nvme_resp_dbg_state           ),
@@ -761,7 +843,7 @@ module pcileech_tlps128_bar_controller(
     pcileech_bram_disk #(
         .DISK_WORDS              ( NVME_BRAM_DISK_WORDS )
     ) i_nvme_bram_disk(
-        .rst            ( rst                       ),
+        .rst            ( device_reset              ),
         .clk            ( clk                       ),
         .req_valid      ( nvme_disk_req_valid       ),
         .req_write      ( nvme_disk_req_write       ),
@@ -779,8 +861,9 @@ module pcileech_tlps128_bar_controller(
     );
 
     pcileech_nvme_dma_bridge i_nvme_dma_bridge(
-        .rst                ( rst                           ),
+        .rst                ( device_reset                  ),
         .clk                ( clk                           ),
+        .dma_enabled        ( dma_enabled                   ),
         .pcie_id            ( pcie_id                       ),
         .dma_wr_req         ( nvme_dma_wr_req               ),
         .dma_wr_addr        ( nvme_dma_wr_addr              ),
@@ -816,8 +899,6 @@ module pcileech_tlps128_bar_controller(
         nvme_id_rom_data_r <= nvme_identify_rom[nvme_id_rom_addr[11:2]];
     assign nvme_id_rom_data = nvme_id_rom_data_r;
 
-// FIFO buffers DMA bridge TLPs before muxing onto tlps_out.
-// DMA TLPs on separate stream (tlps_dma_out); BAR reads on tlps_out.
     wire         nvme_dma_fifo_full;
     wire         nvme_dma_fifo_first;
     wire         nvme_dma_fifo_tlast;
@@ -825,19 +906,22 @@ module pcileech_tlps128_bar_controller(
     wire [127:0] nvme_dma_fifo_tdata;
     wire         nvme_dma_fifo_tvalid;
     reg  [10:0]  nvme_dma_pkt_count;
+    reg  [2:0]   nvme_dma_burst_count;
+    wire         nvme_dma_yield = (nvme_dma_burst_count == 3'd7);
+    wire         nvme_dma_select = nvme_dma_fifo_tvalid && !nvme_dma_yield;
 
     wire nvme_dma_fifo_wr_en = nvme_tlp_tx_tvalid && !nvme_dma_fifo_full;
+    wire nvme_dma_fifo_rd_en = tlps_out.tready && nvme_dma_select;
     wire nvme_dma_pkt_inc    = nvme_dma_fifo_wr_en && nvme_tlp_tx_tlast;
-    wire nvme_dma_pkt_dec    = nvme_dma_fifo_tvalid && nvme_dma_fifo_tlast;
+    wire nvme_dma_pkt_dec    = nvme_dma_fifo_rd_en && nvme_dma_fifo_tlast;
     wire [10:0] nvme_dma_pkt_count_next = nvme_dma_pkt_count +
                                           {10'h000, nvme_dma_pkt_inc} -
                                           {10'h000, nvme_dma_pkt_dec};
-    wire nvme_dma_fifo_rd_en = tlps_dma_out.tready && (nvme_dma_pkt_count_next != 11'd0);
 
     assign nvme_tlp_tx_tready = !nvme_dma_fifo_full;
 
     fifo_134_134_clk1_bar_rdrsp i_fifo_nvme_dma(
-        .srst       ( rst                                                        ),
+        .srst       ( device_reset                                                ),
         .clk        ( clk                                                        ),
         .din        ( { nvme_tlp_tx_tuser[0], nvme_tlp_tx_tlast,
                         nvme_tlp_tx_tkeepdw, nvme_tlp_tx_tdata }                ),
@@ -852,23 +936,34 @@ module pcileech_tlps128_bar_controller(
     );
 
     always @(posedge clk) begin
-        nvme_dma_pkt_count <= rst ? 11'd0 : nvme_dma_pkt_count_next;
+        if (device_reset) begin
+            nvme_dma_pkt_count <= 11'd0;
+            nvme_dma_burst_count <= 3'd0;
+        end else begin
+            nvme_dma_pkt_count <= nvme_dma_pkt_count_next;
+            if (nvme_dma_fifo_rd_en)
+                nvme_dma_burst_count <= nvme_dma_burst_count + 1'b1;
+            else
+                nvme_dma_burst_count <= 3'd0;
+        end
     end
 
-    assign tlps_dma_out.tdata    = nvme_dma_fifo_tdata;
-    assign tlps_dma_out.tkeepdw  = nvme_dma_fifo_tkeepdw;
-    assign tlps_dma_out.tvalid   = nvme_dma_fifo_tvalid;
-    assign tlps_dma_out.tlast    = nvme_dma_fifo_tlast;
-    assign tlps_dma_out.tuser    = {7'h00, nvme_dma_fifo_tlast, nvme_dma_fifo_first};
-    assign tlps_dma_out.has_data = (nvme_dma_pkt_count_next != 11'd0);
+    assign tlps_out.tdata    = nvme_dma_select ? nvme_dma_fifo_tdata   : tlps_rdeng.tdata;
+    assign tlps_out.tkeepdw  = nvme_dma_select ? nvme_dma_fifo_tkeepdw : tlps_rdeng.tkeepdw;
+    assign tlps_out.tvalid   = nvme_dma_select ? nvme_dma_fifo_tvalid  : tlps_rdeng.tvalid;
+    assign tlps_out.tlast    = nvme_dma_select ? nvme_dma_fifo_tlast   : tlps_rdeng.tlast;
+    assign tlps_out.tuser    = nvme_dma_select ?
+                              {7'h00, nvme_dma_fifo_tlast, nvme_dma_fifo_first} :
+                              tlps_rdeng.tuser;
+    assign tlps_out.has_data = (nvme_dma_pkt_count_next != 11'd0) || tlps_rdeng.has_data;
+    assign tlps_rdeng.tready = tlps_out.tready && !nvme_dma_select;
 
-    assign tlps_out.tdata    = tlps_rdeng.tdata;
-    assign tlps_out.tkeepdw  = tlps_rdeng.tkeepdw;
-    assign tlps_out.tvalid   = tlps_rdeng.tvalid;
-    assign tlps_out.tlast    = tlps_rdeng.tlast;
-    assign tlps_out.tuser    = tlps_rdeng.tuser;
-    assign tlps_out.has_data = tlps_rdeng.has_data;
-    assign tlps_rdeng.tready = tlps_out.tready;
+    assign tlps_dma_out.tdata    = 128'h0;
+    assign tlps_dma_out.tkeepdw  = 4'h0;
+    assign tlps_dma_out.tvalid   = 1'b0;
+    assign tlps_dma_out.tlast    = 1'b0;
+    assign tlps_dma_out.tuser    = 9'h0;
+    assign tlps_dma_out.has_data = 1'b0;
 {{ end }}
 
 {{ if and (eq .DeviceClass "audio") .BARModel }}{{ if not (and (eq .DeviceClass "nvme") .NVMeIdentify) }}
@@ -912,7 +1007,7 @@ module pcileech_tlps128_bar_controller(
 
     // BAR1: address loopback
     pcileech_bar_impl_loopaddr i_bar1(
-        .rst            ( rst                           ),
+        .rst            ( device_reset                  ),
         .clk            ( clk                           ),
         .wr_addr        ( wr_addr                       ),
         .wr_be          ( wr_be                         ),
@@ -930,7 +1025,7 @@ module pcileech_tlps128_bar_controller(
     wire        bar2_intr_req;
 
     pcileech_bar_impl_msi i_bar2(
-        .rst            ( rst                           ),
+        .rst            ( device_reset                  ),
         .clk            ( clk                           ),
         .wr_addr        ( wr_addr                       ),
         .wr_be          ( wr_be                         ),
@@ -950,7 +1045,7 @@ module pcileech_tlps128_bar_controller(
     generate
         for (gi = 3; gi < 7; gi = gi + 1) begin : gen_bar_none
             pcileech_bar_impl_none i_bar_none(
-                .rst            ( rst                           ),
+                .rst            ( device_reset                  ),
                 .clk            ( clk                           ),
                 .wr_addr        ( wr_addr                       ),
                 .wr_be          ( wr_be                         ),
@@ -966,6 +1061,6 @@ module pcileech_tlps128_bar_controller(
         end
     endgenerate
 
-    assign intr_req = bar2_intr_req{{ if eq .DeviceClass "audio" }} | hda_intr_req{{ end }}{{ if eq .DeviceClass "nvme" }} | nvme_msix_trigger{{ end }};
+    assign intr_req = !lifecycle_quiesce && (bar2_intr_req{{ if eq .DeviceClass "audio" }} | hda_intr_req{{ end }}{{ if eq .DeviceClass "nvme" }} | nvme_msix_trigger{{ end }});
 
 endmodule

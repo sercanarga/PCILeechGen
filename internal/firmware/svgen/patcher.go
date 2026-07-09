@@ -38,6 +38,29 @@ func (p *SVPatcher) PatchAll() error {
 	if err := p.patchCfgSV(); err != nil {
 		return fmt.Errorf("patching pcileech_pcie_cfg_a7.sv: %w", err)
 	}
+	tlpData, err := os.ReadFile(filepath.Join(p.srcDir, "pcileech_pcie_tlp_a7.sv"))
+	if err == nil {
+		modern, classifyErr := classifyServiceTLP(string(tlpData))
+		if classifyErr != nil {
+			return fmt.Errorf("patching pcileech_pcie_tlp_a7.sv services: %w", classifyErr)
+		}
+		if modern {
+			if err := p.patchCfgInterruptHandshake(); err != nil {
+				return fmt.Errorf("patching pcileech_pcie_cfg_a7.sv interrupt handshake: %w", err)
+			}
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if err := p.patchTLPServiceWiring(); err != nil {
+		return fmt.Errorf("patching pcileech_pcie_tlp_a7.sv services: %w", err)
+	}
+	if err := p.patchPCIeWrapperServiceWiring(); err != nil {
+		return fmt.Errorf("patching PCIe wrapper services: %w", err)
+	}
+	if err := p.validateServiceWiring(); err != nil {
+		return err
+	}
 
 	if err := p.patchFifoSV(); err != nil {
 		return fmt.Errorf("patching pcileech_fifo.sv: %w", err)
@@ -178,28 +201,6 @@ func (p *SVPatcher) patchCfgSV() error {
 		label:       "PM: halt ASPM L1 (cfg_pm_halt_aspm_l1 -> 1)",
 	})
 
-	// force IP core to stay in D0 power state. without this, Windows
-	// can write D3 to PMCSR which the IP core processes internally
-	// before the shadow BRAM even sees it. once in D3, the IP core
-	// stops processing memory/IO TLPs -> DPC_WATCHDOG_VIOLATION BSOD.
-	// cfg_pm_force_state = 00 (D0) is already the default, we just
-	// need to enable the force mechanism.
-	patches = append(patches, svRegexPatch{
-		pattern:     `(rw\[210\]\s*<=\s*)0(\s*;\s*//\s*cfg_pm_force_state_en)`,
-		replacement: "${1}1${2}",
-		label:       "PM: force D0 state (cfg_pm_force_state_en -> 1)",
-	})
-
-	// enable periodic command register auto-set. every ~1ms this
-	// writes 0x0007 (BME+MSE+IOSE) to the IP core's command register
-	// via cfg_mgmt. without this, Windows clearing Bus Master Enable
-	// during Code 10 restart attempts permanently kills DMA.
-	patches = append(patches, svRegexPatch{
-		pattern:     `(rw\[21\]\s*<=\s*)0(\s*;\s*//\s*CFGSPACE_COMMAND_REGISTER_AUTO_SET)`,
-		replacement: "${1}1${2}",
-		label:       "CMD: auto-set BME+MSE+IOSE (CFGSPACE_COMMAND_REGISTER_AUTO_SET -> 1)",
-	})
-
 	// enable periodic status register error bit clearing. every ~1ms
 	// this clears W1C error bits (master abort, target abort, parity)
 	// in the status register. prevents error accumulation that would
@@ -211,6 +212,299 @@ func (p *SVPatcher) patchCfgSV() error {
 	})
 
 	return p.patchFile("pcileech_pcie_cfg_a7.sv", patches)
+}
+
+func (p *SVPatcher) patchCfgInterruptHandshake() error {
+	path := filepath.Join(p.srcDir, "pcileech_pcie_cfg_a7.sv")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	content := string(data)
+	requestPort := interruptRequestPort(content)
+	if requestPort == "" {
+		requestPort = "generated_bar_intr_req"
+	}
+	var patches []svRegexPatch
+	if interruptRequestPort(content) == "" {
+		patches = append(patches, svRegexPatch{
+			pattern:     `(module\s+pcileech_pcie_cfg_a7\s*\(\s*\r?\n)`,
+			replacement: "${1}    input                   " + requestPort + ",\n",
+			label:       "services: accept interrupt request",
+		})
+	}
+	if !strings.Contains(content, "intr_req_pending") {
+		patches = append(patches, svRegexPatch{
+			pattern: `(assign\s+ctx\.cfg_interrupt\s*=\s*)rw\[206\](\s*;)`,
+			replacement: "reg intr_req_pending = 1'b0;\n" +
+				"    always @(posedge clk_pcie) begin\n" +
+				"        if (rst)\n" +
+				"            intr_req_pending <= 1'b0;\n" +
+				"        else if (" + requestPort + ")\n" +
+				"            intr_req_pending <= 1'b1;\n" +
+				"        else if (intr_req_pending && ctx.cfg_interrupt_rdy)\n" +
+				"            intr_req_pending <= 1'b0;\n" +
+				"    end\n\n" +
+				"    ${1}rw[206] | intr_req_pending${2}",
+			label: "services: hold interrupt request until ready",
+		})
+	}
+	escapedPort := regexp.QuoteMeta(requestPort)
+	patches = append(patches,
+		svRegexPatch{
+			pattern:     `(assign\s+ctx\.cfg_interrupt_assert\s*=\s*)rw\[205\](\s*;)`,
+			replacement: "${1}rw[205] | intr_req_pending${2}",
+			label:       "services: route held interrupt assertion",
+		},
+		svRegexPatch{
+			pattern: `(else\s+if\s*\(\s*intr_req_pending\s*&&\s*ctx\.cfg_interrupt_rdy\s*\)\s*begin\s*\r?\n\s*intr_req_pending\s*<=\s*1'b0;\s*\r?\n\s*end\s+else\s+if\s*\(\s*` + escapedPort + `\s*\)\s*begin\s*\r?\n\s*intr_req_pending\s*<=\s*1'b1;\s*\r?\n\s*end)`,
+			replacement: "else if (" + requestPort + ") begin\n" +
+				"            intr_req_pending <= 1'b1;\n" +
+				"        end else if (intr_req_pending && ctx.cfg_interrupt_rdy) begin\n" +
+				"            intr_req_pending <= 1'b0;\n" +
+				"        end",
+			label: "services: preserve interrupt arriving with acknowledgement",
+		},
+	)
+	return p.patchFile("pcileech_pcie_cfg_a7.sv", patches)
+}
+
+func classifyServiceTLP(content string) (bool, error) {
+	if strings.Contains(content, "pcileech_tlps128_bar_controller") {
+		return true, nil
+	}
+	if strings.Contains(content, "IfTlp64") || strings.Contains(content, "IfPCIeTlpRxTx") {
+		return false, nil
+	}
+	return false, fmt.Errorf("unsupported TLP service architecture")
+}
+
+func interruptRequestPort(content string) string {
+	for _, name := range []string{"generated_bar_intr_req", "intr_req"} {
+		re := regexp.MustCompile(`\b(?:input|output)\s+(?:wire\s+)?` + regexp.QuoteMeta(name) + `\b`)
+		if re.MatchString(content) {
+			return name
+		}
+	}
+	return ""
+}
+
+func instanceHasPort(content, moduleName, portName string) bool {
+	re := regexp.MustCompile(`(?s)\b` + regexp.QuoteMeta(moduleName) + `\s+\w+\s*\((.*?)\);`)
+	match := re.FindStringSubmatch(content)
+	return len(match) == 2 && strings.Contains(match[1], "."+portName)
+}
+
+func instancePortPatch(moduleName, portName, connection, label string) svRegexPatch {
+	return svRegexPatch{
+		pattern:     `(` + regexp.QuoteMeta(moduleName) + `\s+\w+\s*\(\s*\r?\n)`,
+		replacement: "${1}        ." + portName + connection + ",\n",
+		label:       label,
+	}
+}
+
+func (p *SVPatcher) patchTLPServiceWiring() error {
+	path := filepath.Join(p.srcDir, "pcileech_pcie_tlp_a7.sv")
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	content := string(data)
+	modern, err := classifyServiceTLP(content)
+	if err != nil {
+		return err
+	}
+	if !modern {
+		return nil
+	}
+
+	var patches []svRegexPatch
+	if !regexp.MustCompile(`\bIfPCIeSignals(?:\.\w+)?\s+ctx\b`).MatchString(content) {
+		patches = append(patches, svRegexPatch{
+			pattern:     `(module\s+pcileech_pcie_tlp_a7\s*\(\s*\r?\n)`,
+			replacement: "${1}    IfPCIeSignals           ctx,\n",
+			label:       "services: add PCIe context port",
+		})
+	}
+	requestPort := interruptRequestPort(content)
+	if requestPort == "" {
+		requestPort = "generated_bar_intr_req"
+		patches = append(patches, svRegexPatch{
+			pattern:     `(module\s+pcileech_pcie_tlp_a7\s*\(\s*\r?\n)`,
+			replacement: "${1}    output wire             " + requestPort + ",\n",
+			label:       "services: add interrupt request port",
+		})
+	}
+	if !instanceHasPort(content, "pcileech_tlps128_bar_controller", "cfg_command") {
+		ports := "        .cfg_command     ( ctx.cfg_command                ),\n" +
+			"        .cfg_power_state ( ctx.cfg_pmcsr_powerstate       ),\n" +
+			"        .cfg_flr_in_process( ctx.cfg_received_func_lvl_rst ),\n" +
+			"        .cfg_to_turnoff  ( ctx.cfg_to_turnoff             ),\n" +
+			"        .cfg_link_up     ( ctx.pl_phy_lnk_up               ),\n" +
+			"        .cfg_msi_enable  ( ctx.cfg_interrupt_msienable     ),\n" +
+			"        .cfg_msix_enable ( ctx.cfg_interrupt_msixenable    ),\n" +
+			"        .cfg_msix_function_mask( ctx.cfg_interrupt_msixfm  ),\n"
+		if !instanceHasPort(content, "pcileech_tlps128_bar_controller", "intr_req") {
+			ports += "        .intr_req        ( " + requestPort + "          ),\n"
+		}
+		patches = append(patches, svRegexPatch{
+			pattern:     `(pcileech_tlps128_bar_controller\s+\w+\s*\(\s*\r?\n)`,
+			replacement: "${1}" + ports,
+			label:       "services: wire lifecycle and interrupt BAR ports",
+		})
+	}
+	return p.patchFile("pcileech_pcie_tlp_a7.sv", patches)
+}
+
+func (p *SVPatcher) patchPCIeWrapperServiceWiring() error {
+	tlpData, err := os.ReadFile(filepath.Join(p.srcDir, "pcileech_pcie_tlp_a7.sv"))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	modern, err := classifyServiceTLP(string(tlpData))
+	if err != nil {
+		return err
+	}
+	if !modern {
+		return nil
+	}
+	requestPort := interruptRequestPort(string(tlpData))
+	if requestPort == "" {
+		return fmt.Errorf("modern TLP wrapper has no interrupt request port")
+	}
+
+	for _, filename := range []string{"pcileech_pcie_a7.sv", "pcileech_pcie_a7x4.sv"} {
+		path := filepath.Join(p.srcDir, filename)
+		data, err := os.ReadFile(path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		content := string(data)
+		var patches []svRegexPatch
+		wirePattern := regexp.MustCompile(`\bwire\s+` + regexp.QuoteMeta(requestPort) + `\b`)
+		if !wirePattern.MatchString(content) {
+			patches = append(patches, svRegexPatch{
+				pattern:     `(IfPCIeSignals\s+ctx\(\);\s*\r?\n)`,
+				replacement: "${1}    wire                    " + requestPort + ";\n",
+				label:       "services: declare interrupt wire",
+			})
+		}
+		if !instanceHasPort(content, "pcileech_pcie_cfg_a7", requestPort) {
+			patches = append(patches, instancePortPatch(
+				"pcileech_pcie_cfg_a7", requestPort, "   ( "+requestPort+"    )",
+				"services: connect interrupt to cfg wrapper",
+			))
+		}
+		if !instanceHasPort(content, "pcileech_pcie_tlp_a7", "ctx") {
+			patches = append(patches, instancePortPatch(
+				"pcileech_pcie_tlp_a7", "ctx", "                        ( ctx                       )",
+				"services: connect lifecycle context to TLP wrapper",
+			))
+		}
+		if !instanceHasPort(content, "pcileech_pcie_tlp_a7", requestPort) {
+			patches = append(patches, instancePortPatch(
+				"pcileech_pcie_tlp_a7", requestPort, "   ( "+requestPort+"    )",
+				"services: connect interrupt from TLP wrapper",
+			))
+		}
+		if err := p.patchFile(filename, patches); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (p *SVPatcher) validateServiceWiring() error {
+	tlpPath := filepath.Join(p.srcDir, "pcileech_pcie_tlp_a7.sv")
+	tlpData, err := os.ReadFile(tlpPath)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	tlpContent := string(tlpData)
+	modern, err := classifyServiceTLP(tlpContent)
+	if err != nil {
+		return fmt.Errorf("pcileech_pcie_tlp_a7.sv: %w", err)
+	}
+	requestPort := interruptRequestPort(tlpContent)
+
+	if modern {
+		cfgData, err := os.ReadFile(filepath.Join(p.srcDir, "pcileech_pcie_cfg_a7.sv"))
+		if err != nil {
+			return err
+		}
+		cfgContent := string(cfgData)
+		cfgChecks := []*regexp.Regexp{
+			regexp.MustCompile(`\binput\s+(?:wire\s+)?` + regexp.QuoteMeta(requestPort) + `\b`),
+			regexp.MustCompile(`\bintr_req_pending\b`),
+			regexp.MustCompile(`intr_req_pending\s*&&\s*ctx\.cfg_interrupt_rdy`),
+			regexp.MustCompile(`ctx\.cfg_interrupt\s*=\s*rw\[206\]\s*\|\s*intr_req_pending`),
+		}
+		for _, check := range cfgChecks {
+			if !check.MatchString(cfgContent) {
+				return fmt.Errorf("pcileech_pcie_cfg_a7.sv: required interrupt handshake %q not applied", check.String())
+			}
+		}
+		required := []string{
+			".cfg_command",
+			".cfg_power_state",
+			".cfg_flr_in_process",
+			".cfg_to_turnoff",
+			".cfg_link_up",
+			".cfg_msi_enable",
+			".cfg_msix_enable",
+			".cfg_msix_function_mask",
+			".intr_req",
+		}
+		if requestPort == "" {
+			return fmt.Errorf("pcileech_pcie_tlp_a7.sv: interrupt request port not applied")
+		}
+		if !regexp.MustCompile(`\bIfPCIeSignals(?:\.\w+)?\s+ctx\b`).MatchString(tlpContent) {
+			return fmt.Errorf("pcileech_pcie_tlp_a7.sv: required service context not applied")
+		}
+		for _, token := range required {
+			if !strings.Contains(tlpContent, token) {
+				return fmt.Errorf("pcileech_pcie_tlp_a7.sv: required service wiring %q not applied", token)
+			}
+		}
+	}
+
+	foundWrapper := false
+	for _, filename := range []string{"pcileech_pcie_a7.sv", "pcileech_pcie_a7x4.sv"} {
+		data, err := os.ReadFile(filepath.Join(p.srcDir, filename))
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		foundWrapper = true
+		if modern {
+			content := string(data)
+			if !instanceHasPort(content, "pcileech_pcie_cfg_a7", requestPort) ||
+				!instanceHasPort(content, "pcileech_pcie_tlp_a7", requestPort) {
+				return fmt.Errorf("%s: interrupt request path not connected", filename)
+			}
+			if !instanceHasPort(content, "pcileech_pcie_tlp_a7", "ctx") {
+				return fmt.Errorf("%s: lifecycle context not connected", filename)
+			}
+		}
+	}
+	if !foundWrapper {
+		return fmt.Errorf("no supported Xilinx PCIe wrapper found")
+	}
+	return nil
 }
 
 // patchFifoSV patches pcileech_fifo.sv with donor device identity.
