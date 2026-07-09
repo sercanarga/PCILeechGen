@@ -4,7 +4,13 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
+
+	"github.com/sercanarga/pcileechgen/internal/board"
+	"github.com/sercanarga/pcileechgen/internal/donor"
+	"github.com/sercanarga/pcileechgen/internal/pci"
 )
 
 func TestGenerateManifest_Empty(t *testing.T) {
@@ -180,7 +186,7 @@ func TestVerifyManifest_MissingFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	m := &BuildManifest{
 		Files: []ManifestEntry{
-			{Name: "missing.coe", Size: 100, SHA256: "abc"},
+			{Name: "missing.coe", Size: 100, SHA256: strings.Repeat("0", 64)},
 		},
 	}
 	manifestPath := filepath.Join(tmpDir, "manifest.json")
@@ -208,7 +214,7 @@ func TestVerifyManifest_HashMismatch(t *testing.T) {
 
 	m := &BuildManifest{
 		Files: []ManifestEntry{
-			{Name: "test.coe", Size: 7, SHA256: "wrong_hash"},
+			{Name: "test.coe", Size: 7, SHA256: strings.Repeat("0", 64)},
 		},
 	}
 	manifestPath := filepath.Join(tmpDir, "manifest.json")
@@ -241,5 +247,241 @@ func TestLoadManifest_Invalid(t *testing.T) {
 	_, err = LoadManifest(filepath.Join(tmpDir, "bad.json"))
 	if err == nil {
 		t.Error("LoadManifest should fail for invalid JSON")
+	}
+}
+
+func TestGenerateManifest_DiscoversRootDeliverablesByExtension(t *testing.T) {
+	tmpDir := t.TempDir()
+	files := map[string]string{
+		"src/nested/core.sv":         "module core; endmodule",
+		"a-output.bit":               "bit",
+		"z-output.bin":               "bin",
+		"identify_init.hex":          "identify",
+		"pcileech_hda_msi.sv":        "module pcileech_hda_msi; endmodule",
+		"pcileech_hda_rirb_dma.sv":   "module pcileech_hda_rirb_dma; endmodule",
+		"build_manifest.json":        `{"files":[]}`,
+		"vivado.log":                 "build log",
+		"vivado.jou":                 "build journal",
+		"post-synthesis-scratch.tmp": "temporary",
+	}
+	for name, content := range files {
+		filePath := filepath.Join(tmpDir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	m, err := GenerateManifest(tmpDir, "1.2.3", "CaptainDMA_35T", 0x1234, 0x5678)
+	if err != nil {
+		t.Fatalf("GenerateManifest error: %v", err)
+	}
+	names := make([]string, 0, len(m.Files))
+	for _, entry := range m.Files {
+		names = append(names, entry.Name)
+	}
+	want := []string{
+		"a-output.bit",
+		"identify_init.hex",
+		"pcileech_hda_msi.sv",
+		"pcileech_hda_rirb_dma.sv",
+		"src/nested/core.sv",
+		"z-output.bin",
+	}
+	if !reflect.DeepEqual(names, want) {
+		t.Fatalf("manifest names = %v, want only generated deliverables %v", names, want)
+	}
+}
+
+func TestGenerateManifest_RejectsSourceSymlink(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(tmpDir, "src"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "outside.sv")
+	if err := os.WriteFile(outside, []byte("secret"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(tmpDir, "src", "linked.sv")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	if _, err := GenerateManifest(tmpDir, "dev", "board", 0, 0); err == nil {
+		t.Fatal("GenerateManifest should reject symlinked artifacts")
+	}
+}
+
+func TestGenerateManifest_RejectsRootDeliverableSymlink(t *testing.T) {
+	tmpDir := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside.sv")
+	if err := os.WriteFile(outside, []byte("module outside; endmodule"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	linkPath := filepath.Join(tmpDir, "pcileech_hda_msi.sv")
+	if err := os.Symlink(outside, linkPath); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	_, err := GenerateManifest(tmpDir, "dev", "board", 0, 0)
+	if err == nil {
+		t.Fatal("GenerateManifest accepted a root deliverable symlink")
+	}
+	want := "refusing to include symlink " + linkPath
+	if err.Error() != want {
+		t.Fatalf("GenerateManifest error = %q, want %q", err, want)
+	}
+}
+
+func TestVerifyManifest_RejectsUnsafeAndMalformedEntries(t *testing.T) {
+	tests := []struct {
+		name  string
+		entry ManifestEntry
+	}{
+		{"parent traversal", ManifestEntry{Name: "../secret", Size: 0, SHA256: strings.Repeat("0", 64)}},
+		{"absolute path", ManifestEntry{Name: "/etc/passwd", Size: 0, SHA256: strings.Repeat("0", 64)}},
+		{"unclean path", ManifestEntry{Name: "src/../file", Size: 0, SHA256: strings.Repeat("0", 64)}},
+		{"backslash path", ManifestEntry{Name: `src\\file`, Size: 0, SHA256: strings.Repeat("0", 64)}},
+		{"negative size", ManifestEntry{Name: "file", Size: -1, SHA256: strings.Repeat("0", 64)}},
+		{"invalid digest", ManifestEntry{Name: "file", Size: 0, SHA256: "not-a-digest"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			m := &BuildManifest{Files: []ManifestEntry{tc.entry}}
+			manifestPath := filepath.Join(tmpDir, "manifest.json")
+			if err := m.WriteJSON(manifestPath); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := VerifyManifest(manifestPath, tmpDir); err == nil {
+				t.Fatal("VerifyManifest should reject malformed entry")
+			}
+		})
+	}
+}
+
+func TestVerifyManifest_ReportsNULBytePath(t *testing.T) {
+	tmpDir := t.TempDir()
+	manifestPath := filepath.Join(tmpDir, "manifest.json")
+	m := &BuildManifest{
+		Files: []ManifestEntry{{
+			Name:   "artifact\x00.sv",
+			Size:   1,
+			SHA256: strings.Repeat("0", 64),
+		}},
+	}
+	if err := m.WriteJSON(manifestPath); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := VerifyManifest(manifestPath, tmpDir)
+	if err == nil {
+		t.Fatal("VerifyManifest accepted an artifact path containing a NUL byte")
+	}
+	if !strings.Contains(err.Error(), "contains a NUL byte") {
+		t.Fatalf("VerifyManifest error = %q, want a distinct NUL-byte error", err)
+	}
+}
+
+func TestVerifyManifest_RejectsDuplicateAndSymlinkEntries(t *testing.T) {
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "artifact.bin")
+	if err := os.WriteFile(filePath, []byte("content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	hash, err := fileHash(filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := ManifestEntry{Name: "artifact.bin", Size: 7, SHA256: hash}
+	m := &BuildManifest{Files: []ManifestEntry{entry, entry}}
+	manifestPath := filepath.Join(tmpDir, "manifest.json")
+	if err := m.WriteJSON(manifestPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := VerifyManifest(manifestPath, tmpDir); err == nil {
+		t.Fatal("VerifyManifest should reject duplicate entries")
+	}
+
+	linkPath := filepath.Join(tmpDir, "artifact-link.bin")
+	if err := os.Symlink(filePath, linkPath); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	m.Files = []ManifestEntry{{Name: "artifact-link.bin", Size: 7, SHA256: hash}}
+	if err := m.WriteJSON(manifestPath); err != nil {
+		t.Fatal(err)
+	}
+	verification, err := VerifyManifest(manifestPath, tmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verification.OK() || len(verification.Failed) != 1 {
+		t.Fatalf("symlink verification = %+v, want one failure", verification)
+	}
+
+	outsideDir := t.TempDir()
+	outsideFile := filepath.Join(outsideDir, "outside.bin")
+	if err := os.WriteFile(outsideFile, []byte("content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outsideDir, filepath.Join(tmpDir, "linked-dir")); err != nil {
+		t.Skipf("directory symlink unavailable: %v", err)
+	}
+	m.Files = []ManifestEntry{{Name: "linked-dir/outside.bin", Size: 7, SHA256: hash}}
+	if err := m.WriteJSON(manifestPath); err != nil {
+		t.Fatal(err)
+	}
+	verification, err = VerifyManifest(manifestPath, tmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verification.OK() || len(verification.Failed) != 1 || !strings.Contains(verification.Failed[0], "escapes") {
+		t.Fatalf("intermediate symlink verification = %+v, want escape failure", verification)
+	}
+}
+
+func TestWriteBuildManifest_PopulatesMetadata(t *testing.T) {
+	tmpDir := t.TempDir()
+	cs := pci.NewConfigSpace()
+	cs.WriteU16(0x00, 0x8086)
+	cs.WriteU16(0x02, 0x15b7)
+	ctx := &donor.DeviceContext{
+		ToolVersion: "v1.2.3",
+		Device: pci.PCIDevice{
+			BDF: pci.BDF{Domain: 0, Bus: 3, Device: 0, Function: 1},
+		},
+		ConfigSpace: cs,
+	}
+	b := &board.Board{Name: "CaptainDMA_35T"}
+	if err := WriteBuildManifest(tmpDir, ctx, b); err != nil {
+		t.Fatalf("WriteBuildManifest error: %v", err)
+	}
+	m, err := LoadManifest(filepath.Join(tmpDir, "build_manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Board != b.Name || m.DeviceBDF != "0000:03:00.1" || m.ToolVersion != "v1.2.3" {
+		t.Fatalf("manifest metadata = board %q, BDF %q, version %q", m.Board, m.DeviceBDF, m.ToolVersion)
+	}
+	if m.VendorID != 0x8086 || m.DeviceID != 0x15b7 {
+		t.Fatalf("manifest IDs = %04x:%04x", m.VendorID, m.DeviceID)
+	}
+}
+
+func TestGeneratePreSynthesisManifest_ExcludesStaleDeliverables(t *testing.T) {
+	tmpDir := t.TempDir()
+	for _, name := range []string{"stale.bit", "stale.bin"} {
+		if err := os.WriteFile(filepath.Join(tmpDir, name), []byte("stale"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m, err := generateManifest(tmpDir, "dev", "board", 0, 0, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range m.Files {
+		if strings.HasSuffix(entry.Name, ".bit") || strings.HasSuffix(entry.Name, ".bin") {
+			t.Fatalf("pre-synthesis manifest included stale deliverable %q", entry.Name)
+		}
 	}
 }

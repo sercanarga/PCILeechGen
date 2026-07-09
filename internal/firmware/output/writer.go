@@ -95,7 +95,9 @@ func (ow *OutputWriter) WriteAll(ctx *donor.DeviceContext, b *board.Board) error
 		}
 	}
 
-	ow.writeManifest(ctx, ids)
+	if err := writeBuildManifest(ow.OutputDir, ctx, b, false); err != nil {
+		return fmt.Errorf("failed to write build manifest: %w", err)
+	}
 	return nil
 }
 
@@ -169,19 +171,23 @@ func (ow *OutputWriter) writeTCLScripts(ctx *donor.DeviceContext, b *board.Board
 	return nil
 }
 
-// writeManifest generates the build manifest with file checksums.
-func (ow *OutputWriter) writeManifest(ctx *donor.DeviceContext, ids firmware.DeviceIDs) {
-	manifest, err := GenerateManifest(ow.OutputDir, ctx.ToolVersion, "", ids.VendorID, ids.DeviceID)
+func WriteBuildManifest(outputDir string, ctx *donor.DeviceContext, b *board.Board) error {
+	return writeBuildManifest(outputDir, ctx, b, true)
+}
+
+func writeBuildManifest(outputDir string, ctx *donor.DeviceContext, b *board.Board, includeSynthesized bool) error {
+	ids := firmware.ExtractDeviceIDs(ctx.ConfigSpace, ctx.ExtCapabilities)
+	manifest, err := generateManifest(outputDir, ctx.ToolVersion, b.Name, ids.VendorID, ids.DeviceID, includeSynthesized)
 	if err != nil {
-		slog.Warn("manifest generation failed", "error", err)
-		return
+		return err
 	}
-	manifestPath := ow.OutputDir + "/build_manifest.json"
+	manifest.DeviceBDF = ctx.Device.BDF.String()
+	manifestPath := filepath.Join(outputDir, "build_manifest.json")
 	if err := manifest.WriteJSON(manifestPath); err != nil {
-		slog.Warn("manifest write failed", "error", err)
-	} else {
-		slog.Info("build manifest written", "files", len(manifest.Files))
+		return err
 	}
+	slog.Info("build manifest written", "files", len(manifest.Files))
+	return nil
 }
 
 // svFilesReplacedByGenerator: board source files we replace with
