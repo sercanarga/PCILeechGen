@@ -4,9 +4,11 @@ package barmodel
 import (
 	"fmt"
 	"log/slog"
+	"sort"
 
 	"github.com/sercanarga/pcileechgen/internal/donor"
 	"github.com/sercanarga/pcileechgen/internal/firmware/devclass"
+	"github.com/sercanarga/pcileechgen/internal/pci"
 	"github.com/sercanarga/pcileechgen/internal/util"
 )
 
@@ -24,8 +26,130 @@ type BARRegister struct {
 
 // BARModel is the complete register map that ends up in the SV template.
 type BARModel struct {
-	Size      int
+	BIR           int
+	Size          int
+	Aperture      uint64
+	Type          string
+	Prefetchable  bool
+	Is64Bit       bool
+	UpperBIR      int
+	ClassSpecific bool
 	Registers []BARRegister // ordered by Offset
+}
+
+func BuildBARModels(
+	bars []pci.BAR,
+	contents map[int][]byte,
+	profiles map[int]*donor.BARProfile,
+	classCode uint32,
+	preferredBIR int,
+) ([]*BARModel, error) {
+	byBIR := make(map[int]pci.BAR, len(bars))
+	for _, bar := range bars {
+		if bar.Index >= 0 && bar.Index < 6 {
+			byBIR[bar.Index] = bar
+		}
+	}
+
+	for bir, data := range contents {
+		if bir < 0 || bir >= 6 {
+			continue
+		}
+		if _, ok := byBIR[bir]; !ok && len(data) > 0 {
+			byBIR[bir] = pci.BAR{Index: bir, Size: uint64(len(data)), Type: pci.BARTypeMem32}
+		}
+	}
+	for bir, profile := range profiles {
+		if bir < 0 || bir >= 6 || profile == nil {
+			continue
+		}
+		if _, ok := byBIR[bir]; !ok && profile.Size > 0 {
+			byBIR[bir] = pci.BAR{Index: bir, Size: uint64(profile.Size), Type: pci.BARTypeMem32}
+		}
+	}
+
+	birs := make([]int, 0, len(byBIR))
+	for bir := range byBIR {
+		birs = append(birs, bir)
+	}
+	sort.Ints(birs)
+
+	models := make([]*BARModel, 0, len(birs))
+	consumed := make(map[int]bool)
+	for _, bir := range birs {
+		if consumed[bir] {
+			continue
+		}
+		bar := byBIR[bir]
+		legacyMemory := bar.Type == "" && (bar.Size > 0 || len(contents[bir]) > 0 || profiles[bir] != nil)
+		if (!bar.IsMemory() && !legacyMemory) || bar.Size == 0 && len(contents[bir]) == 0 &&
+			(profiles[bir] == nil || profiles[bir].Size == 0) {
+			continue
+		}
+
+		if bar.Is64Bit || bar.Type == pci.BARTypeMem64 {
+			if bir == 5 {
+				return nil, fmt.Errorf("64-bit BAR5 has no upper BIR")
+			}
+			upper := byBIR[bir+1]
+			upperPresent := upper.Size > 0 && !upper.IsDisabled()
+			if upperPresent || len(contents[bir+1]) > 0 ||
+				profiles[bir+1] != nil && profiles[bir+1].Size > 0 {
+				return nil, fmt.Errorf("64-bit BAR%d consumes occupied BAR%d", bir, bir+1)
+			}
+		}
+		upperBIR := -1
+		if bar.Is64Bit || bar.Type == pci.BARTypeMem64 {
+			upperBIR = bir + 1
+			if upperBIR < 6 {
+				consumed[upperBIR] = true
+			}
+		}
+
+		data := contents[bir]
+		profile := profiles[bir]
+		var model *BARModel
+		classSpecific := bir == preferredBIR
+		if classSpecific {
+			model = BuildBARModel(data, classCode, profile)
+		} else if profile != nil && len(profile.Probes) > 0 && isProbeDataReliable(profile) {
+			model = SynthesizeBARModel(profile, 0)
+		}
+		if model == nil {
+			model = &BARModel{}
+		}
+
+		aperture := bar.Size
+		if uint64(len(data)) > aperture {
+			aperture = uint64(len(data))
+		}
+		if profile != nil && uint64(profile.Size) > aperture {
+			aperture = uint64(profile.Size)
+		}
+		model.BIR = bir
+		model.Aperture = aperture
+		model.Size = int(aperture)
+		model.Type = bar.Type
+		if model.Type == "" {
+			model.Type = pci.BARTypeMem32
+		}
+		model.Prefetchable = bar.Prefetchable
+		model.Is64Bit = bar.Is64Bit || bar.Type == pci.BARTypeMem64
+		model.UpperBIR = upperBIR
+		model.ClassSpecific = classSpecific && len(model.Registers) > 0
+		validateModel(model)
+		models = append(models, model)
+	}
+	return models, nil
+}
+
+func ModelForBIR(models []*BARModel, bir int) *BARModel {
+	for _, model := range models {
+		if model != nil && model.BIR == bir {
+			return model
+		}
+	}
+	return nil
 }
 
 // BuildBARModel returns a register map from probe data or spec tables.
@@ -68,7 +192,26 @@ func specBARModelForClass(classCode uint32, barData []byte) *BARModel {
 	case baseClass == 0x04 && subClass == 0x03:
 		return buildAudioBARModel(barData)
 	}
-	return nil
+
+	profile := devclass.ProfileForClass(classCode)
+	if profile == nil || len(profile.BARDefaults) == 0 {
+		return nil
+	}
+	regs := make([]BARRegister, 0, len(profile.BARDefaults))
+	for _, d := range profile.BARDefaults {
+		regs = append(regs, BARRegister{
+			Offset:      d.Offset,
+			Width:       d.Width,
+			Reset:       d.Reset,
+			RWMask:      d.RWMask,
+			W1CMask:     d.W1CMask,
+			Name:        d.Name,
+			IsRW1C:      d.IsRW1C,
+			IsFSMDriven: d.IsFSMDriven,
+		})
+	}
+	populateResetValues(regs, barData)
+	return &BARModel{Size: len(barData), Registers: regs}
 }
 
 // specRegAttr carries the W1CMask and IsFSMDriven flags the spec assigns to a
@@ -101,7 +244,7 @@ func specRegisterAttrs(classCode uint32) map[uint32]specRegAttr {
 func validateModel(m *BARModel) {
 	seen := make(map[uint32]string, len(m.Registers))
 	for _, r := range m.Registers {
-		if int(r.Offset) >= m.Size {
+		if m.Size > 0 && int(r.Offset) >= m.Size {
 			slog.Warn("barmodel: register offset beyond BAR size",
 				"reg", r.Name, "offset", fmt.Sprintf("0x%X", r.Offset), "bar_size", m.Size)
 		}

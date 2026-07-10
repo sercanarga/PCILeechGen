@@ -51,8 +51,8 @@ func msiVectorsToTCL(vectors int) string {
 // For 32-bit BAR: "BAR_0"
 // For 64-bit BAR0 (BIR=0 and 64-bit): "BAR_1:0" (64-bit format expected by the IP).
 func barBIRToTCL(bir int, is64bit bool) string {
-	if bir == 0 && is64bit {
-		return "BAR_1:0"
+	if is64bit && bir >= 0 && bir < 5 {
+		return fmt.Sprintf("BAR_%d:%d", bir+1, bir)
 	}
 	return fmt.Sprintf("BAR_%d", bir)
 }

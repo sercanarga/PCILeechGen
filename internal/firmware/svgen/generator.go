@@ -20,11 +20,21 @@ type MSIConfig struct {
 	Data    uint16 // MSI Message Data
 }
 
+type BARSlot struct {
+	BIR        int
+	Model      *barmodel.BARModel
+	ModuleName string
+	Primary    bool
+}
+
 // SVGeneratorConfig is the input data for all SV template renders.
 type SVGeneratorConfig struct {
 	DeviceIDs                   firmware.DeviceIDs
-	DonorCapabilities           DonorCapabilities  // donor capability summary for donor-emulation visibility
+	DonorCapabilities           DonorCapabilities // donor capability summary for donor-emulation visibility
+	BARModels                   []*barmodel.BARModel
+	DonorBARTopology            bool
 	BARModel                    *barmodel.BARModel // nil = generic fallback (uses BRAM-based zerowrite4k)
+	BARModuleName               string
 	ClassCode                   uint32
 	LatencyConfig               *LatencyConfig     // TLP response timing (nil = no latency emulator)
 	HasMSIX                     bool               // generate MSI-X interrupt controller logic
@@ -58,6 +68,53 @@ func (c *SVGeneratorConfig) ResolvedMaxPayloadBytes() int {
 		return c.MaxPayloadBytes
 	}
 	return 128
+}
+
+func (c *SVGeneratorConfig) HasClassEndpoint() bool {
+	if len(c.BARModels) == 0 {
+		return c.BARModel != nil
+	}
+	return c.BARModel != nil && c.BARModel.ClassSpecific
+}
+
+func (c *SVGeneratorConfig) PrimaryBIR() int {
+	if c.BARModel != nil {
+		return c.BARModel.BIR
+	}
+	return 0
+}
+
+func (c *SVGeneratorConfig) BARSlots() []BARSlot {
+	slots := make([]BARSlot, 6)
+	for bir := range slots {
+		slots[bir] = BARSlot{BIR: bir}
+	}
+	if c.BARModel == nil && !c.DonorBARTopology {
+		slots[0].Primary = true
+	}
+	models := c.BARModels
+	if len(models) == 0 && c.BARModel != nil {
+		models = []*barmodel.BARModel{c.BARModel}
+	}
+	for _, model := range models {
+		if model == nil || model.BIR < 0 || model.BIR >= len(slots) {
+			continue
+		}
+		name := fmt.Sprintf("pcileech_bar_impl_device_bar%d", model.BIR)
+		primary := model == c.BARModel
+		if primary {
+			name = "pcileech_bar_impl_device"
+		}
+		slots[model.BIR] = BARSlot{BIR: model.BIR, Model: model, ModuleName: name, Primary: primary}
+	}
+	return slots
+}
+
+func (c *SVGeneratorConfig) BARImplementationModuleName() string {
+	if c.BARModuleName != "" {
+		return c.BARModuleName
+	}
+	return "pcileech_bar_impl_device"
 }
 
 // NVMeDiskWordsForBRAM36 returns the NVMe disk-cache depth in 32-bit words for
@@ -161,11 +218,44 @@ func renderTemplateDelim(name, leftDelim, rightDelim string, data any) (string, 
 }
 
 func GenerateBarImplDeviceSV(cfg *SVGeneratorConfig) (string, error) {
-	prepared, err := prepareBehaviorConfig(cfg)
-	if err != nil {
-		return "", err
+	if len(cfg.BARModels) == 0 {
+		prepared, err := prepareBehaviorConfig(cfg)
+		if err != nil {
+			return "", err
+		}
+		return renderTemplate("bar_impl_device", prepared)
 	}
-	return renderTemplate("bar_impl_device", prepared)
+
+	var out bytes.Buffer
+	for i, model := range cfg.BARModels {
+		if model == nil {
+			continue
+		}
+		endpoint := *cfg
+		endpoint.BARModels = nil
+		endpoint.BARModel = model
+		if model == cfg.BARModel {
+			endpoint.BARModuleName = "pcileech_bar_impl_device"
+		} else {
+			endpoint.BARModuleName = fmt.Sprintf("pcileech_bar_impl_device_bar%d", model.BIR)
+		}
+		if !model.ClassSpecific {
+			endpoint.DeviceClass = ""
+		}
+		prepared, err := prepareBehaviorConfig(&endpoint)
+		if err != nil {
+			return "", fmt.Errorf("preparing BAR%d endpoint: %w", model.BIR, err)
+		}
+		rendered, err := renderTemplate("bar_impl_device", prepared)
+		if err != nil {
+			return "", fmt.Errorf("rendering BAR%d endpoint: %w", model.BIR, err)
+		}
+		if i > 0 {
+			out.WriteString("\n")
+		}
+		out.WriteString(rendered)
+	}
+	return out.String(), nil
 }
 
 func GenerateBarControllerSV(cfg *SVGeneratorConfig) (string, error) {
@@ -182,6 +272,10 @@ func GenerateBarReadEngineSV(cfg *SVGeneratorConfig) (string, error) {
 
 func GenerateURCompleterSV(cfg *SVGeneratorConfig) (string, error) {
 	return renderTemplate("transaction_ur_completer", cfg)
+}
+
+func GenerateBarRspArbiterSV(cfg *SVGeneratorConfig) (string, error) {
+	return renderTemplate("bar_rsp_arbiter", cfg)
 }
 
 func GenerateDeviceConfigSV(cfg *SVGeneratorConfig) (string, error) {

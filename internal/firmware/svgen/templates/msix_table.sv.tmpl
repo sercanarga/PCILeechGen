@@ -8,10 +8,11 @@
 
 module pcileech_msix_table #(
     parameter NUM_VECTORS    = {{ .MSIXConfig.NumVectors }},
+    parameter TABLE_BIR      = {{ .MSIXConfig.TableBIR }},
     parameter TABLE_OFFSET   = 32'h{{ printf "%08X" .MSIXConfig.TableOffset }},
+    parameter PBA_BIR        = {{ .MSIXConfig.PBABIR }},
     parameter PBA_OFFSET     = 32'h{{ printf "%08X" .MSIXConfig.PBAOffset }},
-    parameter TABLE_ENTRIES  = NUM_VECTORS * 4, // DWORDs
-    parameter BAR_SIZE       = {{ .Bar0Size }}
+    parameter TABLE_ENTRIES  = NUM_VECTORS * 4
 )(
     input               rst,
     input               clk,
@@ -21,15 +22,20 @@ module pcileech_msix_table #(
     input [31:0]        wr_data,
     input [3:0]         wr_be,
     input               wr_valid,
+    input               wr_table_select,
+    input               wr_pba_select,
 
     // BAR read interface
     input [87:0]        rd_req_ctx,
     input [31:0]        rd_req_addr,
     input               rd_req_valid,
+    input               rd_table_select,
+    input               rd_pba_select,
 
     output reg [87:0]   rd_rsp_ctx,
     output reg [31:0]   rd_rsp_data,
     output reg          rd_rsp_valid,
+    output reg [2:0]    rd_rsp_bir,
 
     // Indexed vector read for the NVMe responder: admin completions use vector
     // 0, the I/O queue uses its programmed IV.  Registered (1-cycle latency) so
@@ -47,21 +53,18 @@ module pcileech_msix_table #(
     output              addr_hit  // request targets MSI-X region
 );
 
-    // address decode
-    localparam [31:0] BAR_ADDR_MASK = BAR_SIZE - 1;
     localparam TABLE_END = TABLE_OFFSET + NUM_VECTORS * 16;
     localparam PBA_SIZE  = ((NUM_VECTORS + 63) / 64) * 8;
     localparam PBA_END   = PBA_OFFSET + PBA_SIZE;
 
-    wire [31:0] wr_offset     = wr_addr     & BAR_ADDR_MASK;
-    wire [31:0] rd_req_offset = rd_req_addr & BAR_ADDR_MASK;
+    wire [31:0] wr_offset     = wr_addr;
+    wire [31:0] rd_req_offset = rd_req_addr;
 
-    wire is_table = (rd_req_offset >= TABLE_OFFSET) && (rd_req_offset < TABLE_END);
-    wire is_pba   = (rd_req_offset >= PBA_OFFSET) && (rd_req_offset < PBA_END);
+    wire is_table = rd_table_select && (rd_req_offset >= TABLE_OFFSET) && (rd_req_offset < TABLE_END);
+    wire is_pba   = rd_pba_select && (rd_req_offset >= PBA_OFFSET) && (rd_req_offset < PBA_END);
     assign addr_hit = rd_req_valid && (is_table || is_pba);
 
-    wire wr_is_table = (wr_offset >= TABLE_OFFSET) && (wr_offset < TABLE_END);
-
+    wire wr_is_table = wr_table_select && (wr_offset >= TABLE_OFFSET) && (wr_offset < TABLE_END);
     reg [31:0] msix_table_ram [0:TABLE_ENTRIES-1];
 
     initial begin
@@ -86,6 +89,7 @@ module pcileech_msix_table #(
 
     // PBA - all cleared initially
     reg [31:0] msix_pba [0:((NUM_VECTORS+31)/32)-1];
+    wire _unused_wr_pba_select = wr_pba_select;
 
     integer k;
     initial begin
@@ -113,10 +117,12 @@ module pcileech_msix_table #(
     reg [87:0] rd_ctx_d1;
     reg        rd_valid_d1;
     reg [31:0] rd_data_d1;
+    reg [2:0]  rd_bir_d1;
 
     always @(posedge clk) begin
         rd_ctx_d1   <= rd_req_ctx;
         rd_valid_d1 <= addr_hit;
+        rd_bir_d1     <= is_table ? TABLE_BIR[2:0] : PBA_BIR[2:0];
 
         if (addr_hit) begin
             if (is_table)
@@ -134,6 +140,7 @@ module pcileech_msix_table #(
         rd_rsp_ctx   <= rd_ctx_d1;
         rd_rsp_valid <= rd_valid_d1;
         rd_rsp_data  <= rd_data_d1;
+        rd_rsp_bir   <= rd_bir_d1;
     end
 
 endmodule
