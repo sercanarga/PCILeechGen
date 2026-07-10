@@ -158,8 +158,7 @@ if { $pcie_ip != "" } {
     CONFIG.Bar{{.Index}}_Scale           {{.Scale}} \
     CONFIG.Bar{{.Index}}_Size            {{.Size}} \
 {{if lt .Index 5}}    CONFIG.Bar{{.Index}}_64bit           {{if .Is64bit}}true{{else}}false{{end}} \
-{{end}}
-    CONFIG.Bar{{.Index}}_Prefetchable    {{if .Prefetchable}}true{{else}}false{{end}} \
+{{end}}    CONFIG.Bar{{.Index}}_Prefetchable    {{if .Prefetchable}}true{{else}}false{{end}} \
   ] $pcie_ip
 {{end}}{{end}}
   # Enable or disable DSN based on donor device

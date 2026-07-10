@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"text/template"
 
 	"github.com/sercanarga/pcileechgen/internal/board"
@@ -165,17 +166,19 @@ func generateProjectTCL(ctx *donor.DeviceContext, b *board.Board, libDir string,
 	}
 	srcAbs, _ := filepath.Abs(b.SrcPath(libDir))
 	ipAbs, _ := filepath.Abs(b.IPPath(libDir))
+	srcAbs = tclPath(srcAbs)
+	ipAbs = tclPath(ipAbs)
 	data := projectTCLData{
 		BoardName: b.Name, FPGAPart: b.FPGAPart, SrcPath: srcAbs, IPPath: ipAbs,
 		TopModule: b.TopModule, DeviceID: fmt.Sprintf("%04X", ctx.Device.DeviceID),
-		VendorID: fmt.Sprintf("%04X", ctx.Device.VendorID),
-		RevisionID: fmt.Sprintf("%02X", ctx.Device.RevisionID),
+		VendorID:       fmt.Sprintf("%04X", ctx.Device.VendorID),
+		RevisionID:     fmt.Sprintf("%02X", ctx.Device.RevisionID),
 		SubsysVendorID: fmt.Sprintf("%04X", ctx.Device.SubsysVendorID),
 		SubsysDeviceID: fmt.Sprintf("%04X", ctx.Device.SubsysDeviceID),
-		ClassCodeBase: fmt.Sprintf("%02X", (ctx.Device.ClassCode>>16)&0xFF),
-		ClassCodeSub: fmt.Sprintf("%02X", (ctx.Device.ClassCode>>8)&0xFF),
-		ClassCodeIntf: fmt.Sprintf("%02X", ctx.Device.ClassCode&0xFF),
-		LinkSpeed: linkSpeedToTCL(linkSpeed), LinkWidth: linkWidthToTCL(linkWidth),
+		ClassCodeBase:  fmt.Sprintf("%02X", (ctx.Device.ClassCode>>16)&0xFF),
+		ClassCodeSub:   fmt.Sprintf("%02X", (ctx.Device.ClassCode>>8)&0xFF),
+		ClassCodeIntf:  fmt.Sprintf("%02X", ctx.Device.ClassCode&0xFF),
+		LinkSpeed:      linkSpeedToTCL(linkSpeed), LinkWidth: linkWidthToTCL(linkWidth),
 		TrgtLinkSpeed: linkSpeedToTrgt(linkSpeed), Bar0Enabled: bar0.Enabled,
 		Bar0Size: bar0.Size, Bar0Scale: bar0.Scale, Bar064bit: bar0.Is64bit,
 		Bar0ByteSize: bar0Size, StockBar: stockBar, ImportVFiles: b.ImportVFiles,
@@ -202,6 +205,10 @@ func generateProjectTCL(ctx *donor.DeviceContext, b *board.Board, libDir string,
 		panic(fmt.Sprintf("project TCL template error: %v", err))
 	}
 	return buf.String()
+}
+
+func tclPath(path string) string {
+	return strings.ReplaceAll(path, `\`, "/")
 }
 
 // GenerateBuildTCL generates the Vivado build/synthesis TCL script.
