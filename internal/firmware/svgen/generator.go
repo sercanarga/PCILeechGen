@@ -217,6 +217,18 @@ func renderTemplateDelim(name, leftDelim, rightDelim string, data any) (string, 
 	return buf.String(), nil
 }
 
+func GenerateLifecycleServiceSV(cfg *SVGeneratorConfig) (string, error) {
+	return renderTemplate("lifecycle_service", cfg)
+}
+
+func GenerateDMATagServiceSV(cfg *SVGeneratorConfig) (string, error) {
+	return renderTemplate("dma_tag_service", cfg)
+}
+
+func GenerateInterruptServiceSV(cfg *SVGeneratorConfig) (string, error) {
+	return renderTemplate("interrupt_service", cfg)
+}
+
 func GenerateBarImplDeviceSV(cfg *SVGeneratorConfig) (string, error) {
 	if len(cfg.BARModels) == 0 {
 		prepared, err := prepareBehaviorConfig(cfg)

@@ -20,6 +20,7 @@ module pcileech_nvme_admin_responder #(
 ) (
     input               rst,
     input               clk,
+    input tri1          dma_enabled,
 
     input               cc_en,
     input               cc_enable_wr,
@@ -36,12 +37,11 @@ module pcileech_nvme_admin_responder #(
     input [15:0]        doorbell_qid,
     input [15:0]        doorbell_val,
 
-    input               msix_enable,
-    input               msix_function_mask,
-    output [15:0]       msix_vector_select,
     input [63:0]        msix_vector_addr,
     input [31:0]        msix_vector_data,
-    input               msix_vector_masked,
+    input               irq_delivery_valid,
+    output              irq_delivery_ready,
+    output reg          irq_delivery_done,
 
     (* DONT_TOUCH = "TRUE" *) output reg          dma_rd_req,
     (* DONT_TOUCH = "TRUE" *) output reg [63:0]   dma_rd_addr,
@@ -197,7 +197,7 @@ module pcileech_nvme_admin_responder #(
     wire [15:0] io_cq_tail_next = (io_cq_tail >= io_cq_last) ? 16'h0 : (io_cq_tail + 16'h1);
 
     wire active_io = (active_qid != 16'h0000);
-    assign msix_vector_select = active_io ? io_vector : 16'h0000;
+    assign irq_delivery_ready = dma_enabled && (state == S_IDLE) && cc_en && !irq_delivery_done;
     wire [15:0] active_sq_head_next = active_io ? io_sq_head_next : sq_head_next;
     wire [15:0] active_cq_tail      = active_io ? io_cq_tail      : cq_tail;
     wire [15:0] active_cq_last      = active_io ? io_cq_last      : acq_last;
@@ -618,6 +618,7 @@ module pcileech_nvme_admin_responder #(
             dma_wr_data        <= 32'h0;
             dma_wr_be          <= 4'hF;
             dma_wr_valid       <= 1'b0;
+            irq_delivery_done  <= 1'b0;
             disk_req_valid     <= 1'b0;
             disk_req_write     <= 1'b0;
             disk_req_flush     <= 1'b0;
@@ -692,6 +693,7 @@ module pcileech_nvme_admin_responder #(
             dma_wr_valid   <= 1'b0;
             disk_req_valid <= 1'b0;
             msix_trigger   <= 1'b0;
+            irq_delivery_done <= 1'b0;
             pba_set_valid  <= 1'b0;
             if (timing_cmd_active && (timing_elapsed_cycles != 32'hFFFFFFFF))
                 timing_elapsed_cycles <= timing_elapsed_cycles + 1'b1;
@@ -819,12 +821,25 @@ module pcileech_nvme_admin_responder #(
                 dsm_dw3            <= 32'h0;
                 if (cc_stop_event)
                     stat_unsafe_shutdowns <= stat_unsafe_shutdowns + 1'b1;
+            end else if (!dma_enabled) begin
+                state <= S_IDLE;
+                return_state <= S_IDLE;
+                timing_cmd_active <= 1'b0;
+                timing_done_for_cmd <= 1'b0;
             end else if (!cc_en && state != S_SHUTDOWN) begin
                 state <= S_IDLE;
             end else begin
                 case (state)
                     S_IDLE: begin
-                        if (sq_tail != sq_head) begin
+                        if (irq_delivery_valid && irq_delivery_ready) begin
+                            dma_wr_req   <= 1'b1;
+                            dma_wr_valid <= 1'b1;
+                            dma_wr_addr  <= msix_vector_addr;
+                            dma_wr_data  <= msix_vector_data;
+                            dma_wr_be    <= 4'hF;
+                            return_state <= S_IDLE;
+                            state        <= S_WAIT_DMA_WR;
+                        end else if (sq_tail != sq_head) begin
                             active_qid  <= 16'h0000;
                             dma_rd_req  <= 1'b1;
                             dma_rd_addr <= asq_base + ({48'h0, sq_head} * 64);
@@ -1336,31 +1351,17 @@ module pcileech_nvme_admin_responder #(
                             end
                         end
 
-                        if (msix_enable && !msix_function_mask && !msix_vector_masked &&
-                            (msix_vector_addr != 64'h0000000000000000)) begin
-                            dma_wr_req   <= 1'b1;
-                            dma_wr_valid <= 1'b1;
-                            dma_wr_addr  <= msix_vector_addr;
-                            dma_wr_data  <= msix_vector_data;
-                            dma_wr_be    <= 4'hF;
-                            return_state <= S_IDLE;
-                            state        <= S_WAIT_DMA_WR;
-                        end else begin
-                            if (msix_enable) begin
-                                // MSI-X on but can't deliver (masked or vector not armed): hold pending in PBA.
-                                pba_set_valid  <= 1'b1;
-                                pba_set_vector <= msix_vector_select;
-                            end else begin
-                                // fallback to MSI when MSI-X is disabled
-                                msix_trigger <= 1'b1;
-                            end
-                            state <= S_IDLE;
-                        end
+                        pba_set_valid  <= 1'b1;
+                        pba_set_vector <= active_io ? io_vector : 16'h0000;
+                        state <= S_IDLE;
                     end
 
                     S_WAIT_DMA_WR: begin
-                        if (dma_wr_done)
+                        if (dma_wr_done) begin
+                            if (return_state == S_IDLE)
+                                irq_delivery_done <= 1'b1;
                             state <= return_state;
+                        end
                     end
 
                     S_RESOLVE_IO_PRP: begin

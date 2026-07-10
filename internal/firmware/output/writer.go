@@ -268,8 +268,12 @@ func (ow *OutputWriter) patchSVSources(b *board.Board, ids firmware.DeviceIDs) e
 	// generated version, so we exclude the original file and split it.
 	if !ow.StockBar {
 		ctrlSrc := filepath.Join(srcDir, "pcileech_tlps128_bar_controller.sv")
-		if err := extractSubModules(ctrlSrc, dstDir, barControllerSubModules); err != nil {
-			slog.Warn("could not extract BAR controller sub-modules, board source may be incompatible", "error", err)
+		if _, err := os.Stat(ctrlSrc); err == nil {
+			if err := extractSubModules(ctrlSrc, dstDir, barControllerSubModules); err != nil {
+				return fmt.Errorf("failed to extract BAR controller sub-modules: %w", err)
+			}
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("failed to inspect BAR controller: %w", err)
 		}
 	} else {
 		slog.Info("stock-bar mode: keeping stock bar controller")
@@ -380,6 +384,9 @@ func ListOutputFiles() []string {
 		"vivado_generate_project.tcl",
 		"vivado_build.tcl",
 		"src/",
+		"pcileech_lifecycle_service.sv",
+		"pcileech_dma_tag_service.sv",
+		"pcileech_interrupt_service.sv",
 		"pcileech_bar_impl_device.sv",
 		"pcileech_tlps128_bar_controller.sv",
 		"pcileech_tlp_normalizer.sv",
@@ -408,6 +415,9 @@ type svArtifact struct {
 
 // coreSVArtifacts are always generated.
 var coreSVArtifacts = []svArtifact{
+	{"pcileech_lifecycle_service.sv", svgen.GenerateLifecycleServiceSV},
+	{"pcileech_dma_tag_service.sv", svgen.GenerateDMATagServiceSV},
+	{"pcileech_interrupt_service.sv", svgen.GenerateInterruptServiceSV},
 	{"pcileech_bar_impl_device.sv", svgen.GenerateBarImplDeviceSV},
 	{"pcileech_tlps128_bar_controller.sv", svgen.GenerateBarControllerSV},
 	{"pcileech_tlp_normalizer.sv", svgen.GenerateTransactionNormalizerSV},

@@ -24,7 +24,7 @@ if [ "${#BOARDS[@]}" -eq 0 ]; then
 fi
 
 # whitelist of svgen output files (primitives like pcileech_fifo.sv are blackboxed)
-SVGEN_PATTERN='pcileech_bar_impl_device.sv|pcileech_tlps128_bar_controller.sv|pcileech_bar_rsp_arbiter.sv|pcileech_tlps128_bar_rdengine.sv|pcileech_tlps128_bar_wrengine.sv|pcileech_bar_impl_none.sv|pcileech_bar_impl_zerowrite4k.sv|tlp_latency_emulator.sv|device_config.sv|pcileech_msix_table.sv|pcileech_nvme_admin_responder.sv|pcileech_nvme_dma_bridge.sv|pcileech_bram_disk.sv|pcileech_hda_rirb_dma.sv|pcileech_hda_msi.sv'
+SVGEN_PATTERN='pcileech_lifecycle_service.sv|pcileech_dma_tag_service.sv|pcileech_interrupt_service.sv|pcileech_bar_impl_device.sv|pcileech_tlps128_bar_controller.sv|pcileech_tlp_normalizer.sv|pcileech_tlp_ur_completer.sv|pcileech_bar_rsp_arbiter.sv|pcileech_tlps128_bar_rdengine.sv|pcileech_tlps128_bar_wrengine.sv|pcileech_bar_impl_none.sv|pcileech_bar_impl_zerowrite4k.sv|pcileech_bar_impl_msi.sv|tlp_latency_emulator.sv|device_config.sv|pcileech_msix_table.sv|pcileech_nvme_admin_responder.sv|pcileech_nvme_dma_bridge.sv|pcileech_bram_disk.sv|pcileech_hda_rirb_dma.sv|pcileech_hda_msi.sv'
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -50,8 +50,17 @@ for fixture in "${FIXTURES[@]}"; do
     if ! ./bin/pcileechgen build --from-json "$fixture" --board "$board" \
           --skip-vivado --output "$out" --force >"$build_log" 2>&1; then
       # Donor BAR > board BRAM (or other benign incompatibility): skip, do not fail CI.
-      echo "SKIP  $cell (build incompatible — see $build_log)"
-      skip=$((skip+1))
+      if grep -Eq 'board sources not found at' "$build_log"; then
+        echo "SKIP  $cell (board source unavailable — see $build_log)"
+        skip=$((skip+1))
+      elif grep -Eq 'insufficient block RAM|exceeds board BRAM' "$build_log"; then
+        echo "SKIP  $cell (build incompatible — see $build_log)"
+        skip=$((skip+1))
+      else
+        echo "FAIL  $cell (build failed — see $build_log)"
+        cat "$build_log" >&2
+        fail=$((fail+1))
+      fi
       continue
     fi
 
