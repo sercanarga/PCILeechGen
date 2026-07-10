@@ -15,7 +15,7 @@ func TestReplayRetriggerKeepsFirstPendingDeadline(t *testing.T) {
 		Offset: 0x20, Value: 1, ValueMask: math.MaxUint32,
 		DelayedEvents: []DelayedEvent{{
 			DelayCycles: 5,
-			Updates: []RegisterUpdate{{Offset: 0x24, Width: 4, Value: 1, Mask: math.MaxUint32}},
+			Updates:     []RegisterUpdate{{Offset: 0x24, Width: 4, Value: 1, Mask: math.MaxUint32}},
 		}},
 		Confidence: 1, Provenance: []string{"test"},
 	}}
@@ -48,8 +48,8 @@ func simultaneousReviewerRules() *RuleSet {
 			Offset: 0x20, Value: 1, ValueMask: math.MaxUint32,
 			DelayedEvents: []DelayedEvent{{
 				DelayCycles: 5,
-				Updates: []RegisterUpdate{{Offset: 0x24, Width: 4, Value: 0x05, Mask: 0x0f}},
-				NextState: "first",
+				Updates:     []RegisterUpdate{{Offset: 0x24, Width: 4, Value: 0x05, Mask: 0x0f}},
+				NextState:   "first",
 			}},
 			Confidence: 1, Provenance: []string{"test"},
 		},
@@ -58,8 +58,8 @@ func simultaneousReviewerRules() *RuleSet {
 			Offset: 0x28, Value: 1, ValueMask: math.MaxUint32,
 			DelayedEvents: []DelayedEvent{{
 				DelayCycles: 4,
-				Updates: []RegisterUpdate{{Offset: 0x24, Width: 4, Value: 0xa0, Mask: 0xf0}},
-				NextState: "second",
+				Updates:     []RegisterUpdate{{Offset: 0x24, Width: 4, Value: 0xa0, Mask: 0xf0}},
+				NextState:   "second",
 			}},
 			Confidence: 1, Provenance: []string{"test"},
 		},
@@ -202,7 +202,7 @@ func TestReplayMasksExtraneousBitsPerSimultaneousDelayedContribution(t *testing.
 			Offset: 0x20, Value: 1, ValueMask: math.MaxUint32,
 			DelayedEvents: []DelayedEvent{{
 				DelayCycles: 5,
-				Updates: []RegisterUpdate{{Offset: 0x24, Width: 4, Value: 2, Mask: 1}},
+				Updates:     []RegisterUpdate{{Offset: 0x24, Width: 4, Value: 2, Mask: 1}},
 			}},
 			Confidence: 1, Provenance: []string{"test"},
 		},
@@ -211,7 +211,7 @@ func TestReplayMasksExtraneousBitsPerSimultaneousDelayedContribution(t *testing.
 			Offset: 0x28, Value: 1, ValueMask: math.MaxUint32,
 			DelayedEvents: []DelayedEvent{{
 				DelayCycles: 4,
-				Updates: []RegisterUpdate{{Offset: 0x24, Width: 4, Value: 0, Mask: 2}},
+				Updates:     []RegisterUpdate{{Offset: 0x24, Width: 4, Value: 0, Mask: 2}},
 			}},
 			Confidence: 1, Provenance: []string{"test"},
 		},

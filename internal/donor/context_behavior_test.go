@@ -27,11 +27,11 @@ func TestDeviceContext_BehaviorRulesRoundTripDeterministically(t *testing.T) {
 				NextState: "waiting",
 				DelayedEvents: []behavior.DelayedEvent{{
 					DelayCycles: 12,
-					Updates: []behavior.RegisterUpdate{{Offset: 0x24, Width: 4, Value: 1, Mask: math.MaxUint32}},
-					NextState: "ready",
+					Updates:     []behavior.RegisterUpdate{{Offset: 0x24, Width: 4, Value: 1, Mask: math.MaxUint32}},
+					NextState:   "ready",
 				}},
 				Confidence: 1, Provenance: []string{"test fixture"},
-			},},
+			}},
 		},
 	}
 

@@ -20,8 +20,8 @@ func TestParseTextTrace_PreservesWideOffsetsWidthsAndValues(t *testing.T) {
 	trace, err := ParseTextTrace(input, TextTraceOptions{
 		BDF:      "0000:03:00.0",
 		BARIndex: 2,
-		BARBase: 0xf7800000,
-		BARSize: 0x4000,
+		BARBase:  0xf7800000,
+		BARSize:  0x4000,
 	})
 	if err != nil {
 		t.Fatalf("ParseTextTrace returned error: %v", err)

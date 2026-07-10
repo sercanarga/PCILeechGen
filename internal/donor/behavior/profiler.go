@@ -21,9 +21,9 @@ type Profile struct {
 
 // InitStep is one reg access during driver init (first unique touch per offset).
 type InitStep struct {
-	Order     int           `json:"order"`     // step number (1-based)
-	Offset    uint32        `json:"offset"`    // BAR register offset
-	Type      string        `json:"type"`      // "read" or "write"
+	Order     int           `json:"order"`  // step number (1-based)
+	Offset    uint32        `json:"offset"` // BAR register offset
+	Type      string        `json:"type"`   // "read" or "write"
 	Value     uint64        `json:"value"`
 	Timestamp time.Duration `json:"timestamp"` // time since start
 	Purpose   string        `json:"purpose"`   // inferred purpose (if known)

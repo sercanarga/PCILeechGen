@@ -11,13 +11,13 @@ import (
 )
 
 const (
-	RuleSchemaVersion = 1
-	DefaultRuleClockHz uint64 = 125_000_000
-	MaxDelayCycles uint32 = 1_000_000
-	MaxRules = 256
-	MaxDelayedEvents = 64
-	maxUpdatesPerAction = 16
-	MaxInitialRegisters = 1024
+	RuleSchemaVersion          = 1
+	DefaultRuleClockHz  uint64 = 125_000_000
+	MaxDelayCycles      uint32 = 1_000_000
+	MaxRules                   = 256
+	MaxDelayedEvents           = 64
+	maxUpdatesPerAction        = 16
+	MaxInitialRegisters        = 1024
 )
 
 type AccessKind string
@@ -29,15 +29,15 @@ const (
 )
 
 type RuleSet struct {
-	Version          int             `json:"version"`
-	BDF              string          `json:"bdf,omitempty"`
-	BARIndex         int             `json:"bar_index"`
-	BARSize          int             `json:"bar_size"`
-	ClockHz          uint64          `json:"clock_hz"`
-	InitialState     string          `json:"initial_state"`
-	InitialRegisters []RegisterValue `json:"initial_registers,omitempty"`
+	Version            int             `json:"version"`
+	BDF                string          `json:"bdf,omitempty"`
+	BARIndex           int             `json:"bar_index"`
+	BARSize            int             `json:"bar_size"`
+	ClockHz            uint64          `json:"clock_hz"`
+	InitialState       string          `json:"initial_state"`
+	InitialRegisters   []RegisterValue `json:"initial_registers,omitempty"`
 	UnknownInputPolicy string          `json:"unknown_input_policy,omitempty"`
-	Rules            []Rule          `json:"rules"`
+	Rules              []Rule          `json:"rules"`
 }
 
 type RegisterValue struct {
@@ -53,18 +53,18 @@ type RegisterWritePolicy struct {
 }
 
 type Rule struct {
-	ID            string          `json:"id"`
-	State         string          `json:"state"`
-	Access        AccessKind      `json:"access"`
-	Width         uint8           `json:"width"`
-	Offset        uint32          `json:"offset"`
-	Value         uint64          `json:"value"`
-	ValueMask     uint64          `json:"value_mask"`
-	NextState     string          `json:"next_state,omitempty"`
+	ID            string           `json:"id"`
+	State         string           `json:"state"`
+	Access        AccessKind       `json:"access"`
+	Width         uint8            `json:"width"`
+	Offset        uint32           `json:"offset"`
+	Value         uint64           `json:"value"`
+	ValueMask     uint64           `json:"value_mask"`
+	NextState     string           `json:"next_state,omitempty"`
 	Updates       []RegisterUpdate `json:"updates,omitempty"`
-	DelayedEvents []DelayedEvent  `json:"delayed_events,omitempty"`
-	Confidence    float64         `json:"confidence"`
-	Provenance    []string        `json:"provenance,omitempty"`
+	DelayedEvents []DelayedEvent   `json:"delayed_events,omitempty"`
+	Confidence    float64          `json:"confidence"`
+	Provenance    []string         `json:"provenance,omitempty"`
 }
 
 type RegisterUpdate struct {
@@ -338,13 +338,13 @@ type pendingEvent struct {
 }
 
 type Engine struct {
-	set     *RuleSet
-	state   string
-	regs    map[uint32]uint64
-	pending []pendingEvent
-	matched []string
-	suppressNext bool
-	eventOrder map[string]int
+	set           *RuleSet
+	state         string
+	regs          map[uint32]uint64
+	pending       []pendingEvent
+	matched       []string
+	suppressNext  bool
+	eventOrder    map[string]int
 	writePolicies map[uint32]RegisterWritePolicy
 }
 
@@ -634,7 +634,7 @@ func observations(trace *mmio.TraceResult, clockHz uint64, sessionIndex int) []i
 			}
 			out = append(out, inferredObservation{
 				sessionIndex: sessionIndex,
-				ordinal: ordinal, triggerOffset: record.Offset, triggerWidth: record.Width,
+				ordinal:      ordinal, triggerOffset: record.Offset, triggerWidth: record.Width,
 				triggerValue: record.Value, updateOffset: candidate.Offset, updateWidth: candidate.Width,
 				before: before.Value, after: candidate.Value, delayCycles: uint32(cycles),
 				provenance: fmt.Sprintf("session=%d trace=%s bar=%d record=%d", sessionIndex, trace.StartTime.UTC().Format(time.RFC3339Nano), trace.BARIndex, i),

@@ -137,7 +137,7 @@ func TestValidate_RejectsUnboundedDelay(t *testing.T) {
 			ID: "unbounded", State: "idle", Access: AccessKind("write"), Width: 4,
 			Offset: 0x20, Value: 1, ValueMask: math.MaxUint32,
 			DelayedEvents: []DelayedEvent{{DelayCycles: MaxDelayCycles + 1, NextState: "ready"}},
-			Confidence: 1, Provenance: []string{"test"},
+			Confidence:    1, Provenance: []string{"test"},
 		}},
 	}
 	if err := Validate(rules); err == nil {
@@ -160,8 +160,8 @@ func TestEngine_DelayedTransitionIsPollingInsensitive(t *testing.T) {
 			Offset: 0x20, Value: 1, ValueMask: math.MaxUint32, NextState: "waiting",
 			DelayedEvents: []DelayedEvent{{
 				DelayCycles: 5,
-				Updates: []RegisterUpdate{{Offset: 0x24, Width: 4, Value: 1, Mask: math.MaxUint32}},
-				NextState: "ready",
+				Updates:     []RegisterUpdate{{Offset: 0x24, Width: 4, Value: 1, Mask: math.MaxUint32}},
+				NextState:   "ready",
 			}},
 			Confidence: 1, Provenance: []string{"test"},
 		}},
@@ -211,8 +211,8 @@ func TestReplay_PollCountDoesNotChangeObservedTransition(t *testing.T) {
 			Offset: 0x20, Value: 1, ValueMask: math.MaxUint32, NextState: "waiting",
 			DelayedEvents: []DelayedEvent{{
 				DelayCycles: 5,
-				Updates: []RegisterUpdate{{Offset: 0x24, Width: 4, Value: 1, Mask: math.MaxUint32}},
-				NextState: "ready",
+				Updates:     []RegisterUpdate{{Offset: 0x24, Width: 4, Value: 1, Mask: math.MaxUint32}},
+				NextState:   "ready",
 			}},
 			Confidence: 1, Provenance: []string{"test"},
 		}},

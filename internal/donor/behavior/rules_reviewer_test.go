@@ -123,8 +123,8 @@ func TestReplaySuppressesTriggerAtDelayedEventDeadline(t *testing.T) {
 			Offset: 0x20, Value: 1, ValueMask: math.MaxUint32,
 			DelayedEvents: []DelayedEvent{{
 				DelayCycles: 5,
-				Updates: []RegisterUpdate{{Offset: 0x24, Width: 4, Value: 1, Mask: math.MaxUint32}},
-				NextState: "armed",
+				Updates:     []RegisterUpdate{{Offset: 0x24, Width: 4, Value: 1, Mask: math.MaxUint32}},
+				NextState:   "armed",
 			}},
 			Confidence: 1, Provenance: []string{"test"},
 		},

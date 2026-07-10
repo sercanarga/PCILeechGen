@@ -31,9 +31,9 @@ type AccessRecord struct {
 	BDF       string
 	BARIndex  int
 	Address   uint64
-	Offset    uint32        // byte offset within the BAR
+	Offset    uint32 // byte offset within the BAR
 	Width     uint8
-	Type      AccessType    // read or write
+	Type      AccessType // read or write
 	Value     uint64
 	Timestamp time.Duration // time since trace started
 }
@@ -225,7 +225,7 @@ func (t TraceResult) MarshalJSON() ([]byte, error) {
 	}
 	return json.Marshal(traceResultJSON{
 		SchemaVersion: TraceSchemaVersion,
-		BDF: t.BDF, BARIndex: t.BARIndex, BARBase: t.BARBase, BARSize: t.BARSize,
+		BDF:           t.BDF, BARIndex: t.BARIndex, BARBase: t.BARBase, BARSize: t.BARSize,
 		StartedAt: t.StartTime, DurationNS: int64(t.Duration), Records: records,
 	})
 }
@@ -389,7 +389,6 @@ func (t *TraceResult) validateRecords(requireAddress bool) error {
 	}
 	return nil
 }
-
 
 func firstJSONField(fields map[string]json.RawMessage, names ...string) (json.RawMessage, bool) {
 	for _, name := range names {

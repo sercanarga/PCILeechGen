@@ -423,7 +423,6 @@ var coreSVArtifacts = []svArtifact{
 	{"pcileech_tlp_normalizer.sv", svgen.GenerateTransactionNormalizerSV},
 	{"pcileech_tlps128_bar_rdengine.sv", svgen.GenerateBarReadEngineSV},
 	{"pcileech_tlp_ur_completer.sv", svgen.GenerateURCompleterSV},
-	{"pcileech_bar_impl_msi.sv", svgen.GenerateBarImplMSISV},
 	{"pcileech_bar_rsp_arbiter.sv", svgen.GenerateBarRspArbiterSV},
 	{"tlp_latency_emulator.sv", svgen.GenerateLatencyEmulatorSV},
 	{"device_config.sv", svgen.GenerateDeviceConfigSV},
@@ -621,7 +620,7 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 		BARModel:                    primary,
 		ClassCode:                   ctx.Device.ClassCode,
 		LatencyConfig:               svgen.DefaultLatencyConfig(ctx.Device.ClassCode),
-		HasMSIX:                     primary != nil,
+		HasMSIX:                     ctx.MSIXData != nil && ctx.MSIXData.TableSize > 0,
 		BuildEntropy:                entropy,
 		PRNGSeeds:                   svgen.BuildPRNGSeeds(ids.VendorID, ids.DeviceID, entropy),
 		DeviceClass:                 devClass,
@@ -795,6 +794,16 @@ func (ow *OutputWriter) writeConditionalArtifacts(cfg *svgen.SVGeneratorConfig, 
 			}
 		}
 		if err := ow.writeFile("msix_table_init.hex", codegen.GenerateMSIXTableHex(entries)); err != nil {
+			return err
+		}
+	}
+
+	if cfg.MSIConfig != nil {
+		msiEpSV, err := svgen.GenerateBarImplMSISV(cfg)
+		if err != nil {
+			return fmt.Errorf("generating pcileech_bar_impl_msi.sv: %w", err)
+		}
+		if err := ow.writeFile("pcileech_bar_impl_msi.sv", msiEpSV); err != nil {
 			return err
 		}
 	}
