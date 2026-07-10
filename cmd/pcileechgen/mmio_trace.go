@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -26,6 +27,7 @@ type mmioTraceOptions struct {
 	jsonOutput bool
 	outputFile string
 	traceFile  string
+	rulesOutput string
 }
 
 var mmioTraceOpts mmioTraceOptions
@@ -36,8 +38,8 @@ var mmioTraceCmd = &cobra.Command{
 	Long: `Captures MMIO BAR accesses for a short duration using the kernel mmiotrace tracer.
 
 Example:
-  pcileechgen mmio-trace --bdf 0000:03:00.0 --duration 5s
-  pcileechgen mmio-trace --bdf 03:00.0 --bar-size 4096 --class-code 0x010802
+  pcileechgen mmio-trace --bdf 0000:03:00.0 --bar-base 0xf7800000 --bar-size 4096 --duration 5s
+  pcileechgen mmio-trace --bdf 03:00.0 --bar-base 0xf7800000 --bar-size 4096 --class-code 0x010802
   pcileechgen mmio-trace --trace-file mmiotrace.txt --bar-base 0xf7800000 --bar-index 2 --json`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if mmioTraceOpts.traceFile == "" {
@@ -74,6 +76,17 @@ Example:
 		profile := behavior.FromMMIOTrace(trace, classCode)
 		timing := behavior.ExtractTimingHistogram(trace)
 
+		if mmioTraceOpts.rulesOutput != "" {
+			rules, inferErr := behavior.Infer(trace)
+			if inferErr != nil {
+				return fmt.Errorf("infer behavior rules: %w", inferErr)
+			}
+			if saveErr := behavior.SaveRuleSet(rules, mmioTraceOpts.rulesOutput); saveErr != nil {
+				return saveErr
+			}
+			fmt.Fprintln(cmd.ErrOrStderr(), color.OK(fmt.Sprintf("saved behavior rules to %s", mmioTraceOpts.rulesOutput)))
+		}
+
 		if mmioTraceOpts.jsonOutput {
 			report := map[string]any{
 				"trace":            trace,
@@ -107,33 +120,40 @@ Example:
 
 func loadMMIOTrace(opts mmioTraceOptions, barBase uint64) (*mmio.TraceResult, error) {
 	if opts.traceFile != "" {
-		f, err := os.Open(opts.traceFile)
+		data, err := os.ReadFile(opts.traceFile)
 		if err != nil {
 			return nil, fmt.Errorf("open trace file %q: %w", opts.traceFile, err)
 		}
-		defer f.Close()
-
-		trace, err := mmio.ParseTextTrace(f, mmio.TextTraceOptions{
+		if json.Valid(data) {
+			trace, parseErr := mmio.ParseJSONTrace(bytes.NewReader(data))
+			if parseErr != nil {
+				return nil, fmt.Errorf("parse trace file %q: %w", opts.traceFile, parseErr)
+			}
+			return trace, nil
+		}
+		trace, parseErr := mmio.ParseTextTrace(bytes.NewReader(data), mmio.TextTraceOptions{
 			BDF:      opts.bdf,
 			BARIndex: opts.barIndex,
 			BARSize:  opts.barSize,
 			BARBase:  barBase,
 		})
-		if err != nil {
-			return nil, fmt.Errorf("parse trace file %q: %w", opts.traceFile, err)
+		if parseErr != nil {
+			return nil, fmt.Errorf("parse trace file %q: %w", opts.traceFile, parseErr)
 		}
 		trace.StartTime = time.Now().Add(-trace.Duration)
 		return trace, nil
 	}
 
+	if barBase == 0 {
+		return nil, fmt.Errorf("--bar-base is required for target-aware live capture")
+	}
 	start := time.Now()
-	trace, err := mmio.LiveTrace(opts.bdf, opts.duration)
+	trace, err := mmio.LiveTraceTarget(mmio.TraceTarget{
+		BDF: opts.bdf, BARIndex: opts.barIndex, BARBase: barBase, BARSize: opts.barSize,
+	}, opts.duration)
 	if err != nil {
 		return nil, fmt.Errorf("trace capture failed: %w", err)
 	}
-	trace.BARIndex = opts.barIndex
-	trace.BARSize = opts.barSize
-	trace.Duration = opts.duration
 	trace.StartTime = start
 	return trace, nil
 }
@@ -206,9 +226,10 @@ func init() {
 	mmioTraceCmd.Flags().DurationVar(&mmioTraceOpts.duration, "duration", 5*time.Second, "trace length (e.g. 5s, 1m)")
 	mmioTraceCmd.Flags().IntVar(&mmioTraceOpts.barIndex, "bar-index", 0, "BAR index that was targeted for this trace")
 	mmioTraceCmd.Flags().IntVar(&mmioTraceOpts.barSize, "bar-size", 4096, "expected BAR size hint in bytes")
-	mmioTraceCmd.Flags().StringVar(&mmioTraceOpts.barBase, "bar-base", "", "absolute BAR base for offline trace address normalization")
+	mmioTraceCmd.Flags().StringVar(&mmioTraceOpts.barBase, "bar-base", "", "absolute target BAR base for capture or text import")
 	mmioTraceCmd.Flags().StringVar(&mmioTraceOpts.classCode, "class-code", "", "PCI class code in hex (e.g. 0x010802)")
 	mmioTraceCmd.Flags().StringVar(&mmioTraceOpts.outputFile, "output", "", "save raw trace JSON to file")
+	mmioTraceCmd.Flags().StringVar(&mmioTraceOpts.rulesOutput, "rules-output", "", "save inferred behavior rules to a JSON artifact")
 	mmioTraceCmd.Flags().StringVar(&mmioTraceOpts.traceFile, "trace-file", "", "analyze an existing mmiotrace text file instead of capturing live")
 	mmioTraceCmd.Flags().BoolVar(&mmioTraceOpts.jsonOutput, "json", false, "emit machine-readable report")
 	rootCmd.AddCommand(mmioTraceCmd)

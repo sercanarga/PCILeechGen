@@ -522,19 +522,43 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 		bm = &barmodel.BARModel{Size: bar0Size}
 	}
 
+	var compiledRules *svgen.CompiledBehavior
+	if ctx.BehaviorRules != nil {
+		if ownershipErr := svgen.ValidateBehaviorRuleOwnership(ctx.BehaviorRules, devClass); ownershipErr != nil {
+			return nil, ownershipErr
+		}
+		if ctx.BehaviorRules.BARIndex != barIdx {
+			return nil, fmt.Errorf("behavior rules target BAR%d but generated BAR is BAR%d", ctx.BehaviorRules.BARIndex, barIdx)
+		}
+		if ctx.BehaviorRules.BARSize > bar0Size {
+			return nil, fmt.Errorf("behavior BAR size %d exceeds generated BAR size %d", ctx.BehaviorRules.BARSize, bar0Size)
+		}
+		var applyErr error
+		bm, applyErr = barmodel.ApplyBehaviorRules(bm, ctx.BehaviorRules)
+		if applyErr != nil {
+			return nil, fmt.Errorf("apply behavior rules: %w", applyErr)
+		}
+		compiledRules, applyErr = svgen.CompileBehaviorRules(ctx.BehaviorRules, bm)
+		if applyErr != nil {
+			return nil, fmt.Errorf("compile behavior rules: %w", applyErr)
+		}
+	}
+
 	cfg := &svgen.SVGeneratorConfig{
-		DeviceIDs:         ids,
-		DonorCapabilities: extractDonorCapabilities(scrubbedCS),
-		BARModel:          bm,
-		ClassCode:         ctx.Device.ClassCode,
-		LatencyConfig:     svgen.DefaultLatencyConfig(ctx.Device.ClassCode),
-		HasMSIX:           bm != nil,
-		BuildEntropy:      entropy,
-		PRNGSeeds:         svgen.BuildPRNGSeeds(ids.VendorID, ids.DeviceID, entropy),
-		DeviceClass:       devClass,
-		Bar0Size:          bar0Size,
+		DeviceIDs:                   ids,
+		DonorCapabilities:           extractDonorCapabilities(scrubbedCS),
+		BARModel:                    bm,
+		ClassCode:                   ctx.Device.ClassCode,
+		LatencyConfig:               svgen.DefaultLatencyConfig(ctx.Device.ClassCode),
+		HasMSIX:                     bm != nil,
+		BuildEntropy:                entropy,
+		PRNGSeeds:                   svgen.BuildPRNGSeeds(ids.VendorID, ids.DeviceID, entropy),
+		DeviceClass:                 devClass,
+		Bar0Size:                    bar0Size,
 		ReadCompletionBoundaryBytes: 64,
 		MaxPayloadBytes:             128,
+		BehaviorRules:               ctx.BehaviorRules,
+		CompiledBehavior:            compiledRules,
 	}
 
 	if devClass == devclass.ClassNVMe {

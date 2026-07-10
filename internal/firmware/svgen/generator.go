@@ -7,6 +7,7 @@ import (
 	"text/template"
 
 	"github.com/sercanarga/pcileechgen/internal/board"
+	"github.com/sercanarga/pcileechgen/internal/donor/behavior"
 	"github.com/sercanarga/pcileechgen/internal/firmware"
 	"github.com/sercanarga/pcileechgen/internal/firmware/barmodel"
 	"github.com/sercanarga/pcileechgen/internal/firmware/nvme"
@@ -21,25 +22,27 @@ type MSIConfig struct {
 
 // SVGeneratorConfig is the input data for all SV template renders.
 type SVGeneratorConfig struct {
-	DeviceIDs          firmware.DeviceIDs
-	DonorCapabilities  DonorCapabilities  // donor capability summary for donor-emulation visibility
-	BARModel           *barmodel.BARModel // nil = generic fallback (uses BRAM-based zerowrite4k)
-	ClassCode          uint32
-	LatencyConfig      *LatencyConfig     // TLP response timing (nil = no latency emulator)
-	HasMSIX            bool               // generate MSI-X interrupt controller logic
-	BuildEntropy       uint32             // seed for PRNG uniqueness per build
-	PRNGSeeds          [4]uint32          // computed PRNG seeds for latency emulator
-	DeviceClass        string             // "nvme", "xhci", "audio", "ethernet", or ""
-	MSIXConfig         *MSIXConfig        // MSI-X table replication (nil = no MSI-X table)
-	MSIConfig          *MSIConfig         // MSI capability info (nil = no MSI cap or disabled)
-	NVMeIdentify       *nvme.IdentifyData // NVMe Identify Controller/Namespace data (nil = no responder)
-	NVMeSMART          *nvme.SMART        // donor-plausible SMART/Health wear seeds (nil = zero wear)
-	NVMeDoorbellStride uint32             // CAP.DSTRD - doorbell stride (0 = 4B, default)
-	NVMeDiskWords      int                // NVMe disk-cache depth (words), board-scaled
-	NVMeAdvertisedLBAs uint64             // actual NSZE from donor (0 = use default 2000409264)
-	Bar0Size           int
+	DeviceIDs                   firmware.DeviceIDs
+	DonorCapabilities           DonorCapabilities  // donor capability summary for donor-emulation visibility
+	BARModel                    *barmodel.BARModel // nil = generic fallback (uses BRAM-based zerowrite4k)
+	ClassCode                   uint32
+	LatencyConfig               *LatencyConfig     // TLP response timing (nil = no latency emulator)
+	HasMSIX                     bool               // generate MSI-X interrupt controller logic
+	BuildEntropy                uint32             // seed for PRNG uniqueness per build
+	PRNGSeeds                   [4]uint32          // computed PRNG seeds for latency emulator
+	DeviceClass                 string             // "nvme", "xhci", "audio", "ethernet", or ""
+	MSIXConfig                  *MSIXConfig        // MSI-X table replication (nil = no MSI-X table)
+	MSIConfig                   *MSIConfig         // MSI capability info (nil = no MSI cap or disabled)
+	NVMeIdentify                *nvme.IdentifyData // NVMe Identify Controller/Namespace data (nil = no responder)
+	NVMeSMART                   *nvme.SMART        // donor-plausible SMART/Health wear seeds (nil = zero wear)
+	NVMeDoorbellStride          uint32             // CAP.DSTRD - doorbell stride (0 = 4B, default)
+	NVMeDiskWords               int                // NVMe disk-cache depth (words), board-scaled
+	NVMeAdvertisedLBAs          uint64             // actual NSZE from donor (0 = use default 2000409264)
+	Bar0Size                    int
 	ReadCompletionBoundaryBytes int
 	MaxPayloadBytes             int
+	BehaviorRules               *behavior.RuleSet
+	CompiledBehavior            *CompiledBehavior
 }
 
 func (c *SVGeneratorConfig) ResolvedReadCompletionBoundaryBytes() int {
@@ -158,7 +161,11 @@ func renderTemplateDelim(name, leftDelim, rightDelim string, data any) (string, 
 }
 
 func GenerateBarImplDeviceSV(cfg *SVGeneratorConfig) (string, error) {
-	return renderTemplate("bar_impl_device", cfg)
+	prepared, err := prepareBehaviorConfig(cfg)
+	if err != nil {
+		return "", err
+	}
+	return renderTemplate("bar_impl_device", prepared)
 }
 
 func GenerateBarControllerSV(cfg *SVGeneratorConfig) (string, error) {

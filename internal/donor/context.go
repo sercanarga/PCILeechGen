@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/sercanarga/pcileechgen/internal/donor/behavior"
 	"github.com/sercanarga/pcileechgen/internal/pci"
 )
 
@@ -47,6 +48,7 @@ type DeviceContext struct {
 	ExtCapabilities []pci.ExtCapability `json:"ext_capabilities,omitempty"`
 	MSIXData        *MSIXData           `json:"msix_data,omitempty"`
 	NVMeIdentity    *NVMeIdentity       `json:"nvme_identity,omitempty"`
+	BehaviorRules   *behavior.RuleSet   `json:"behavior_rules,omitempty"`
 }
 
 // JSON wire format - config space as hex words, BARs as base64.
@@ -64,6 +66,7 @@ type deviceContextJSON struct {
 	ExtCapabilities []pci.ExtCapability    `json:"ext_capabilities,omitempty"`
 	MSIXData        *MSIXData              `json:"msix_data,omitempty"`
 	NVMeIdentity    *NVMeIdentity          `json:"nvme_identity,omitempty"`
+	BehaviorRules   *behavior.RuleSet      `json:"behavior_rules,omitempty"`
 }
 
 func (dc *DeviceContext) MarshalJSON() ([]byte, error) {
@@ -77,6 +80,7 @@ func (dc *DeviceContext) MarshalJSON() ([]byte, error) {
 		ExtCapabilities: dc.ExtCapabilities,
 		MSIXData:        dc.MSIXData,
 		NVMeIdentity:    dc.NVMeIdentity,
+		BehaviorRules:   dc.BehaviorRules,
 	}
 
 	if dc.ConfigSpace != nil {
@@ -125,6 +129,7 @@ func (dc *DeviceContext) UnmarshalJSON(data []byte) error {
 	dc.ExtCapabilities = j.ExtCapabilities
 	dc.MSIXData = j.MSIXData
 	dc.NVMeIdentity = j.NVMeIdentity
+	dc.BehaviorRules = j.BehaviorRules
 
 	// Reconstruct config space from hex words
 	if len(j.ConfigSpaceHex) > 0 {
@@ -179,6 +184,12 @@ func FromJSON(data []byte) (*DeviceContext, error) {
 
 	if dc.ConfigSpace == nil {
 		return nil, fmt.Errorf("config_space_hex not found in JSON, file may be from an unsupported tool")
+	}
+
+	if dc.BehaviorRules != nil {
+		if err := behavior.Validate(dc.BehaviorRules); err != nil {
+			return nil, fmt.Errorf("invalid behavior_rules: %w", err)
+		}
 	}
 
 	return dc, nil
