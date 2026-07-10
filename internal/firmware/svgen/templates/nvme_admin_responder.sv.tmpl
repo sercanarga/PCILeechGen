@@ -37,11 +37,11 @@ module pcileech_nvme_admin_responder #(
     input [15:0]        doorbell_qid,
     input [15:0]        doorbell_val,
 
-    output [15:0]       msix_vector_select,
     input [63:0]        msix_vector_addr,
     input [31:0]        msix_vector_data,
     input               irq_delivery_valid,
     output              irq_delivery_ready,
+    output reg          irq_delivery_done,
 
     (* DONT_TOUCH = "TRUE" *) output reg          dma_rd_req,
     (* DONT_TOUCH = "TRUE" *) output reg [63:0]   dma_rd_addr,
@@ -197,8 +197,7 @@ module pcileech_nvme_admin_responder #(
     wire [15:0] io_cq_tail_next = (io_cq_tail >= io_cq_last) ? 16'h0 : (io_cq_tail + 16'h1);
 
     wire active_io = (active_qid != 16'h0000);
-    assign msix_vector_select = active_io ? io_vector : 16'h0000;
-    assign irq_delivery_ready = dma_enabled && (state == S_IDLE) && cc_en;
+    assign irq_delivery_ready = dma_enabled && (state == S_IDLE) && cc_en && !irq_delivery_done;
     wire [15:0] active_sq_head_next = active_io ? io_sq_head_next : sq_head_next;
     wire [15:0] active_cq_tail      = active_io ? io_cq_tail      : cq_tail;
     wire [15:0] active_cq_last      = active_io ? io_cq_last      : acq_last;
@@ -619,6 +618,7 @@ module pcileech_nvme_admin_responder #(
             dma_wr_data        <= 32'h0;
             dma_wr_be          <= 4'hF;
             dma_wr_valid       <= 1'b0;
+            irq_delivery_done  <= 1'b0;
             disk_req_valid     <= 1'b0;
             disk_req_write     <= 1'b0;
             disk_req_flush     <= 1'b0;
@@ -693,6 +693,7 @@ module pcileech_nvme_admin_responder #(
             dma_wr_valid   <= 1'b0;
             disk_req_valid <= 1'b0;
             msix_trigger   <= 1'b0;
+            irq_delivery_done <= 1'b0;
             pba_set_valid  <= 1'b0;
             if (timing_cmd_active && (timing_elapsed_cycles != 32'hFFFFFFFF))
                 timing_elapsed_cycles <= timing_elapsed_cycles + 1'b1;
@@ -1351,13 +1352,16 @@ module pcileech_nvme_admin_responder #(
                         end
 
                         pba_set_valid  <= 1'b1;
-                        pba_set_vector <= msix_vector_select;
+                        pba_set_vector <= active_io ? io_vector : 16'h0000;
                         state <= S_IDLE;
                     end
 
                     S_WAIT_DMA_WR: begin
-                        if (dma_wr_done)
+                        if (dma_wr_done) begin
+                            if (return_state == S_IDLE)
+                                irq_delivery_done <= 1'b1;
                             state <= return_state;
+                        end
                     end
 
                     S_RESOLVE_IO_PRP: begin

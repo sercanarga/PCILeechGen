@@ -1,7 +1,8 @@
 `timescale 1ns / 1ps
 
 module pcileech_interrupt_service #(
-    parameter integer NUM_VECTORS = 1
+    parameter integer NUM_VECTORS = 1,
+    parameter integer DEFER_MSIX_CLEAR = 0
 )(
     input               clk,
     input               rst,
@@ -14,6 +15,7 @@ module pcileech_interrupt_service #(
     output reg [15:0]   vector_select,
     input               vector_masked,
     input               delivery_ready,
+    input               delivery_done,
     output reg          delivery_valid,
     output reg [15:0]   delivery_vector,
     output reg          msi_pulse,
@@ -64,7 +66,15 @@ module pcileech_interrupt_service #(
             end
 
             if (delivery_valid) begin
-                if (delivery_ready) begin
+                if (DEFER_MSIX_CLEAR && msix_mode) begin
+                    if (delivery_done) begin
+                        delivery_valid <= 1'b0;
+                        if (!(event_valid && (event_vector == delivery_vector)))
+                            pending[delivery_vector[INDEX_WIDTH-1:0]] <= 1'b0;
+                        pba_clear_valid <= 1'b1;
+                        pba_vector <= delivery_vector;
+                    end
+                end else if (delivery_ready) begin
                     delivery_valid <= 1'b0;
                     if (!(event_valid && (event_vector == delivery_vector)))
                         pending[delivery_vector[INDEX_WIDTH-1:0]] <= 1'b0;

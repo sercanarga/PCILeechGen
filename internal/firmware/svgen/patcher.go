@@ -45,7 +45,11 @@ func (p *SVPatcher) PatchAll() error {
 			return fmt.Errorf("patching pcileech_pcie_tlp_a7.sv services: %w", classifyErr)
 		}
 		if modern {
-			if err := p.patchCfgInterruptHandshake(); err != nil {
+			requestPort := interruptRequestPort(string(tlpData))
+			if requestPort == "" {
+				requestPort = "generated_bar_intr_req"
+			}
+			if err := p.patchCfgInterruptHandshake(requestPort); err != nil {
 				return fmt.Errorf("patching pcileech_pcie_cfg_a7.sv interrupt handshake: %w", err)
 			}
 		}
@@ -201,6 +205,18 @@ func (p *SVPatcher) patchCfgSV() error {
 		label:       "PM: halt ASPM L1 (cfg_pm_halt_aspm_l1 -> 1)",
 	})
 
+	patches = append(patches, svRegexPatch{
+		pattern:     `(rw\[210\]\s*<=\s*)0(\s*;\s*//\s*cfg_pm_force_state_en)`,
+		replacement: "${1}1${2}",
+		label:       "PM: force D0 state (cfg_pm_force_state_en -> 1)",
+	})
+
+	patches = append(patches, svRegexPatch{
+		pattern:     `(rw\[21\]\s*<=\s*)0(\s*;\s*//\s*CFGSPACE_COMMAND_REGISTER_AUTO_SET)`,
+		replacement: "${1}1${2}",
+		label:       "CMD: auto-set BME+MSE+IOSE (CFGSPACE_COMMAND_REGISTER_AUTO_SET -> 1)",
+	})
+
 	// enable periodic status register error bit clearing. every ~1ms
 	// this clears W1C error bits (master abort, target abort, parity)
 	// in the status register. prevents error accumulation that would
@@ -214,19 +230,18 @@ func (p *SVPatcher) patchCfgSV() error {
 	return p.patchFile("pcileech_pcie_cfg_a7.sv", patches)
 }
 
-func (p *SVPatcher) patchCfgInterruptHandshake() error {
+func (p *SVPatcher) patchCfgInterruptHandshake(requestPort string) error {
 	path := filepath.Join(p.srcDir, "pcileech_pcie_cfg_a7.sv")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
 	content := string(data)
-	requestPort := interruptRequestPort(content)
 	if requestPort == "" {
-		requestPort = "generated_bar_intr_req"
+		return fmt.Errorf("interrupt request port is empty")
 	}
 	var patches []svRegexPatch
-	if interruptRequestPort(content) == "" {
+	if !hasInterruptRequestPort(content, requestPort) {
 		patches = append(patches, svRegexPatch{
 			pattern:     `(module\s+pcileech_pcie_cfg_a7\s*\(\s*\r?\n)`,
 			replacement: "${1}    input                   " + requestPort + ",\n",
@@ -281,12 +296,16 @@ func classifyServiceTLP(content string) (bool, error) {
 
 func interruptRequestPort(content string) string {
 	for _, name := range []string{"generated_bar_intr_req", "intr_req"} {
-		re := regexp.MustCompile(`\b(?:input|output)\s+(?:wire\s+)?` + regexp.QuoteMeta(name) + `\b`)
-		if re.MatchString(content) {
+		if hasInterruptRequestPort(content, name) {
 			return name
 		}
 	}
 	return ""
+}
+
+func hasInterruptRequestPort(content, name string) bool {
+	re := regexp.MustCompile(`\b(?:input|output)\s+(?:wire\s+)?` + regexp.QuoteMeta(name) + `\b`)
+	return re.MatchString(content)
 }
 
 func instanceHasPort(content, moduleName, portName string) bool {

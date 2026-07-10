@@ -338,6 +338,7 @@ module pcileech_tlps128_bar_controller(
     wire        nvme_irq_delivery_valid;
     wire [15:0] nvme_irq_delivery_vector;
     wire        nvme_irq_delivery_ready;
+    wire        nvme_irq_delivery_done;
     wire        nvme_msix_pba_set_valid;
     wire        nvme_msix_pba_clear_valid;
     wire [15:0] nvme_msix_pba_vector;
@@ -573,7 +574,8 @@ module pcileech_tlps128_bar_controller(
 
 {{ if eq .DeviceClass "nvme" }}
     pcileech_interrupt_service #(
-        .NUM_VECTORS    ( {{ .MSIXConfig.NumVectors }} )
+        .NUM_VECTORS       ( {{ .MSIXConfig.NumVectors }} ),
+        .DEFER_MSIX_CLEAR  ( 1 )
     ) i_nvme_interrupt_service(
         .clk             ( clk                           ),
         .rst             ( device_reset                  ),
@@ -586,6 +588,7 @@ module pcileech_tlps128_bar_controller(
         .vector_select   ( nvme_msix_vector_select       ),
         .vector_masked   ( nvme_msix_vector_masked       ),
         .delivery_ready  ( nvme_irq_delivery_ready       ),
+        .delivery_done   ( nvme_irq_delivery_done        ),
         .delivery_valid  ( nvme_irq_delivery_valid       ),
         .delivery_vector ( nvme_irq_delivery_vector      ),
         .msi_pulse       ( nvme_msix_trigger             ),
@@ -696,6 +699,7 @@ module pcileech_tlps128_bar_controller(
         .vector_select   (                               ),
         .vector_masked   ( 1'b0                          ),
         .delivery_ready  ( 1'b1                          ),
+        .delivery_done   ( 1'b0                          ),
         .delivery_valid  (                               ),
         .delivery_vector (                               ),
         .msi_pulse       ( hda_intr_req                  ),
@@ -795,11 +799,11 @@ module pcileech_tlps128_bar_controller(
         .doorbell_is_cq     ( nvme_db_is_cq                 ),
         .doorbell_qid       ( nvme_db_qid                   ),
         .doorbell_val       ( nvme_db_val                   ),
-        .msix_vector_select ( nvme_irq_event_vector        ),
         .msix_vector_addr   ( nvme_msix_vector_addr         ),
         .msix_vector_data   ( nvme_msix_vector_data         ),
         .irq_delivery_valid ( nvme_irq_delivery_valid       ),
         .irq_delivery_ready ( nvme_irq_delivery_ready       ),
+        .irq_delivery_done  ( nvme_irq_delivery_done        ),
         .pba_set_valid      ( nvme_irq_event_valid          ),
         .pba_set_vector     ( nvme_irq_event_vector         ),
         .dma_rd_req         ( nvme_dma_rd_req               ),

@@ -131,7 +131,7 @@ endmodule
 `
 	runVerilatorSimulation(t, map[string]string{
 		"pcileech_pcie_cfg_a7.sv": string(cfg),
-		"tb.sv":                    testbench,
+		"tb.sv":                   testbench,
 	})
 }
 
@@ -809,9 +809,9 @@ end
 endmodule
 `
 	runVerilatorSimulation(t, map[string]string{
-		"msix_table_init.hex":     strings.Repeat("00000000\n", 16),
+		"msix_table_init.hex":    strings.Repeat("00000000\n", 16),
 		"pcileech_msix_table.sv": sv,
-		"tb.sv":                   testbench,
+		"tb.sv":                  testbench,
 	})
 }
 
@@ -1018,10 +1018,10 @@ end
 endmodule
 `
 	runVerilatorSimulation(t, map[string]string{
-		"msix_table_init.hex":            strings.Repeat("00000000\n", 16),
+		"msix_table_init.hex":           strings.Repeat("00000000\n", 16),
 		"pcileech_interrupt_service.sv": interruptSV,
 		"pcileech_msix_table.sv":        tableSV,
-		"tb.sv":                          testbench,
+		"tb.sv":                         testbench,
 	})
 }
 
@@ -1062,6 +1062,7 @@ wire [15:0] vector_select;
 wire irq_delivery_valid;
 wire [15:0] irq_delivery_vector;
 wire irq_delivery_ready;
+wire irq_delivery_done;
 wire msi_pulse;
 wire pba_set_valid;
 wire pba_clear_valid;
@@ -1096,7 +1097,8 @@ integer i;
 reg found = 0;
 
 pcileech_interrupt_service #(
-    .NUM_VECTORS(4)
+    .NUM_VECTORS(4),
+    .DEFER_MSIX_CLEAR(1)
 ) interrupts (
     .clk(clk),
     .rst(rst),
@@ -1109,6 +1111,7 @@ pcileech_interrupt_service #(
     .vector_select(vector_select),
     .vector_masked(1'b0),
     .delivery_ready(irq_delivery_ready),
+    .delivery_done(irq_delivery_done),
     .delivery_valid(irq_delivery_valid),
     .delivery_vector(irq_delivery_vector),
     .msi_pulse(msi_pulse),
@@ -1157,11 +1160,11 @@ pcileech_nvme_admin_responder responder (
     .doorbell_is_cq(1'b0),
     .doorbell_qid(16'd0),
     .doorbell_val(16'd0),
-    .msix_vector_select(),
     .msix_vector_addr(64'h00000000FEE00000),
     .msix_vector_data(32'h00000044),
     .irq_delivery_valid(irq_delivery_valid),
     .irq_delivery_ready(irq_delivery_ready),
+    .irq_delivery_done(irq_delivery_done),
     .dma_rd_req(dma_rd_req),
     .dma_rd_addr(dma_rd_addr),
     .dma_rd_len(dma_rd_len),
@@ -1273,12 +1276,14 @@ initial begin
     if (!found || responder_state !== 8'd0 || msix_writes !== 0)
         $fatal(1, "test did not reach ready-high held delivery");
 
-    @(negedge clk);
+    cycle();
+    if (responder_state === 8'd0 || !dma_wr_valid)
+        $fatal(1, "ready delivery was not accepted by the responder");
     quiesce = 1;
     dma_enabled = 0;
     cycle();
     if (irq_delivery_valid || irq_delivery_ready || dma_wr_valid || responder_state !== 8'd0 || msix_writes !== 0)
-        $fatal(1, "BME drop accepted delivery or stranded responder");
+        $fatal(1, "BME drop failed to reset the accepted delivery");
     for (i = 0; i < 3; i = i + 1) begin
         cycle();
         if (dma_wr_valid || responder_state !== 8'd0 || msix_writes !== 0)
@@ -1305,6 +1310,8 @@ initial begin
             i = 16;
     end
     if (responder_state !== 8'd0 || dma_wr_valid) $fatal(1, "responder remained stuck waiting for DMA write");
+    cycle();
+    cycle();
     read_pba();
     if (rd_rsp_data[0] !== 1'b0) $fatal(1, "completed resumed MSI-X write did not clear PBA");
     for (i = 0; i < 16; i = i + 1) begin
@@ -1316,12 +1323,12 @@ end
 endmodule
 `
 	runVerilatorSimulation(t, map[string]string{
-		"msix_table_init.hex":             strings.Repeat("00000000\n", 16),
-		"pcileech_dma_tag_service.sv":     tagSV,
-		"pcileech_interrupt_service.sv":   interruptSV,
-		"pcileech_msix_table.sv":          tableSV,
+		"msix_table_init.hex":              strings.Repeat("00000000\n", 16),
+		"pcileech_dma_tag_service.sv":      tagSV,
+		"pcileech_interrupt_service.sv":    interruptSV,
+		"pcileech_msix_table.sv":           tableSV,
 		"pcileech_nvme_admin_responder.sv": responderSV,
-		"pcileech_nvme_dma_bridge.sv":     bridgeSV,
+		"pcileech_nvme_dma_bridge.sv":      bridgeSV,
 		"tb.sv":                            testbench,
 	})
 }

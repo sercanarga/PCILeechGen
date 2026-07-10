@@ -66,6 +66,7 @@ func TestGenerateSharedServiceSVBehavioralContracts(t *testing.T) {
 	)
 }
 
+
 func TestGenerateBarControllerWiresSharedLifecycle(t *testing.T) {
 	cfg := testConfig()
 	controllerSV, err := GenerateBarControllerSV(cfg)
@@ -99,19 +100,38 @@ func TestGenerateNVMeWiresSharedDMAInterruptAndPBA(t *testing.T) {
 	}
 	requireSVContracts(t, controllerSV,
 		"i_nvme_interrupt_service",
+		".DEFER_MSIX_CLEAR  ( 1 )",
 		".event_valid     ( nvme_irq_event_valid",
 		".delivery_valid  ( nvme_irq_delivery_valid",
+		".delivery_done   ( nvme_irq_delivery_done",
 		".delivery_vector ( nvme_irq_delivery_vector",
 		".pba_set_valid   ( nvme_msix_pba_set_valid",
 		".pba_clear_valid ( nvme_msix_pba_clear_valid",
 		".pba_clear_vector( nvme_msix_pba_vector",
 		".irq_delivery_valid ( nvme_irq_delivery_valid",
+		".irq_delivery_done  ( nvme_irq_delivery_done",
+		".pba_set_vector     ( nvme_irq_event_vector",
 		"i_nvme_dma_bridge",
 		".rst                ( device_reset",
 		".dma_enabled        ( dma_enabled",
 	)
 	if strings.Contains(controllerSV, ".msix_trigger       ( nvme_msix_trigger") {
 		t.Fatal("NVMe responder and shared interrupt service must not drive the same trigger net")
+	}
+	if strings.Contains(controllerSV, ".msix_vector_select (") {
+		t.Fatal("NVMe responder must not expose a second MSI-X vector driver")
+	}
+
+	responderSV, err := GenerateNVMeResponderSV(cfg)
+	if err != nil {
+		t.Fatalf("GenerateNVMeResponderSV: %v", err)
+	}
+	requireSVContracts(t, responderSV,
+		"output reg          irq_delivery_done",
+		"pba_set_vector <= active_io ? io_vector : 16'h0000",
+	)
+	if strings.Contains(responderSV, "msix_vector_select") {
+		t.Fatal("NVMe responder retains an obsolete externally-driven MSI-X selector")
 	}
 
 	bridgeSV, err := GenerateNVMeDMABridgeSV(cfg)

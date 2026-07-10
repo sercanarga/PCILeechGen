@@ -99,6 +99,34 @@ endmodule`
 	}
 }
 
+func TestPatchCfgSVPreservesD0AndCommandRecovery(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "pcileech_pcie_cfg_a7.sv")
+	cfg := `module pcileech_pcie_cfg_a7;
+    rw[210] <= 0; // cfg_pm_force_state_en
+    rw[21] <= 0; // CFGSPACE_COMMAND_REGISTER_AUTO_SET
+endmodule`
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := NewSVPatcher(firmware.DeviceIDs{}, dir).patchCfgSV(); err != nil {
+		t.Fatalf("patchCfgSV: %v", err)
+	}
+	patched, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"rw[210] <= 1; // cfg_pm_force_state_en",
+		"rw[21] <= 1; // CFGSPACE_COMMAND_REGISTER_AUTO_SET",
+	} {
+		if !contains(string(patched), want) {
+			t.Errorf("patched cfg wrapper missing %q", want)
+		}
+	}
+}
+
 func TestFormatPatchSummary_Empty(t *testing.T) {
 	result := FormatPatchSummary(nil)
 	if result != "  (no patches applied)" {
@@ -151,7 +179,7 @@ endmodule`,
 	if err := patcher.patchCfgSV(); err != nil {
 		t.Fatalf("patchCfgSV: %v", err)
 	}
-	if err := patcher.patchCfgInterruptHandshake(); err != nil {
+	if err := patcher.patchCfgInterruptHandshake("generated_bar_intr_req"); err != nil {
 		t.Fatalf("patchCfgInterruptHandshake: %v", err)
 	}
 	if err := patcher.patchTLPServiceWiring(); err != nil {
@@ -208,6 +236,55 @@ endmodule`,
 		if !contains(string(wrapper), want) {
 			t.Errorf("patched PCIe wrapper missing %q", want)
 		}
+	}
+}
+
+func TestPatchAllUsesTLPDeclaredInterruptPort(t *testing.T) {
+	dir := t.TempDir()
+	fixtures := map[string]string{
+		"pcileech_fifo.sv": `module pcileech_fifo;
+    rw[175:160] <= 16'h0000; // CFG_VEND_ID
+    rw[191:176] <= 16'h0000; // CFG_DEV_ID
+endmodule`,
+		"pcileech_pcie_cfg_a7.sv": `module pcileech_pcie_cfg_a7(
+    input clk
+);
+assign ctx.cfg_interrupt = rw[206];
+assign ctx.cfg_interrupt_assert = rw[205];
+endmodule`,
+		"pcileech_pcie_tlp_a7.sv": `module pcileech_pcie_tlp_a7(
+    output intr_req,
+    input clk
+);
+pcileech_tlps128_bar_controller i_bar(
+    .rst(rst)
+);
+endmodule`,
+		"pcileech_pcie_a7.sv": `module pcileech_pcie_a7();
+IfPCIeSignals ctx();
+pcileech_pcie_cfg_a7 i_cfg(
+    .ctx(ctx)
+);
+pcileech_pcie_tlp_a7 i_tlp(
+    .clk(clk)
+);
+endmodule`,
+	}
+	for name, fixture := range fixtures {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(fixture), 0644); err != nil {
+			t.Fatalf("writing %s: %v", name, err)
+		}
+	}
+
+	if err := NewSVPatcher(firmware.DeviceIDs{VendorID: 0xBEEF, DeviceID: 0xCAFE}, dir).PatchAll(); err != nil {
+		t.Fatalf("PatchAll: %v", err)
+	}
+	cfg, err := os.ReadFile(filepath.Join(dir, "pcileech_pcie_cfg_a7.sv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(string(cfg), "input                   intr_req") {
+		t.Fatalf("cfg wrapper did not use TLP interrupt port:\n%s", cfg)
 	}
 }
 
