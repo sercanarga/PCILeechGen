@@ -68,11 +68,14 @@ func writeOutputFixture(t *testing.T, tmpDir string, skip map[string]bool, devic
 			}
 			continue
 		}
-		content := "content"
+		content := []byte("content")
 		if name == "device_config.sv" {
-			content = deviceConfig
+			content = []byte(deviceConfig)
 		}
-		if err := os.WriteFile(filepath.Join(tmpDir, name), []byte(content), 0644); err != nil {
+		if name == "device_model.json" {
+			content = validOutputDeviceModelJSON(t)
+		}
+		if err := os.WriteFile(filepath.Join(tmpDir, name), content, 0644); err != nil {
 			t.Fatalf("WriteFile(%s): %v", name, err)
 		}
 	}

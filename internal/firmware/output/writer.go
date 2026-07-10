@@ -15,6 +15,7 @@ import (
 	"github.com/sercanarga/pcileechgen/internal/firmware/barmodel"
 	"github.com/sercanarga/pcileechgen/internal/firmware/codegen"
 	"github.com/sercanarga/pcileechgen/internal/firmware/devclass"
+	"github.com/sercanarga/pcileechgen/internal/firmware/devicemodel"
 	"github.com/sercanarga/pcileechgen/internal/firmware/nvme"
 	"github.com/sercanarga/pcileechgen/internal/firmware/overlay"
 	"github.com/sercanarga/pcileechgen/internal/firmware/scrub"
@@ -59,6 +60,9 @@ func (ow *OutputWriter) WriteAll(ctx *donor.DeviceContext, b *board.Board) error
 	ids := firmware.ExtractDeviceIDs(ctx.ConfigSpace, ctx.ExtCapabilities)
 
 	if err := ow.writeDeviceContext(ctx); err != nil {
+		return err
+	}
+	if err := ow.writeDeviceModel(ctx); err != nil {
 		return err
 	}
 
@@ -109,6 +113,21 @@ func (ow *OutputWriter) writeDeviceContext(ctx *donor.DeviceContext) error {
 	}
 	if err := ow.writeFile("device_context.json", string(data)); err != nil {
 		return fmt.Errorf("failed to write device context: %w", err)
+	}
+	return nil
+}
+
+func (ow *OutputWriter) writeDeviceModel(ctx *donor.DeviceContext) error {
+	model, err := devicemodel.Build(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to build device model: %w", err)
+	}
+	data, err := model.ToJSON()
+	if err != nil {
+		return fmt.Errorf("failed to marshal device model: %w", err)
+	}
+	if err := ow.writeFile("device_model.json", string(data)); err != nil {
+		return fmt.Errorf("failed to write device model: %w", err)
 	}
 	return nil
 }
@@ -343,6 +362,7 @@ func (ow *OutputWriter) writeFile(name, content string) error {
 func ListOutputFiles() []string {
 	return []string{
 		"device_context.json",
+		"device_model.json",
 		"pcileech_cfgspace.coe",
 		"pcileech_cfgspace_writemask.coe",
 		"pcileech_bar_zero4k.coe",
