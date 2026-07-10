@@ -29,13 +29,93 @@ module pcileech_tlps128_bar_controller(
     output                  intr_req
 );
 
-    // TLP receive
+    wire        norm_request_present;
+    wire        norm_request_supported;
+    wire        norm_unsupported_request;
+    wire        norm_ur_required;
+    wire        norm_non_posted_request;
+    wire        norm_malformed_request;
+    wire        norm_posted_write;
+    wire        norm_memory_read;
+    wire        norm_memory_write;
+    wire [2:0]  norm_request_kind;
+    wire        norm_header_4dw;
+    wire [63:0] norm_address;
+    wire [10:0] norm_length_dw;
+    wire [3:0]  norm_first_be;
+    wire [3:0]  norm_last_be;
+    wire [15:0] norm_requester_id;
+    wire [7:0]  norm_tag;
+    wire [2:0]  norm_traffic_class;
+    wire [2:0]  norm_attributes;
+    wire [2:0]  norm_bir;
+    wire [6:0]  norm_bar_mask;
+    wire [12:0] norm_enabled_byte_count;
+    wire [12:0] norm_first_completion_byte_count;
+    wire [10:0] norm_first_completion_dw;
+    wire [6:0]  norm_first_lower_address;
+
+    pcileech_tlp_normalizer #(
+        .READ_COMPLETION_BOUNDARY ( {{ .ResolvedReadCompletionBoundaryBytes }} ),
+        .MAX_PAYLOAD_BYTES         ( {{ .ResolvedMaxPayloadBytes }} )
+    ) i_tlp_normalizer(
+        .tlp_data              ( tlps_in.tdata              ),
+        .tlp_user              ( tlps_in.tuser              ),
+        .tlp_last              ( tlps_in.tlast              ),
+        .request_present       ( norm_request_present       ),
+        .request_supported     ( norm_request_supported     ),
+        .unsupported_request   ( norm_unsupported_request   ),
+        .ur_required           ( norm_ur_required           ),
+        .non_posted_request  ( norm_non_posted_request  ),
+        .malformed_request     ( norm_malformed_request     ),
+        .posted_write          ( norm_posted_write          ),
+        .memory_read           ( norm_memory_read           ),
+        .memory_write          ( norm_memory_write          ),
+        .request_kind          ( norm_request_kind          ),
+        .header_4dw             ( norm_header_4dw             ),
+        .address               ( norm_address               ),
+        .length_dw             ( norm_length_dw             ),
+        .first_be              ( norm_first_be              ),
+        .last_be               ( norm_last_be               ),
+        .requester_id          ( norm_requester_id          ),
+        .tag                   ( norm_tag                   ),
+        .traffic_class         ( norm_traffic_class         ),
+        .attributes            ( norm_attributes            ),
+        .bir                   ( norm_bir                   ),
+        .bar_mask              ( norm_bar_mask              ),
+        .enabled_byte_count    ( norm_enabled_byte_count    ),
+        .first_completion_byte_count ( norm_first_completion_byte_count ),
+        .first_completion_dw   ( norm_first_completion_dw   ),
+        .first_lower_address   ( norm_first_lower_address   )
+    );
+
+    IfAXIS128 tlps_ur();
+    wire ur_request_ready;
+
+    pcileech_tlp_ur_completer i_tlp_ur_completer(
+        .rst            ( rst                           ),
+        .clk            ( clk                           ),
+        .pcie_id        ( pcie_id                       ),
+        .request_valid  ( tlps_in.tvalid && bar_en &&
+                          norm_request_present && norm_ur_required &&
+                          norm_non_posted_request &&
+                          (norm_bar_mask != 7'h00)        ),
+        .request_ready  ( ur_request_ready              ),
+        .requester_id   ( norm_requester_id             ),
+        .tag            ( norm_tag                      ),
+        .traffic_class  ( norm_traffic_class            ),
+        .attributes     ( norm_attributes               ),
+        .tlps_out       ( tlps_ur.source                )
+    );
+
     wire in_is_wr_ready;
     bit  in_is_wr_last;
-    wire in_is_first    = tlps_in.tuser[0];
-    wire in_is_bar      = bar_en && (tlps_in.tuser[8:2] != 0);
-    wire in_is_rd       = (in_is_first && tlps_in.tlast && ((tlps_in.tdata[31:25] == 7'b0000000) || (tlps_in.tdata[31:25] == 7'b0010000) || (tlps_in.tdata[31:24] == 8'b00000010)));
-    wire in_is_wr       = in_is_wr_last || (in_is_first && in_is_wr_ready && ((tlps_in.tdata[31:25] == 7'b0100000) || (tlps_in.tdata[31:25] == 7'b0110000) || (tlps_in.tdata[31:24] == 8'b01000010)));
+    wire in_is_first = tlps_in.tuser[0];
+    wire in_is_bar   = bar_en && (norm_request_supported || in_is_wr_last);
+    wire in_is_rd    = in_is_first && norm_memory_read && norm_request_supported;
+    wire in_is_wr    = in_is_wr_last ||
+                       (in_is_first && in_is_wr_ready && norm_posted_write &&
+                        (norm_enabled_byte_count != 13'd0));
 
     always @ ( posedge clk )
         if ( rst ) begin
@@ -96,45 +176,74 @@ module pcileech_tlps128_bar_controller(
     localparam NVME_TIMING_ENABLED = (`NVME_TIMING_ENABLE != 0);
     localparam integer NVME_TIMING_CLOCK_HZ = `NVME_TIMING_CLK_HZ;
 
-{{ if and (eq .DeviceClass "nvme") .NVMeIdentify }}
-    // rdengine goes to an intermediate bus so we can mux in DMA bridge TLPs
     IfAXIS128 tlps_rdeng();
 
-    pcileech_tlps128_bar_rdengine i_pcileech_tlps128_bar_rdengine(
-        .rst            ( rst                           ),
-        .clk            ( clk                           ),
-        .pcie_id        ( pcie_id                       ),
-        .tlps_in        ( tlps_in                       ),
-        .tlps_in_valid  ( tlps_in.tvalid && in_is_bar && in_is_rd ),
-        .tlps_out       ( tlps_rdeng.source             ),
-        .rd_req_ctx     ( rd_req_ctx                    ),
-        .rd_req_bar     ( rd_req_bar                    ),
-        .rd_req_addr    ( rd_req_addr                   ),
-        .rd_req_valid   ( rd_req_valid                  ),
-        .rd_rsp_ctx     ( rd_rsp_ctx                    ),
-        .rd_rsp_data    ( rd_rsp_data                   ),
-        .rd_rsp_valid   ( rd_rsp_valid                  )
+    pcileech_tlps128_bar_rdengine #(
+        .READ_COMPLETION_BOUNDARY ( {{ .ResolvedReadCompletionBoundaryBytes }} ),
+        .MAX_PAYLOAD_BYTES         ( {{ .ResolvedMaxPayloadBytes }} )
+    ) i_pcileech_tlps128_bar_rdengine(
+        .rst                       ( rst                         ),
+        .clk                       ( clk                         ),
+        .pcie_id                   ( pcie_id                     ),
+        .tlps_in_valid             ( tlps_in.tvalid && in_is_bar && in_is_rd ),
+        .norm_address              ( norm_address                ),
+        .norm_length_dw            ( norm_length_dw              ),
+        .norm_first_be             ( norm_first_be               ),
+        .norm_last_be              ( norm_last_be                ),
+        .norm_requester_id         ( norm_requester_id           ),
+        .norm_tag                  ( norm_tag                    ),
+        .norm_traffic_class        ( norm_traffic_class          ),
+        .norm_attributes           ( norm_attributes             ),
+        .norm_header_4dw           ( norm_header_4dw             ),
+        .norm_bar_mask             ( norm_bar_mask               ),
+        .norm_enabled_byte_count   ( norm_enabled_byte_count     ),
+        .norm_first_completion_byte_count ( norm_first_completion_byte_count ),
+        .norm_first_completion_dw  ( norm_first_completion_dw    ),
+        .tlps_out                  ( tlps_rdeng.source           ),
+        .rd_req_ctx                ( rd_req_ctx                  ),
+        .rd_req_bar                ( rd_req_bar                  ),
+        .rd_req_addr               ( rd_req_addr                 ),
+        .rd_req_valid              ( rd_req_valid                ),
+        .rd_rsp_ctx                ( rd_rsp_ctx                  ),
+        .rd_rsp_data               ( rd_rsp_data                 ),
+        .rd_rsp_valid              ( rd_rsp_valid                )
     );
-{{ else }}
-    // rdengine output goes to intermediate for DMA bridge TLP muxing
-    IfAXIS128 tlps_rdeng();
 
-    pcileech_tlps128_bar_rdengine i_pcileech_tlps128_bar_rdengine(
-        .rst            ( rst                           ),
-        .clk            ( clk                           ),
-        .pcie_id        ( pcie_id                       ),
-        .tlps_in        ( tlps_in                       ),
-        .tlps_in_valid  ( tlps_in.tvalid && in_is_bar && in_is_rd ),
-        .tlps_out       ( tlps_rdeng.source             ),
-        .rd_req_ctx     ( rd_req_ctx                    ),
-        .rd_req_bar     ( rd_req_bar                    ),
-        .rd_req_addr    ( rd_req_addr                   ),
-        .rd_req_valid   ( rd_req_valid                  ),
-        .rd_rsp_ctx     ( rd_rsp_ctx                    ),
-        .rd_rsp_data    ( rd_rsp_data                   ),
-        .rd_rsp_valid   ( rd_rsp_valid                  )
-    );
-{{ end }}
+    IfAXIS128 tlps_cpl();
+    reg cpl_grant_active;
+    reg cpl_grant_ur;
+    reg cpl_last_grant_ur;
+    wire cpl_select_ur = cpl_grant_active
+                       ? cpl_grant_ur
+                       : (tlps_ur.tvalid &&
+                          (!tlps_rdeng.tvalid || !cpl_last_grant_ur));
+
+    assign tlps_cpl.tdata    = cpl_select_ur ? tlps_ur.tdata    : tlps_rdeng.tdata;
+    assign tlps_cpl.tkeepdw  = cpl_select_ur ? tlps_ur.tkeepdw  : tlps_rdeng.tkeepdw;
+    assign tlps_cpl.tvalid   = cpl_select_ur ? tlps_ur.tvalid   : tlps_rdeng.tvalid;
+    assign tlps_cpl.tlast    = cpl_select_ur ? tlps_ur.tlast    : tlps_rdeng.tlast;
+    assign tlps_cpl.tuser    = cpl_select_ur ? tlps_ur.tuser    : tlps_rdeng.tuser;
+    assign tlps_cpl.has_data = cpl_select_ur ? tlps_ur.has_data : tlps_rdeng.has_data;
+    assign tlps_ur.tready    = tlps_cpl.tready && cpl_select_ur;
+    assign tlps_rdeng.tready = tlps_cpl.tready && !cpl_select_ur;
+
+    always @(posedge clk) begin
+        if (rst) begin
+            cpl_grant_active <= 1'b0;
+            cpl_grant_ur     <= 1'b0;
+            cpl_last_grant_ur <= 1'b1;
+        end else begin
+            if (!cpl_grant_active && tlps_cpl.tvalid) begin
+                cpl_grant_ur <= cpl_select_ur;
+                if (!(tlps_cpl.tready && tlps_cpl.tlast))
+                    cpl_grant_active <= 1'b1;
+            end
+            if (tlps_cpl.tvalid && tlps_cpl.tready && tlps_cpl.tlast) begin
+                cpl_grant_active <= 1'b0;
+                cpl_last_grant_ur <= cpl_select_ur;
+            end
+        end
+    end
 
     wire        wrengine_ready;
 
@@ -579,6 +688,7 @@ module pcileech_tlps128_bar_controller(
     wire         hda_tlp_tx_tvalid;
     wire         hda_tlp_tx_tlast;
     wire [8:0]   hda_tlp_tx_tuser;
+    wire         hda_tlp_tx_tready;
 
     pcileech_hda_rirb_dma i_hda_rirb_dma(
         .rst            ( rst                           ),
@@ -598,7 +708,7 @@ module pcileech_tlps128_bar_controller(
         .tlp_tx_tvalid  ( hda_tlp_tx_tvalid             ),
         .tlp_tx_tlast   ( hda_tlp_tx_tlast              ),
         .tlp_tx_tuser   ( hda_tlp_tx_tuser              ),
-        .tlp_tx_tready  ( tlps_out.tready && !dma_yield  )
+        .tlp_tx_tready  ( hda_tlp_tx_tready              )
     );
 
     // ========================================================================
@@ -862,52 +972,63 @@ module pcileech_tlps128_bar_controller(
     assign tlps_dma_out.tuser    = {7'h00, nvme_dma_fifo_tlast, nvme_dma_fifo_first};
     assign tlps_dma_out.has_data = (nvme_dma_pkt_count_next != 11'd0);
 
-    assign tlps_out.tdata    = tlps_rdeng.tdata;
-    assign tlps_out.tkeepdw  = tlps_rdeng.tkeepdw;
-    assign tlps_out.tvalid   = tlps_rdeng.tvalid;
-    assign tlps_out.tlast    = tlps_rdeng.tlast;
-    assign tlps_out.tuser    = tlps_rdeng.tuser;
-    assign tlps_out.has_data = tlps_rdeng.has_data;
-    assign tlps_rdeng.tready = tlps_out.tready;
+    assign tlps_out.tdata    = tlps_cpl.tdata;
+    assign tlps_out.tkeepdw  = tlps_cpl.tkeepdw;
+    assign tlps_out.tvalid   = tlps_cpl.tvalid;
+    assign tlps_out.tlast    = tlps_cpl.tlast;
+    assign tlps_out.tuser    = tlps_cpl.tuser;
+    assign tlps_out.has_data = tlps_cpl.has_data;
+    assign tlps_cpl.tready   = tlps_out.tready;
 {{ end }}
 
 {{ if and (eq .DeviceClass "audio") .BARModel }}{{ if not (and (eq .DeviceClass "nvme") .NVMeIdentify) }}
-    // HDA-only build: mux HDA DMA TLPs with rdengine BAR responses
-    //
-    // fairness: after 8 consecutive DMA TLP words a 1-cycle gap is forced so
-    // BAR read completions cannot be starved by sustained DMA bursts
-    reg [2:0] dma_burst_cnt;
-    wire dma_yield = (dma_burst_cnt == 3'd7);
+    reg hda_packet_active;
+    reg hda_packet_select_dma;
+    reg hda_last_grant_dma;
+    wire hda_select_dma = hda_packet_active
+                        ? hda_packet_select_dma
+                        : (hda_tlp_tx_tvalid &&
+                           (!tlps_cpl.tvalid || !hda_last_grant_dma));
+
+    assign tlps_out.tdata    = hda_select_dma ? hda_tlp_tx_tdata   : tlps_cpl.tdata;
+    assign tlps_out.tkeepdw  = hda_select_dma ? hda_tlp_tx_tkeepdw : tlps_cpl.tkeepdw;
+    assign tlps_out.tvalid   = hda_select_dma ? hda_tlp_tx_tvalid  : tlps_cpl.tvalid;
+    assign tlps_out.tlast    = hda_select_dma ? hda_tlp_tx_tlast   : tlps_cpl.tlast;
+    assign tlps_out.tuser    = hda_select_dma ? hda_tlp_tx_tuser   : tlps_cpl.tuser;
+    assign tlps_out.has_data = hda_select_dma ? hda_tlp_tx_tvalid  : tlps_cpl.has_data;
+    assign hda_tlp_tx_tready = tlps_out.tready && hda_select_dma;
+    assign tlps_cpl.tready   = tlps_out.tready && !hda_select_dma;
 
     always @(posedge clk) begin
-        if (dma_yield)
-            dma_burst_cnt <= 3'd0;
-        else if (hda_tlp_tx_tvalid && tlps_out.tready && dma_burst_cnt != 3'd7)
-            dma_burst_cnt <= dma_burst_cnt + 3'd1;
-        else if (!hda_tlp_tx_tvalid)
-            dma_burst_cnt <= 3'd0;
+        if (rst) begin
+            hda_packet_active     <= 1'b0;
+            hda_packet_select_dma <= 1'b0;
+            hda_last_grant_dma    <= 1'b0;
+        end else if (!hda_packet_active) begin
+            if (tlps_out.tvalid) begin
+                hda_packet_select_dma <= hda_select_dma;
+                if (tlps_out.tready && tlps_out.tlast)
+                    hda_last_grant_dma <= hda_select_dma;
+                else
+                    hda_packet_active <= 1'b1;
+            end
+        end else if (tlps_out.tvalid && tlps_out.tready && tlps_out.tlast) begin
+            hda_packet_active  <= 1'b0;
+            hda_last_grant_dma <= hda_select_dma;
+        end
     end
-
-    assign tlps_out.tdata    = (hda_tlp_tx_tvalid && !dma_yield) ? hda_tlp_tx_tdata    : tlps_rdeng.tdata;
-    assign tlps_out.tkeepdw  = (hda_tlp_tx_tvalid && !dma_yield) ? hda_tlp_tx_tkeepdw  : tlps_rdeng.tkeepdw;
-    assign tlps_out.tvalid   = (hda_tlp_tx_tvalid && !dma_yield) || tlps_rdeng.tvalid;
-    assign tlps_out.tlast    = (hda_tlp_tx_tvalid && !dma_yield) ? hda_tlp_tx_tlast    : tlps_rdeng.tlast;
-    assign tlps_out.tuser    = (hda_tlp_tx_tvalid && !dma_yield) ? hda_tlp_tx_tuser    : tlps_rdeng.tuser;
-    assign tlps_out.has_data = (hda_tlp_tx_tvalid && !dma_yield) || tlps_rdeng.has_data;
-    assign tlps_rdeng.tready = tlps_out.tready && (dma_yield || !hda_tlp_tx_tvalid);
 
 {{ end }}{{
  end }}
 
 {{ if not (or (and (eq .DeviceClass "nvme") .NVMeIdentify) (and (eq .DeviceClass "audio") .BARModel)) }}
-    // no DMA bridge: rdengine output goes straight to tlps_out
-    assign tlps_out.tdata    = tlps_rdeng.tdata;
-    assign tlps_out.tkeepdw  = tlps_rdeng.tkeepdw;
-    assign tlps_out.tvalid   = tlps_rdeng.tvalid;
-    assign tlps_out.tlast    = tlps_rdeng.tlast;
-    assign tlps_out.tuser    = tlps_rdeng.tuser;
-    assign tlps_out.has_data = tlps_rdeng.has_data;
-    assign tlps_rdeng.tready = tlps_out.tready;
+    assign tlps_out.tdata    = tlps_cpl.tdata;
+    assign tlps_out.tkeepdw  = tlps_cpl.tkeepdw;
+    assign tlps_out.tvalid   = tlps_cpl.tvalid;
+    assign tlps_out.tlast    = tlps_cpl.tlast;
+    assign tlps_out.tuser    = tlps_cpl.tuser;
+    assign tlps_out.has_data = tlps_cpl.has_data;
+    assign tlps_cpl.tready   = tlps_out.tready;
 {{ end }}
 
     // BAR1: address loopback

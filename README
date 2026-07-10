@@ -159,6 +159,9 @@ OUTPUT
     pcileech_bar_zero4k.coe             BAR0 content (sized to donor/BRAM)
     pcileech_bar_impl_device.sv         register-level BAR implementation
     pcileech_tlps128_bar_controller.sv  TLP BAR controller
+    pcileech_tlp_normalizer.sv           normalized MRd/MWr decode + decisions
+    pcileech_tlps128_bar_rdengine.sv     BE/RCB/MPS-aware read completions
+    pcileech_tlp_ur_completer.sv        unsupported non-posted completions
     pcileech_msix_table.sv              MSI-X table + PBA
     pcileech_nvme_admin_responder.sv    (if NVMe)
     pcileech_nvme_dma_bridge.sv         (if NVMe)

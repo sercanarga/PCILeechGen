@@ -48,6 +48,7 @@ func (b *Board) BRAMSizeOrDefault() int {
 	return DefaultBRAMSize
 }
 
+
 // BRAM36Capacity returns the FPGA's RAMB36 block count parsed from the part
 // number, used to size the NVMe disk cache. Returns 0 for non-Artix-7 parts.
 func (b *Board) BRAM36Capacity() int {

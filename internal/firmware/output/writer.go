@@ -221,7 +221,6 @@ var svFilesReplacedByGenerator = map[string]bool{
 // is replaced by the generated version, but these shared modules are still
 // needed by the generated controller.
 var barControllerSubModules = []string{
-	"pcileech_tlps128_bar_rdengine",
 	"pcileech_tlps128_bar_wrengine",
 	"pcileech_bar_impl_none",
 	"pcileech_bar_impl_loopaddr",
@@ -372,6 +371,9 @@ func ListOutputFiles() []string {
 		"src/",
 		"pcileech_bar_impl_device.sv",
 		"pcileech_tlps128_bar_controller.sv",
+		"pcileech_tlp_normalizer.sv",
+		"pcileech_tlps128_bar_rdengine.sv",
+		"pcileech_tlp_ur_completer.sv",
 		"pcileech_bar_impl_msi.sv",
 		"pcileech_msix_table.sv",
 		"pcileech_nvme_admin_responder.sv",
@@ -396,6 +398,9 @@ type svArtifact struct {
 var coreSVArtifacts = []svArtifact{
 	{"pcileech_bar_impl_device.sv", svgen.GenerateBarImplDeviceSV},
 	{"pcileech_tlps128_bar_controller.sv", svgen.GenerateBarControllerSV},
+	{"pcileech_tlp_normalizer.sv", svgen.GenerateTransactionNormalizerSV},
+	{"pcileech_tlps128_bar_rdengine.sv", svgen.GenerateBarReadEngineSV},
+	{"pcileech_tlp_ur_completer.sv", svgen.GenerateURCompleterSV},
 	{"pcileech_bar_impl_msi.sv", svgen.GenerateBarImplMSISV},
 	{"tlp_latency_emulator.sv", svgen.GenerateLatencyEmulatorSV},
 	{"device_config.sv", svgen.GenerateDeviceConfigSV},
@@ -528,6 +533,8 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 		PRNGSeeds:         svgen.BuildPRNGSeeds(ids.VendorID, ids.DeviceID, entropy),
 		DeviceClass:       devClass,
 		Bar0Size:          bar0Size,
+		ReadCompletionBoundaryBytes: 64,
+		MaxPayloadBytes:             128,
 	}
 
 	if devClass == devclass.ClassNVMe {

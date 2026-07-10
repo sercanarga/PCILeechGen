@@ -1,0 +1,202 @@
+`timescale 1ns / 1ps
+
+module pcileech_tlp_normalizer #(
+    parameter integer READ_COMPLETION_BOUNDARY = {{ .ResolvedReadCompletionBoundaryBytes }},
+    parameter integer MAX_PAYLOAD_BYTES         = {{ .ResolvedMaxPayloadBytes }}
+)(
+    input  wire [127:0] tlp_data,
+    input  wire [8:0]   tlp_user,
+    input  wire         tlp_last,
+
+    output reg          request_present,
+    output reg          request_supported,
+    output reg          unsupported_request,
+    output reg          ur_required,
+    output reg          non_posted_request,
+    output reg          malformed_request,
+    output reg          posted_write,
+    output reg          memory_read,
+    output reg          memory_write,
+    output reg  [2:0]   request_kind,
+    output reg          header_4dw,
+    output reg  [63:0]  address,
+    output reg  [10:0]  length_dw,
+    output reg  [3:0]   first_be,
+    output reg  [3:0]   last_be,
+    output reg  [15:0]  requester_id,
+    output reg  [7:0]   tag,
+    output reg  [2:0]   traffic_class,
+    output reg  [2:0]   attributes,
+    output reg  [2:0]   bir,
+    output reg  [6:0]   bar_mask,
+
+    output reg  [12:0]  enabled_byte_count,
+    output reg  [12:0]  first_completion_byte_count,
+    output reg  [10:0]  first_completion_dw,
+    output reg  [6:0]   first_lower_address
+);
+    localparam [2:0] KIND_UNKNOWN = 3'd0;
+    localparam [2:0] KIND_MRD     = 3'd1;
+    localparam [2:0] KIND_MWR     = 3'd2;
+    localparam [2:0] KIND_IORD    = 3'd3;
+    localparam [2:0] KIND_IOWR    = 3'd4;
+    localparam [2:0] KIND_ATOMIC  = 3'd5;
+    localparam [2:0] KIND_MRDLK   = 3'd6;
+    localparam [2:0] KIND_CONFIG  = 3'd7;
+
+    reg [2:0]  fmt;
+    reg [4:0]  tlp_type;
+    reg [12:0] rcb_bytes_left;
+    reg [10:0] rcb_dw_left;
+    reg [10:0] mps_dw;
+    reg        legal_be;
+    reg        legal_bar;
+    reg        crosses_4k;
+
+    function automatic [2:0] popcount4(input [3:0] value);
+        begin
+            popcount4 = {2'b00, value[0]} + {2'b00, value[1]} +
+                        {2'b00, value[2]} + {2'b00, value[3]};
+        end
+    endfunction
+
+    function automatic [1:0] first_enabled_offset(input [3:0] value);
+        begin
+            if (value[0])      first_enabled_offset = 2'd0;
+            else if (value[1]) first_enabled_offset = 2'd1;
+            else if (value[2]) first_enabled_offset = 2'd2;
+            else if (value[3]) first_enabled_offset = 2'd3;
+            else               first_enabled_offset = 2'd0;
+        end
+    endfunction
+
+    function automatic valid_first_edge(input [3:0] value);
+        begin
+            valid_first_edge = (value == 4'h8) || (value == 4'hC) ||
+                               (value == 4'hE) || (value == 4'hF);
+        end
+    endfunction
+
+    function automatic valid_last_edge(input [3:0] value);
+        begin
+            valid_last_edge = (value == 4'h1) || (value == 4'h3) ||
+                              (value == 4'h7) || (value == 4'hF);
+        end
+    endfunction
+
+    function automatic onehot7(input [6:0] value);
+        begin
+            onehot7 = (value != 7'h00) && ((value & (value - 1'b1)) == 7'h00);
+        end
+    endfunction
+
+    function automatic [2:0] decode_bir(input [6:0] value);
+        begin
+            case (value)
+                7'b0000001: decode_bir = 3'd0;
+                7'b0000010: decode_bir = 3'd1;
+                7'b0000100: decode_bir = 3'd2;
+                7'b0001000: decode_bir = 3'd3;
+                7'b0010000: decode_bir = 3'd4;
+                7'b0100000: decode_bir = 3'd5;
+                7'b1000000: decode_bir = 3'd6;
+                default:    decode_bir = 3'd7;
+            endcase
+        end
+    endfunction
+
+    always @(*) begin
+        fmt               = tlp_data[31:29];
+        tlp_type          = tlp_data[28:24];
+        request_present   = tlp_user[0];
+        request_supported = 1'b0;
+        unsupported_request = 1'b0;
+        ur_required       = 1'b0;
+        non_posted_request = 1'b0;
+        malformed_request = 1'b0;
+        posted_write      = 1'b0;
+        memory_read       = 1'b0;
+        memory_write      = 1'b0;
+        request_kind      = KIND_UNKNOWN;
+        header_4dw        = fmt[0];
+        length_dw         = (tlp_data[9:0] == 10'h000) ? 11'd1024 : {1'b0, tlp_data[9:0]};
+        first_be          = tlp_data[35:32];
+        last_be           = tlp_data[39:36];
+        requester_id      = tlp_data[63:48];
+        tag               = tlp_data[47:40];
+        traffic_class     = tlp_data[22:20];
+        attributes        = {tlp_data[18], tlp_data[13:12]};
+        bar_mask          = tlp_user[8:2];
+        bir               = decode_bir(tlp_user[8:2]);
+        address           = fmt[0]
+                          ? {tlp_data[95:64], tlp_data[127:98], 2'b00}
+                          : {32'h00000000, tlp_data[95:66], 2'b00};
+
+        case ({fmt, tlp_type})
+            8'b000_00000, 8'b001_00000: begin
+                request_kind = KIND_MRD;
+                memory_read  = 1'b1;
+            end
+            8'b010_00000, 8'b011_00000: begin
+                request_kind = KIND_MWR;
+                memory_write = 1'b1;
+            end
+            8'b000_00001, 8'b001_00001: request_kind = KIND_MRDLK;
+            8'b000_00100, 8'b010_00100,
+            8'b000_00101, 8'b010_00101: request_kind = KIND_CONFIG;
+            8'b000_00010: request_kind = KIND_IORD;
+            8'b010_00010: request_kind = KIND_IOWR;
+            8'b010_01100, 8'b011_01100,
+            8'b010_01101, 8'b011_01101,
+            8'b010_01110, 8'b011_01110: request_kind = KIND_ATOMIC;
+            default: request_kind = KIND_UNKNOWN;
+        endcase
+        non_posted_request = (request_kind == KIND_IORD) ||
+                             (request_kind == KIND_IOWR) ||
+                             (request_kind == KIND_ATOMIC) ||
+                             (request_kind == KIND_MRDLK) ||
+                             (request_kind == KIND_CONFIG);
+
+        legal_bar = onehot7(bar_mask);
+        if (length_dw == 11'd1)
+            legal_be = (last_be == 4'h0);
+        else if ((length_dw == 11'd2) && (address[2:0] == 3'b000))
+            legal_be = (first_be != 4'h0) && (last_be != 4'h0);
+        else
+            legal_be = valid_first_edge(first_be) && valid_last_edge(last_be);
+        crosses_4k = ({1'b0, address[11:0]} + ({2'b00, length_dw} << 2)) > 13'd4096;
+
+        if (request_present) begin
+            if (memory_read || memory_write) begin
+                malformed_request = !legal_bar || !legal_be || crosses_4k ||
+                                    (!header_4dw && (address[63:32] != 32'h0)) ||
+                                    (memory_read && !tlp_last);
+                request_supported = !malformed_request;
+                posted_write      = memory_write && !malformed_request;
+            end else begin
+                unsupported_request = 1'b1;
+                ur_required         = 1'b1;
+            end
+        end
+
+        enabled_byte_count = (length_dw == 11'd1)
+                           ? popcount4(first_be)
+                           : ({10'd0, popcount4(first_be)} +
+                              {10'd0, popcount4(last_be)} +
+                              ((length_dw - 11'd2) << 2));
+        first_completion_byte_count =
+            ((length_dw == 11'd1) && (first_be == 4'h0) && memory_read)
+            ? 13'd4 : enabled_byte_count;
+        first_lower_address = address[6:0] + first_enabled_offset(first_be);
+
+        rcb_bytes_left = READ_COMPLETION_BOUNDARY -
+                         (address & (READ_COMPLETION_BOUNDARY - 1));
+        rcb_dw_left = rcb_bytes_left[12:2];
+        mps_dw = MAX_PAYLOAD_BYTES / 4;
+        first_completion_dw = length_dw;
+        if (first_completion_dw > rcb_dw_left)
+            first_completion_dw = rcb_dw_left;
+        if (first_completion_dw > mps_dw)
+            first_completion_dw = mps_dw;
+    end
+endmodule
