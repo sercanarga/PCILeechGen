@@ -42,7 +42,92 @@ func TestVerilatorURCompletionStableWhileStalled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateURCompleterSV() error = %v", err)
 	}
-	bench := "`timescale 1ns/1ps\n`include \"pcileech_header.svh\"\nmodule tb;\nbit clk = 0;\nalways #5 clk = ~clk;\nbit rst = 1;\nbit ready = 0;\nbit request_valid = 0;\nwire request_ready;\nIfAXIS128 out();\nassign out.tready = ready;\npcileech_tlp_ur_completer dut(.rst(rst), .clk(clk), .pcie_id(16'h1234), .request_valid(request_valid), .request_ready(request_ready), .requester_id(16'hA15E), .tag(8'hD3), .traffic_class(3'h5), .attributes(3'h3), .tlps_out(out.source));\nreg [142:0] held;\ninitial begin\nrepeat (2) @(posedge clk);\n@(negedge clk); rst = 0; request_valid = 1;\n@(posedge clk);\n@(negedge clk); request_valid = 0;\nwait (out.tvalid);\nheld = {out.has_data, out.tuser, out.tlast, out.tkeepdw, out.tdata};\nif (out.tdata[31:29] !== 3'b000) $fatal(1, \"fmt\");\nif (out.tdata[28:24] !== 5'b01010) $fatal(1, \"type\");\nif (out.tdata[22:20] !== 3'h5) $fatal(1, \"tc\");\nif ({out.tdata[18], out.tdata[13:12]} !== 3'h3) $fatal(1, \"attr\");\nif (out.tdata[47:45] !== 3'b001) $fatal(1, \"status\");\nif (out.tdata[95:80] !== 16'hA15E) $fatal(1, \"requester\");\nif (out.tdata[79:72] !== 8'hD3) $fatal(1, \"tag\");\nif (out.tdata[9:0] !== 10'h000) $fatal(1, \"length\");\nif (out.tkeepdw !== 4'b0111) $fatal(1, \"keep\");\nrepeat (4) begin\n@(posedge clk);\n#1;\nif ({out.has_data, out.tuser, out.tlast, out.tkeepdw, out.tdata} !== held) $fatal(1, \"stability\");\nend\n@(negedge clk); ready = 1;\n@(posedge clk);\n@(negedge clk);\nif (out.tvalid !== 1'b0) $fatal(1, \"drain\");\n$finish;\nend\nendmodule\n"
+	bench := `
+module tb;
+timeunit 1ns;
+timeprecision 1ps;
+bit clk = 0;
+always #5 clk = ~clk;
+bit rst = 1;
+bit ready = 0;
+bit request_valid = 0;
+bit [15:0] requester_id;
+bit [7:0] tag;
+bit [2:0] traffic_class;
+bit [2:0] attributes;
+wire request_ready;
+IfAXIS128 out();
+assign out.tready = ready;
+pcileech_tlp_ur_completer dut(
+    .rst(rst),
+    .clk(clk),
+    .pcie_id(16'h1234),
+    .request_valid(request_valid),
+    .request_ready(request_ready),
+    .requester_id(requester_id),
+    .tag(tag),
+    .traffic_class(traffic_class),
+    .attributes(attributes),
+    .tlps_out(out.source)
+);
+reg [142:0] held;
+initial begin
+repeat (2) @(posedge clk);
+@(negedge clk);
+rst = 0;
+requester_id = 16'hA15E;
+tag = 8'hD3;
+traffic_class = 3'h5;
+attributes = 3'h3;
+request_valid = 1;
+@(posedge clk);
+@(negedge clk);
+if (!request_ready) $fatal(1, "first_accept");
+requester_id = 16'hB26F;
+tag = 8'h4C;
+traffic_class = 3'h2;
+attributes = 3'h6;
+@(posedge clk);
+@(negedge clk);
+if (!request_ready) $fatal(1, "second_accept");
+request_valid = 0;
+wait (out.tvalid);
+#1;
+if (out.tdata[95:80] !== 16'hA15E || out.tdata[79:72] !== 8'hD3) $fatal(1, "first_identity");
+if (out.tdata[22:20] !== 3'h5 || {out.tdata[18], out.tdata[13:12]} !== 3'h3) $fatal(1, "first_metadata");
+if (out.tdata[31:29] !== 3'b000 || out.tdata[28:24] !== 5'b01010) $fatal(1, "header");
+if (out.tdata[47:45] !== 3'b001 || out.tdata[9:0] !== 10'h000) $fatal(1, "completion");
+if (out.tkeepdw !== 4'b0111) $fatal(1, "keep");
+held = {out.has_data, out.tuser, out.tlast, out.tkeepdw, out.tdata};
+repeat (4) begin
+@(posedge clk);
+#1;
+if ({out.has_data, out.tuser, out.tlast, out.tkeepdw, out.tdata} !== held) $fatal(1, "first_stability");
+end
+@(negedge clk);
+ready = 1;
+@(posedge clk);
+@(negedge clk);
+ready = 0;
+#1;
+if (!out.tvalid) $fatal(1, "second_valid");
+if (out.tdata[95:80] !== 16'hB26F || out.tdata[79:72] !== 8'h4C) $fatal(1, "second_identity");
+if (out.tdata[22:20] !== 3'h2 || {out.tdata[18], out.tdata[13:12]} !== 3'h6) $fatal(1, "second_metadata");
+held = {out.has_data, out.tuser, out.tlast, out.tkeepdw, out.tdata};
+repeat (4) begin
+@(posedge clk);
+#1;
+if ({out.has_data, out.tuser, out.tlast, out.tkeepdw, out.tdata} !== held) $fatal(1, "second_stability");
+end
+@(negedge clk);
+ready = 1;
+@(posedge clk);
+@(negedge clk);
+if (out.tvalid) $fatal(1, "drain");
+$finish;
+end
+endmodule
+`
 	runVerilatorBinary(t, dut, bench)
 }
 
@@ -468,6 +553,134 @@ end
 endmodule
 `
 	runVerilatorBinary(t, normalizer+completer, bench)
+}
+
+func TestVerilatorControllerQueuesURRequestWhileCompleterBusy(t *testing.T) {
+	controller, err := GenerateBarControllerSV(testConfig())
+	if err != nil {
+		t.Fatalf("GenerateBarControllerSV() error = %v", err)
+	}
+	block := extractHDLBlock(t, controller, "    wire ur_request_ready;", "    reg cpl_grant_active;")
+	dut := "`timescale 1ns/1ps\n`include \"pcileech_header.svh\"\n" + `
+module pcileech_tlp_ur_completer(
+    input rst,
+    input clk,
+    input [15:0] pcie_id,
+    input request_valid,
+    output request_ready,
+    input [15:0] requester_id,
+    input [7:0] tag,
+    input [2:0] traffic_class,
+    input [2:0] attributes,
+    IfAXIS128.source tlps_out
+);
+assign request_ready = tlps_out.tready;
+assign tlps_out.tdata = {98'd0, requester_id, tag, traffic_class, attributes};
+assign tlps_out.tkeepdw = 4'hF;
+assign tlps_out.tvalid = request_valid;
+assign tlps_out.tlast = 1'b1;
+assign tlps_out.tuser = 9'd0;
+assign tlps_out.has_data = 1'b0;
+endmodule
+module ur_queue(
+    input clk,
+    input rst,
+    input in_is_bar,
+    input norm_request_present,
+    input norm_ur_required,
+    input norm_non_posted_request,
+    input [15:0] norm_requester_id,
+    input [7:0] norm_tag,
+    input [2:0] norm_traffic_class,
+    input [2:0] norm_attributes,
+    IfAXIS128.sink tlps_in,
+    IfAXIS128.source tlps_ur
+);
+wire [15:0] pcie_id = 16'h1234;
+` + block + `
+endmodule
+`
+	bench := `
+module tb;
+timeunit 1ns;
+timeprecision 1ps;
+bit clk = 0;
+always #5 clk = ~clk;
+bit rst = 1;
+bit ready = 0;
+bit request_valid = 0;
+bit [15:0] requester_id = 0;
+bit [7:0] tag = 0;
+bit [2:0] traffic_class = 0;
+bit [2:0] attributes = 0;
+IfAXIS128 in();
+IfAXIS128 out();
+assign in.tvalid = request_valid;
+assign in.tdata = 128'd0;
+assign in.tkeepdw = 4'd0;
+assign in.tlast = 1'b1;
+assign in.tuser = 9'd0;
+assign in.has_data = 1'b0;
+assign out.tready = ready;
+ur_queue dut(
+    .clk(clk),
+    .rst(rst),
+    .in_is_bar(1'b1),
+    .norm_request_present(1'b1),
+    .norm_ur_required(1'b1),
+    .norm_non_posted_request(1'b1),
+    .norm_requester_id(requester_id),
+    .norm_tag(tag),
+    .norm_traffic_class(traffic_class),
+    .norm_attributes(attributes),
+    .tlps_in(in.sink),
+    .tlps_ur(out.source)
+);
+initial begin
+repeat (2) @(posedge clk);
+@(negedge clk);
+rst = 0;
+request_valid = 1;
+requester_id = 16'hA15E;
+tag = 8'hD3;
+traffic_class = 3'h5;
+attributes = 3'h3;
+@(posedge clk);
+#1;
+if (dut.ur_request_count !== 9'd1) $fatal(1, "first_count");
+@(negedge clk);
+requester_id = 16'hB26F;
+tag = 8'h4C;
+traffic_class = 3'h2;
+attributes = 3'h6;
+@(posedge clk);
+#1;
+if (dut.ur_request_count !== 9'd2) $fatal(1, "second_count");
+@(negedge clk);
+request_valid = 0;
+repeat (4) begin
+@(posedge clk);
+#1;
+if (!out.tvalid) $fatal(1, "first_valid");
+if (out.tdata[29:14] !== 16'hA15E || out.tdata[13:6] !== 8'hD3) $fatal(1, "first_identity");
+if (out.tdata[5:3] !== 3'h5 || out.tdata[2:0] !== 3'h3) $fatal(1, "first_metadata");
+end
+@(negedge clk);
+ready = 1;
+@(posedge clk);
+#1;
+if (!out.tvalid) $fatal(1, "second_valid");
+if (out.tdata[29:14] !== 16'hB26F || out.tdata[13:6] !== 8'h4C) $fatal(1, "second_identity");
+if (out.tdata[5:3] !== 3'h2 || out.tdata[2:0] !== 3'h6) $fatal(1, "second_metadata");
+if (dut.ur_request_count !== 9'd1) $fatal(1, "dequeue_count");
+@(posedge clk);
+#1;
+if (out.tvalid || dut.ur_request_count !== 9'd0) $fatal(1, "empty");
+$finish;
+end
+endmodule
+`
+	runVerilatorBinary(t, dut, bench)
 }
 
 func extractHDLThroughAlways(t *testing.T, source, start, always string) string {
