@@ -456,7 +456,7 @@ module pcileech_tlps128_bar_controller(
     reg  [31:0] bar0_spill_data;
 
     always @(posedge clk) begin
-        if (rst) begin
+        if (device_reset) begin
             bar0_spill_valid <= 1'b0;
             bar0_spill_ctx   <= 88'h0;
             bar0_spill_data  <= 32'h0;
@@ -573,7 +573,7 @@ module pcileech_tlps128_bar_controller(
     wire [6:0] bar_rsp_ready;
     pcileech_bar_rsp_arbiter i_bar_rsp_arbiter(
         .clk        ( clk           ),
-        .rst        ( rst           ),
+        .rst        ( device_reset  ),
         .in_valid   ( bar_rsp_valid ),
         .in_ctx     ( bar_rsp_ctx   ),
         .in_data    ( bar_rsp_data  ),
@@ -603,7 +603,7 @@ module pcileech_tlps128_bar_controller(
 {{ else }}
     pcileech_bar_impl_zerowrite4k i_bar0(
 {{ end }}
-        .rst            ( rst                           ),
+        .rst            ( device_reset                  ),
         .clk            ( clk                           ),
         .wr_addr        ( {{ if .BARModel }}wr_addr_bar0{{ else }}wr_addr{{ end }} ),
         .wr_be          ( wr_be                         ),
@@ -654,7 +654,7 @@ module pcileech_tlps128_bar_controller(
 {{ if .LatencyConfig }}
     tlp_latency_emulator i_latency_emu(
         .clk            ( clk                           ),
-        .rst            ( rst                           ),
+        .rst            ( device_reset                  ),
         .crst_falling   ( hda_crst_falling              ),
         .req_valid      ( !bar0_buf_empty               ), // data available in buffer
         .req_ctx        ( bar0_buf_ctx_w                ), // read from buffer head
@@ -686,7 +686,7 @@ module pcileech_tlps128_bar_controller(
     // Pop:  when emulator goes idle->busy (bar0_emu_accepted), it took the head data.
     // Push+pop in the same cycle: count stays the same (single NBA expression).
     always @(posedge clk) begin
-        if (rst) begin
+        if (device_reset) begin
             bar0_buf_count     <= 5'd0;
             bar0_buf_rd        <= 4'd0;
             bar0_buf_wr        <= 4'd0;
@@ -1220,7 +1220,7 @@ module pcileech_tlps128_bar_controller(
     {{ .ModuleName }} #(
         .BAR_SIZE       ( {{ .Model.Size }} )
     ) i_bar{{ .BIR }}(
-        .rst            ( rst                           ),
+        .rst            ( device_reset                  ),
         .clk            ( clk                           ),
         .wr_addr        ( wr_addr                       ),
         .wr_be          ( wr_be                         ),
@@ -1235,7 +1235,7 @@ module pcileech_tlps128_bar_controller(
     );
 {{ else }}
     pcileech_bar_impl_none i_bar{{ .BIR }}(
-        .rst            ( rst                           ),
+        .rst            ( device_reset                  ),
         .clk            ( clk                           ),
         .wr_addr        ( wr_addr                       ),
         .wr_be          ( wr_be                         ),

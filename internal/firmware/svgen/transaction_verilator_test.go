@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/sercanarga/pcileechgen/internal/firmware/barmodel"
+	"github.com/sercanarga/pcileechgen/internal/pci"
 )
 
 const axis128Header = "`ifndef _pcileech_header_svh_\n`define _pcileech_header_svh_\ninterface IfAXIS128;\nwire [127:0] tdata;\nwire [3:0] tkeepdw;\nwire tvalid;\nwire tlast;\nwire [8:0] tuser;\nwire tready;\nwire has_data;\nmodport source(input tready, output tdata, tkeepdw, tvalid, tlast, tuser, has_data);\nmodport sink(output tready, input tdata, tkeepdw, tvalid, tlast, tuser, has_data);\nmodport source_lite(output tdata, tkeepdw, tvalid, tlast, tuser);\nmodport sink_lite(input tdata, tkeepdw, tvalid, tlast, tuser);\nendinterface\n`endif\n"
@@ -695,6 +698,43 @@ func TestBarControllerWriteEngineUsesDeviceReset(t *testing.T) {
 	instance := extractHDLBlock(t, controller, "    pcileech_tlps128_bar_wrengine ", "\n    );")
 	if !strings.Contains(instance, ".rst            ( device_reset") {
 		t.Fatal("write engine must reset with device_reset")
+	}
+}
+
+func TestBarControllerFunctionLocalStateUsesDeviceReset(t *testing.T) {
+	primary := &barmodel.BARModel{
+		BIR: 0, Size: 0x1000, Aperture: 0x1000, Type: pci.BARTypeMem32, ClassSpecific: true,
+	}
+	secondary := &barmodel.BARModel{
+		BIR: 3, Size: 0x1000, Aperture: 0x1000, Type: pci.BARTypeMem32,
+	}
+	cfg := testConfig()
+	cfg.BARModel = primary
+	cfg.BARModels = []*barmodel.BARModel{primary, secondary}
+	cfg.LatencyConfig = DefaultLatencyConfig(cfg.ClassCode)
+
+	controller, err := GenerateBarControllerSV(cfg)
+	if err != nil {
+		t.Fatalf("GenerateBarControllerSV() error = %v", err)
+	}
+	controller = strings.Join(strings.Fields(controller), " ")
+
+	for name, resetSite := range map[string]string{
+		"primary BAR":      "i_bar0( .rst ( device_reset",
+		"secondary BAR":    "i_bar3( .rst ( device_reset",
+		"absent BAR":       "i_bar1( .rst ( device_reset",
+		"response arbiter": "i_bar_rsp_arbiter( .clk ( clk ), .rst ( device_reset",
+		"latency emulator": "i_latency_emu( .clk ( clk ), .rst ( device_reset",
+		"latency spill":    "if (device_reset) begin bar0_spill_valid",
+		"latency buffer":   "if (device_reset) begin bar0_buf_count",
+	} {
+		if !strings.Contains(controller, resetSite) {
+			t.Errorf("%s must reset with device_reset", name)
+		}
+	}
+	if !strings.Contains(controller, ".crst_falling ( hda_crst_falling") ||
+		!strings.Contains(controller, "else if (hda_crst_falling) begin") {
+		t.Error("HDA codec-local reset must remain connected")
 	}
 }
 
