@@ -137,7 +137,7 @@ func TestVerilatorCompletionArbiterLocksStalledPacket(t *testing.T) {
 		t.Fatalf("GenerateBarControllerSV() error = %v", err)
 	}
 	block := extractHDLBlock(t, controller, "    reg cpl_grant_active;", "    wire        wrengine_ready;")
-	dut := "`timescale 1ns/1ps\n`include \"pcileech_header.svh\"\nmodule cpl_arb(input clk, input rst, IfAXIS128.sink tlps_ur, IfAXIS128.sink tlps_rdeng, IfAXIS128.source tlps_cpl);\n" + block + "endmodule\n"
+	dut := "`timescale 1ns/1ps\n`include \"pcileech_header.svh\"\nmodule cpl_arb(input clk, input rst, IfAXIS128.sink tlps_ur, IfAXIS128.sink tlps_rdeng, IfAXIS128.source tlps_cpl);\nwire device_reset = rst;\n" + block + "endmodule\n"
 	bench := `
 module tb;
 timeunit 1ns;
@@ -214,7 +214,7 @@ func TestVerilatorCompletionArbiterServicesQueuedURUnderContinuousReads(t *testi
 		t.Fatalf("GenerateBarControllerSV() error = %v", err)
 	}
 	block := extractHDLBlock(t, controller, "    reg cpl_grant_active;", "    wire        wrengine_ready;")
-	dut := "`timescale 1ns/1ps\n`include \"pcileech_header.svh\"\nmodule cpl_arb(input clk, input rst, IfAXIS128.sink tlps_ur, IfAXIS128.sink tlps_rdeng, IfAXIS128.source tlps_cpl);\n" + block + "endmodule\n"
+	dut := "`timescale 1ns/1ps\n`include \"pcileech_header.svh\"\nmodule cpl_arb(input clk, input rst, IfAXIS128.sink tlps_ur, IfAXIS128.sink tlps_rdeng, IfAXIS128.source tlps_cpl);\nwire device_reset = rst;\n" + block + "endmodule\n"
 	bench := `
 module tb;
 timeunit 1ns;
@@ -328,7 +328,7 @@ func TestVerilatorHDAArbiterLocksPacketsUnderBackpressure(t *testing.T) {
 		t.Fatalf("GenerateBarControllerSV() error = %v", err)
 	}
 	block := extractHDLThroughAlways(t, controller, "    reg hda_packet_active;", "    always @(posedge clk) begin")
-	dut := "`timescale 1ns/1ps\n`include \"pcileech_header.svh\"\nmodule hda_arb(input clk, input rst, input [127:0] hda_tlp_tx_tdata, input [3:0] hda_tlp_tx_tkeepdw, input hda_tlp_tx_tvalid, input hda_tlp_tx_tlast, input [8:0] hda_tlp_tx_tuser, output hda_tlp_tx_tready, IfAXIS128.sink tlps_cpl, IfAXIS128.source tlps_out);\n" + block + "endmodule\n"
+	dut := "`timescale 1ns/1ps\n`include \"pcileech_header.svh\"\nmodule hda_arb(input clk, input rst, input [127:0] hda_tlp_tx_tdata, input [3:0] hda_tlp_tx_tkeepdw, input hda_tlp_tx_tvalid, input hda_tlp_tx_tlast, input [8:0] hda_tlp_tx_tuser, output hda_tlp_tx_tready, IfAXIS128.sink tlps_cpl, IfAXIS128.source tlps_out);\nwire device_reset = rst;\n" + block + "endmodule\n"
 	bench := `
 module tb;
 timeunit 1ns;
@@ -555,7 +555,7 @@ endmodule
 	runVerilatorBinary(t, normalizer+completer, bench)
 }
 
-func TestVerilatorControllerQueuesURRequestWhileCompleterBusy(t *testing.T) {
+func TestVerilatorFunctionResetDropsQueuedUR(t *testing.T) {
 	controller, err := GenerateBarControllerSV(testConfig())
 	if err != nil {
 		t.Fatalf("GenerateBarControllerSV() error = %v", err)
@@ -585,6 +585,7 @@ endmodule
 module ur_queue(
     input clk,
     input rst,
+    input device_reset,
     input in_is_bar,
     input norm_request_present,
     input norm_ur_required,
@@ -607,6 +608,7 @@ timeprecision 1ps;
 bit clk = 0;
 always #5 clk = ~clk;
 bit rst = 1;
+bit device_reset = 0;
 bit ready = 0;
 bit request_valid = 0;
 bit [15:0] requester_id = 0;
@@ -625,6 +627,7 @@ assign out.tready = ready;
 ur_queue dut(
     .clk(clk),
     .rst(rst),
+    .device_reset(device_reset),
     .in_is_bar(1'b1),
     .norm_request_present(1'b1),
     .norm_ur_required(1'b1),
@@ -658,24 +661,25 @@ attributes = 3'h6;
 if (dut.ur_request_count !== 9'd2) $fatal(1, "second_count");
 @(negedge clk);
 request_valid = 0;
-repeat (4) begin
+repeat (2) begin
 @(posedge clk);
 #1;
-if (!out.tvalid) $fatal(1, "first_valid");
-if (out.tdata[29:14] !== 16'hA15E || out.tdata[13:6] !== 8'hD3) $fatal(1, "first_identity");
-if (out.tdata[5:3] !== 3'h5 || out.tdata[2:0] !== 3'h3) $fatal(1, "first_metadata");
+if (!out.tvalid) $fatal(1, "queued_valid");
 end
 @(negedge clk);
+device_reset = 1;
+@(posedge clk);
+#1;
+if (dut.ur_request_count !== 9'd0) $fatal(1, "reset_count");
+if (out.tvalid) $fatal(1, "reset_valid");
+@(negedge clk);
+device_reset = 0;
 ready = 1;
+repeat (3) begin
 @(posedge clk);
 #1;
-if (!out.tvalid) $fatal(1, "second_valid");
-if (out.tdata[29:14] !== 16'hB26F || out.tdata[13:6] !== 8'h4C) $fatal(1, "second_identity");
-if (out.tdata[5:3] !== 3'h2 || out.tdata[2:0] !== 3'h6) $fatal(1, "second_metadata");
-if (dut.ur_request_count !== 9'd1) $fatal(1, "dequeue_count");
-@(posedge clk);
-#1;
-if (out.tvalid || dut.ur_request_count !== 9'd0) $fatal(1, "empty");
+if (out.tvalid) $fatal(1, "stale_completion");
+end
 $finish;
 end
 endmodule

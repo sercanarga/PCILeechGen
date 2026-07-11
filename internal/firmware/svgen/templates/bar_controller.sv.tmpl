@@ -206,7 +206,7 @@ module pcileech_tlps128_bar_controller(
         .READ_COMPLETION_BOUNDARY ( {{ .ResolvedReadCompletionBoundaryBytes }} ),
         .MAX_PAYLOAD_BYTES         ( {{ .ResolvedMaxPayloadBytes }} )
     ) i_pcileech_tlps128_bar_rdengine(
-        .rst                              ( rst                              ),
+        .rst                              ( device_reset                     ),
         .clk                              ( clk                              ),
         .pcie_id                          ( pcie_id                          ),
         .tlps_in_valid                    ( tlps_in.tvalid && in_is_bar && in_is_rd ),
@@ -237,7 +237,7 @@ module pcileech_tlps128_bar_controller(
         .READ_COMPLETION_BOUNDARY ( {{ .ResolvedReadCompletionBoundaryBytes }} ),
         .MAX_PAYLOAD_BYTES         ( {{ .ResolvedMaxPayloadBytes }} )
     ) i_pcileech_tlps128_bar_rdengine(
-        .rst                              ( rst                              ),
+        .rst                              ( device_reset                     ),
         .clk                              ( clk                              ),
         .pcie_id                          ( pcie_id                          ),
         .tlps_in_valid                    ( tlps_in.tvalid && in_is_bar && in_is_rd ),
@@ -277,7 +277,7 @@ module pcileech_tlps128_bar_controller(
                               ((ur_request_count != 9'd256) || ur_request_dequeue);
 
     always @(posedge clk) begin
-        if (rst) begin
+        if (device_reset) begin
             ur_request_read_ptr  <= 8'd0;
             ur_request_write_ptr <= 8'd0;
             ur_request_count     <= 9'd0;
@@ -302,7 +302,7 @@ module pcileech_tlps128_bar_controller(
     end
 
     pcileech_tlp_ur_completer i_tlp_ur_completer(
-        .rst           ( rst                                          ),
+        .rst           ( device_reset                                 ),
         .clk           ( clk                                          ),
         .pcie_id       ( pcie_id                                      ),
         .request_valid ( ur_request_count != 9'd0                     ),
@@ -333,7 +333,7 @@ module pcileech_tlps128_bar_controller(
     assign tlps_rdeng.tready = tlps_cpl.tready && !cpl_select_ur;
 
     always @(posedge clk) begin
-        if (rst) begin
+        if (device_reset) begin
             cpl_grant_active <= 1'b0;
             cpl_grant_ur     <= 1'b0;
             cpl_rr_ur        <= 1'b0;
@@ -1184,7 +1184,7 @@ module pcileech_tlps128_bar_controller(
     assign tlps_cpl.tready   = tlps_out.tready && !hda_select_dma;
 
     always @(posedge clk) begin
-        if (rst) begin
+        if (device_reset) begin
             hda_packet_active     <= 1'b0;
             hda_packet_select_dma <= 1'b0;
             hda_rr_dma            <= 1'b1;
