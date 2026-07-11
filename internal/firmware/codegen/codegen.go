@@ -48,7 +48,7 @@ func GenerateConfigSpaceCOE(cs *pci.ConfigSpace) string {
 // GenerateWritemaskCOE outputs the writemask COE (1=writable, 0=read-only).
 // Shadow BRAM is the sole read source under cfgtlp_zero=0, so masks match BAR
 // sizes (sizing probes return size-encoded values); identity regs stay read-only.
-func GenerateWritemaskCOE(cs *pci.ConfigSpace) string {
+func GenerateWritemask(cs *pci.ConfigSpace) []uint32 {
 	masks := make([]uint32, shadowCfgSpaceWords)
 
 	// 0x40-0xFF capabilities: fully writable. Locking here would desync shadow BRAM from the IP core.
@@ -94,13 +94,18 @@ func GenerateWritemaskCOE(cs *pci.ConfigSpace) string {
 	masks[14] = 0x00000000 // 0x38: reserved
 	masks[15] = 0x000000FF // 0x3C: IntLine writable, IntPin/MinGnt/MaxLat RO
 
+	return masks
+}
+
+// GenerateWritemaskCOE outputs the writemask COE (1=writable, 0=read-only).
+func GenerateWritemaskCOE(cs *pci.ConfigSpace) string {
 	return formatCOE(
 		"; PCILeechGen - Configuration Space Write Mask (4KB shadow)\n"+
 			"; 1 = writable bit, 0 = read-only bit\n"+
 			"; BAR masks match scrubbed BAR sizes for correct BAR sizing\n"+
 			"; Identity registers (VID/DID, ClassCode, SubsysIDs) are read-only\n"+
 			";\n",
-		masks,
+		GenerateWritemask(cs),
 	)
 }
 

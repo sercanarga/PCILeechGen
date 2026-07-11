@@ -17,15 +17,16 @@ import (
 )
 
 type mmioTraceOptions struct {
-	bdf        string
-	duration   time.Duration
-	barIndex   int
-	barSize    int
-	barBase    string
-	classCode  string
-	jsonOutput bool
-	outputFile string
-	traceFile  string
+	bdf               string
+	duration          time.Duration
+	barIndex          int
+	barSize           int
+	barBase           string
+	classCode         string
+	jsonOutput        bool
+	outputFile        string
+	traceFile         string
+	compareTraceFiles []string
 }
 
 var mmioTraceOpts mmioTraceOptions
@@ -69,6 +70,17 @@ Example:
 		if err != nil {
 			return err
 		}
+		traces := []*mmio.TraceResult{trace}
+		for _, path := range mmioTraceOpts.compareTraceFiles {
+			opts := mmioTraceOpts
+			opts.traceFile = path
+			other, err := loadMMIOTrace(opts, barBase)
+			if err != nil {
+				return err
+			}
+			traces = append(traces, other)
+		}
+		comparison := mmio.CompareTraces(traces)
 
 		pattern := mmio.Analyze(trace)
 		profile := behavior.FromMMIOTrace(trace, classCode)
@@ -80,6 +92,7 @@ Example:
 				"analysis":         pattern,
 				"behavior_profile": profile,
 				"timing_histogram": timing,
+				"comparison":       comparison,
 			}
 			enc := json.NewEncoder(cmd.OutOrStdout())
 			enc.SetIndent("", "  ")
@@ -88,6 +101,9 @@ Example:
 			}
 		} else {
 			printMMIOTraceReport(cmd.OutOrStdout(), trace, pattern, profile, timing)
+			if len(mmioTraceOpts.compareTraceFiles) > 0 {
+				printMMIOTraceComparison(cmd.OutOrStdout(), comparison)
+			}
 		}
 
 		if mmioTraceOpts.outputFile != "" {
@@ -201,6 +217,15 @@ func printMMIOTraceReport(out io.Writer, trace *mmio.TraceResult, pattern *mmio.
 	fmt.Fprintf(out, "Max cycles: %d\n", timing.MaxCycles)
 }
 
+func printMMIOTraceComparison(out io.Writer, comparison []mmio.RegisterComparison) {
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, color.Header("MMIO Trace Comparison"))
+	fmt.Fprintln(out, "Offset     Reads  Writes  Classification")
+	for _, reg := range comparison {
+		fmt.Fprintf(out, "0x%08x %-6d %-7d %s\n", reg.Offset, reg.Reads, reg.Writes, reg.Classification)
+	}
+}
+
 func init() {
 	mmioTraceCmd.Flags().StringVar(&mmioTraceOpts.bdf, "bdf", "", "device BDF address (e.g. 0000:03:00.0)")
 	mmioTraceCmd.Flags().DurationVar(&mmioTraceOpts.duration, "duration", 5*time.Second, "trace length (e.g. 5s, 1m)")
@@ -210,6 +235,7 @@ func init() {
 	mmioTraceCmd.Flags().StringVar(&mmioTraceOpts.classCode, "class-code", "", "PCI class code in hex (e.g. 0x010802)")
 	mmioTraceCmd.Flags().StringVar(&mmioTraceOpts.outputFile, "output", "", "save raw trace JSON to file")
 	mmioTraceCmd.Flags().StringVar(&mmioTraceOpts.traceFile, "trace-file", "", "analyze an existing mmiotrace text file instead of capturing live")
+	mmioTraceCmd.Flags().StringSliceVar(&mmioTraceOpts.compareTraceFiles, "compare-trace", nil, "additional mmiotrace text file to compare (repeatable)")
 	mmioTraceCmd.Flags().BoolVar(&mmioTraceOpts.jsonOutput, "json", false, "emit machine-readable report")
 	rootCmd.AddCommand(mmioTraceCmd)
 }

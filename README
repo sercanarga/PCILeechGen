@@ -90,6 +90,15 @@ COMMANDS
     pcileechgen mmio-trace --trace-file mmiotrace.txt --bar-base 0xf7800000 \
       --bar-index 2 --bar-size 4096 --class-code 0x010802 --json
 
+  Donor analysis and capability-chain validation:
+    pcileechgen validate --json device_context.json --output-dir pcileech_datastore \
+      --report-json donor_report.json
+
+  Compare repeated MMIO captures to identify stable, changing, initialization,
+  and read-after-write registers:
+    pcileechgen mmio-trace --trace-file first.log --compare-trace second.log \
+      --bar-base 0xf7800000 --bar-index 2 --bar-size 4096
+
 
 FEATURES
 --------

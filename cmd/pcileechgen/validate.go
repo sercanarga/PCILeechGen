@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -20,6 +21,7 @@ import (
 var validateJSONPath string
 var validateOutputDir string
 var validateBoard string
+var validateReportJSON string
 
 // validator bundles state for a single validation run.
 type validator struct {
@@ -50,6 +52,17 @@ Example:
 		}
 		fmt.Printf("Loaded donor context: %s\n\n",
 			color.Bold(fmt.Sprintf("%04x:%04x (rev %02x)", ctx.Device.VendorID, ctx.Device.DeviceID, ctx.Device.RevisionID)))
+		report := buildDonorReport(ctx)
+		printDonorReport(os.Stdout, report)
+		if validateReportJSON != "" {
+			data, marshalErr := json.MarshalIndent(report, "", "  ")
+			if marshalErr != nil {
+				return fmt.Errorf("encoding donor report: %w", marshalErr)
+			}
+			if writeErr := os.WriteFile(validateReportJSON, append(data, '\n'), 0o644); writeErr != nil {
+				return fmt.Errorf("writing donor report: %w", writeErr)
+			}
+		}
 
 		var b *board.Board
 		if validateBoard != "" {
@@ -89,6 +102,7 @@ Example:
 		v.validateIdentity()
 		v.validateOutputFiles()
 		v.validateSVIDs()
+		v.validateCapabilityChains()
 		v.validateFormats()
 
 		// Print results
@@ -225,6 +239,12 @@ func (v *validator) validateSVIDs() {
 	}
 }
 
+// validateCapabilityChains checks donor capability links, BARs, and MSI-X placement.
+func (v *validator) validateCapabilityChains() {
+	v.result.Failed = append(v.result.Failed, pci.ValidateCapabilityChains(v.ctx.ConfigSpace)...)
+	v.result.Failed = append(v.result.Failed, donor.ValidateDeviceLayout(v.ctx)...)
+}
+
 // validateFormats checks COE file format validity.
 func (v *validator) validateFormats() {
 	for _, coeName := range []string{"pcileech_cfgspace.coe", "pcileech_cfgspace_writemask.coe", "pcileech_bar_zero4k.coe"} {
@@ -243,6 +263,7 @@ func init() {
 	validateCmd.Flags().StringVar(&validateJSONPath, "json", "", "path to device_context.json (required)")
 	validateCmd.Flags().StringVar(&validateOutputDir, "output-dir", ".", "path to firmware output directory")
 	validateCmd.Flags().StringVar(&validateBoard, "board", "", "target FPGA board (for exact build-matching validation)")
+	validateCmd.Flags().StringVar(&validateReportJSON, "report-json", "", "write donor analysis report as JSON")
 	_ = validateCmd.MarkFlagRequired("json")
 	rootCmd.AddCommand(validateCmd)
 }

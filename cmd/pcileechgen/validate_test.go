@@ -6,6 +6,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/sercanarga/pcileechgen/internal/donor"
 	"github.com/sercanarga/pcileechgen/internal/firmware/codegen"
 	"github.com/sercanarga/pcileechgen/internal/firmware/output"
 	"github.com/sercanarga/pcileechgen/internal/pci"
@@ -37,5 +38,23 @@ func TestValidateCOEFiles_ConfigSpaceMismatchFails(t *testing.T) {
 	}
 	if len(v.result.Warnings) != 0 {
 		t.Fatalf("warnings = %v, want none", v.result.Warnings)
+	}
+}
+
+func TestValidateCapabilityChainsFailsMalformedDonor(t *testing.T) {
+	cs := pci.NewConfigSpace()
+	cs.WriteU16(0x06, 0x0010)
+	cs.WriteU8(0x34, 0x40)
+	cs.WriteU8(0x40, pci.CapIDPowerManagement)
+	cs.WriteU8(0x41, 0x40)
+	v := &validator{
+		ctx:    &donor.DeviceContext{ConfigSpace: cs},
+		result: &output.ValidationResult{},
+	}
+
+	v.validateCapabilityChains()
+
+	if !slices.Contains(v.result.Failed, "standard capability loop at 0x040") {
+		t.Fatalf("failed validations = %v", v.result.Failed)
 	}
 }
