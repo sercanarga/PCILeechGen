@@ -9,11 +9,15 @@ import (
 // pcileech_nvme_admin_responder and drives a realistic admin-command flow:
 // host memory (ASQ/ACQ) is modeled as an SV array, doorbells submit SQEs, the
 // tb short-circuits DMA by feeding SQE DWORDs on the read port and capturing
-// CQE DWORDs on the write port. Coverage:
+// CQE DWORDs on the write port, and DMA write beats are written back into
+// host_mem so data payloads can be inspected. Coverage:
 //   - Get Features with an unsupported FID  -> INVALID_FIELD (0x0002)
 //   - Identify CNS=0x01                     -> SUCCESS (0x0000)
 //   - Create I/O CQ / Create I/O SQ         -> SUCCESS (gates the MDTS path)
 //   - Oversized I/O read (nlb=64 -> 8320 DW > MAX_XFER_DW=8192) -> INVALID_FIELD
+//   - Get Log Page LID=0x02 (SMART/Health)  -> SUCCESS, log-page DW0/DW1/DW36
+//     content asserted against the LOG_PAGE_SMART template
+//   - Asynchronous Event Request (opc 0x0C) -> NO synchronous CQE, returns idle
 //
 // NVME_SC_INVALID_FIELD = 15'h0002. The CQE status lives in DWORD3[31:17].
 func nvmeAdminBehaviorBench() string {
@@ -123,6 +127,7 @@ end
 // CQE status capture: the status DWORD is CQE DW3 (addr offset +12, i.e.
 // addr[3:2]==2'b11) written to the ACQ (base 0x2000) or IOCQ (base 0x4000).
 integer cqe_count = 0;
+integer cqe_snapshot = 0;
 reg [31:0] last_cqe_status = 32'h0;
 always @(posedge clk) begin
     if (!rst && dma_wr_valid && dma_wr_addr[3:2] == 2'b11 &&
@@ -130,6 +135,14 @@ always @(posedge clk) begin
         last_cqe_status <= dma_wr_data;
         cqe_count <= cqe_count + 1;
     end
+end
+
+// Host memory write-back: capture every DMA write beat into host_mem so that
+// data payloads (Get Log Page, Identify) landed in host RAM can be inspected
+// after the command completes. Byte-addressed; DWORD index = addr[15:2].
+always @(posedge clk) begin
+    if (!rst && dma_wr_valid)
+        host_mem[dma_wr_addr[15:2]] <= dma_wr_data;
 end
 
 pcileech_nvme_admin_responder responder (
@@ -296,6 +309,43 @@ initial begin
              32'h0, 32'h0, 32'h00000040);
     ring_sq(16'd1, 16'd1);
     wait_cqe(15'h0002);
+
+    // (6) Get Log Page LID=0x02 (SMART/Health) -> SUCCESS. 512-byte page to 0x6000.
+    //     cdw10 = NUMDL(127)<<16 | LID(0x02) = 0x007F0002. Assert the responder
+    //     actually serves real log-page content (not zeros): DW1 is the hardcoded
+    //     spare threshold 0x0A, DW0 carries avail_spare/temp/warning, DW36 holds
+    //     the config-fed unsafe-shutdown count.
+    poke_sqe(16'h440, 8'h02, 32'h0,
+             32'h00006000, 32'h0, 32'h0, 32'h0,
+             32'h007F0002, 32'h0, 32'h0);
+    ring_sq(16'd0, 16'd5);
+    wait_cqe(15'h0000);
+    #1;
+    // DW0 = {avail_spare=100, smart_temp_k[15:0], warning[7:0]}. thermal_load
+    // resets to 0x08 so smart_temp_k = 303 + (8>>3) = 304 = 0x0130; warning=0
+    // (304K < 343K WCTEMP and config MediaErrors=0).
+    if (host_mem[16'h1800] !== 32'h64013000) $fatal(5, "smart log DW0 mismatch");
+    if (host_mem[16'h1801] !== 32'h0000000A) $fatal(6, "smart log DW1 spare threshold");
+    if (host_mem[16'h1824] !== 32'h00000003) $fatal(7, "smart log DW36 unsafe shutdowns");
+
+    // (7) Asynchronous Event Request (opc 0x0C). Must NOT complete synchronously:
+    //     the responder registers the AER and returns to idle without posting a
+    //     CQE. The async completion (S_AER_POST) only fires when
+    //     smart_warning_byte != 0, which needs temperature >= 343K. But
+    //     smart_temp_k = 303 + thermal_load[7:3] and thermal_load is an 8-bit
+    //     counter (max 255 -> temp max 334K), so the thermal trip is unreachable
+    //     from a self-contained testbench without $root-force hacks; and
+    //     stat_media_errors is config-only (0 here) and never incremented. We
+    //     therefore assert only the no-immediate-CQE property.
+    poke_sqe(16'h450, 8'h0C, 32'h0,
+             32'h0, 32'h0, 32'h0, 32'h0,
+             32'h0, 32'h0, 32'h0);
+    cqe_snapshot = cqe_count;
+    ring_sq(16'd0, 16'd6);
+    repeat (2000) @(posedge clk);
+    if (cqe_count !== cqe_snapshot) $fatal(8, "AER posted a synchronous CQE");
+    #1;
+    if (dbg_state !== 8'd0) $fatal(9, "AER did not return to idle");
 
     // Responder must return to S_IDLE (8'd0) after the flow.
     repeat (8) @(posedge clk);
