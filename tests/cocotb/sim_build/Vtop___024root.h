@@ -288,9 +288,10 @@ class alignas(VL_CACHE_LINE_BYTES) Vtop___024root final {
         CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_pcileech_tlps128_bar_rdengine__DOT__i_fifo_134_134_clk1_bar_rdrsp__DOT__full;
         CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_pcileech_tlps128_bar_rdengine__DOT__i_fifo_134_134_clk1_bar_rdrsp__DOT__empty;
         CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_pcileech_tlps128_bar_rdengine__DOT__i_fifo_134_134_clk1_bar_rdrsp__DOT__prog_empty;
-        CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_pcileech_tlps128_bar_rdengine__DOT__i_fifo_134_134_clk1_bar_rdrsp__DOT__valid;
+        CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_pcileech_tlps128_bar_rdengine__DOT__i_fifo_134_134_clk1_bar_rdrsp__DOT__prog_full;
     };
     struct {
+        CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_pcileech_tlps128_bar_rdengine__DOT__i_fifo_134_134_clk1_bar_rdrsp__DOT__valid;
         CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_tlp_ur_completer__DOT__rst;
         CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_tlp_ur_completer__DOT__clk;
         CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_tlp_ur_completer__DOT__request_valid;
@@ -354,9 +355,9 @@ class alignas(VL_CACHE_LINE_BYTES) Vtop___024root final {
         CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_bar0__DOT__rd_rsp_valid;
         CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_bar0__DOT__wr_in_range;
         CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_bar0__DOT__rd_in_range;
-        CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_bar0__DOT__cc_en_prev;
     };
     struct {
+        CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_bar0__DOT__cc_en_prev;
         CData/*3:0*/ tb_top__DOT__i_bar__DOT__i_bar0__DOT__csts_transition_cnt;
         CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_bar0__DOT__csts_rdy_pending;
         CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_bar0__DOT__rd_req_valid_d1;
@@ -420,9 +421,9 @@ class alignas(VL_CACHE_LINE_BYTES) Vtop___024root final {
         CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_nvme_responder__DOT__dma_enabled;
         CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_nvme_responder__DOT__cc_en;
         CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_nvme_responder__DOT__cc_enable_wr;
-        CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_nvme_responder__DOT__cc_disable_wr;
     };
     struct {
+        CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_nvme_responder__DOT__cc_disable_wr;
         CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_nvme_responder__DOT__doorbell_wr;
         CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_nvme_responder__DOT__doorbell_is_cq;
         CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_nvme_responder__DOT__irq_delivery_valid;
@@ -486,9 +487,9 @@ class alignas(VL_CACHE_LINE_BYTES) Vtop___024root final {
         CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_nvme_responder__DOT__cc_start_event;
         CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_nvme_responder__DOT__cc_stop_event;
         CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_nvme_responder__DOT__cc_reset_event;
-        CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_nvme_responder__DOT__aer_registered;
     };
     struct {
+        CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_nvme_responder__DOT__aer_registered;
         CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_nvme_responder__DOT__aer_event_pending;
         CData/*1:0*/ tb_top__DOT__i_bar__DOT__i_nvme_responder__DOT__io_dir;
         CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_nvme_responder__DOT__prp_cached_valid;
@@ -552,9 +553,9 @@ class alignas(VL_CACHE_LINE_BYTES) Vtop___024root final {
         CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_nvme_bram_disk__DOT__i_bank0__DOT__en;
         CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_nvme_bram_disk__DOT__i_bank0__DOT__we;
         CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_nvme_bram_disk__DOT__i_bank1__DOT__clk;
-        CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_nvme_bram_disk__DOT__i_bank1__DOT__en;
     };
     struct {
+        CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_nvme_bram_disk__DOT__i_bank1__DOT__en;
         CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_nvme_bram_disk__DOT__i_bank1__DOT__we;
         CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_nvme_bram_disk__DOT__i_bank2__DOT__clk;
         CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_nvme_bram_disk__DOT__i_bank2__DOT__en;
@@ -618,14 +619,15 @@ class alignas(VL_CACHE_LINE_BYTES) Vtop___024root final {
         CData/*3:0*/ tb_top__DOT__i_bar__DOT__i_nvme_dma_bridge__DOT__i_dma_tag_service__DOT__terminal_index;
         CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_nvme_dma_bridge__DOT__i_dma_tag_service__DOT__outcome_ready_i;
         CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_fifo_nvme_dma__DOT__srst;
-        CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_fifo_nvme_dma__DOT__clk;
     };
     struct {
+        CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_fifo_nvme_dma__DOT__clk;
         CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_fifo_nvme_dma__DOT__wr_en;
         CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_fifo_nvme_dma__DOT__rd_en;
         CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_fifo_nvme_dma__DOT__full;
         CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_fifo_nvme_dma__DOT__empty;
         CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_fifo_nvme_dma__DOT__prog_empty;
+        CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_fifo_nvme_dma__DOT__prog_full;
         CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_fifo_nvme_dma__DOT__valid;
         CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_bar1__DOT__rst;
         CData/*0:0*/ tb_top__DOT__i_bar__DOT__i_bar1__DOT__clk;
@@ -670,14 +672,23 @@ class alignas(VL_CACHE_LINE_BYTES) Vtop___024root final {
         CData/*6:0*/ __Vfunc_tb_top__DOT__i_bar__DOT__i_nvme_bram_disk__DOT__backing_index__38__word_off;
         CData/*7:0*/ __Vfunc_tb_top__DOT__i_bar__DOT__i_nvme_bram_disk__DOT__backing_index__38____VlefCall_0__backing_slot;
         CData/*7:0*/ __Vfunc_tb_top__DOT__i_bar__DOT__i_nvme_bram_disk__DOT__backing_slot__39__Vfuncout;
-        CData/*0:0*/ __VdfgRegularize_hebeb780c_0_7;
+        CData/*0:0*/ __VdfgRegularize_hebeb780c_0_6;
+        CData/*0:0*/ __Vtrigprevexpr___TOP__tb_top__DOT__i_bar__DOT__cpl_select_ur__0;
+        CData/*0:0*/ __Vtrigprevexpr___TOP__tb_top__DOT__i_bar__DOT__i_fifo_nvme_dma__DOT__rd_en__0;
+        CData/*0:0*/ __VstlDidInit;
         CData/*0:0*/ __VstlFirstIteration;
         CData/*0:0*/ __VstlPhaseResult;
+        CData/*0:0*/ __VicoDidInit;
         CData/*0:0*/ __VicoFirstIteration;
         CData/*0:0*/ __VicoPhaseResult;
+        CData/*0:0*/ __Vtrigprevexpr___TOP__tb_top__DOT__i_bar__DOT__cpl_select_ur__1;
+        CData/*0:0*/ __Vtrigprevexpr___TOP__tb_top__DOT__i_bar__DOT__i_fifo_nvme_dma__DOT__rd_en__1;
         CData/*0:0*/ __Vtrigprevexpr___TOP__tb_top__DOT__i_bar__DOT__clk__0;
         CData/*0:0*/ __Vtrigprevexpr___TOP__tb_top__DOT__i_bar__DOT__i_lifecycle_service__DOT__clk__0;
+    };
+    struct {
         CData/*0:0*/ __Vtrigprevexpr___TOP__tb_top__DOT__i_bar__DOT__i_pcileech_tlps128_bar_rdengine__DOT__clk__0;
+        CData/*0:0*/ __Vtrigprevexpr___TOP__tb_top__DOT__i_bar__DOT__i_pcileech_tlps128_bar_rdengine__DOT__i_fifo_134_134_clk1_bar_rdrsp__DOT__clk__0;
         CData/*0:0*/ __Vtrigprevexpr___TOP__tb_top__DOT__i_bar__DOT__i_tlp_ur_completer__DOT__clk__0;
         CData/*0:0*/ __Vtrigprevexpr___TOP__tb_top__DOT__i_bar__DOT__i_pcileech_tlps128_bar_wrengine__DOT__clk__0;
         CData/*0:0*/ __Vtrigprevexpr___TOP__tb_top__DOT__i_bar__DOT__i_bar_rsp_arbiter__DOT__clk__0;
@@ -685,8 +696,6 @@ class alignas(VL_CACHE_LINE_BYTES) Vtop___024root final {
         CData/*0:0*/ __Vtrigprevexpr___TOP__tb_top__DOT__i_bar__DOT__i_latency_emu__DOT__clk__0;
         CData/*0:0*/ __Vtrigprevexpr___TOP__tb_top__DOT__i_bar__DOT__i_nvme_interrupt_service__DOT__clk__0;
         CData/*0:0*/ __Vtrigprevexpr___TOP__tb_top__DOT__i_bar__DOT__i_nvme_responder__DOT__clk__0;
-    };
-    struct {
         CData/*0:0*/ __Vtrigprevexpr___TOP__tb_top__DOT__i_bar__DOT__i_nvme_bram_disk__DOT__clk__0;
         CData/*0:0*/ __Vtrigprevexpr___TOP__tb_top__DOT__i_bar__DOT__i_nvme_bram_disk__DOT__i_bank0__DOT__clk__0;
         CData/*0:0*/ __Vtrigprevexpr___TOP__tb_top__DOT__i_bar__DOT__i_nvme_bram_disk__DOT__i_bank1__DOT__clk__0;
@@ -694,6 +703,7 @@ class alignas(VL_CACHE_LINE_BYTES) Vtop___024root final {
         CData/*0:0*/ __Vtrigprevexpr___TOP__tb_top__DOT__i_bar__DOT__i_nvme_bram_disk__DOT__i_bank3__DOT__clk__0;
         CData/*0:0*/ __Vtrigprevexpr___TOP__tb_top__DOT__i_bar__DOT__i_nvme_dma_bridge__DOT__clk__0;
         CData/*0:0*/ __Vtrigprevexpr___TOP__tb_top__DOT__i_bar__DOT__i_nvme_dma_bridge__DOT__i_dma_tag_service__DOT__clk__0;
+        CData/*0:0*/ __Vtrigprevexpr___TOP__tb_top__DOT__i_bar__DOT__i_fifo_nvme_dma__DOT__clk__0;
         CData/*0:0*/ __VactPhaseResult;
         CData/*0:0*/ __VinactPhaseResult;
         CData/*0:0*/ __VnbaPhaseResult;
@@ -741,6 +751,8 @@ class alignas(VL_CACHE_LINE_BYTES) Vtop___024root final {
         SData/*10:0*/ tb_top__DOT__i_bar__DOT__i_pcileech_tlps128_bar_rdengine__DOT__norm_first_completion_dw;
         SData/*8:0*/ tb_top__DOT__i_bar__DOT__i_pcileech_tlps128_bar_rdengine__DOT__req_count;
         SData/*10:0*/ tb_top__DOT__i_bar__DOT__i_pcileech_tlps128_bar_rdengine__DOT__request_length_dw;
+    };
+    struct {
         SData/*10:0*/ tb_top__DOT__i_bar__DOT__i_pcileech_tlps128_bar_rdengine__DOT__remaining_dw;
         SData/*10:0*/ tb_top__DOT__i_bar__DOT__i_pcileech_tlps128_bar_rdengine__DOT__packet_length_dw;
         SData/*10:0*/ tb_top__DOT__i_bar__DOT__i_pcileech_tlps128_bar_rdengine__DOT__packet_remaining_dw;
@@ -749,10 +761,13 @@ class alignas(VL_CACHE_LINE_BYTES) Vtop___024root final {
         SData/*10:0*/ tb_top__DOT__i_bar__DOT__i_pcileech_tlps128_bar_rdengine__DOT__rd_rsp_dwlen;
         SData/*11:0*/ tb_top__DOT__i_bar__DOT__i_pcileech_tlps128_bar_rdengine__DOT__rd_rsp_byte_count;
         SData/*15:0*/ tb_top__DOT__i_bar__DOT__i_pcileech_tlps128_bar_rdengine__DOT__rd_rsp_requester;
+        SData/*10:0*/ tb_top__DOT__i_bar__DOT__i_pcileech_tlps128_bar_rdengine__DOT__i_fifo_134_134_clk1_bar_rdrsp__DOT__rd_data_count;
+        SData/*10:0*/ tb_top__DOT__i_bar__DOT__i_pcileech_tlps128_bar_rdengine__DOT__i_fifo_134_134_clk1_bar_rdrsp__DOT__wr_data_count;
+        SData/*10:0*/ tb_top__DOT__i_bar__DOT__i_pcileech_tlps128_bar_rdengine__DOT__i_fifo_134_134_clk1_bar_rdrsp__DOT__wr_ptr;
+        SData/*10:0*/ tb_top__DOT__i_bar__DOT__i_pcileech_tlps128_bar_rdengine__DOT__i_fifo_134_134_clk1_bar_rdrsp__DOT__rd_ptr;
+        SData/*10:0*/ tb_top__DOT__i_bar__DOT__i_pcileech_tlps128_bar_rdengine__DOT__i_fifo_134_134_clk1_bar_rdrsp__DOT__count;
         SData/*15:0*/ tb_top__DOT__i_bar__DOT__i_tlp_ur_completer__DOT__pcie_id;
         SData/*15:0*/ tb_top__DOT__i_bar__DOT__i_tlp_ur_completer__DOT__requester_id;
-    };
-    struct {
         SData/*8:0*/ tb_top__DOT__i_bar__DOT__i_tlp_ur_completer__DOT__request_count;
         SData/*8:0*/ tb_top__DOT__i_bar__DOT__i_pcileech_tlps128_bar_wrengine__DOT__f_tuser;
         SData/*15:0*/ tb_top__DOT__i_bar__DOT__i_latency_emu__DOT__thermal_counter;
@@ -802,6 +817,8 @@ class alignas(VL_CACHE_LINE_BYTES) Vtop___024root final {
         SData/*12:0*/ tb_top__DOT__i_bar__DOT__i_nvme_responder__DOT__id_rom_offset;
         SData/*11:0*/ tb_top__DOT__i_bar__DOT__i_nvme_responder__DOT__hour_second_count;
         SData/*15:0*/ tb_top__DOT__i_bar__DOT__i_nvme_responder__DOT__smart_temp_k;
+    };
+    struct {
         SData/*15:0*/ tb_top__DOT__i_bar__DOT__i_nvme_responder__DOT__timing_mix_lfsr__Vstatic__x;
         SData/*15:0*/ tb_top__DOT__i_bar__DOT__i_nvme_responder__DOT__aer_cid;
         SData/*15:0*/ tb_top__DOT__i_bar__DOT__i_nvme_bram_disk__DOT____VlemCall_3__lba_count_to_dw;
@@ -817,8 +834,6 @@ class alignas(VL_CACHE_LINE_BYTES) Vtop___024root final {
         SData/*15:0*/ tb_top__DOT__i_bar__DOT__i_nvme_bram_disk__DOT__pending_slot_dbg;
         SData/*12:0*/ tb_top__DOT__i_bar__DOT__i_nvme_bram_disk__DOT__i_bank0__DOT__addr;
         SData/*12:0*/ tb_top__DOT__i_bar__DOT__i_nvme_bram_disk__DOT__i_bank1__DOT__addr;
-    };
-    struct {
         SData/*12:0*/ tb_top__DOT__i_bar__DOT__i_nvme_bram_disk__DOT__i_bank2__DOT__addr;
         SData/*12:0*/ tb_top__DOT__i_bar__DOT__i_nvme_bram_disk__DOT__i_bank3__DOT__addr;
         SData/*15:0*/ tb_top__DOT__i_bar__DOT__i_nvme_dma_bridge__DOT__pcie_id;
@@ -835,6 +850,11 @@ class alignas(VL_CACHE_LINE_BYTES) Vtop___024root final {
         SData/*15:0*/ tb_top__DOT__i_bar__DOT__i_nvme_dma_bridge__DOT__i_dma_tag_service__DOT__cancel_reported;
         SData/*15:0*/ tb_top__DOT__i_bar__DOT__i_nvme_dma_bridge__DOT__i_dma_tag_service__DOT__cancel_report_pending;
         SData/*15:0*/ tb_top__DOT__i_bar__DOT__i_nvme_dma_bridge__DOT__i_dma_tag_service__DOT__terminal_pending;
+        SData/*10:0*/ tb_top__DOT__i_bar__DOT__i_fifo_nvme_dma__DOT__rd_data_count;
+        SData/*10:0*/ tb_top__DOT__i_bar__DOT__i_fifo_nvme_dma__DOT__wr_data_count;
+        SData/*10:0*/ tb_top__DOT__i_bar__DOT__i_fifo_nvme_dma__DOT__wr_ptr;
+        SData/*10:0*/ tb_top__DOT__i_bar__DOT__i_fifo_nvme_dma__DOT__rd_ptr;
+        SData/*10:0*/ tb_top__DOT__i_bar__DOT__i_fifo_nvme_dma__DOT__count;
         VlWide<4>/*127:0*/ tb_top__DOT__tlps_in_tdata;
         VlWide<4>/*127:0*/ tb_top__DOT__tlps_out_tdata;
         IData/*31:0*/ tb_top__DOT__i_bar__DOT__lifecycle_generation;
@@ -863,6 +883,8 @@ class alignas(VL_CACHE_LINE_BYTES) Vtop___024root final {
         IData/*31:0*/ tb_top__DOT__i_bar__DOT__nvme_disk_req_rdata;
         IData/*31:0*/ tb_top__DOT__i_bar__DOT__nvme_reg_cc;
         IData/*31:0*/ tb_top__DOT__i_bar__DOT__nvme_reg_aqa;
+    };
+    struct {
         IData/*31:0*/ tb_top__DOT__i_bar__DOT__nvme_reg_asq_lo;
         IData/*31:0*/ tb_top__DOT__i_bar__DOT__nvme_reg_asq_hi;
         IData/*31:0*/ tb_top__DOT__i_bar__DOT__nvme_reg_acq_lo;
@@ -883,8 +905,6 @@ class alignas(VL_CACHE_LINE_BYTES) Vtop___024root final {
         IData/*31:0*/ tb_top__DOT__i_bar__DOT__nvme_id_rom_data_r;
         VlWide<4>/*127:0*/ tb_top__DOT__i_bar__DOT__nvme_dma_fifo_tdata;
         IData/*31:0*/ tb_top__DOT__i_bar__DOT__i_lifecycle_service__DOT__generation;
-    };
-    struct {
         VlWide<4>/*127:0*/ tb_top__DOT__i_bar__DOT__i_tlp_normalizer__DOT__tlp_data;
         VlWide<3>/*87:0*/ tb_top__DOT__i_bar__DOT__i_pcileech_tlps128_bar_rdengine__DOT__rd_req_ctx;
         IData/*31:0*/ tb_top__DOT__i_bar__DOT__i_pcileech_tlps128_bar_rdengine__DOT__rd_req_addr;
@@ -929,6 +949,8 @@ class alignas(VL_CACHE_LINE_BYTES) Vtop___024root final {
         IData/*31:0*/ tb_top__DOT__i_bar__DOT__i_bar0__DOT__reg_0x00000008;
         IData/*31:0*/ tb_top__DOT__i_bar__DOT__i_bar0__DOT__reg_0x0000000C;
         IData/*31:0*/ tb_top__DOT__i_bar__DOT__i_bar0__DOT__reg_0x00000010;
+    };
+    struct {
         IData/*31:0*/ tb_top__DOT__i_bar__DOT__i_bar0__DOT__reg_0x00000014;
         IData/*31:0*/ tb_top__DOT__i_bar__DOT__i_bar0__DOT__reg_0x0000001C;
         IData/*31:0*/ tb_top__DOT__i_bar__DOT__i_bar0__DOT__reg_0x00000020;
@@ -949,8 +971,6 @@ class alignas(VL_CACHE_LINE_BYTES) Vtop___024root final {
         IData/*31:0*/ tb_top__DOT__i_bar__DOT__i_latency_emu__DOT__stored_data;
         IData/*31:0*/ tb_top__DOT__i_bar__DOT__i_latency_emu__DOT__prev_addr;
         IData/*18:0*/ tb_top__DOT__i_bar__DOT__i_latency_emu__DOT__timeout_counter;
-    };
-    struct {
         IData/*31:0*/ tb_top__DOT__i_bar__DOT__i_latency_emu__DOT__prng_s0;
         IData/*31:0*/ tb_top__DOT__i_bar__DOT__i_latency_emu__DOT__prng_s1;
         IData/*31:0*/ tb_top__DOT__i_bar__DOT__i_latency_emu__DOT__prng_s2;
@@ -995,6 +1015,8 @@ class alignas(VL_CACHE_LINE_BYTES) Vtop___024root final {
         IData/*31:0*/ tb_top__DOT__i_bar__DOT__i_nvme_responder__DOT__timing_wait_cycles;
         IData/*31:0*/ tb_top__DOT__i_bar__DOT__i_nvme_responder__DOT__stat_media_errors;
         IData/*31:0*/ tb_top__DOT__i_bar__DOT__i_nvme_responder__DOT__stat_error_log_entries;
+    };
+    struct {
         IData/*31:0*/ tb_top__DOT__i_bar__DOT__i_nvme_responder__DOT__stat_unsafe_shutdowns;
         IData/*31:0*/ tb_top__DOT__i_bar__DOT__i_nvme_responder__DOT__power_cycle_count;
         IData/*31:0*/ tb_top__DOT__i_bar__DOT__i_nvme_responder__DOT__power_on_hours;
@@ -1015,8 +1037,6 @@ class alignas(VL_CACHE_LINE_BYTES) Vtop___024root final {
         IData/*23:0*/ tb_top__DOT__i_bar__DOT__i_nvme_responder__DOT__io_total_dw;
         IData/*23:0*/ tb_top__DOT__i_bar__DOT__i_nvme_responder__DOT__io_dw_idx;
         IData/*31:0*/ tb_top__DOT__i_bar__DOT__i_nvme_responder__DOT__io_host_data;
-    };
-    struct {
         IData/*31:0*/ tb_top__DOT__i_bar__DOT__i_nvme_responder__DOT__prp_entry_lo;
         IData/*31:0*/ tb_top__DOT__i_bar__DOT__i_nvme_responder__DOT__prp_entry_hi;
         IData/*19:0*/ tb_top__DOT__i_bar__DOT__i_nvme_responder__DOT__prp_cached_index;
@@ -1061,6 +1081,8 @@ class alignas(VL_CACHE_LINE_BYTES) Vtop___024root final {
         IData/*31:0*/ tb_top__DOT__i_bar__DOT__i_nvme_dma_bridge__DOT__dbg_status;
         IData/*31:0*/ tb_top__DOT__i_bar__DOT__i_nvme_dma_bridge__DOT__rd_payload;
         IData/*31:0*/ tb_top__DOT__i_bar__DOT__i_nvme_dma_bridge__DOT__wr_data_hold;
+    };
+    struct {
         IData/*31:0*/ tb_top__DOT__i_bar__DOT__i_nvme_dma_bridge__DOT__wr_pending_data;
         IData/*31:0*/ tb_top__DOT__i_bar__DOT__i_nvme_dma_bridge__DOT__i_dma_tag_service__DOT__i;
         IData/*31:0*/ tb_top__DOT__i_bar__DOT__i_nvme_dma_bridge__DOT__i_dma_tag_service__DOT__scan_index;
@@ -1081,8 +1103,6 @@ class alignas(VL_CACHE_LINE_BYTES) Vtop___024root final {
         IData/*31:0*/ tb_top__DOT__i_bar__DOT__i_bar2__DOT__rd_req_addr;
         VlWide<3>/*87:0*/ tb_top__DOT__i_bar__DOT__i_bar2__DOT__rd_rsp_ctx;
         IData/*31:0*/ tb_top__DOT__i_bar__DOT__i_bar2__DOT__rd_rsp_data;
-    };
-    struct {
         IData/*31:0*/ tb_top__DOT__i_bar__DOT__i_bar3__DOT__wr_addr;
         IData/*31:0*/ tb_top__DOT__i_bar__DOT__i_bar3__DOT__wr_data;
         VlWide<3>/*87:0*/ tb_top__DOT__i_bar__DOT__i_bar3__DOT__rd_req_ctx;
@@ -1127,6 +1147,8 @@ class alignas(VL_CACHE_LINE_BYTES) Vtop___024root final {
         QData/*63:0*/ tb_top__DOT__i_bar__DOT__i_nvme_responder__DOT__cmd_prp1;
         QData/*63:0*/ tb_top__DOT__i_bar__DOT__i_nvme_responder__DOT__cmd_prp2;
         QData/*63:0*/ tb_top__DOT__i_bar__DOT__i_nvme_responder__DOT__cmd_slba;
+    };
+    struct {
         QData/*63:0*/ tb_top__DOT__i_bar__DOT__i_nvme_responder__DOT__cmd_nlb_count64;
         QData/*63:0*/ tb_top__DOT__i_bar__DOT__i_nvme_responder__DOT__last_error_count;
         QData/*63:0*/ tb_top__DOT__i_bar__DOT__i_nvme_responder__DOT__last_error_lba;
@@ -1147,8 +1169,6 @@ class alignas(VL_CACHE_LINE_BYTES) Vtop___024root final {
         QData/*63:0*/ tb_top__DOT__i_bar__DOT__i_nvme_responder__DOT__dsm_lba_value;
         QData/*63:0*/ tb_top__DOT__i_bar__DOT__i_nvme_responder__DOT__dsm_nlb64;
         QData/*63:0*/ tb_top__DOT__i_bar__DOT__i_nvme_responder__DOT__io_disk_lba;
-    };
-    struct {
         QData/*63:0*/ tb_top__DOT__i_bar__DOT__i_nvme_bram_disk__DOT__req_lba;
         QData/*63:0*/ tb_top__DOT__i_bar__DOT__i_nvme_bram_disk__DOT__pending_lba;
         QData/*63:0*/ tb_top__DOT__i_bar__DOT__i_nvme_bram_disk__DOT__clear_base_lba;
@@ -1191,7 +1211,10 @@ class alignas(VL_CACHE_LINE_BYTES) Vtop___024root final {
         VlUnpacked<CData/*6:0*/, 256> tb_top__DOT__i_bar__DOT__i_pcileech_tlps128_bar_rdengine__DOT__req_bar_fifo;
         VlUnpacked<SData/*12:0*/, 256> tb_top__DOT__i_bar__DOT__i_pcileech_tlps128_bar_rdengine__DOT__req_bc_fifo;
         VlUnpacked<SData/*10:0*/, 256> tb_top__DOT__i_bar__DOT__i_pcileech_tlps128_bar_rdengine__DOT__req_cpl_fifo;
+        VlUnpacked<VlWide<5>/*133:0*/, 1024> tb_top__DOT__i_bar__DOT__i_pcileech_tlps128_bar_rdengine__DOT__i_fifo_134_134_clk1_bar_rdrsp__DOT__mem;
         VlUnpacked<SData/*15:0*/, 256> tb_top__DOT__i_bar__DOT__i_tlp_ur_completer__DOT__requester_fifo;
+    };
+    struct {
         VlUnpacked<CData/*7:0*/, 256> tb_top__DOT__i_bar__DOT__i_tlp_ur_completer__DOT__tag_fifo;
         VlUnpacked<CData/*2:0*/, 256> tb_top__DOT__i_bar__DOT__i_tlp_ur_completer__DOT__tc_fifo;
         VlUnpacked<CData/*2:0*/, 256> tb_top__DOT__i_bar__DOT__i_tlp_ur_completer__DOT__attr_fifo;
@@ -1213,10 +1236,9 @@ class alignas(VL_CACHE_LINE_BYTES) Vtop___024root final {
         VlUnpacked<IData/*31:0*/, 8192> tb_top__DOT__i_bar__DOT__i_nvme_bram_disk__DOT__i_bank3__DOT__ram;
         VlUnpacked<IData/*23:0*/, 16> tb_top__DOT__i_bar__DOT__i_nvme_dma_bridge__DOT__i_dma_tag_service__DOT__age;
         VlUnpacked<CData/*1:0*/, 16> tb_top__DOT__i_bar__DOT__i_nvme_dma_bridge__DOT__i_dma_tag_service__DOT__terminal_status;
-    };
-    struct {
-        VlUnpacked<QData/*63:0*/, 1> __VstlTriggered;
-        VlUnpacked<QData/*63:0*/, 1> __VicoTriggered;
+        VlUnpacked<VlWide<5>/*133:0*/, 1024> tb_top__DOT__i_bar__DOT__i_fifo_nvme_dma__DOT__mem;
+        VlUnpacked<QData/*63:0*/, 2> __VstlTriggered;
+        VlUnpacked<QData/*63:0*/, 2> __VicoTriggered;
         VlUnpacked<QData/*63:0*/, 1> __VactTriggered;
         VlUnpacked<QData/*63:0*/, 1> __VactTriggeredAcc;
         VlUnpacked<QData/*63:0*/, 1> __VnbaTriggered;

@@ -3,7 +3,7 @@ TOPLEVEL_LANG ?= verilog
 
 OUT_DIR := out
 RTL := $(wildcard $(OUT_DIR)/*.sv) $(wildcard $(OUT_DIR)/src/pcileech_bar_impl_none.sv) $(wildcard $(OUT_DIR)/src/pcileech_bar_impl_zerowrite4k.sv) $(wildcard $(OUT_DIR)/src/pcileech_tlps128_bar_wrengine.sv)
-STUBS := ../../testdata/stubs/blackbox.sv fifo_stub.sv
+STUBS := cocotb_stubs.sv
 
 VERILOG_SOURCES := $(RTL) $(STUBS) tb_top.sv
 TOPLEVEL := tb_top

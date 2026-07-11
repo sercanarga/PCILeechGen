@@ -16,11 +16,12 @@ def mwr3(addr, data, tag=0, req_id=0):
     dw3 = data
     return dw0 | (dw1 << 32) | (dw2 << 64) | (dw3 << 96)
 
-async def send(dut, tdata):
+async def send(dut, tdata, bar=0):
+    tuser = 1 | (1 << (bar + 2))
     dut.tlps_in_tdata.value = tdata
     dut.tlps_in_tvalid.value = 1
     dut.tlps_in_tlast.value = 1
-    dut.tlps_in_tuser.value = 1
+    dut.tlps_in_tuser.value = tuser
     dut.tlps_in_tkeepdw.value = 0xF
     await RisingEdge(dut.clk)
     dut.tlps_in_tvalid.value = 0
