@@ -9,7 +9,7 @@ on:
 jobs:
   test:
     name: Test
-    runs-on: ubuntu-24.04  # pinned (not -latest): keeps apt verilator version stable across runs
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
@@ -44,7 +44,7 @@ jobs:
 
   hdl-lint:
     name: HDL Lint (Verilator)
-    runs-on: ubuntu-24.04  # pinned (not -latest): keeps apt verilator version stable across runs
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
