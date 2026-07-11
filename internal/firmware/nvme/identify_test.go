@@ -80,6 +80,35 @@ func TestIdentifyController_SQES(t *testing.T) {
 	}
 }
 
+func TestIdentifyController_MetadataConsistency(t *testing.T) {
+	id := BuildIdentifyData(sampleIDs(), nil, nil)
+
+	if got := binary.LittleEndian.Uint16(id.Controller[0x100:]); got != 0x0002 {
+		t.Fatalf("OACS = 0x%04X, want 0x0002", got)
+	}
+	if got := id.Controller[0x104]; got != 0x02 {
+		t.Fatalf("FRMW = 0x%02X, want 0x02", got)
+	}
+	if got := id.Controller[0x105]; got != 0x00 {
+		t.Fatalf("LPA = 0x%02X, want 0x00", got)
+	}
+	if got := id.Controller[0x106]; got != 0x00 {
+		t.Fatalf("ELPE = 0x%02X, want 0x00", got)
+	}
+	if got := id.Controller[0x108]; got != 0x00 {
+		t.Fatalf("AVSCC = 0x%02X, want 0x00", got)
+	}
+	if got := binary.LittleEndian.Uint16(id.Controller[0x10C:]); got != 358 {
+		t.Fatalf("CCTEMP = %d, want 358", got)
+	}
+	if got := id.Controller[0x15C]; got != 0x01 {
+		t.Fatalf("CNTRLTYPE = 0x%02X, want 0x01", got)
+	}
+	if got := binary.LittleEndian.Uint16(id.Controller[0x208:]); got != 0x000C {
+		t.Fatalf("ONCS = 0x%04X, want 0x000C", got)
+	}
+}
+
 func TestIdentifyController_CQES(t *testing.T) {
 	id := BuildIdentifyData(sampleIDs(), nil, nil)
 	cqes := id.Controller[0x201]
@@ -254,9 +283,9 @@ func TestBuildIdentifyData_UsesCapturedIdentity(t *testing.T) {
 func TestBuildIdentifyData_RawControllerClampsMDTSAndAlignsVER(t *testing.T) {
 	ids := sampleIDs()
 	raw := make([]byte, 4096)
-	raw[0x04D] = 6                                              // MDTS too large for backend
-	binary.LittleEndian.PutUint32(raw[0x050:], 0x00010300)      // donor VER 1.3 (would mismatch BAR)
-	binary.LittleEndian.PutUint16(raw[0x000:], 0xBEEF)          // donor VID (must be overridden)
+	raw[0x04D] = 6                                         // MDTS too large for backend
+	binary.LittleEndian.PutUint32(raw[0x050:], 0x00010300) // donor VER 1.3 (would mismatch BAR)
+	binary.LittleEndian.PutUint16(raw[0x000:], 0xBEEF)     // donor VID (must be overridden)
 	captured := &ControllerIdentity{RawControllerIdent: raw}
 
 	barData := make([]byte, 0x10)
@@ -404,10 +433,10 @@ func TestDoorbellStrideFromCAP(t *testing.T) {
 func TestBuildIdentifyData_RawControllerOverridesAllForced(t *testing.T) {
 	ids := sampleIDs()
 	raw := make([]byte, 4096)
-	binary.LittleEndian.PutUint16(raw[0x000:], 0xBEEF)                         // donor VID
-	binary.LittleEndian.PutUint16(raw[0x002:], 0xDEAD)                        // donor SSVID
-	binary.LittleEndian.PutUint32(raw[0x05C:], 0xCAFEBABE)                    // donor OAES
-	binary.LittleEndian.PutUint32(raw[0x060:], 0xFEEDFACE)                    // donor CTRATT
+	binary.LittleEndian.PutUint16(raw[0x000:], 0xBEEF)     // donor VID
+	binary.LittleEndian.PutUint16(raw[0x002:], 0xDEAD)     // donor SSVID
+	binary.LittleEndian.PutUint32(raw[0x05C:], 0xCAFEBABE) // donor OAES
+	binary.LittleEndian.PutUint32(raw[0x060:], 0xFEEDFACE) // donor CTRATT
 	captured := &ControllerIdentity{RawControllerIdent: raw}
 
 	id := BuildIdentifyData(ids, nil, captured)

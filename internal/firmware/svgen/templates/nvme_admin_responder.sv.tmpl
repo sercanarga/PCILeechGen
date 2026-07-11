@@ -20,6 +20,7 @@ module pcileech_nvme_admin_responder #(
 ) (
     input               rst,
     input               clk,
+    input tri1          dma_enabled,
 
     input               cc_en,
     input               cc_enable_wr,
@@ -36,12 +37,11 @@ module pcileech_nvme_admin_responder #(
     input [15:0]        doorbell_qid,
     input [15:0]        doorbell_val,
 
-    input               msix_enable,
-    input               msix_function_mask,
-    output [15:0]       msix_vector_select,
     input [63:0]        msix_vector_addr,
     input [31:0]        msix_vector_data,
-    input               msix_vector_masked,
+    input               irq_delivery_valid,
+    output              irq_delivery_ready,
+    output reg          irq_delivery_done,
 
     (* DONT_TOUCH = "TRUE" *) output reg          dma_rd_req,
     (* DONT_TOUCH = "TRUE" *) output reg [63:0]   dma_rd_addr,
@@ -118,6 +118,8 @@ module pcileech_nvme_admin_responder #(
     localparam [5:0] S_TIMING_DELAY      = 6'd30;
     localparam [5:0] S_TIMING_PREP       = 6'd31;
     localparam [5:0] S_TIMING_EVAL       = 6'd32;
+    localparam [5:0] S_AER_POST          = 6'd33;
+    localparam [5:0] S_AER_FINISH        = 6'd34;
 
     localparam [1:0] IO_DIR_READ  = 2'd0;
     localparam [1:0] IO_DIR_WRITE = 2'd1;
@@ -145,6 +147,12 @@ module pcileech_nvme_admin_responder #(
     localparam [14:0] NVME_SC_PRP_OFFSET_INVALID = 15'h0013;
     localparam [14:0] NVME_SC_LBA_RANGE          = 15'h0080;
     localparam [14:0] NVME_SC_INVALID_FORMAT     = 15'h010A;
+
+    // MDTS = 32 KiB (8192 DWORDs). I/O transfers larger than this are rejected.
+    localparam [23:0] MAX_XFER_DW = 24'd8192;
+    // Upper bound on PRP list entries we will walk before failing the command.
+    localparam [19:0] PRP_LIST_MAX_ENTRIES = 20'd512;
+{{ if .MSIXConfig }}    localparam [15:0] NVME_NUM_MSIX_VECTORS = 16'd{{ .MSIXConfig.NumVectors }};{{ else }}    localparam [15:0] NVME_NUM_MSIX_VECTORS = 16'd1;{{ end }}
 
     (* DONT_TOUCH = "TRUE" *) reg [5:0] state;
     (* DONT_TOUCH = "TRUE" *) reg [5:0] return_state;
@@ -176,6 +184,10 @@ module pcileech_nvme_admin_responder #(
     wire [15:0] cq_tail_next = (cq_tail >= acq_last) ? 16'h0 : (cq_tail + 16'h1);
     wire [63:0] asq_base = {admin_asq_hi, admin_asq_lo & 32'hFFFFF000};
     wire [63:0] acq_base = {admin_acq_hi, admin_acq_lo & 32'hFFFFF000};
+    wire        admin_aqa_valid = (asqs >= 12'd1) && (acqs >= 12'd1);
+    wire        admin_asq_valid = ({admin_asq_hi, admin_asq_lo} != 64'h0000000000000000) && (admin_asq_lo[11:0] == 12'h000);
+    wire        admin_acq_valid = ({admin_acq_hi, admin_acq_lo} != 64'h0000000000000000) && (admin_acq_lo[11:0] == 12'h000);
+    wire        admin_queue_config_valid = admin_aqa_valid && admin_asq_valid && admin_acq_valid;
 
     // I/O queue 1.  Windows normally creates one SQ/CQ pair after admin init.
     reg        io_sq_created;
@@ -197,7 +209,7 @@ module pcileech_nvme_admin_responder #(
     wire [15:0] io_cq_tail_next = (io_cq_tail >= io_cq_last) ? 16'h0 : (io_cq_tail + 16'h1);
 
     wire active_io = (active_qid != 16'h0000);
-    assign msix_vector_select = active_io ? io_vector : 16'h0000;
+    assign irq_delivery_ready = dma_enabled && (state == S_IDLE) && cc_en && !irq_delivery_done;
     wire [15:0] active_sq_head_next = active_io ? io_sq_head_next : sq_head_next;
     wire [15:0] active_cq_tail      = active_io ? io_cq_tail      : cq_tail;
     wire [15:0] active_cq_last      = active_io ? io_cq_last      : acq_last;
@@ -212,6 +224,7 @@ module pcileech_nvme_admin_responder #(
     wire [31:0] cmd_nsid   = sqe[1];
     wire [63:0] cmd_prp1   = {sqe[7], sqe[6]};
     wire [63:0] cmd_prp2   = {sqe[9], sqe[8]};
+    wire        cmd_prp1_page_valid = (cmd_prp1 != 64'h0000000000000000) && (cmd_prp1[11:0] == 12'h000);
     wire [31:0] cmd_cdw10  = sqe[10];
     wire [31:0] cmd_cdw11  = sqe[11];
     wire [31:0] cmd_cdw12  = sqe[12];
@@ -244,6 +257,7 @@ module pcileech_nvme_admin_responder #(
         (cmd_cdw14 == 32'h00000000) &&
         (cmd_cdw15 == 32'h00000000);
     wire [23:0] cmd_total_dw = {cmd_nlb_count, 7'b0000000};
+    wire        cmd_mdts_ok = (cmd_total_dw <= MAX_XFER_DW);
     wire [127:0] nvme_disk_bytes = {55'h0, NVME_ADVERTISED_LBAS, 9'h000};
     wire [10:0] cmd_log_last_dw = (cmd_cdw10[31:16] > 16'd1023) ? 11'd1023 : cmd_cdw10[26:16];
 
@@ -271,18 +285,18 @@ module pcileech_nvme_admin_responder #(
                 case (dw_index)
                     // SN/MN/FR (bytes 4..71) come from the donor identify ROM;
                     // only optional feature fields are substituted below.
-                    11'd64: identify_data_word = 32'h00000002; // OACS: Format NVM only.
-                    11'd65: identify_data_word = 32'h00070100; // ELPE/LPA/one power state.
+                    11'd64: identify_data_word = 32'h07030002; // OACS: Format NVM only.
+                    11'd65: identify_data_word = 32'h00000002; // ELPE/LPA/one power state.
                     11'd66: identify_data_word = 32'h01570000; // WCTEMP=343K.
                     11'd67: identify_data_word = 32'h00000166; // CCTEMP=358K.
                     11'd70: identify_data_word = nvme_disk_bytes[31:0];  // TNVMCAP low.
                     11'd71: identify_data_word = nvme_disk_bytes[63:32];
                     11'd72: identify_data_word = nvme_disk_bytes[95:64];
                     11'd73: identify_data_word = nvme_disk_bytes[127:96];
-                    11'd74: identify_data_word = nvme_disk_bytes[31:0];  // UNVMCAP low.
-                    11'd75: identify_data_word = nvme_disk_bytes[63:32];
-                    11'd76: identify_data_word = nvme_disk_bytes[95:64];
-                    11'd77: identify_data_word = nvme_disk_bytes[127:96];
+                    11'd74: identify_data_word = 32'h00000000;  // UNVMCAP low.
+                    11'd75: identify_data_word = 32'h00000000;
+                    11'd76: identify_data_word = 32'h00000000;
+                    11'd77: identify_data_word = 32'h00000000;
                     11'd128: identify_data_word = 32'h00004466; // SQES=64B, CQES=16B.
                     11'd129: identify_data_word = 32'h00000001; // NN: one namespace.
                     11'd130: identify_data_word = 32'h0000000C; // Dataset Management and Write Zeroes.
@@ -318,6 +332,13 @@ module pcileech_nvme_admin_responder #(
     reg [1:0]  cqe_dw_idx;
     reg [31:0] cqe_result;
     reg [14:0] cqe_status;
+    reg [63:0] last_error_count;
+    reg [15:0] last_error_sqid;
+    reg [15:0] last_error_cid;
+    reg [15:0] last_error_status;
+    reg [15:0] last_error_peloc;
+    reg [63:0] last_error_lba;
+    reg [31:0] last_error_nsid;
     reg [3:0]  timing_class;
     reg [3:0]  timing_effective_class;
     reg        timing_done_for_cmd;
@@ -355,8 +376,12 @@ module pcileech_nvme_admin_responder #(
     reg [11:0] hour_second_count;
     reg [26:0] second_tick;
     reg [7:0]  thermal_load;
+    reg [31:0] warning_temp_time;
+    reg [31:0] critical_temp_time;
 
     wire [15:0] smart_temp_k = 16'd303 + {11'h000, thermal_load[7:3]};
+    // Critical warning byte: bit1=temp over WCTEMP(343K), bit2=reliability(media errors).
+    wire [7:0]  smart_warning_byte = {5'b00000, (stat_media_errors != 32'h00000000), (smart_temp_k >= 16'd343), 1'b0};
 
     function [63:0] data_units_for_nlb;
         input [16:0] nlb_count;
@@ -461,11 +486,21 @@ module pcileech_nvme_admin_responder #(
                     endcase
                 end
                 LOG_PAGE_ERROR: begin
-                    log_page_word = 32'h00000000;
+                    case (dw_index[7:0])
+                        8'd0: log_page_word = last_error_count[31:0];
+                        8'd1: log_page_word = last_error_count[63:32];
+                        8'd2: log_page_word = {last_error_cid, last_error_sqid};
+                        8'd3: log_page_word = {last_error_peloc, last_error_status};
+                        8'd4: log_page_word = last_error_lba[31:0];
+                        8'd5: log_page_word = last_error_lba[63:32];
+                        8'd6: log_page_word = last_error_nsid;
+                        8'd7: log_page_word = 32'h00000000;
+                        default: log_page_word = 32'h00000000;
+                    endcase
                 end
                 LOG_PAGE_SMART: begin
                     case (dw_index[7:0])
-                        8'd0:  log_page_word = {8'd100, smart_temp_k, 8'h00};
+                        8'd0:  log_page_word = {8'd100, smart_temp_k, smart_warning_byte};
                         8'd1:  log_page_word = 32'h0000000A; // spare threshold 10%, used 0%.
                         8'd8:  log_page_word = stat_data_units_read[31:0];
                         8'd9:  log_page_word = stat_data_units_read[63:32];
@@ -482,17 +517,18 @@ module pcileech_nvme_admin_responder #(
                         8'd36: log_page_word = stat_unsafe_shutdowns;
                         8'd40: log_page_word = stat_media_errors;
                         8'd44: log_page_word = stat_error_log_entries;
-                        8'd48: log_page_word = 32'h00000000; // warning temp time.
-                        8'd52: log_page_word = 32'h00000000; // critical temp time.
-                        8'd56: log_page_word = {16'h0000, smart_temp_k};
+                        8'd48: log_page_word = warning_temp_time;
+                        8'd49: log_page_word = critical_temp_time;
+                        8'd50: log_page_word = {smart_temp_k, smart_temp_k};
+                        8'd51: log_page_word = {16'h0000, smart_temp_k};
                         default: log_page_word = 32'h00000000;
                     endcase
                 end
                 LOG_PAGE_FW_SLOT: begin
                     case (dw_index[7:0])
                         8'd0: log_page_word = 32'h00000001;
-                        8'd2: log_page_word = 32'h31564E44; // "DNV1" little-endian.
-                        8'd3: log_page_word = 32'h3030302E; // ".000" little-endian-ish filler.
+                        8'd2: log_page_word = 32'h{{ if .NVMeIdentify }}{{ hex02 (index .NVMeIdentify.Controller 67) }}{{ hex02 (index .NVMeIdentify.Controller 66) }}{{ hex02 (index .NVMeIdentify.Controller 65) }}{{ hex02 (index .NVMeIdentify.Controller 64) }}{{ else }}20202020{{ end }}; // "DNV1" little-endian.
+                        8'd3: log_page_word = 32'h{{ if .NVMeIdentify }}{{ hex02 (index .NVMeIdentify.Controller 71) }}{{ hex02 (index .NVMeIdentify.Controller 70) }}{{ hex02 (index .NVMeIdentify.Controller 69) }}{{ hex02 (index .NVMeIdentify.Controller 68) }}{{ else }}20202020{{ end }}; // ".000" little-endian-ish filler.
                         default: log_page_word = 32'h00000000;
                     endcase
                 end
@@ -505,8 +541,17 @@ module pcileech_nvme_admin_responder #(
     wire        cc_start_event = (cc_en && !cc_en_prev) || (cc_enable_wr && !cc_en_prev);
     wire        cc_stop_event  = (!cc_en && cc_en_prev) || (cc_disable_wr && cc_en_prev);
     wire        cc_reset_event = cc_start_event || cc_stop_event;
-    reg [3:0]   aer_pending;
+    reg         aer_registered;
+    reg [15:0]  aer_cid;
+    reg         aer_event_pending;
+    reg [31:0]  aer_event_info;
     reg [31:0]  num_queues_granted;
+    reg [31:0]  feat_arbitration;
+    reg [31:0]  feat_power_mgmt;
+    reg [31:0]  feat_temp_threshold;
+    reg [31:0]  feat_write_cache;
+    reg [31:0]  feat_irq_coalescing;
+    reg [31:0]  feat_async_event_cfg;
 
     reg [1:0]   io_dir;
     reg [63:0]  io_slba;
@@ -618,6 +663,7 @@ module pcileech_nvme_admin_responder #(
             dma_wr_data        <= 32'h0;
             dma_wr_be          <= 4'hF;
             dma_wr_valid       <= 1'b0;
+            irq_delivery_done  <= 1'b0;
             disk_req_valid     <= 1'b0;
             disk_req_write     <= 1'b0;
             disk_req_flush     <= 1'b0;
@@ -632,6 +678,13 @@ module pcileech_nvme_admin_responder #(
             cqe_dw_idx         <= 2'h0;
             cqe_result         <= 32'h0;
             cqe_status         <= 15'h0;
+            last_error_count   <= 64'h0;
+            last_error_sqid    <= 16'h0;
+            last_error_cid     <= 16'h0;
+            last_error_status  <= 16'h0;
+            last_error_peloc   <= 16'h0;
+            last_error_lba     <= 64'h0;
+            last_error_nsid    <= 32'h0;
             timing_class       <= TIMING_ADMIN_SHORT;
             timing_effective_class <= TIMING_ADMIN_SHORT;
             timing_done_for_cmd <= 1'b0;
@@ -648,8 +701,17 @@ module pcileech_nvme_admin_responder #(
             id_rom_offset      <= 13'h0;
             id_rom_addr        <= 13'h0;
             cc_en_prev         <= 1'b0;
-            aer_pending        <= 4'h0;
+            aer_registered     <= 1'b0;
+            aer_cid            <= 16'h0000;
+            aer_event_pending  <= 1'b0;
+            aer_event_info     <= 32'h00000000;
             num_queues_granted <= 32'h00000000;
+            feat_arbitration   <= 32'h00000000;
+            feat_power_mgmt    <= 32'h00000000;
+            feat_temp_threshold <= 32'h00000157;
+            feat_write_cache   <= 32'h00000001;
+            feat_irq_coalescing <= 32'h00000000;
+            feat_async_event_cfg <= 32'h00000000;
 
             io_dir             <= IO_DIR_READ;
             io_slba            <= 64'h0;
@@ -686,12 +748,15 @@ module pcileech_nvme_admin_responder #(
             hour_second_count       <= 12'h0;
             second_tick             <= 27'h0;
             thermal_load            <= 8'h08;
+            warning_temp_time       <= 32'h0;
+            critical_temp_time      <= 32'h0;
         end else begin
             dma_rd_req     <= 1'b0;
             dma_wr_req     <= 1'b0;
             dma_wr_valid   <= 1'b0;
             disk_req_valid <= 1'b0;
             msix_trigger   <= 1'b0;
+            irq_delivery_done <= 1'b0;
             pba_set_valid  <= 1'b0;
             if (timing_cmd_active && (timing_elapsed_cycles != 32'hFFFFFFFF))
                 timing_elapsed_cycles <= timing_elapsed_cycles + 1'b1;
@@ -700,6 +765,10 @@ module pcileech_nvme_admin_responder #(
                 if (second_tick >= 27'd124999999) begin
                     second_tick <= 27'h0;
                     thermal_load <= (thermal_load == 8'h00) ? 8'h00 : (thermal_load - 1'b1);
+                    if ((smart_temp_k >= 16'd343) && (warning_temp_time != 32'hFFFFFFFF))
+                        warning_temp_time <= warning_temp_time + 1'b1;
+                    if ((smart_temp_k >= 16'd358) && (critical_temp_time != 32'hFFFFFFFF))
+                        critical_temp_time <= critical_temp_time + 1'b1;
                     if (hour_second_count >= 12'd3599) begin
                         hour_second_count <= 12'h0;
                         power_on_hours <= power_on_hours + 1'b1;
@@ -782,6 +851,13 @@ module pcileech_nvme_admin_responder #(
                 cqe_dw_idx         <= 2'h0;
                 cqe_result         <= 32'h0;
                 cqe_status         <= 15'h0;
+                last_error_count   <= 64'h0;
+                last_error_sqid    <= 16'h0;
+                last_error_cid     <= 16'h0;
+                last_error_status  <= 16'h0;
+                last_error_peloc   <= 16'h0;
+                last_error_lba     <= 64'h0;
+                last_error_nsid    <= 32'h0;
                 timing_class       <= TIMING_ADMIN_SHORT;
                 timing_effective_class <= TIMING_ADMIN_SHORT;
                 timing_done_for_cmd <= 1'b0;
@@ -796,7 +872,10 @@ module pcileech_nvme_admin_responder #(
                 data_dw_cnt        <= 11'h0;
                 id_rom_offset      <= 13'h0;
                 id_rom_addr        <= 13'h0;
-                aer_pending        <= 4'h0;
+                aer_registered     <= 1'b0;
+                aer_cid            <= 16'h0000;
+                aer_event_pending  <= 1'b0;
+                aer_event_info     <= 32'h00000000;
                 num_queues_granted <= 32'h00000000;
 
                 io_dir             <= IO_DIR_READ;
@@ -817,14 +896,45 @@ module pcileech_nvme_admin_responder #(
                 dsm_dw1            <= 32'h0;
                 dsm_dw2            <= 32'h0;
                 dsm_dw3            <= 32'h0;
+                warning_temp_time  <= 32'h0;
+                critical_temp_time <= 32'h0;
+                feat_arbitration   <= 32'h00000000;
+                feat_power_mgmt    <= 32'h00000000;
+                feat_temp_threshold <= 32'h00000157;
+                feat_write_cache   <= 32'h00000001;
+                feat_irq_coalescing <= 32'h00000000;
+                feat_async_event_cfg <= 32'h00000000;
                 if (cc_stop_event)
                     stat_unsafe_shutdowns <= stat_unsafe_shutdowns + 1'b1;
+            end else if (!dma_enabled) begin
+                state <= S_IDLE;
+                return_state <= S_IDLE;
+                timing_cmd_active <= 1'b0;
+                timing_done_for_cmd <= 1'b0;
             end else if (!cc_en && state != S_SHUTDOWN) begin
                 state <= S_IDLE;
             end else begin
                 case (state)
                     S_IDLE: begin
-                        if (sq_tail != sq_head) begin
+                        if (aer_registered && aer_event_pending) begin
+                            cqe[0] <= aer_event_info;
+                            cqe[1] <= 32'h00000000;
+                            cqe[2] <= {16'h0000, sq_head};
+                            cqe[3] <= {15'h0000, cq_phase, aer_cid};
+                            cqe_dw_idx <= 2'h0;
+                            state <= S_AER_POST;
+                        end else if (aer_registered && !aer_event_pending && (smart_warning_byte != 8'h00)) begin
+                            aer_event_pending <= 1'b1;
+                            aer_event_info <= 32'h00000002;
+                        end else if (irq_delivery_valid && irq_delivery_ready) begin
+                            dma_wr_req   <= 1'b1;
+                            dma_wr_valid <= 1'b1;
+                            dma_wr_addr  <= msix_vector_addr;
+                            dma_wr_data  <= msix_vector_data;
+                            dma_wr_be    <= 4'hF;
+                            return_state <= S_IDLE;
+                            state        <= S_WAIT_DMA_WR;
+                        end else if ((sq_tail != sq_head) && admin_queue_config_valid) begin
                             active_qid  <= 16'h0000;
                             dma_rd_req  <= 1'b1;
                             dma_rd_addr <= asq_base + ({48'h0, sq_head} * 64);
@@ -895,6 +1005,9 @@ module pcileech_nvme_admin_responder #(
                                     timing_class <= TIMING_WRITE;
                                     if (NVME_ZERO_IO_READS) begin
                                         state <= S_BUILD_CQE;
+                                    end else if (!cmd_mdts_ok) begin
+                                        cqe_status <= NVME_SC_INVALID_FIELD;
+                                        state <= S_BUILD_CQE;
                                     end else if (cmd_lba_ok) begin
                                         io_dir      <= IO_DIR_WRITE;
                                         io_slba     <= cmd_slba;
@@ -913,7 +1026,10 @@ module pcileech_nvme_admin_responder #(
                                 end
                                 8'h02: begin
                                     timing_class <= (NVME_ZERO_IO_READS || NVME_PRP_ONLY_IO) ? TIMING_READ_MISS_ZERO : TIMING_READ_PENDING;
-                                    if (cmd_lba_ok) begin
+                                    if (!cmd_mdts_ok) begin
+                                        cqe_status <= NVME_SC_INVALID_FIELD;
+                                        state <= S_BUILD_CQE;
+                                    end else if (cmd_lba_ok) begin
                                         io_dir      <= IO_DIR_READ;
                                         io_slba     <= cmd_slba;
                                         io_total_dw <= cmd_total_dw;
@@ -943,6 +1059,9 @@ module pcileech_nvme_admin_responder #(
                                         (cmd_cdw13 != 32'h00000000) ||
                                         (cmd_cdw14 != 32'h00000000) ||
                                         (cmd_cdw15 != 32'h00000000)) begin
+                                        cqe_status <= NVME_SC_INVALID_FIELD;
+                                        state <= S_BUILD_CQE;
+                                    end else if (!cmd_mdts_ok) begin
                                         cqe_status <= NVME_SC_INVALID_FIELD;
                                         state <= S_BUILD_CQE;
                                     end else if (cmd_lba_ok) begin
@@ -975,10 +1094,18 @@ module pcileech_nvme_admin_responder #(
                                                  (cmd_cdw10[31:8] != 24'h000000)) begin
                                         cqe_status <= NVME_SC_INVALID_FIELD;
                                         state <= S_BUILD_CQE;
+                                    end else if (cmd_cdw11[2]) begin
+                                        // Deallocate: invalidate backing-cache slots in each range.
+                                        io_total_dw    <= ({16'h0000, cmd_cdw10[7:0]} + 24'd1) << 2;
+                                        io_dw_idx      <= 24'h0;
+                                        dsm_range_idx  <= 8'h0;
+                                        dsm_range_last <= cmd_cdw10[7:0];
+                                        dsm_dw_idx     <= 2'h0;
+                                        prp_cached_valid <= 1'b0;
+                                        return_state   <= S_DSM_FETCH_REQ;
+                                        state          <= S_RESOLVE_IO_PRP;
                                     end else begin
-                                        // DSM/Deallocate is advisory. Complete it without
-                                        // mutating the volatile BRAM cache; Write Zeroes and
-                                        // Format NVM remain the destructive clear paths.
+                                        // Advisory (no Deallocate): complete without mutating cache.
                                         state <= S_BUILD_CQE;
                                     end
                                 end
@@ -1002,7 +1129,12 @@ module pcileech_nvme_admin_responder #(
                                 8'h01: begin
                                     if (!NVME_ENABLE_IO_QUEUES) begin
                                         cqe_status <= 15'h0001;
-                                    end else if ((cmd_cdw10[15:0] == 16'h0001) && (cmd_cdw11[0] == 1'b1) && (cmd_cdw11[31:16] == 16'h0001)) begin
+                                    end else if ((cmd_cdw10[15:0] == 16'h0001) &&
+                                                 (cmd_cdw10[31:16] != 16'h0000) &&
+                                                 (cmd_cdw11[0] == 1'b1) &&
+                                                 (cmd_cdw11[31:16] == 16'h0001) &&
+                                                 io_cq_created &&
+                                                 cmd_prp1_page_valid) begin
                                         io_sq_base <= cmd_prp1 & 64'hFFFFFFFFFFFFF000;
                                         io_sq_last <= cmd_cdw10[31:16];
                                         io_sq_tail <= 16'h0;
@@ -1026,7 +1158,6 @@ module pcileech_nvme_admin_responder #(
                                         end
                                         default: begin
                                             cqe_status <= NVME_SC_INVALID_FIELD;
-                                            stat_error_log_entries <= stat_error_log_entries + 1'b1;
                                             state <= S_BUILD_CQE;
                                         end
                                     endcase
@@ -1044,13 +1175,16 @@ module pcileech_nvme_admin_responder #(
                                 8'h05: begin
                                     if (!NVME_ENABLE_IO_QUEUES) begin
                                         cqe_status <= 15'h0001;
-                                    end else if ((cmd_cdw10[15:0] == 16'h0001) && (cmd_cdw11[0] == 1'b1)) begin
+                                    end else if ((cmd_cdw10[15:0] == 16'h0001) &&
+                                                 (cmd_cdw10[31:16] != 16'h0000) &&
+                                                 (cmd_cdw11[0] == 1'b1) &&
+                                                 cmd_prp1_page_valid) begin
                                         io_cq_base <= cmd_prp1 & 64'hFFFFFFFFFFFFF000;
                                         io_cq_last <= cmd_cdw10[31:16];
                                         io_cq_tail <= 16'h0;
                                         io_cq_head_db <= 16'h0;
                                         io_cq_phase <= 1'b1;
-                                        io_vector <= cmd_cdw11[31:16];
+                                        io_vector <= (cmd_cdw11[31:16] >= NVME_NUM_MSIX_VECTORS) ? 16'h0000 : cmd_cdw11[31:16];
                                         io_cq_created <= 1'b1;
                                     end else begin
                                         cqe_status <= 15'h0001;
@@ -1106,31 +1240,47 @@ module pcileech_nvme_admin_responder #(
 
                                 8'h09: begin
                                     case (cmd_cdw10[7:0])
-                                        8'h06: cqe_result <= cmd_cdw11;
+                                        8'h01: feat_arbitration <= cmd_cdw11;
+                                        8'h02: feat_power_mgmt <= cmd_cdw11;
+                                        8'h04: feat_temp_threshold <= cmd_cdw11;
+                                        8'h06: feat_write_cache <= cmd_cdw11;
                                         8'h07: begin
                                             num_queues_granted <= 32'h00000000;
                                             cqe_result <= 32'h00000000;
                                         end
-                                        default: cqe_result <= 32'h00000000;
+                                        8'h08, 8'h09, 8'h0A: ; // minimal: accept without persisting
+                                        8'h0B: feat_async_event_cfg <= cmd_cdw11;
+                                        default: cqe_status <= NVME_SC_INVALID_FIELD;
                                     endcase
                                     state <= S_BUILD_CQE;
                                 end
 
                                 8'h0A: begin
                                     case (cmd_cdw10[7:0])
+                                        8'h01: cqe_result <= feat_arbitration;
+                                        8'h02: cqe_result <= feat_power_mgmt;
+                                        8'h04: cqe_result <= feat_temp_threshold;
+                                        8'h06: cqe_result <= feat_write_cache;
                                         8'h07: cqe_result <= num_queues_granted;
-                                        8'h0B: cqe_result <= 32'h00000000;
-                                        default: cqe_result <= 32'h00000000;
+                                        8'h08: cqe_result <= feat_irq_coalescing;
+                                        8'h09, 8'h0A: cqe_result <= 32'h00000000;
+                                        8'h0B: cqe_result <= feat_async_event_cfg;
+                                        default: cqe_status <= NVME_SC_INVALID_FIELD;
                                     endcase
                                     state <= S_BUILD_CQE;
                                 end
 
 	                                8'h0C: begin
-	                                    if (aer_pending < 4'hF)
-	                                        aer_pending <= aer_pending + 1'b1;
-	                                    sq_head <= sq_head_next;
-                                    timing_cmd_active <= 1'b0;
-	                                    state <= S_IDLE;
+	                                    if (aer_registered) begin
+	                                        cqe_status <= NVME_SC_INVALID_FIELD;
+	                                        state <= S_BUILD_CQE;
+	                                    end else begin
+	                                        aer_cid <= cmd_cid;
+	                                        aer_registered <= 1'b1;
+	                                        sq_head <= sq_head_next;
+	                                        timing_cmd_active <= 1'b0;
+	                                        state <= S_IDLE;
+	                                    end
 	                                end
 
 	                                8'h80: begin
@@ -1255,6 +1405,16 @@ module pcileech_nvme_admin_responder #(
                         if (NVME_TIMING_ENABLE && !timing_done_for_cmd) begin
                             state <= S_TIMING_PREP;
                         end else begin
+                            if (cqe_status != 15'h0000) begin
+                                stat_error_log_entries <= stat_error_log_entries + 1'b1;
+                                last_error_count <= {32'h00000000, stat_error_log_entries + 1'b1};
+                                last_error_sqid <= active_qid;
+                                last_error_cid <= cmd_cid;
+                                last_error_status <= {cqe_status, 1'b0};
+                                last_error_peloc <= 16'h0000;
+                                last_error_lba <= (active_qid == 16'h0000) ? 64'h0000000000000000 : cmd_slba;
+                                last_error_nsid <= cmd_nsid;
+                            end
                             cqe[0] <= cqe_result;
                             cqe[1] <= 32'h00000000;
                             cqe[2] <= {active_qid, active_sq_head_next};
@@ -1315,6 +1475,38 @@ module pcileech_nvme_admin_responder #(
                         state <= S_WAIT_DMA_WR;
                     end
 
+                    S_AER_POST: begin
+                        dma_wr_req   <= 1'b1;
+                        dma_wr_valid <= 1'b1;
+                        dma_wr_addr  <= acq_base + ({48'h0, cq_tail} * 16)
+                                      + {62'h0, cqe_dw_idx, 2'b00};
+                        dma_wr_data  <= cqe[cqe_dw_idx];
+                        dma_wr_be    <= 4'hF;
+
+                        if (cqe_dw_idx == 2'd3) begin
+                            cqe_dw_idx <= 2'h0;
+                            return_state <= S_AER_FINISH;
+                        end else begin
+                            cqe_dw_idx <= cqe_dw_idx + 1'b1;
+                            return_state <= S_AER_POST;
+                        end
+                        state <= S_WAIT_DMA_WR;
+                    end
+
+                    S_AER_FINISH: begin
+                        aer_registered    <= 1'b0;
+                        aer_event_pending <= 1'b0;
+                        if (cq_tail >= acq_last) begin
+                            cq_tail  <= 16'h0;
+                            cq_phase <= ~cq_phase;
+                        end else begin
+                            cq_tail  <= cq_tail_next;
+                        end
+                        pba_set_valid  <= 1'b1;
+                        pba_set_vector <= 16'h0000;
+                        state <= S_IDLE;
+                    end
+
                     S_SEND_MSIX: begin
                         stat_cmds_completed <= stat_cmds_completed + 1'b1;
                         timing_cmd_active <= 1'b0;
@@ -1336,31 +1528,17 @@ module pcileech_nvme_admin_responder #(
                             end
                         end
 
-                        if (msix_enable && !msix_function_mask && !msix_vector_masked &&
-                            (msix_vector_addr != 64'h0000000000000000)) begin
-                            dma_wr_req   <= 1'b1;
-                            dma_wr_valid <= 1'b1;
-                            dma_wr_addr  <= msix_vector_addr;
-                            dma_wr_data  <= msix_vector_data;
-                            dma_wr_be    <= 4'hF;
-                            return_state <= S_IDLE;
-                            state        <= S_WAIT_DMA_WR;
-                        end else begin
-                            if (msix_enable) begin
-                                // MSI-X on but can't deliver (masked or vector not armed): hold pending in PBA.
-                                pba_set_valid  <= 1'b1;
-                                pba_set_vector <= msix_vector_select;
-                            end else begin
-                                // fallback to MSI when MSI-X is disabled
-                                msix_trigger <= 1'b1;
-                            end
-                            state <= S_IDLE;
-                        end
+                        pba_set_valid  <= 1'b1;
+                        pba_set_vector <= active_io ? io_vector : 16'h0000;
+                        state <= S_IDLE;
                     end
 
                     S_WAIT_DMA_WR: begin
-                        if (dma_wr_done)
+                        if (dma_wr_done) begin
+                            if (return_state == S_IDLE)
+                                irq_delivery_done <= 1'b1;
                             state <= return_state;
+                        end
                     end
 
                     S_RESOLVE_IO_PRP: begin
@@ -1399,7 +1577,10 @@ module pcileech_nvme_admin_responder #(
                         if (dma_rd_valid)
                             prp_entry_hi <= dma_rd_data;
                         if (dma_rd_done) begin
-		                            if (prp_list_entry_invalid) begin
+		                            if (io_prp_list_index > PRP_LIST_MAX_ENTRIES) begin
+                                    cqe_status <= NVME_SC_INVALID_FIELD;
+                                    state <= S_BUILD_CQE;
+                                end else if (prp_list_entry_invalid) begin
 		                                cqe_status <= NVME_SC_PRP_OFFSET_INVALID;
 		                                state <= S_BUILD_CQE;
 		                            end else begin
@@ -1622,7 +1803,10 @@ module pcileech_nvme_admin_responder #(
                         io_cq_tail    <= 16'h0;
                         io_cq_head_db <= 16'h0;
                         io_cq_phase   <= 1'b1;
-                        aer_pending   <= 4'h0;
+                        aer_registered    <= 1'b0;
+                        aer_cid           <= 16'h0000;
+                        aer_event_pending <= 1'b0;
+                        aer_event_info    <= 32'h00000000;
                         state         <= S_IDLE;
                     end
 

@@ -7,6 +7,7 @@ import (
 	"text/template"
 
 	"github.com/sercanarga/pcileechgen/internal/board"
+	"github.com/sercanarga/pcileechgen/internal/donor/behavior"
 	"github.com/sercanarga/pcileechgen/internal/firmware"
 	"github.com/sercanarga/pcileechgen/internal/firmware/barmodel"
 	"github.com/sercanarga/pcileechgen/internal/firmware/nvme"
@@ -14,30 +15,104 @@ import (
 
 // MSIConfig describes the MSI capability programmed into config space.
 type MSIConfig struct {
-	Enabled bool   // MSI enabled in Message Control
-	AddrLo  uint32 // MSI Message Address (lower 32 bits)
-	Data    uint16 // MSI Message Data
+	Enabled bool // MSI enabled in Message Control
+}
+
+type BARSlot struct {
+	BIR        int
+	Model      *barmodel.BARModel
+	ModuleName string
+	Primary    bool
 }
 
 // SVGeneratorConfig is the input data for all SV template renders.
 type SVGeneratorConfig struct {
-	DeviceIDs          firmware.DeviceIDs
-	DonorCapabilities  DonorCapabilities  // donor capability summary for donor-emulation visibility
-	BARModel           *barmodel.BARModel // nil = generic fallback (uses BRAM-based zerowrite4k)
-	ClassCode          uint32
-	LatencyConfig      *LatencyConfig     // TLP response timing (nil = no latency emulator)
-	HasMSIX            bool               // generate MSI-X interrupt controller logic
-	BuildEntropy       uint32             // seed for PRNG uniqueness per build
-	PRNGSeeds          [4]uint32          // computed PRNG seeds for latency emulator
-	DeviceClass        string             // "nvme", "xhci", "audio", "ethernet", or ""
-	MSIXConfig         *MSIXConfig        // MSI-X table replication (nil = no MSI-X table)
-	MSIConfig          *MSIConfig         // MSI capability info (nil = no MSI cap or disabled)
-	NVMeIdentify       *nvme.IdentifyData // NVMe Identify Controller/Namespace data (nil = no responder)
-	NVMeSMART          *nvme.SMART        // donor-plausible SMART/Health wear seeds (nil = zero wear)
-	NVMeDoorbellStride uint32             // CAP.DSTRD - doorbell stride (0 = 4B, default)
-	NVMeDiskWords      int                // NVMe disk-cache depth (words), board-scaled
-	NVMeAdvertisedLBAs uint64             // actual NSZE from donor (0 = use default 2000409264)
-	Bar0Size           int
+	DeviceIDs                   firmware.DeviceIDs
+	DonorCapabilities           DonorCapabilities // donor capability summary for donor-emulation visibility
+	BARModels                   []*barmodel.BARModel
+	DonorBARTopology            bool
+	BARModel                    *barmodel.BARModel // nil = generic fallback (uses BRAM-based zerowrite4k)
+	BARModuleName               string
+	ClassCode                   uint32
+	LatencyConfig               *LatencyConfig     // TLP response timing (nil = no latency emulator)
+	HasMSIX                     bool               // generate MSI-X interrupt controller logic
+	BuildEntropy                uint32             // seed for PRNG uniqueness per build
+	PRNGSeeds                   [4]uint32          // computed PRNG seeds for latency emulator
+	DeviceClass                 string             // "nvme", "xhci", "audio", "ethernet", or ""
+	MSIXConfig                  *MSIXConfig        // MSI-X table replication (nil = no MSI-X table)
+	MSIConfig                   *MSIConfig         // MSI capability info (nil = no MSI cap or disabled)
+	NVMeIdentify                *nvme.IdentifyData // NVMe Identify Controller/Namespace data (nil = no responder)
+	NVMeSMART                   *nvme.SMART        // donor-plausible SMART/Health wear seeds (nil = zero wear)
+	NVMeDoorbellStride          uint32             // CAP.DSTRD - doorbell stride (0 = 4B, default)
+	NVMeDiskWords               int                // NVMe disk-cache depth (words), board-scaled
+	NVMeAdvertisedLBAs          uint64             // actual NSZE from donor (0 = use default 2000409264)
+	Bar0Size                    int
+	ReadCompletionBoundaryBytes int
+	MaxPayloadBytes             int
+	BehaviorRules               *behavior.RuleSet
+	CompiledBehavior            *CompiledBehavior
+}
+
+func (c *SVGeneratorConfig) ResolvedReadCompletionBoundaryBytes() int {
+	if c != nil && (c.ReadCompletionBoundaryBytes == 64 || c.ReadCompletionBoundaryBytes == 128) {
+		return c.ReadCompletionBoundaryBytes
+	}
+	return 64
+}
+
+func (c *SVGeneratorConfig) ResolvedMaxPayloadBytes() int {
+	if c != nil && c.MaxPayloadBytes >= 128 && c.MaxPayloadBytes <= 4096 &&
+		c.MaxPayloadBytes&(c.MaxPayloadBytes-1) == 0 {
+		return c.MaxPayloadBytes
+	}
+	return 128
+}
+
+func (c *SVGeneratorConfig) HasClassEndpoint() bool {
+	if len(c.BARModels) == 0 {
+		return c.BARModel != nil
+	}
+	return c.BARModel != nil && c.BARModel.ClassSpecific
+}
+
+func (c *SVGeneratorConfig) PrimaryBIR() int {
+	if c.BARModel != nil {
+		return c.BARModel.BIR
+	}
+	return 0
+}
+
+func (c *SVGeneratorConfig) BARSlots() []BARSlot {
+	slots := make([]BARSlot, 6)
+	for bir := range slots {
+		slots[bir] = BARSlot{BIR: bir}
+	}
+	if c.BARModel == nil && !c.DonorBARTopology {
+		slots[0].Primary = true
+	}
+	models := c.BARModels
+	if len(models) == 0 && c.BARModel != nil {
+		models = []*barmodel.BARModel{c.BARModel}
+	}
+	for _, model := range models {
+		if model == nil || model.BIR < 0 || model.BIR >= len(slots) {
+			continue
+		}
+		name := fmt.Sprintf("pcileech_bar_impl_device_bar%d", model.BIR)
+		primary := model == c.BARModel
+		if primary {
+			name = "pcileech_bar_impl_device"
+		}
+		slots[model.BIR] = BARSlot{BIR: model.BIR, Model: model, ModuleName: name, Primary: primary}
+	}
+	return slots
+}
+
+func (c *SVGeneratorConfig) BARImplementationModuleName() string {
+	if c.BARModuleName != "" {
+		return c.BARModuleName
+	}
+	return "pcileech_bar_impl_device"
 }
 
 // NVMeDiskWordsForBRAM36 returns the NVMe disk-cache depth in 32-bit words for
@@ -140,12 +215,84 @@ func renderTemplateDelim(name, leftDelim, rightDelim string, data any) (string, 
 	return buf.String(), nil
 }
 
+func GenerateLifecycleServiceSV(cfg *SVGeneratorConfig) (string, error) {
+	return renderTemplate("lifecycle_service", cfg)
+}
+
+func GenerateDMATagServiceSV(cfg *SVGeneratorConfig) (string, error) {
+	return renderTemplate("dma_tag_service", cfg)
+}
+
+func GenerateInterruptServiceSV(cfg *SVGeneratorConfig) (string, error) {
+	return renderTemplate("interrupt_service", cfg)
+}
+
 func GenerateBarImplDeviceSV(cfg *SVGeneratorConfig) (string, error) {
-	return renderTemplate("bar_impl_device", cfg)
+	if len(cfg.BARModels) == 0 {
+		prepared, err := prepareBehaviorConfig(cfg)
+		if err != nil {
+			return "", err
+		}
+		return renderTemplate("bar_impl_device", prepared)
+	}
+
+	var out bytes.Buffer
+	for i, model := range cfg.BARModels {
+		if model == nil {
+			continue
+		}
+		endpoint := *cfg
+		endpoint.BARModels = nil
+		endpoint.BARModel = model
+		if model == cfg.BARModel {
+			endpoint.BARModuleName = "pcileech_bar_impl_device"
+		} else {
+			endpoint.BARModuleName = fmt.Sprintf("pcileech_bar_impl_device_bar%d", model.BIR)
+		}
+		if !model.ClassSpecific {
+			endpoint.DeviceClass = ""
+		}
+		// Behavior rules target a single BIR; only that endpoint should carry
+		// the FSM. Other BARs would inherit the shared pointer and render an
+		// FSM whose offsets belong to a different BAR.
+		if cfg.BehaviorRules != nil && model.BIR != cfg.BehaviorRules.BARIndex {
+			endpoint.BehaviorRules = nil
+			endpoint.CompiledBehavior = nil
+		}
+		prepared, err := prepareBehaviorConfig(&endpoint)
+		if err != nil {
+			return "", fmt.Errorf("preparing BAR%d endpoint: %w", model.BIR, err)
+		}
+		rendered, err := renderTemplate("bar_impl_device", prepared)
+		if err != nil {
+			return "", fmt.Errorf("rendering BAR%d endpoint: %w", model.BIR, err)
+		}
+		if i > 0 {
+			out.WriteString("\n")
+		}
+		out.WriteString(rendered)
+	}
+	return out.String(), nil
 }
 
 func GenerateBarControllerSV(cfg *SVGeneratorConfig) (string, error) {
 	return renderTemplate("bar_controller", cfg)
+}
+
+func GenerateTransactionNormalizerSV(cfg *SVGeneratorConfig) (string, error) {
+	return renderTemplate("transaction_normalizer", cfg)
+}
+
+func GenerateBarReadEngineSV(cfg *SVGeneratorConfig) (string, error) {
+	return renderTemplate("bar_read_engine", cfg)
+}
+
+func GenerateURCompleterSV(cfg *SVGeneratorConfig) (string, error) {
+	return renderTemplate("transaction_ur_completer", cfg)
+}
+
+func GenerateBarRspArbiterSV(cfg *SVGeneratorConfig) (string, error) {
+	return renderTemplate("bar_rsp_arbiter", cfg)
 }
 
 func GenerateDeviceConfigSV(cfg *SVGeneratorConfig) (string, error) {
@@ -178,11 +325,6 @@ func GenerateNVMeBRAMDiskSV(cfg *SVGeneratorConfig) (string, error) {
 // GenerateHDARIRBDMASV renders the HDA RIRB DMA bridge module.
 func GenerateHDARIRBDMASV(cfg *SVGeneratorConfig) (string, error) {
 	return renderTemplate("hda_rirb_dma", cfg)
-}
-
-// GenerateHDAMSISV renders the HDA MSI interrupt TLP generator module.
-func GenerateHDAMSISV(cfg *SVGeneratorConfig) (string, error) {
-	return renderTemplate("hda_msi", cfg)
 }
 
 // GenerateBarImplMSISV renders the MSI doorbell BAR implementation.

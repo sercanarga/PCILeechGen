@@ -1,0 +1,133 @@
+{
+  "collected_at": "2026-01-01T00:00:00Z",
+  "tool_version": "b4ab213-7-ga15c776",
+  "hostname": "ci-multibar",
+  "device": {
+    "bdf": {
+      "Domain": 0,
+      "Bus": 3,
+      "Device": 0,
+      "Function": 0
+    },
+    "vendor_id": 4660,
+    "device_id": 22136,
+    "subsys_vendor_id": 0,
+    "subsys_device_id": 0,
+    "revision_id": 0,
+    "class_code": 0,
+    "header_type": 0
+  },
+  "config_space_hex": [
+    "56781234",
+    "00100000",
+    "00000001",
+    "00000000",
+    "f7000000",
+    "00000000",
+    "f7100000",
+    "00000000",
+    "00000000",
+    "f7200000",
+    "00000000",
+    "00000000",
+    "00000000",
+    "00000040",
+    "00000000",
+    "00000000",
+    "00034801",
+    "00000008",
+    "00005405",
+    "00000000",
+    "00000000",
+    "00020010",
+    "00000000",
+    "00000000",
+    "00000000",
+    "00000000",
+    "00000000",
+    "00000000",
+    "00000000",
+    "00000000",
+    "00000000",
+    "00000000",
+    "00000000",
+    "00000000",
+    "00000000",
+    "00000000",
+    "00000000",
+    "00000000",
+    "00000000",
+    "00000000",
+    "00000000",
+    "00000000",
+    "00000000",
+    "00000000",
+    "00000000",
+    "00000000",
+    "00000000",
+    "00000000",
+    "00000000",
+    "00000000",
+    "00000000",
+    "00000000",
+    "00000000",
+    "00000000",
+    "00000000",
+    "00000000",
+    "00000000",
+    "00000000",
+    "00000000",
+    "00000000",
+    "00000000",
+    "00000000",
+    "00000000",
+    "00000000"
+  ],
+  "config_space_size": 256,
+  "bars": [
+    {
+      "index": 0,
+      "raw_value": 4143972352,
+      "address": 4143972352,
+      "size": 4096,
+      "type": "mem32",
+      "prefetchable": false,
+      "is_64bit": false
+    },
+    {
+      "index": 2,
+      "raw_value": 4145020928,
+      "address": 4145020928,
+      "size": 4096,
+      "type": "mem32",
+      "prefetchable": false,
+      "is_64bit": false
+    },
+    {
+      "index": 5,
+      "raw_value": 4146069504,
+      "address": 4146069504,
+      "size": 4096,
+      "type": "mem32",
+      "prefetchable": false,
+      "is_64bit": false
+    }
+  ],
+  "capabilities": [
+    {
+      "id": 1,
+      "offset": 64,
+      "data": "AUgDAAgAAAA="
+    },
+    {
+      "id": 5,
+      "offset": 72,
+      "data": "BVQAAAAAAAAAAAAA"
+    },
+    {
+      "id": 16,
+      "offset": 84,
+      "data": "EAACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+    }
+  ]
+}

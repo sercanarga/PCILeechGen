@@ -22,6 +22,23 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Install Tcl
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tcl
+
+      - name: Go format check
+        run: |
+          out="$(gofmt -l .)"
+          if [ -n "$out" ]; then
+            echo "::error::Files need gofmt:"
+            echo "$out"
+            exit 1
+          fi
+
+      - name: Go vet
+        run: go vet ./...
+
       - name: Run tests
         run: go test -race ./...
 
@@ -39,6 +56,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y verilator
+          # Echo the version: not pinned (apt provides whatever the runner ships),
+          # so record it to catch divergence across runs (5.032 vs 5.048 differ on
+          # interface-modport handling). Pin to a tag/build-from-source if stricter
+          # reproducibility is ever required.
+          verilator --version
 
       - name: Setup Go
         uses: actions/setup-go@v6

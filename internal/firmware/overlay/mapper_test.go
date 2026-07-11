@@ -132,7 +132,6 @@ func TestMultipleChanges(t *testing.T) {
 	}
 }
 
-
 func TestConfigSpace(t *testing.T) {
 	cs := pci.NewConfigSpace()
 	cs.Size = pci.ConfigSpaceSize

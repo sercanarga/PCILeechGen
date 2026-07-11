@@ -253,16 +253,16 @@ func TestLoadManifest_Invalid(t *testing.T) {
 func TestGenerateManifest_DiscoversRootDeliverablesByExtension(t *testing.T) {
 	tmpDir := t.TempDir()
 	files := map[string]string{
-		"src/nested/core.sv":         "module core; endmodule",
-		"a-output.bit":               "bit",
-		"z-output.bin":               "bin",
-		"identify_init.hex":          "identify",
-		"pcileech_hda_msi.sv":        "module pcileech_hda_msi; endmodule",
-		"pcileech_hda_rirb_dma.sv":   "module pcileech_hda_rirb_dma; endmodule",
-		"build_manifest.json":        `{"files":[]}`,
-		"vivado.log":                 "build log",
-		"vivado.jou":                 "build journal",
-		"post-synthesis-scratch.tmp": "temporary",
+		"src/nested/core.sv":          "module core; endmodule",
+		"a-output.bit":                "bit",
+		"z-output.bin":                "bin",
+		"identify_init.hex":           "identify",
+		"pcileech_bar_impl_device.sv": "module pcileech_bar_impl_device; endmodule",
+		"pcileech_hda_rirb_dma.sv":    "module pcileech_hda_rirb_dma; endmodule",
+		"build_manifest.json":         `{"files":[]}`,
+		"vivado.log":                  "build log",
+		"vivado.jou":                  "build journal",
+		"post-synthesis-scratch.tmp":  "temporary",
 	}
 	for name, content := range files {
 		filePath := filepath.Join(tmpDir, filepath.FromSlash(name))
@@ -285,7 +285,7 @@ func TestGenerateManifest_DiscoversRootDeliverablesByExtension(t *testing.T) {
 	want := []string{
 		"a-output.bit",
 		"identify_init.hex",
-		"pcileech_hda_msi.sv",
+		"pcileech_bar_impl_device.sv",
 		"pcileech_hda_rirb_dma.sv",
 		"src/nested/core.sv",
 		"z-output.bin",
@@ -318,7 +318,7 @@ func TestGenerateManifest_RejectsRootDeliverableSymlink(t *testing.T) {
 	if err := os.WriteFile(outside, []byte("module outside; endmodule"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	linkPath := filepath.Join(tmpDir, "pcileech_hda_msi.sv")
+	linkPath := filepath.Join(tmpDir, "pcileech_bar_impl_device.sv")
 	if err := os.Symlink(outside, linkPath); err != nil {
 		t.Skipf("symlink unavailable: %v", err)
 	}

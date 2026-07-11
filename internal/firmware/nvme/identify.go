@@ -126,32 +126,35 @@ func buildIdentifyController(ids firmware.DeviceIDs, barData []byte, identity *C
 	data[0x04A] = oui[1]
 	data[0x04B] = oui[0]
 
-	data[0x04C] = 0x00                                  // CMIC
-	data[0x04D] = deriveMDTS(barData)                   // MDTS — clamped to backend-safe
-	binary.LittleEndian.PutUint16(data[0x04E:], 0x0001) // CNTLID
+	data[0x04C] = 0x00                                              // CMIC
+	data[0x04D] = deriveMDTS(barData)                               // MDTS — clamped to backend-safe
+	binary.LittleEndian.PutUint16(data[0x04E:], 0x0001)             // CNTLID
 	binary.LittleEndian.PutUint32(data[0x050:], deriveVER(barData)) // VER — must match BAR VS
-	binary.LittleEndian.PutUint32(data[0x054:], 0x00000064) // RTD3 Resume Latency (100µs)
-	binary.LittleEndian.PutUint32(data[0x058:], 0x00000064) // RTD3 Entry Latency (100µs)
-	binary.LittleEndian.PutUint32(data[0x05C:], 0x00000000) // OAES
-	binary.LittleEndian.PutUint32(data[0x060:], 0x00000000) // CTRATT
+	binary.LittleEndian.PutUint32(data[0x054:], 0x00000064)         // RTD3 Resume Latency (100µs)
+	binary.LittleEndian.PutUint32(data[0x058:], 0x00000064)         // RTD3 Entry Latency (100µs)
+	binary.LittleEndian.PutUint32(data[0x05C:], 0x00000000)         // OAES
+	binary.LittleEndian.PutUint32(data[0x060:], 0x00000000)         // CTRATT
 
 	// Admin Command Set Attributes (0x100)
-	binary.LittleEndian.PutUint16(data[0x100:], 0x0006) // OACS - Format + FW Download
+	binary.LittleEndian.PutUint16(data[0x100:], 0x0002) // OACS - Format NVM only
 	data[0x102] = 3                                     // ACL
 	data[0x103] = 7                                     // AERL
-	data[0x104] = 0x14                                  // FRMW
-	data[0x105] = 0x0E                                  // LPA
-	data[0x106] = 0x3F                                  // ELPE
-	data[0x107] = 0                                     // NPSS (1 power state)
-	data[0x108] = 0x01                                  // AVSCC
-	data[0x111] = 0x01                                  // CNTRLTYPE - I/O Controller
+	data[0x104] = 0x02                                  // FRMW
+	data[0x105] = 0x00                                  // LPA
+	data[0x106] = 0x00                                  // ELPE
+	data[0x107] = 0x00                                  // NPSS (no extra power states)
+	data[0x108] = 0x00                                  // AVSCC
+	data[0x109] = 0x00                                  // APSTA
+	binary.LittleEndian.PutUint16(data[0x10A:], 343)    // WCTEMP
+	binary.LittleEndian.PutUint16(data[0x10C:], 358)    // CCTEMP (matches SMART critical threshold)
+	data[0x15C] = 0x01                                  // CNTRLTYPE - I/O Controller (NVMe 1.4)
 
 	// NVM Command Set Attributes (0x200)
 	data[0x200] = 0x66                                  // SQES min=max=64B
 	data[0x201] = 0x44                                  // CQES min=max=16B
 	binary.LittleEndian.PutUint16(data[0x202:], 0x0000) // MAXCMD
 	binary.LittleEndian.PutUint32(data[0x204:], 1)      // NN - 1 namespace
-	binary.LittleEndian.PutUint16(data[0x208:], 0x001F) // ONCS
+	binary.LittleEndian.PutUint16(data[0x208:], 0x000C) // ONCS - DSM + Write Zeroes only
 	binary.LittleEndian.PutUint16(data[0x20A:], 0x0000) // FUSES
 	data[0x20C] = 0x00                                  // FNA
 	data[0x20D] = 0x01                                  // VWC present

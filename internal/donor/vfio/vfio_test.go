@@ -542,8 +542,8 @@ func TestWriteWithDeadline_DeadlineFires(t *testing.T) {
 	if !containsStr(err.Error(), "did not complete") {
 		t.Errorf("error should report the write did not complete, got: %v", err)
 	}
-	close(blocker)   // release the leaked goroutine
-	<-writeReturned  // ensure it exits (no leak)
+	close(blocker)  // release the leaked goroutine
+	<-writeReturned // ensure it exits (no leak)
 }
 
 func TestConfigSpaceReachable_AllFF(t *testing.T) {

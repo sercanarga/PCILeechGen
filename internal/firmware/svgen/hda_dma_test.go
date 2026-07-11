@@ -81,6 +81,13 @@ func TestHDADMABridgeIntegration(t *testing.T) {
 		}
 	}
 
+	if !strings.Contains(ctrlSV, ".tlp_tx_tready  ( hda_tlp_tx_tready             )") {
+		t.Error("bar_controller HDA DMA ready must come from the arbiter")
+	}
+	if strings.Contains(ctrlSV, "dma_yield") {
+		t.Error("bar_controller contains stale dma_yield reference")
+	}
+
 	// Check HDA DMA bridge
 	dmaSV, err := svgen.GenerateHDARIRBDMASV(cfg)
 	if err != nil {

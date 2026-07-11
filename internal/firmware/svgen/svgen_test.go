@@ -411,7 +411,8 @@ func TestNVMeDoorbellOffsets(t *testing.T) {
 	sq0 := cfg.NVMeSQ0DoorbellOffset()
 	cq0 := cfg.NVMeCQ0DoorbellOffset()
 
-	d := uint32(0x1000); if sq0 != d {
+	d := uint32(0x1000)
+	if sq0 != d {
 		t.Errorf("SQ0 doorbell = 0x%X, want 0x1000", sq0)
 	}
 	if cq0 != 0x1004 {
@@ -422,7 +423,8 @@ func TestNVMeDoorbellOffsets(t *testing.T) {
 	cfg.NVMeDoorbellStride = 1
 	sq0 = cfg.NVMeSQ0DoorbellOffset()
 	cq0 = cfg.NVMeCQ0DoorbellOffset()
-	d = uint32(0x1000); if sq0 != d {
+	d = uint32(0x1000)
+	if sq0 != d {
 		t.Errorf("SQ0 doorbell (stride=1) = 0x%X, want 0x1000", sq0)
 	}
 	if cq0 != 0x1008 {

@@ -167,8 +167,8 @@ func TestWritemask_CommandStatusWritable(t *testing.T) {
 	wm := GenerateWritemaskCOE(cs)
 	dwords := parseCOEDwords(t, wm)
 
-	if dwords[1] != "ffffffff" {
-		t.Errorf("Command:Status mask = %s, want ffffffff", dwords[1])
+	if dwords[1] != "f900ffff" {
+		t.Errorf("Command:Status mask = %s, want f900ffff (Command writable, Status RO bits protected)", dwords[1])
 	}
 }
 

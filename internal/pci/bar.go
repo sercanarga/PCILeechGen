@@ -141,8 +141,8 @@ func ParseBARsFromSysfsResource(lines []string) []BAR {
 			bar.Size = end - start + 1
 
 			// flags are kernel struct resource->flags (IORESOURCE_*), not raw BAR bits.
-			isIO := flags&0x00000100 != 0   // IORESOURCE_IO
-			isMem64 := flags&0x00100000 != 0 // IORESOURCE_MEM_64
+			isIO := flags&0x00000100 != 0       // IORESOURCE_IO
+			isMem64 := flags&0x00100000 != 0    // IORESOURCE_MEM_64
 			isPrefetch := flags&0x00002000 != 0 // IORESOURCE_PREFETCH
 			if isIO {
 				bar.Type = BARTypeIO

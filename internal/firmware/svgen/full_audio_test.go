@@ -2,6 +2,9 @@ package svgen_test
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -264,4 +267,110 @@ func TestLatencyEmulatorAudio(t *testing.T) {
 	}
 
 	t.Logf("Generated %d bytes of latency emulator SystemVerilog", len(sv))
+}
+
+func TestAudioDelayedWritesKeepTheirPayload(t *testing.T) {
+	sv, err := svgen.GenerateBarImplDeviceSV(&svgen.SVGeneratorConfig{
+		DeviceIDs: firmware.DeviceIDs{
+			VendorID:   0x1102,
+			DeviceID:   0x0012,
+			RevisionID: 0x03,
+		},
+		BARModel:    audioBARModel(),
+		DeviceClass: "audio",
+		ClassCode:   0x040300,
+		PRNGSeeds:   [4]uint32{0x12345678, 0x9ABCDEF0, 0xFEDCBA98, 0x76543210},
+	})
+	if err != nil {
+		t.Fatalf("GenerateBarImplDeviceSV: %v", err)
+	}
+
+	verilator, err := exec.LookPath("verilator")
+	if err != nil {
+		t.Skip("verilator not installed")
+	}
+	dir := t.TempDir()
+	dutPath := filepath.Join(dir, "dut.sv")
+	tbPath := filepath.Join(dir, "tb.sv")
+	testbench := `
+module tb;
+    reg clk = 0;
+    reg rst = 1;
+    reg [31:0] wr_addr = 0;
+    reg [31:0] wr_data = 0;
+    reg [3:0] wr_be = 0;
+    reg wr_valid = 0;
+    always #5 clk = ~clk;
+
+    pcileech_bar_impl_device dut (
+        .rst(rst), .clk(clk),
+        .wr_addr(wr_addr), .wr_data(wr_data), .wr_be(wr_be), .wr_valid(wr_valid),
+        .rd_req_ctx(0), .rd_req_addr(0), .rd_req_valid(0),
+        .dma_req_ready(0), .dma_done(0)
+    );
+
+    task write(input [31:0] addr, input [31:0] data, input [3:0] be);
+        @(negedge clk);
+        wr_addr = addr;
+        wr_data = data;
+        wr_be = be;
+        wr_valid = 1;
+        @(posedge clk);
+    endtask
+
+    task idle;
+        @(negedge clk);
+        wr_valid = 0;
+        wr_data = 0;
+        wr_be = 0;
+        @(posedge clk);
+        @(negedge clk);
+    endtask
+
+    initial begin
+        repeat (2) @(posedge clk);
+        @(negedge clk);
+        rst = 0;
+
+        write(32'h4c, 32'h00000002, 4'b0001);
+        write(32'h5c, 32'h00000002, 4'b0001);
+        idle();
+        if (dut.reg_0x0000004C[1:0] !== 2'b10)
+            $fatal(1, "0x4c consumed next write payload: %h", dut.reg_0x0000004C);
+        if (dut.reg_0x0000005C[2:0] !== 3'b010)
+            $fatal(1, "0x5c DMAEN consumed wrong payload: %h", dut.reg_0x0000005C);
+
+        dut.reg_0x0000005C[8] = 1'b1;
+        write(32'h5c, 32'h00000102, 4'b0011);
+        write(32'h4c, 32'h00000002, 4'b0001);
+        idle();
+        if (dut.reg_0x0000005C[8] !== 1'b0)
+            $fatal(1, "0x5c RIRBSTS consumed next byte enables: %h", dut.reg_0x0000005C);
+
+        dut.reg_0x00000060[0] = 1'b1;
+        write(32'h60, 32'h00000001, 4'b0001);
+        write(32'h5c, 32'h00000002, 4'b0001);
+        idle();
+        if (dut.reg_0x00000060[0] !== 1'b0)
+            $fatal(1, "0x60 RW1C consumed next write payload: %h", dut.reg_0x00000060);
+        if (dut.reg_0x0000005C[2:0] !== 3'b010)
+            $fatal(1, "0x5c final payload lost: %h", dut.reg_0x0000005C);
+
+        $finish;
+    end
+endmodule
+`
+	for path, content := range map[string]string{dutPath: sv, tbPath: testbench} {
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	objDir := filepath.Join(dir, "obj")
+	build := exec.Command(verilator, "--binary", "--timing", "-Wno-fatal", "--top-module", "tb", "--Mdir", objDir, "-o", "sim", dutPath, tbPath)
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("verilator build: %v\n%s", err, output)
+	}
+	if output, err := exec.Command(filepath.Join(objDir, "sim")).CombinedOutput(); err != nil {
+		t.Fatalf("verilator simulation: %v\n%s", err, output)
+	}
 }

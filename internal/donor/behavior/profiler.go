@@ -21,10 +21,10 @@ type Profile struct {
 
 // InitStep is one reg access during driver init (first unique touch per offset).
 type InitStep struct {
-	Order     int           `json:"order"`     // step number (1-based)
-	Offset    uint32        `json:"offset"`    // BAR register offset
-	Type      string        `json:"type"`      // "read" or "write"
-	Value     uint32        `json:"value"`     // value read or written
+	Order     int           `json:"order"`  // step number (1-based)
+	Offset    uint32        `json:"offset"` // BAR register offset
+	Type      string        `json:"type"`   // "read" or "write"
+	Value     uint64        `json:"value"`
 	Timestamp time.Duration `json:"timestamp"` // time since start
 	Purpose   string        `json:"purpose"`   // inferred purpose (if known)
 }
@@ -178,7 +178,7 @@ func FormatReport(profile *Profile) string {
 			if step.Purpose != "" {
 				purpose = " ← " + step.Purpose
 			}
-			sb.WriteString(fmt.Sprintf("  %2d. [%v] %s 0x%03X = 0x%08X%s\n",
+			sb.WriteString(fmt.Sprintf("  %2d. [%v] %s 0x%03X = 0x%016X%s\n",
 				step.Order, step.Timestamp, step.Type, step.Offset, step.Value, purpose))
 		}
 	}

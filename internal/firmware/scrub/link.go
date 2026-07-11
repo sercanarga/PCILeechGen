@@ -99,9 +99,9 @@ func clampDeviceCapability(cs *pci.ConfigSpace, om *overlay.Map, caps []pci.Capa
 		if cap.Offset+0x04+4 <= pci.ConfigSpaceLegacySize {
 			devCap := cs.ReadU32(cap.Offset + 0x04)
 			newDevCap := devCap
-			newDevCap &= ^uint32(0x07) // MPS -> 128B
-			newDevCap &= ^uint32(0x18) // phantom functions off
-			newDevCap &= ^uint32(0x20) // extended tag off
+			newDevCap &= ^uint32(0x07)    // MPS -> 128B
+			newDevCap &= ^uint32(0x18)    // phantom functions off
+			newDevCap &= ^uint32(0x20)    // extended tag off
 			newDevCap &= ^uint32(1 << 28) // FLR capable off - prevents Windows from issuing function level reset
 			om.WriteU32(cap.Offset+0x04, newDevCap, "clamp Device Capabilities (MPS/phantom/exttag/FLR)")
 		}
@@ -125,11 +125,11 @@ func clampDeviceCapability(cs *pci.ConfigSpace, om *overlay.Map, caps []pci.Capa
 		if cap.Offset+0x24+4 <= pci.ConfigSpaceLegacySize {
 			devCap2 := cs.ReadU32(cap.Offset + 0x24)
 			newDevCap2 := devCap2
-			newDevCap2 &= ^uint32(1 << 11)  // LTR Mechanism Supported off
+			newDevCap2 &= ^uint32(1 << 11)    // LTR Mechanism Supported off
 			newDevCap2 &= ^uint32(0x03 << 18) // OBFF Supported off (bits 19:18)
-			newDevCap2 &= ^uint32(1 << 16)  // 10-bit tag completer off
-			newDevCap2 &= ^uint32(1 << 17)  // 10-bit tag requester off
-			newDevCap2 &= ^uint32(1 << 28)  // FRS Supported off
+			newDevCap2 &= ^uint32(1 << 16)    // 10-bit tag completer off
+			newDevCap2 &= ^uint32(1 << 17)    // 10-bit tag requester off
+			newDevCap2 &= ^uint32(1 << 28)    // FRS Supported off
 			om.WriteU32(cap.Offset+0x24, newDevCap2, "clamp Device Capabilities 2 (LTR/OBFF/tags/FRS)")
 		}
 
@@ -138,11 +138,10 @@ func clampDeviceCapability(cs *pci.ConfigSpace, om *overlay.Map, caps []pci.Capa
 			devCtl2 := cs.ReadU16(cap.Offset + 0x28)
 			newDevCtl2 := devCtl2
 			newDevCtl2 &= ^uint16(0x03 << 13) // OBFF Enable off (bits 14:13)
-			newDevCtl2 &= ^uint16(0x0F)        // Completion Timeout Value = default
+			newDevCtl2 &= ^uint16(0x0F)       // Completion Timeout Value = default
 			om.WriteU16(cap.Offset+0x28, newDevCtl2, "clear OBFF Enable + Completion Timeout Value")
 		}
 
 		break
 	}
 }
-

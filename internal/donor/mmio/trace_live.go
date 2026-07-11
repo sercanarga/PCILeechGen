@@ -6,6 +6,7 @@ package mmio
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"time"
@@ -18,14 +19,105 @@ const (
 	tracingOnPath = tracingDir + "/tracing_on"
 )
 
-// LiveTrace enables mmiotrace, records BAR accesses for `duration`, then stops.
 func LiveTrace(bdf string, duration time.Duration) (*TraceResult, error) {
-	// debugfs present?
+	return nil, fmt.Errorf("target BAR aperture is required for live MMIO capture")
+}
+
+func LiveTraceTarget(target TraceTarget, duration time.Duration) (*TraceResult, error) {
+	if err := validateTraceTarget(target); err != nil {
+		return nil, err
+	}
+	return captureLiveTrace(&target, target.BDF, duration)
+}
+
+type liveTraceOutcome struct {
+	record    AccessRecord
+	hasRecord bool
+	err       error
+	done      bool
+}
+
+func collectLiveTrace(reader io.ReadCloser, target TraceTarget, duration time.Duration) ([]AccessRecord, error) {
+	if reader == nil {
+		return nil, fmt.Errorf("trace reader is nil")
+	}
+	if err := validateTraceTarget(target); err != nil {
+		return nil, err
+	}
+	if duration <= 0 {
+		return nil, fmt.Errorf("trace duration must be positive")
+	}
+	events := make(chan liveTraceOutcome)
+	stop := make(chan struct{})
+	go func() {
+		scanner := bufio.NewScanner(reader)
+		var firstTimestamp time.Duration
+		haveFirst := false
+		for scanner.Scan() {
+			rec, isMMIO, parseErr := parseRawMMIOTraceLine(scanner.Text())
+			if parseErr != nil || !isMMIO {
+				continue
+			}
+			if applyErr := applyTraceTarget(&rec, target); applyErr != nil {
+				continue
+			}
+			if !haveFirst {
+				firstTimestamp = rec.Timestamp
+				haveFirst = true
+			}
+			rec.Timestamp -= firstTimestamp
+			select {
+			case events <- liveTraceOutcome{record: rec, hasRecord: true}:
+			case <-stop:
+				return
+			}
+		}
+		select {
+		case events <- liveTraceOutcome{err: scanner.Err(), done: true}:
+		case <-stop:
+		}
+	}()
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+	defer reader.Close()
+	var records []AccessRecord
+	for {
+		select {
+		case event := <-events:
+			if event.hasRecord {
+				records = append(records, event.record)
+			}
+			if event.done {
+				if event.err != nil {
+					return nil, fmt.Errorf("read trace pipe: %w", event.err)
+				}
+				return records, nil
+			}
+		case <-timer.C:
+			close(stop)
+			_ = reader.Close()
+			grace := time.NewTimer(10 * time.Millisecond)
+			select {
+			case event := <-events:
+				grace.Stop()
+				if event.done && event.err != nil {
+					return records, nil
+				}
+			case <-grace.C:
+			}
+			return records, nil
+		}
+	}
+}
+
+func captureLiveTrace(target *TraceTarget, bdf string, duration time.Duration) (*TraceResult, error) {
+	if duration <= 0 {
+		return nil, fmt.Errorf("trace duration must be positive")
+	}
 	if _, err := os.Stat(currentTracer); err != nil {
 		return nil, fmt.Errorf("ftrace not available (debugfs mounted?): %w", err)
 	}
 
-	// save + restore previous tracer
 	prevTracer, err := os.ReadFile(currentTracer)
 	if err != nil {
 		return nil, fmt.Errorf("cannot read current tracer: %w", err)
@@ -36,13 +128,11 @@ func LiveTrace(bdf string, duration time.Duration) (*TraceResult, error) {
 		}
 	}()
 
-	// switch to mmiotrace
 	if writeErr := os.WriteFile(currentTracer, []byte("mmiotrace"), 0644); writeErr != nil {
 		return nil, fmt.Errorf("cannot enable mmiotrace (CONFIG_MMIOTRACE=y needed): %w", writeErr)
 	}
-
 	if writeErr := os.WriteFile(tracingOnPath, []byte("1"), 0644); writeErr != nil {
-		slog.Warn("failed to enable tracing", "error", writeErr)
+		return nil, fmt.Errorf("cannot enable tracing: %w", writeErr)
 	}
 	defer func() {
 		if writeErr := os.WriteFile(tracingOnPath, []byte("0"), 0644); writeErr != nil {
@@ -50,51 +140,38 @@ func LiveTrace(bdf string, duration time.Duration) (*TraceResult, error) {
 		}
 	}()
 
-	// read from the pipe
 	pipe, err := os.Open(tracePipe)
 	if err != nil {
 		return nil, fmt.Errorf("cannot open trace_pipe: %w", err)
 	}
 	defer pipe.Close()
 
+	startedAt := time.Now()
 	result := &TraceResult{
-		BDF:      bdf,
-		Duration: duration,
+		SchemaVersion: TraceSchemaVersion,
+		BDF:           bdf,
+		Duration:      duration,
+		StartTime:     startedAt,
+	}
+	if target != nil {
+		result.BARIndex = target.BARIndex
+		result.BARBase = target.BARBase
+		result.BARSize = target.BARSize
 	}
 
-	// read records until timeout
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		scanner := bufio.NewScanner(pipe)
-		deadline := time.Now().Add(duration)
-
-		for scanner.Scan() {
-			if time.Now().After(deadline) {
-				break
-			}
-			line := scanner.Text()
-			rec, ok := parseMMIOTraceLine(line)
-			if ok {
-				result.Records = append(result.Records, rec)
-			}
-		}
-	}()
-
-	// wait or timeout
-	select {
-	case <-done:
-	case <-time.After(duration + 500*time.Millisecond):
+	if target == nil {
+		return nil, fmt.Errorf("target BAR aperture is required")
 	}
-
-	if err := os.WriteFile(tracingOnPath, []byte("0"), 0644); err != nil {
-		slog.Warn("failed to stop tracing", "error", err)
+	records, collectErr := collectLiveTrace(pipe, *target, duration)
+	if collectErr != nil {
+		return nil, collectErr
 	}
-
+	result.Records = records
+	result.Duration = time.Since(startedAt)
 	return result, nil
 }
 
-// parseMMIOTraceLine parses one mmiotrace line (R/W <width> <ts> <addr> <val>).
 func parseMMIOTraceLine(line string) (AccessRecord, bool) {
-	return parseTextTraceLine(line, 0)
+	rec, isMMIO, err := parseRawMMIOTraceLine(line)
+	return rec, isMMIO && err == nil
 }

@@ -58,7 +58,7 @@ func makeCSWithPCIe() *pci.ConfigSpace {
 	cs.Data[0x61] = 0x70 // MSI next -> PCIe at 0x70
 	// PCIe capability at 0x70
 	cs.Data[0x70] = pci.CapIDPCIExpress
-	cs.Data[0x71] = 0x00 // end of chain
+	cs.Data[0x71] = 0x00                                  // end of chain
 	binary.LittleEndian.PutUint16(cs.Data[0x72:], 0x0002) // version 2, endpoint
 	return cs
 }
@@ -767,9 +767,9 @@ func TestFullPipeline_DevCap2PowerBitsCleared(t *testing.T) {
 	// set power-triggering bits in donor's DevCap2
 	pcieOff := findPCIeCapOffset(t, cs)
 	devCap2 := cs.ReadU32(pcieOff + 0x24)
-	devCap2 |= 1 << 11          // LTR Mechanism Supported
-	devCap2 |= 0x03 << 18       // OBFF Supported (Wake# and WAKE# signaling)
-	devCap2 |= 1 << 28          // FRS Supported
+	devCap2 |= 1 << 11    // LTR Mechanism Supported
+	devCap2 |= 0x03 << 18 // OBFF Supported (Wake# and WAKE# signaling)
+	devCap2 |= 1 << 28    // FRS Supported
 	cs.WriteU32(pcieOff+0x24, devCap2)
 
 	scrubbed := ScrubConfigSpace(cs, b)
@@ -795,8 +795,8 @@ func TestFullPipeline_DevCtl2PowerBitsCleared(t *testing.T) {
 
 	pcieOff := findPCIeCapOffset(t, cs)
 	devCtl2 := cs.ReadU16(pcieOff + 0x28)
-	devCtl2 |= 1 << 10         // LTR Enable
-	devCtl2 |= 0x03 << 13      // OBFF Enable
+	devCtl2 |= 1 << 10    // LTR Enable
+	devCtl2 |= 0x03 << 13 // OBFF Enable
 	cs.WriteU16(pcieOff+0x28, devCtl2)
 
 	scrubbed := ScrubConfigSpace(cs, b)
@@ -968,4 +968,3 @@ func findPCIeCapOffset(t *testing.T, cs *pci.ConfigSpace) int {
 	t.Fatal("PCIe cap not found")
 	return 0
 }
-

@@ -13,8 +13,8 @@ import (
 )
 
 var (
-	sysfsBase   = "/sys/bus/pci/devices" // per-device attributes
-	pciBusPath  = "/sys/bus/pci"         // drivers_probe and drivers/ live here
+	sysfsBase  = "/sys/bus/pci/devices" // per-device attributes
+	pciBusPath = "/sys/bus/pci"         // drivers_probe and drivers/ live here
 )
 
 // sysfsProbeTimeout bounds a probe-triggering sysfs write. It cannot interrupt a

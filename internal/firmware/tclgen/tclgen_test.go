@@ -1,11 +1,17 @@
 package tclgen
 
 import (
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/sercanarga/pcileechgen/internal/board"
 	"github.com/sercanarga/pcileechgen/internal/donor"
+	"github.com/sercanarga/pcileechgen/internal/firmware/barmodel"
+	"github.com/sercanarga/pcileechgen/internal/firmware/svgen"
 	"github.com/sercanarga/pcileechgen/internal/pci"
 )
 
@@ -62,6 +68,68 @@ func TestGenerateProjectTCL(t *testing.T) {
 	}
 	if !strings.Contains(tcl, "set v_files") {
 		t.Error("TCL must define `set v_files` even when empty (concat references it)")
+	}
+}
+
+func TestTclPathNormalizesWindowsSeparators(t *testing.T) {
+	if got, want := tclPath(`C:\Users\Admin\pcileech-fpga\board\ip`), `C:/Users/Admin/pcileech-fpga/board/ip`; got != want {
+		t.Fatalf("tclPath = %q, want %q", got, want)
+	}
+}
+
+func TestGeneratedMultiBARTCLSourcesInTclsh(t *testing.T) {
+	tclsh, err := exec.LookPath("tclsh")
+	if err != nil {
+		t.Skip("tclsh is required to execute generated Tcl")
+	}
+
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	ctx := &donor.DeviceContext{
+		Device:      pci.PCIDevice{VendorID: 0x1234, DeviceID: 0x5678, ClassCode: 0xFF0000},
+		ConfigSpace: cs,
+		BARs: []pci.BAR{
+			{Index: 0, Size: 0x2000, Type: pci.BARTypeMem64, Is64Bit: true},
+			{Index: 2, Size: 0x1000, Type: pci.BARTypeMem32, Prefetchable: true},
+			{Index: 5, Size: 0x100000, Type: pci.BARTypeMem32},
+		},
+	}
+	bar0 := &barmodel.BARModel{BIR: 0, Size: 0x2000, Type: pci.BARTypeMem64, Is64Bit: true}
+	bar2 := &barmodel.BARModel{BIR: 2, Size: 0x1000, Type: pci.BARTypeMem32, Prefetchable: true}
+	bar5 := &barmodel.BARModel{BIR: 5, Size: 0x100000, Type: pci.BARTypeMem32}
+	cfg := &svgen.SVGeneratorConfig{
+		DonorBARTopology: true,
+		BARModels:        []*barmodel.BARModel{bar0, bar2, bar5},
+		BARModel:         bar0,
+	}
+	b := &board.Board{Name: "TclSyntax", FPGAPart: "xc7a35tfgg484-2", PCIeLanes: 1, TopModule: "test_top"}
+	generated := GenerateProjectTCLWithConfig(ctx, b, t.TempDir(), false, cfg)
+	tclPath := filepath.Join(t.TempDir(), "vivado_generate_project.tcl")
+	if err := os.WriteFile(tclPath, []byte(generated), 0644); err != nil {
+		t.Fatal(err)
+	}
+	harnessPath := filepath.Join(t.TempDir(), "source_generated.tcl")
+	harness := `proc create_project args {}
+proc get_property args { return "." }
+proc current_project args { return "project" }
+proc set_property args {}
+proc get_filesets args { return "sources_1" }
+proc create_fileset args {}
+proc import_files args { return "" }
+proc get_files args { return "" }
+proc remove_files args {}
+proc get_ips args { return "pcie_7x_0" }
+proc upgrade_ip args {}
+proc create_run args {}
+proc get_runs args { return "run" }
+proc current_run args {}
+` + fmt.Sprintf("source {%s}\n", filepath.ToSlash(tclPath))
+	if err := os.WriteFile(harnessPath, []byte(harness), 0644); err != nil {
+		t.Fatal(err)
+	}
+	output, err := exec.Command(tclsh, harnessPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("tclsh rejected generated multi-BAR Tcl: %v\n%s", err, output)
 	}
 }
 

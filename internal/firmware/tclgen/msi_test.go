@@ -88,7 +88,8 @@ func TestMSIVectorsToTCL(t *testing.T) {
 func TestBuildBAR0Config_MemoryBAR(t *testing.T) {
 	// Memory BAR - Xilinx IP should be configured with provided size (e.g. 4 KB default) to match
 	// the FPGA's BRAM-served region size (CappedBAR0Size may be larger on big-BRAM boards or large donor).
-	sz := 4096; cfg := buildBAR0Config(sz, nil)
+	sz := 4096
+	cfg := buildBAR0Config(sz, nil)
 	if !cfg.Enabled {
 		t.Fatal("BAR0 should be enabled")
 	}
@@ -104,7 +105,8 @@ func TestBuildBAR0Config_MemoryBAR(t *testing.T) {
 func TestBuildBAR0Config_IOBAR(t *testing.T) {
 	// IO BAR donor: BAR0 must still be enabled as memory.
 	// (dynamic Capped +) scrubber forces BAR0 to 32-bit memory regardless of donor type.
-	sz := 4096; cfg := buildBAR0Config(sz, nil)
+	sz := 4096
+	cfg := buildBAR0Config(sz, nil)
 	if !cfg.Enabled {
 		t.Fatal("BAR0 should be enabled even with IO-only donor")
 	}
@@ -119,7 +121,8 @@ func TestBuildBAR0Config_IOBAR(t *testing.T) {
 func TestBuildBAR0Config_NoBARs(t *testing.T) {
 	// no donor BARs: BAR0 must still be enabled.
 	// the (CappedBAR0Size + scrub) determines BAR0 size (4KB default on standard boards) 32-bit memory for all devices.
-	sz := 4096; cfg := buildBAR0Config(sz, nil)
+	sz := 4096
+	cfg := buildBAR0Config(sz, nil)
 	if !cfg.Enabled {
 		t.Fatal("BAR0 should always be enabled")
 	}

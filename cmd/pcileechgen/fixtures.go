@@ -18,7 +18,7 @@ var fixturesOpts struct {
 var fixturesCmd = &cobra.Command{
 	Use:   "fixtures",
 	Short: "Generate synthetic donor fixtures for CI HDL verification",
-	Long: "Writes one representative device_context.json per device class.",
+	Long:  "Writes one representative device_context.json per device class.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := os.MkdirAll(fixturesOpts.out, 0o755); err != nil {
 			return fmt.Errorf("create output dir: %w", err)

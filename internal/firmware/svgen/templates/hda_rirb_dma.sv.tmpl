@@ -13,6 +13,7 @@
 module pcileech_hda_rirb_dma(
     input               rst,
     input               clk,
+    input               dma_enabled,
 
     input [15:0]        pcie_id,        // our BDF, goes into requester ID
 
@@ -64,7 +65,7 @@ module pcileech_hda_rirb_dma(
     always @(posedge clk) begin
         if (rst) begin
             dstate          <= D_IDLE;
-            dma_req_ready   <= 1'b1;
+            dma_req_ready   <= 1'b0;
             dma_done        <= 1'b0;
             d_tag           <= 8'h80;
             d_resp_lo       <= 32'h0;
@@ -80,7 +81,7 @@ module pcileech_hda_rirb_dma(
 
             // CRST falling: reset to IDLE and clear ALL latched data. Without clearing,
             // a still-asserted dma_req_valid_r re-accepts stale data next cycle -> corrupt RIRB entries.
-            if (crst_falling) begin
+            if (crst_falling && (dstate == D_IDLE)) begin
                 dstate          <= D_IDLE;
                 dma_req_ready   <= 1'b1;
                 d_tlp_timeout   <= 20'h0;
@@ -96,11 +97,11 @@ module pcileech_hda_rirb_dma(
 
                 // ---- idle: accept new response from BAR module ---------------
                 D_IDLE: begin
-                    dma_req_ready <= 1'b1;
+                    dma_req_ready <= dma_enabled;
                     d_tlp_timeout   <= 20'h0;
                     d_tlp_timed_out <= 1'b0;
 
-                    if (dma_req_valid) begin
+                    if (dma_enabled && dma_req_valid) begin
                         // Latch inputs; don't depend on live signals during TLP emission.
                         d_resp_lo   <= dma_req_lo;
                         d_resp_hi   <= dma_req_hi;
@@ -117,21 +118,18 @@ module pcileech_hda_rirb_dma(
                 // ---- first beat: header (64-bit) or header+data0 (32-bit) ----
                 D_WR_TLP1: begin
                     d_tlp_timeout <= d_tlp_timeout + 1'b1;
-                    if (d_tlp_timeout >= 20'hFFFFF) begin
+                    if (d_tlp_timeout >= 20'hFFFFF)
                         d_tlp_timed_out <= 1'b1;
-                        dstate          <= D_IDLE;
-                    end else if (tlp_tx_tready) begin
+                    if (tlp_tx_tready)
                         dstate <= D_WR_TLP2;
-                    end
                 end
 
                 // ---- data beat 1: type+NID (64-bit) or payload (32-bit) ------
                 D_WR_TLP2: begin
                     d_tlp_timeout <= d_tlp_timeout + 1'b1;
-                    if (d_tlp_timeout >= 20'hFFFFF) begin
+                    if (d_tlp_timeout >= 20'hFFFFF)
                         d_tlp_timed_out <= 1'b1;
-                        dstate          <= D_IDLE;
-                    end else if (tlp_tx_tready) begin
+                    if (tlp_tx_tready) begin
                         if (d_is_64bit) begin
                             dstate <= D_WR_TLP3;
                         end else begin
@@ -143,12 +141,10 @@ module pcileech_hda_rirb_dma(
                 // ---- data beat 2: payload (64-bit only) ----------------------
                 D_WR_TLP3: begin
                     d_tlp_timeout <= d_tlp_timeout + 1'b1;
-                    if (d_tlp_timeout >= 20'hFFFFF) begin
+                    if (d_tlp_timeout >= 20'hFFFFF)
                         d_tlp_timed_out <= 1'b1;
-                        dstate          <= D_IDLE;
-                    end else if (tlp_tx_tready) begin
+                    if (tlp_tx_tready)
                         dstate <= D_DONE;
-                    end
                 end
 
                 // ---- signal completion to BAR module -------------------------

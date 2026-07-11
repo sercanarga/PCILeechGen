@@ -91,6 +91,24 @@ COMMANDS
       --bar-index 2 --bar-size 4096 --class-code 0x010802 --json
 
 
+VMD / INTEL RST HOST PLACEMENT
+------------------------------
+  The generated endpoint presents as an NVMe controller (PCIe class code
+  010802), not an Intel VMD controller. Intel VMD ownership is selected by
+  the host BIOS for a specific root port or port group, so the card must sit
+  on a VMD-mapped port or adapter path to come up under VMD.
+
+  Requirements for VMD / Intel RST operation:
+    - Intel CPU, 11th generation or newer, in the host that holds the card.
+    - Intel VMD enabled in BIOS for the physical PCIe port or M.2 adapter
+      path used by the card.
+    - Matching Intel RST / VMD drivers installed on Windows.
+
+  If Windows lists the board as a generic SCSI or storage controller with no
+  NVMe driver, the active bitstream was built with the wrong PCIe class code.
+  Keep the endpoint class as 010802 and use a VMD-mapped slot or adapter path.
+
+
 FEATURES
 --------
   Device identity
@@ -159,6 +177,9 @@ OUTPUT
     pcileech_bar_zero4k.coe             BAR0 content (sized to donor/BRAM)
     pcileech_bar_impl_device.sv         register-level BAR implementation
     pcileech_tlps128_bar_controller.sv  TLP BAR controller
+    pcileech_tlp_normalizer.sv           normalized MRd/MWr decode + decisions
+    pcileech_tlps128_bar_rdengine.sv     BE/RCB/MPS-aware read completions
+    pcileech_tlp_ur_completer.sv        unsupported non-posted completions
     pcileech_msix_table.sv              MSI-X table + PBA
     pcileech_nvme_admin_responder.sv    (if NVMe)
     pcileech_nvme_dma_bridge.sv         (if NVMe)

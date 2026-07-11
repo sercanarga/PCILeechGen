@@ -6,6 +6,7 @@ import (
 
 	"github.com/sercanarga/pcileechgen/internal/board"
 	"github.com/sercanarga/pcileechgen/internal/donor"
+	"github.com/sercanarga/pcileechgen/internal/donor/behavior"
 	"github.com/sercanarga/pcileechgen/internal/firmware"
 	"github.com/sercanarga/pcileechgen/internal/pci"
 	"github.com/sercanarga/pcileechgen/internal/vivado"
@@ -14,17 +15,18 @@ import (
 
 // buildFlags groups all build command flags.
 type buildFlags struct {
-	bdf        string
-	board      string
-	vivadoPath string
-	output     string
-	skipVivado bool
-	jobs       int
-	timeout    int
-	libDir     string
-	fromJSON   string
-	stockBar   bool
-	force      bool
+	bdf           string
+	board         string
+	vivadoPath    string
+	output        string
+	skipVivado    bool
+	jobs          int
+	timeout       int
+	libDir        string
+	fromJSON      string
+	stockBar      bool
+	behaviorRules string
+	force         bool
 }
 
 var buildOpts buildFlags
@@ -56,6 +58,10 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	ctx, err := loadDonorContext()
 	if err != nil {
 		return err
+	}
+
+	if buildOpts.stockBar && ctx.BehaviorRules != nil {
+		return fmt.Errorf("behavior rules require generated BAR RTL; --stock-bar is unsupported")
 	}
 
 	printBuildSummary(ctx, b)
@@ -94,27 +100,36 @@ func runBuild(cmd *cobra.Command, args []string) error {
 
 // loadDonorContext loads device context from JSON or live device.
 func loadDonorContext() (*donor.DeviceContext, error) {
+	var ctx *donor.DeviceContext
+	var err error
 	if buildOpts.fromJSON != "" {
 		slog.Info("loading device context", "file", buildOpts.fromJSON)
-		return donor.LoadContext(buildOpts.fromJSON)
+		ctx, err = donor.LoadContext(buildOpts.fromJSON)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		if buildOpts.bdf == "" {
+			return nil, fmt.Errorf("either --bdf or --from-json is required")
+		}
+		bdf, parseErr := pci.ParseBDF(buildOpts.bdf)
+		if parseErr != nil {
+			return nil, fmt.Errorf("invalid BDF: %w", parseErr)
+		}
+		slog.Info("target device", "bdf", bdf.String())
+		slog.Info("collecting donor device data")
+		collector := donor.NewCollector()
+		ctx, err = collector.Collect(bdf)
+		if err != nil {
+			return nil, fmt.Errorf("device data collection failed: %w", err)
+		}
 	}
-
-	if buildOpts.bdf == "" {
-		return nil, fmt.Errorf("either --bdf or --from-json is required")
-	}
-
-	bdf, err := pci.ParseBDF(buildOpts.bdf)
-	if err != nil {
-		return nil, fmt.Errorf("invalid BDF: %w", err)
-	}
-
-	slog.Info("target device", "bdf", bdf.String())
-	slog.Info("collecting donor device data")
-
-	collector := donor.NewCollector()
-	ctx, err := collector.Collect(bdf)
-	if err != nil {
-		return nil, fmt.Errorf("device data collection failed: %w", err)
+	if buildOpts.behaviorRules != "" {
+		rules, loadErr := behavior.LoadRuleSet(buildOpts.behaviorRules)
+		if loadErr != nil {
+			return nil, loadErr
+		}
+		ctx.BehaviorRules = rules
 	}
 	return ctx, nil
 }
@@ -149,6 +164,7 @@ func init() {
 	buildCmd.Flags().StringVar(&buildOpts.bdf, "bdf", "", "donor device BDF address (e.g. 0000:03:00.0)")
 	buildCmd.Flags().StringVar(&buildOpts.board, "board", "", "target FPGA board name (required, e.g. PCIeSquirrel)")
 	buildCmd.Flags().StringVar(&buildOpts.fromJSON, "from-json", "", "load donor device data from JSON file (offline build)")
+	buildCmd.Flags().StringVar(&buildOpts.behaviorRules, "behavior-rules", "", "attach a validated behavior-rule JSON artifact")
 	buildCmd.Flags().StringVar(&buildOpts.vivadoPath, "vivado-path", "", "path to Vivado installation")
 	buildCmd.Flags().StringVar(&buildOpts.output, "output", "pcileech_datastore", "output directory")
 	buildCmd.Flags().BoolVar(&buildOpts.skipVivado, "skip-vivado", false, "skip Vivado synthesis (only generate artifacts)")

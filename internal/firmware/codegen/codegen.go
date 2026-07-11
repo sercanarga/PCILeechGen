@@ -60,7 +60,7 @@ func GenerateWritemaskCOE(cs *pci.ConfigSpace) string {
 
 	// header type 0 registers (DWORD index = byte offset / 4)
 	masks[0] = 0x00000000 // 0x00: VID:DID (read-only identity)
-	masks[1] = 0xFFFFFFFF // 0x04: Command:Status (OS needs full control)
+	masks[1] = 0xF900FFFF // 0x04: Command writable; Status W1C bits writable, RO bits read-only
 	masks[2] = 0x00000000 // 0x08: RevisionID:ClassCode (read-only identity)
 	masks[3] = 0xFF00FFFF // 0x0C: CLS+LT writable, HeaderType RO, BIST writable
 

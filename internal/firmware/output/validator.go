@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/sercanarga/pcileechgen/internal/firmware"
+	"github.com/sercanarga/pcileechgen/internal/firmware/devicemodel"
 )
 
 type ValidationResult struct {
@@ -55,6 +56,17 @@ func ValidateOutputDir(dir string) *ValidationResult {
 		if info.Size() == 0 {
 			result.fail(fmt.Sprintf("%s: empty file", name))
 			continue
+		}
+		if name == "device_model.json" {
+			data, readErr := os.ReadFile(path)
+			if readErr != nil {
+				result.fail(fmt.Sprintf("%s: unreadable: %v", name, readErr))
+				continue
+			}
+			if _, parseErr := devicemodel.FromJSON(data); parseErr != nil {
+				result.fail(fmt.Sprintf("%s: invalid: %v", name, parseErr))
+				continue
+			}
 		}
 		result.pass(fmt.Sprintf("%s: OK (%d bytes)", name, info.Size()))
 	}
