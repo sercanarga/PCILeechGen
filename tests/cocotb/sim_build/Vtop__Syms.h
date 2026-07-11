@@ -49,18 +49,8 @@ class alignas(VL_CACHE_LINE_BYTES) Vtop__Syms final : public VerilatedSyms {
     VerilatedScope* __Vscopep_tb_top__i_bar__i_bar4;
     VerilatedScope* __Vscopep_tb_top__i_bar__i_bar5;
     VerilatedScope* __Vscopep_tb_top__i_bar__i_bar_rsp_arbiter;
-    VerilatedScope* __Vscopep_tb_top__i_bar__i_fifo_nvme_dma;
     VerilatedScope* __Vscopep_tb_top__i_bar__i_latency_emu;
     VerilatedScope* __Vscopep_tb_top__i_bar__i_lifecycle_service;
-    VerilatedScope* __Vscopep_tb_top__i_bar__i_nvme_bram_disk;
-    VerilatedScope* __Vscopep_tb_top__i_bar__i_nvme_bram_disk__i_bank0;
-    VerilatedScope* __Vscopep_tb_top__i_bar__i_nvme_bram_disk__i_bank1;
-    VerilatedScope* __Vscopep_tb_top__i_bar__i_nvme_bram_disk__i_bank2;
-    VerilatedScope* __Vscopep_tb_top__i_bar__i_nvme_bram_disk__i_bank3;
-    VerilatedScope* __Vscopep_tb_top__i_bar__i_nvme_dma_bridge;
-    VerilatedScope* __Vscopep_tb_top__i_bar__i_nvme_dma_bridge__i_dma_tag_service;
-    VerilatedScope* __Vscopep_tb_top__i_bar__i_nvme_interrupt_service;
-    VerilatedScope* __Vscopep_tb_top__i_bar__i_nvme_responder;
     VerilatedScope* __Vscopep_tb_top__i_bar__i_pcileech_tlps128_bar_rdengine;
     VerilatedScope* __Vscopep_tb_top__i_bar__i_pcileech_tlps128_bar_rdengine__i_fifo_134_134_clk1_bar_rdrsp;
     VerilatedScope* __Vscopep_tb_top__i_bar__i_pcileech_tlps128_bar_wrengine;

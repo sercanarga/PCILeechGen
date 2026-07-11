@@ -42,3 +42,6 @@ Thumbs.db
 *.str
 *.xpr
 .Xil/.claude/
+tests/cocotb/out/
+tests/cocotb/out_*/
+tests/cocotb/sim_build/

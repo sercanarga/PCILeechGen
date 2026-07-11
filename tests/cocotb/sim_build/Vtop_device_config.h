@@ -20,17 +20,17 @@ class alignas(VL_CACHE_LINE_BYTES) Vtop_device_config final {
 
     // PARAMETERS
     static constexpr CData/*7:0*/ REVISION_ID = 1U;
-    static constexpr CData/*7:0*/ CLASS_BASE = 1U;
-    static constexpr CData/*7:0*/ CLASS_SUB = 8U;
-    static constexpr CData/*7:0*/ CLASS_PROGIF = 2U;
-    static constexpr CData/*7:0*/ DONOR_PME_SUPPORT_MASK = 4U;
+    static constexpr CData/*7:0*/ CLASS_BASE = 8U;
+    static constexpr CData/*7:0*/ CLASS_SUB = 7U;
+    static constexpr CData/*7:0*/ CLASS_PROGIF = 0U;
+    static constexpr CData/*7:0*/ DONOR_PME_SUPPORT_MASK = 0U;
     static constexpr CData/*2:0*/ DONOR_MSI_MULTIPLE_MSG = 0U;
     static constexpr CData/*1:0*/ DONOR_PCIE_ASPM_CAP = 0U;
     static constexpr CData/*1:0*/ DONOR_PCIE_ASPM_ENABLE = 0U;
     static constexpr CData/*7:0*/ DONOR_PCIELINK_SPEED = 0U;
     static constexpr CData/*7:0*/ DONOR_PCIELINK_WIDTH = 0U;
-    static constexpr SData/*15:0*/ VENDOR_ID = 0x144dU;
-    static constexpr SData/*15:0*/ DEVICE_ID = 0xa809U;
+    static constexpr SData/*15:0*/ VENDOR_ID = 0x8086U;
+    static constexpr SData/*15:0*/ DEVICE_ID = 0x15d9U;
     static constexpr SData/*15:0*/ SUBSYS_VENDOR_ID = 0U;
     static constexpr SData/*15:0*/ SUBSYS_DEVICE_ID = 0U;
     static constexpr SData/*11:0*/ DONOR_PM_CAP_OFF = 0x0040U;
@@ -43,12 +43,12 @@ class alignas(VL_CACHE_LINE_BYTES) Vtop_device_config final {
     static constexpr SData/*11:0*/ DONOR_DSN_CAP_OFF = 0U;
     static constexpr IData/*31:0*/ BAR0_PRESENT = 1U;
     static constexpr IData/*31:0*/ BAR0_SIZE = 0x00004000U;
-    static constexpr IData/*31:0*/ BAR0_REGS = 0x0000000dU;
+    static constexpr IData/*31:0*/ BAR0_REGS = 0U;
     static constexpr IData/*31:0*/ LATENCY_MIN = 3U;
-    static constexpr IData/*31:0*/ LATENCY_MAX = 0x0000000cU;
-    static constexpr IData/*31:0*/ LATENCY_AVG = 6U;
-    static constexpr IData/*31:0*/ HAS_NVME_FSM = 1U;
-    static constexpr IData/*31:0*/ HAS_NVME_RESP = 1U;
+    static constexpr IData/*31:0*/ LATENCY_MAX = 0x0000000fU;
+    static constexpr IData/*31:0*/ LATENCY_AVG = 7U;
+    static constexpr IData/*31:0*/ HAS_NVME_FSM = 0U;
+    static constexpr IData/*31:0*/ HAS_NVME_RESP = 0U;
     static constexpr IData/*31:0*/ HAS_XHCI_FSM = 0U;
     static constexpr IData/*31:0*/ HAS_AUDIO_FSM = 0U;
     static constexpr IData/*31:0*/ HAS_MSIX_INT = 0U;
