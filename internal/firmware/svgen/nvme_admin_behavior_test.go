@@ -265,10 +265,28 @@ initial begin
     @(negedge clk);
     rst = 1'b0;
     @(negedge clk);
-    cc_en = 1'b1; // CC enable rising edge latches aqa/asq/acq (start event)
+    // cc_en stays 0 so scenario (0) can prove doorbells are gated until enable.
+
+    // (0) Controller Enable handshake: doorbells before CC.EN must produce no CQE.
+    poke_sqe(16'h400, 8'h0A, 32'h0, 32'h0, 32'h0, 32'h0, 32'h0, 32'h000000FF, 32'h0, 32'h0);
+    ring_sq(16'd0, 16'd1); // cc_en=0 -> responder must ignore this admin doorbell
+    cqe_snapshot = cqe_count;
+    repeat (2000) @(posedge clk);
+    if (cqe_count !== cqe_snapshot) $fatal(20, "doorbell processed before CC.EN set");
+    #1;
+    if (dbg_state !== 8'd0) $fatal(21, "responder left idle while CC.EN=0");
+    // Assert CC.EN and pulse cc_enable_wr one cycle to latch AQA/ASQ/ACQ.
+    @(negedge clk);
+    cc_en = 1'b1;
+    cc_enable_wr = 1'b1;
+    @(negedge clk);
+    cc_enable_wr = 1'b0;
+    repeat (8) @(posedge clk);
+    #1;
+    if (dbg_state !== 8'd0) $fatal(22, "responder not idle after CC.EN handshake");
     @(negedge clk);
 
-    // (1) Get Features with unsupported FID=0xFF -> INVALID_FIELD.
+    // (1) Get Features with unsupported FID=0xFF -> INVALID_FIELD (now CC.EN=1 -> CQE).
     poke_sqe(16'h400, 8'h0A, 32'h0,
              32'h0, 32'h0, 32'h0, 32'h0,
              32'h000000FF, 32'h0, 32'h0);
