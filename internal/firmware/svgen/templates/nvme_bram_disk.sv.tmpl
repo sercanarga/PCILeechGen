@@ -298,8 +298,8 @@ module pcileech_bram_disk #(
             clear_idx <= {CLEAR_WIDTH{1'b0}};
             clear_total_dw <= {CLEAR_WIDTH{1'b0}};
             for (reset_idx = 0; reset_idx < BACKING_LBAS; reset_idx = reset_idx + 1) begin
-                cache_valid[reset_idx] <= 1'b0;
-                cache_tag[reset_idx]   <= 64'h0000000000000000;
+                cache_valid[reset_idx] = 1'b0;
+                cache_tag[reset_idx]   = 64'h0000000000000000;
             end
         end else begin
             req_done <= 1'b0;
