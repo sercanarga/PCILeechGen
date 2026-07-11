@@ -12,11 +12,11 @@ void Vtop_IfAXIS128___ico_sequent__TOP__tb_top__DOT__tlps_in_if__0(Vtop_IfAXIS12
     vlSelfRef.tkeepdw = vlSymsp->TOP.tb_top__DOT__tlps_in_tkeepdw;
     vlSelfRef.tvalid = vlSymsp->TOP.tb_top__DOT__tlps_in_tvalid;
     vlSelfRef.tlast = vlSymsp->TOP.tb_top__DOT__tlps_in_tlast;
+    vlSelfRef.tuser = vlSymsp->TOP.tb_top__DOT__tlps_in_tuser;
     vlSelfRef.tdata[0U] = vlSymsp->TOP.tb_top__DOT__tlps_in_tdata[0U];
     vlSelfRef.tdata[1U] = vlSymsp->TOP.tb_top__DOT__tlps_in_tdata[1U];
     vlSelfRef.tdata[2U] = vlSymsp->TOP.tb_top__DOT__tlps_in_tdata[2U];
     vlSelfRef.tdata[3U] = vlSymsp->TOP.tb_top__DOT__tlps_in_tdata[3U];
-    vlSelfRef.tuser = vlSymsp->TOP.tb_top__DOT__tlps_in_tuser;
 }
 
 void Vtop_IfAXIS128___ico_sequent__TOP__tb_top__DOT__tlps_in_if__1(Vtop_IfAXIS128* vlSelf) {
@@ -50,6 +50,50 @@ void Vtop_IfAXIS128___ico_comb__TOP__tb_top__DOT__tlps_out_if__0(Vtop_IfAXIS128*
     vlSelfRef.has_data = vlSymsp->TOP__tb_top__DOT__i_bar__DOT__tlps_cpl.has_data;
     vlSelfRef.tvalid = vlSymsp->TOP__tb_top__DOT__i_bar__DOT__tlps_cpl.tvalid;
     vlSelfRef.tlast = vlSymsp->TOP__tb_top__DOT__i_bar__DOT__tlps_cpl.tlast;
+}
+
+void Vtop_IfAXIS128___ico_sequent__TOP__tb_top__DOT__tlps_dma_out_if__0(Vtop_IfAXIS128* vlSelf) {
+    VL_DEBUG_IF(VL_DBG_MSGF("+            Vtop_IfAXIS128___ico_sequent__TOP__tb_top__DOT__tlps_dma_out_if__0\n"); );
+    Vtop__Syms* const __restrict vlSymsp VL_ATTR_UNUSED = vlSelf->vlSymsp;
+    auto& vlSelfRef = std::ref(*vlSelf).get();
+    // Body
+    vlSelfRef.tkeepdw = vlSymsp->TOP.tb_top__DOT__i_bar__DOT__nvme_dma_fifo_tkeepdw;
+    vlSelfRef.tdata[0U] = vlSymsp->TOP.tb_top__DOT__i_bar__DOT__nvme_dma_fifo_tdata[0U];
+    vlSelfRef.tdata[1U] = vlSymsp->TOP.tb_top__DOT__i_bar__DOT__nvme_dma_fifo_tdata[1U];
+    vlSelfRef.tdata[2U] = vlSymsp->TOP.tb_top__DOT__i_bar__DOT__nvme_dma_fifo_tdata[2U];
+    vlSelfRef.tdata[3U] = vlSymsp->TOP.tb_top__DOT__i_bar__DOT__nvme_dma_fifo_tdata[3U];
+    vlSelfRef.tlast = vlSymsp->TOP.tb_top__DOT__i_bar__DOT__nvme_dma_fifo_tlast;
+    vlSelfRef.tuser = (((IData)(vlSymsp->TOP.tb_top__DOT__i_bar__DOT__nvme_dma_fifo_tlast) 
+                        << 1U) | (IData)(vlSymsp->TOP.tb_top__DOT__i_bar__DOT__nvme_dma_fifo_first));
+}
+
+void Vtop_IfAXIS128___ico_comb__TOP__tb_top__DOT__tlps_dma_out_if__0(Vtop_IfAXIS128* vlSelf) {
+    VL_DEBUG_IF(VL_DBG_MSGF("+            Vtop_IfAXIS128___ico_comb__TOP__tb_top__DOT__tlps_dma_out_if__0\n"); );
+    Vtop__Syms* const __restrict vlSymsp VL_ATTR_UNUSED = vlSelf->vlSymsp;
+    auto& vlSelfRef = std::ref(*vlSelf).get();
+    // Body
+    vlSelfRef.tvalid = ((IData)(vlSymsp->TOP.tb_top__DOT__i_bar__DOT__dma_enabled) 
+                        & (IData)(vlSymsp->TOP.tb_top__DOT__i_bar__DOT__nvme_dma_fifo_tvalid));
+    vlSelfRef.has_data = ((IData)(vlSymsp->TOP.tb_top__DOT__i_bar__DOT__dma_enabled) 
+                          & (0U != (IData)(vlSymsp->TOP.tb_top__DOT__i_bar__DOT__nvme_dma_pkt_count_next)));
+}
+
+void Vtop_IfAXIS128___nba_comb__TOP__tb_top__DOT__tlps_dma_out_if__0(Vtop_IfAXIS128* vlSelf) {
+    VL_DEBUG_IF(VL_DBG_MSGF("+            Vtop_IfAXIS128___nba_comb__TOP__tb_top__DOT__tlps_dma_out_if__0\n"); );
+    Vtop__Syms* const __restrict vlSymsp VL_ATTR_UNUSED = vlSelf->vlSymsp;
+    auto& vlSelfRef = std::ref(*vlSelf).get();
+    // Body
+    vlSelfRef.tvalid = ((IData)(vlSymsp->TOP.tb_top__DOT__i_bar__DOT__dma_enabled) 
+                        & (IData)(vlSymsp->TOP.tb_top__DOT__i_bar__DOT__nvme_dma_fifo_tvalid));
+}
+
+void Vtop_IfAXIS128___nba_comb__TOP__tb_top__DOT__tlps_dma_out_if__1(Vtop_IfAXIS128* vlSelf) {
+    VL_DEBUG_IF(VL_DBG_MSGF("+            Vtop_IfAXIS128___nba_comb__TOP__tb_top__DOT__tlps_dma_out_if__1\n"); );
+    Vtop__Syms* const __restrict vlSymsp VL_ATTR_UNUSED = vlSelf->vlSymsp;
+    auto& vlSelfRef = std::ref(*vlSelf).get();
+    // Body
+    vlSelfRef.has_data = ((IData)(vlSymsp->TOP.tb_top__DOT__i_bar__DOT__dma_enabled) 
+                          & (0U != (IData)(vlSymsp->TOP.tb_top__DOT__i_bar__DOT__nvme_dma_pkt_count_next)));
 }
 
 void Vtop_IfAXIS128___ico_sequent__TOP__tb_top__DOT__i_bar__DOT__tlps_rdeng__0(Vtop_IfAXIS128* vlSelf) {

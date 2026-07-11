@@ -1,48 +1,22 @@
 <testsuites name="results">
   <testsuite name="all" package="all">
-    <property name="random_seed" value="1783811644" />
-    <testcase name="test_mrd_basic" classname="test_pcie_host" file="/Users/can/PCILeechGen/tests/cocotb/test_pcie_host.py" lineno="63" time="0.001931905746459961" sim_time_ns="2450.0" ratio_time="1268177.8106873997" />
-    <testcase name="test_mrd_offset_100" classname="test_pcie_host" file="/Users/can/PCILeechGen/tests/cocotb/test_pcie_host.py" lineno="71" time="0" sim_time_ns="0" ratio_time="0">
-      <skipped />
-    </testcase>
-    <testcase name="test_mwr_then_mrd" classname="test_pcie_host" file="/Users/can/PCILeechGen/tests/cocotb/test_pcie_host.py" lineno="79" time="0.0019409656524658203" sim_time_ns="2759.999" ratio_time="1421972.097493674" />
-    <testcase name="test_mrd_no_bar_hit" classname="test_pcie_host" file="/Users/can/PCILeechGen/tests/cocotb/test_pcie_host.py" lineno="89" time="0.0022449493408203125" sim_time_ns="3309.999" ratio_time="1474420.3531962617" />
-    <testcase name="test_io_read_ur" classname="test_pcie_host" file="/Users/can/PCILeechGen/tests/cocotb/test_pcie_host.py" lineno="106" time="0.0051648616790771484" sim_time_ns="7309.999" ratio_time="1415332.9661494715" />
-    <testcase name="test_mrd_length_4" classname="test_pcie_host" file="/Users/can/PCILeechGen/tests/cocotb/test_pcie_host.py" lineno="113" time="0" sim_time_ns="0" ratio_time="0">
-      <skipped />
-    </testcase>
-    <testcase name="test_mwr_doorbell_safe" classname="test_pcie_host" file="/Users/can/PCILeechGen/tests/cocotb/test_pcie_host.py" lineno="121" time="0" sim_time_ns="0" ratio_time="0">
-      <skipped />
-    </testcase>
-    <testcase name="test_rapid_mrd_burst" classname="test_pcie_host" file="/Users/can/PCILeechGen/tests/cocotb/test_pcie_host.py" lineno="128" time="0" sim_time_ns="0" ratio_time="0">
-      <skipped />
-    </testcase>
-    <testcase name="test_mrd_large_length" classname="test_pcie_host" file="/Users/can/PCILeechGen/tests/cocotb/test_pcie_host.py" lineno="142" time="0" sim_time_ns="0" ratio_time="0">
-      <skipped />
-    </testcase>
-    <testcase name="test_mwr_pattern_integrity" classname="test_pcie_host" file="/Users/can/PCILeechGen/tests/cocotb/test_pcie_host.py" lineno="150" time="0" sim_time_ns="0" ratio_time="0">
-      <skipped />
-    </testcase>
-    <testcase name="test_nvme_cap_read" classname="test_pcie_host" file="/Users/can/PCILeechGen/tests/cocotb/test_pcie_host.py" lineno="161" time="0" sim_time_ns="0" ratio_time="0">
-      <skipped />
-    </testcase>
-    <testcase name="test_nvme_cc_write_readback" classname="test_pcie_host" file="/Users/can/PCILeechGen/tests/cocotb/test_pcie_host.py" lineno="171" time="0" sim_time_ns="0" ratio_time="0">
-      <skipped />
-    </testcase>
-    <testcase name="test_nvme_csts_read" classname="test_pcie_host" file="/Users/can/PCILeechGen/tests/cocotb/test_pcie_host.py" lineno="181" time="0" sim_time_ns="0" ratio_time="0">
-      <skipped />
-    </testcase>
-    <testcase name="test_nvme_vs_read" classname="test_pcie_host" file="/Users/can/PCILeechGen/tests/cocotb/test_pcie_host.py" lineno="189" time="0" sim_time_ns="0" ratio_time="0">
-      <skipped />
-    </testcase>
-    <testcase name="test_nvme_intms_read" classname="test_pcie_host" file="/Users/can/PCILeechGen/tests/cocotb/test_pcie_host.py" lineno="197" time="0" sim_time_ns="0" ratio_time="0">
-      <skipped />
-    </testcase>
-    <testcase name="test_nvme_doorbell_write" classname="test_pcie_host" file="/Users/can/PCILeechGen/tests/cocotb/test_pcie_host.py" lineno="205" time="0" sim_time_ns="0" ratio_time="0">
-      <skipped />
-    </testcase>
-    <testcase name="test_nvme_full_init_sequence" classname="test_pcie_host" file="/Users/can/PCILeechGen/tests/cocotb/test_pcie_host.py" lineno="212" time="0" sim_time_ns="0" ratio_time="0">
-      <skipped />
-    </testcase>
+    <property name="random_seed" value="1783811858" />
+    <testcase name="test_mrd_basic" classname="test_pcie_host" file="/Users/can/PCILeechGen/tests/cocotb/test_pcie_host.py" lineno="65" time="0.002050161361694336" sim_time_ns="2360.0" ratio_time="1151128.903360856" />
+    <testcase name="test_mrd_offset_100" classname="test_pcie_host" file="/Users/can/PCILeechGen/tests/cocotb/test_pcie_host.py" lineno="73" time="0.001850128173828125" sim_time_ns="2369.999" ratio_time="1280991.7893938143" />
+    <testcase name="test_mwr_then_mrd" classname="test_pcie_host" file="/Users/can/PCILeechGen/tests/cocotb/test_pcie_host.py" lineno="81" time="0.002128124237060547" sim_time_ns="2579.999" ratio_time="1212334.7664907011" />
+    <testcase name="test_mrd_no_bar_hit" classname="test_pcie_host" file="/Users/can/PCILeechGen/tests/cocotb/test_pcie_host.py" lineno="91" time="0.002444028854370117" sim_time_ns="3309.999" ratio_time="1354320.7536529119" />
+    <testcase name="test_io_read_ur" classname="test_pcie_host" file="/Users/can/PCILeechGen/tests/cocotb/test_pcie_host.py" lineno="108" time="0.005435943603515625" sim_time_ns="7309.999" ratio_time="1344752.5458638596" />
+    <testcase name="test_mrd_length_4" classname="test_pcie_host" file="/Users/can/PCILeechGen/tests/cocotb/test_pcie_host.py" lineno="115" time="0.0018601417541503906" sim_time_ns="2399.999" ratio_time="1290223.7125988207" />
+    <testcase name="test_mwr_doorbell_safe" classname="test_pcie_host" file="/Users/can/PCILeechGen/tests/cocotb/test_pcie_host.py" lineno="123" time="0.0020868778228759766" sim_time_ns="2809.999" ratio_time="1346508.6308346852" />
+    <testcase name="test_rapid_mrd_burst" classname="test_pcie_host" file="/Users/can/PCILeechGen/tests/cocotb/test_pcie_host.py" lineno="130" time="0.04451727867126465" sim_time_ns="52499.998999999996" ratio_time="1179317.3474884506" />
+    <testcase name="test_mrd_large_length" classname="test_pcie_host" file="/Users/can/PCILeechGen/tests/cocotb/test_pcie_host.py" lineno="144" time="0.0019860267639160156" sim_time_ns="2519.998999999996" ratio_time="1268864.572112363" />
+    <testcase name="test_mwr_pattern_integrity" classname="test_pcie_host" file="/Users/can/PCILeechGen/tests/cocotb/test_pcie_host.py" lineno="152" time="0.0021538734436035156" sim_time_ns="2739.998999999996" ratio_time="1272126.274706219" />
+    <testcase name="test_nvme_cap_read" classname="test_pcie_host" file="/Users/can/PCILeechGen/tests/cocotb/test_pcie_host.py" lineno="163" time="0.0018379688262939453" sim_time_ns="2369.998999999996" ratio_time="1289466.3751064967" />
+    <testcase name="test_nvme_cc_write_readback" classname="test_pcie_host" file="/Users/can/PCILeechGen/tests/cocotb/test_pcie_host.py" lineno="173" time="0.0020079612731933594" sim_time_ns="2579.998999999996" ratio_time="1284884.8403818551" />
+    <testcase name="test_nvme_csts_read" classname="test_pcie_host" file="/Users/can/PCILeechGen/tests/cocotb/test_pcie_host.py" lineno="183" time="0.0017743110656738281" sim_time_ns="2369.998999999996" ratio_time="1335729.1434689579" />
+    <testcase name="test_nvme_vs_read" classname="test_pcie_host" file="/Users/can/PCILeechGen/tests/cocotb/test_pcie_host.py" lineno="191" time="0.0017840862274169922" sim_time_ns="2369.998999999996" ratio_time="1328410.568715219" />
+    <testcase name="test_nvme_intms_read" classname="test_pcie_host" file="/Users/can/PCILeechGen/tests/cocotb/test_pcie_host.py" lineno="199" time="0.0017342567443847656" sim_time_ns="2369.998999999996" ratio_time="1366579.0879428077" />
+    <testcase name="test_nvme_doorbell_write" classname="test_pcie_host" file="/Users/can/PCILeechGen/tests/cocotb/test_pcie_host.py" lineno="207" time="0.002439737319946289" sim_time_ns="3309.998999999996" ratio_time="1356703.0241078846" />
+    <testcase name="test_nvme_full_init_sequence" classname="test_pcie_host" file="/Users/can/PCILeechGen/tests/cocotb/test_pcie_host.py" lineno="214" time="0.005445718765258789" sim_time_ns="7379.998999999996" ratio_time="1355192.8254321609" />
   </testsuite>
 </testsuites>

@@ -2,7 +2,9 @@ import struct, cocotb, random
 from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge, Timer
 
-def mrd3(addr, tag=1, length=1, first_be=0xF, last_be=0x0, req_id=0):
+def mrd3(addr, tag=1, length=1, first_be=0xF, last_be=None, req_id=0):
+    if last_be is None:
+        last_be = 0x0 if length == 1 else 0xF
     dw0 = (0b000 << 29) | 0b00000 << 24 | (length & 0x3FF)
     dw1 = ((req_id & 0xFFFF) << 16) | ((tag & 0xFF) << 8) | ((last_be & 0xF) << 4) | (first_be & 0xF)
     dw2 = addr & 0xFFFFFFFC
