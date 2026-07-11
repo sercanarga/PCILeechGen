@@ -152,7 +152,7 @@ module pcileech_nvme_admin_responder #(
     localparam [23:0] MAX_XFER_DW = 24'd8192;
     // Upper bound on PRP list entries we will walk before failing the command.
     localparam [19:0] PRP_LIST_MAX_ENTRIES = 20'd512;
-    localparam [15:0] NVME_NUM_MSIX_VECTORS = 16'd1;
+    localparam [15:0] NVME_NUM_MSIX_VECTORS = 16'd5;
 
     (* DONT_TOUCH = "TRUE" *) reg [5:0] state;
     (* DONT_TOUCH = "TRUE" *) reg [5:0] return_state;
@@ -732,19 +732,19 @@ module pcileech_nvme_admin_responder #(
             dsm_dw2            <= 32'h0;
             dsm_dw3            <= 32'h0;
 
-            stat_data_units_read    <= 64'h0000000001EE7CFD;
-            stat_data_units_written <= 64'h0000000000A8E922;
-            stat_host_read_cmds     <= 64'h000000006C2B5758;
-            stat_host_write_cmds    <= 64'h00000000093CBFDC;
+            stat_data_units_read    <= 64'h00000000010BF5B8;
+            stat_data_units_written <= 64'h0000000002F4DE78;
+            stat_host_read_cmds     <= 64'h0000000015FB2818;
+            stat_host_write_cmds    <= 64'h00000000705905D0;
             stat_flush_cmds         <= 64'h0;
             stat_write_zero_cmds    <= 64'h0;
             stat_dataset_cmds       <= 64'h0;
-            stat_cmds_completed     <= 64'h000000000000525D;
-            stat_media_errors       <= 32'h00000002;
-            stat_error_log_entries  <= 32'h00000004;
-            stat_unsafe_shutdowns   <= 32'h00000017;
-            power_cycle_count       <= 32'h00000345;
-            power_on_hours          <= 32'h000016E1;
+            stat_cmds_completed     <= 64'h00000000000041A4;
+            stat_media_errors       <= 32'h00000001;
+            stat_error_log_entries  <= 32'h00000005;
+            stat_unsafe_shutdowns   <= 32'h0000000E;
+            power_cycle_count       <= 32'h000002F6;
+            power_on_hours          <= 32'h000036B4;
             hour_second_count       <= 12'h0;
             second_tick             <= 27'h0;
             thermal_load            <= 8'h08;

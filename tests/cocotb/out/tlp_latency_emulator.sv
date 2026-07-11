@@ -13,10 +13,10 @@ module tlp_latency_emulator #(
     parameter WR_MIN_LATENCY     = 2,
     parameter WR_MAX_LATENCY     = 6,
     parameter CPL_TIMEOUT_CYCLES = 65536,
-    parameter [31:0] PRNG_SEED_0 = 32'h343BD444,
-    parameter [31:0] PRNG_SEED_1 = 32'h477C3009,
-    parameter [31:0] PRNG_SEED_2 = 32'hE9782444,
-    parameter [31:0] PRNG_SEED_3 = 32'h38C48C4D
+    parameter [31:0] PRNG_SEED_0 = 32'h45FA3BC4,
+    parameter [31:0] PRNG_SEED_1 = 32'h6D1BC089,
+    parameter [31:0] PRNG_SEED_2 = 32'hB74984C4,
+    parameter [31:0] PRNG_SEED_3 = 32'h0AF56CCD
 )(
     input wire          clk,
     input wire          rst,

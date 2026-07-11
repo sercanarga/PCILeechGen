@@ -52,6 +52,7 @@ class alignas(VL_CACHE_LINE_BYTES) Vtop__Syms final : public VerilatedSyms {
     VerilatedScope* __Vscopep_tb_top__i_bar__i_fifo_nvme_dma;
     VerilatedScope* __Vscopep_tb_top__i_bar__i_latency_emu;
     VerilatedScope* __Vscopep_tb_top__i_bar__i_lifecycle_service;
+    VerilatedScope* __Vscopep_tb_top__i_bar__i_msix_table;
     VerilatedScope* __Vscopep_tb_top__i_bar__i_nvme_bram_disk;
     VerilatedScope* __Vscopep_tb_top__i_bar__i_nvme_bram_disk__i_bank0;
     VerilatedScope* __Vscopep_tb_top__i_bar__i_nvme_bram_disk__i_bank1;

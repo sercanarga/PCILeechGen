@@ -20,6 +20,10 @@ constexpr CData/*2:0*/ Vtop___024root::tb_top__DOT__i_bar__DOT__i_tlp_normalizer
 constexpr CData/*2:0*/ Vtop___024root::tb_top__DOT__i_bar__DOT__i_tlp_normalizer__DOT__KIND_CONFIG;
 constexpr CData/*0:0*/ Vtop___024root::tb_top__DOT__i_bar__DOT__i_pcileech_tlps128_bar_rdengine__DOT__ST_IDLE;
 constexpr CData/*0:0*/ Vtop___024root::tb_top__DOT__i_bar__DOT__i_pcileech_tlps128_bar_rdengine__DOT__ST_ISSUE;
+constexpr CData/*1:0*/ Vtop___024root::tb_top__DOT__i_bar__DOT__i_bar0__DOT__INT_IDLE;
+constexpr CData/*1:0*/ Vtop___024root::tb_top__DOT__i_bar__DOT__i_bar0__DOT__INT_PENDING;
+constexpr CData/*1:0*/ Vtop___024root::tb_top__DOT__i_bar__DOT__i_bar0__DOT__INT_ASSERT;
+constexpr CData/*1:0*/ Vtop___024root::tb_top__DOT__i_bar__DOT__i_bar0__DOT__INT_COOLDOWN;
 constexpr CData/*1:0*/ Vtop___024root::tb_top__DOT__i_bar__DOT__i_nvme_interrupt_service__DOT__Q_SELECT;
 constexpr CData/*1:0*/ Vtop___024root::tb_top__DOT__i_bar__DOT__i_nvme_interrupt_service__DOT__Q_WAIT;
 constexpr CData/*1:0*/ Vtop___024root::tb_top__DOT__i_bar__DOT__i_nvme_interrupt_service__DOT__Q_CHECK;
@@ -132,6 +136,15 @@ constexpr IData/*31:0*/ Vtop___024root::tb_top__DOT__i_bar__DOT__i_latency_emu__
 constexpr IData/*31:0*/ Vtop___024root::tb_top__DOT__i_bar__DOT__i_latency_emu__DOT__PRNG_SEED_1;
 constexpr IData/*31:0*/ Vtop___024root::tb_top__DOT__i_bar__DOT__i_latency_emu__DOT__PRNG_SEED_2;
 constexpr IData/*31:0*/ Vtop___024root::tb_top__DOT__i_bar__DOT__i_latency_emu__DOT__PRNG_SEED_3;
+constexpr IData/*31:0*/ Vtop___024root::tb_top__DOT__i_bar__DOT__i_msix_table__DOT__NUM_VECTORS;
+constexpr IData/*31:0*/ Vtop___024root::tb_top__DOT__i_bar__DOT__i_msix_table__DOT__TABLE_BIR;
+constexpr IData/*31:0*/ Vtop___024root::tb_top__DOT__i_bar__DOT__i_msix_table__DOT__TABLE_OFFSET;
+constexpr IData/*31:0*/ Vtop___024root::tb_top__DOT__i_bar__DOT__i_msix_table__DOT__PBA_BIR;
+constexpr IData/*31:0*/ Vtop___024root::tb_top__DOT__i_bar__DOT__i_msix_table__DOT__PBA_OFFSET;
+constexpr IData/*31:0*/ Vtop___024root::tb_top__DOT__i_bar__DOT__i_msix_table__DOT__TABLE_ENTRIES;
+constexpr IData/*31:0*/ Vtop___024root::tb_top__DOT__i_bar__DOT__i_msix_table__DOT__TABLE_END;
+constexpr IData/*31:0*/ Vtop___024root::tb_top__DOT__i_bar__DOT__i_msix_table__DOT__PBA_SIZE;
+constexpr IData/*31:0*/ Vtop___024root::tb_top__DOT__i_bar__DOT__i_msix_table__DOT__PBA_END;
 constexpr IData/*31:0*/ Vtop___024root::tb_top__DOT__i_bar__DOT__i_nvme_interrupt_service__DOT__NUM_VECTORS;
 constexpr IData/*31:0*/ Vtop___024root::tb_top__DOT__i_bar__DOT__i_nvme_interrupt_service__DOT__DEFER_MSIX_CLEAR;
 constexpr IData/*31:0*/ Vtop___024root::tb_top__DOT__i_bar__DOT__i_nvme_interrupt_service__DOT__INDEX_WIDTH;

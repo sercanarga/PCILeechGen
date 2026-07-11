@@ -17,7 +17,6 @@ module tb_top;
     wire [15:0] pcie_id = 16'h0000;
     wire        bar_en = 1'b1;
 
-    // Flat AXIS signals for cocotb
     reg  [127:0] tlps_in_tdata = 0;
     reg  [3:0]   tlps_in_tkeepdw = 0;
     reg          tlps_in_tvalid = 0;
@@ -31,22 +30,26 @@ module tb_top;
     wire [8:0]   tlps_out_tuser;
     wire         tlps_out_has_data;
 
+    wire [127:0] tlps_dma_out_tdata;
     wire         tlps_dma_out_tvalid;
+    wire         tlps_dma_out_tlast;
+    wire [8:0]   tlps_dma_out_tuser;
+    wire         tlps_dma_out_has_data;
     wire         intr_req;
 
-    // Interface objects
+    reg [31:0] host_mem [0:65535];
+    integer i;
+
     IfAXIS128 tlps_in_if();
     IfAXIS128 tlps_out_if();
     IfAXIS128 tlps_dma_out_if();
 
-    // Drive tlps_in_if from flat regs
     assign tlps_in_if.tdata = tlps_in_tdata;
     assign tlps_in_if.tkeepdw = tlps_in_tkeepdw;
     assign tlps_in_if.tvalid = tlps_in_tvalid;
     assign tlps_in_if.tlast = tlps_in_tlast;
     assign tlps_in_if.tuser = tlps_in_tuser;
 
-    // Read tlps_out_if to flat wires
     assign tlps_out_tdata = tlps_out_if.tdata;
     assign tlps_out_tkeepdw = tlps_out_if.tkeepdw;
     assign tlps_out_tvalid = tlps_out_if.tvalid;
@@ -54,8 +57,13 @@ module tb_top;
     assign tlps_out_tuser = tlps_out_if.tuser;
     assign tlps_out_has_data = tlps_out_if.has_data;
 
-    assign tlps_out_if.tready = 1'b1;
+    assign tlps_dma_out_tdata = tlps_dma_out_if.tdata;
     assign tlps_dma_out_tvalid = tlps_dma_out_if.tvalid;
+    assign tlps_dma_out_tlast = tlps_dma_out_if.tlast;
+    assign tlps_dma_out_tuser = tlps_dma_out_if.tuser;
+    assign tlps_dma_out_has_data = tlps_dma_out_if.has_data;
+
+    assign tlps_out_if.tready = 1'b1;
     assign tlps_dma_out_if.tready = 1'b1;
 
     pcileech_tlps128_bar_controller i_bar(

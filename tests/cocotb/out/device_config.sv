@@ -14,12 +14,13 @@
 // Class Code:      0x010802
 
 // PCIe Link:       Speed=0 Width=x0
-// Donor PM: PME support=0x04, PME_Enable=off
+// Donor PM: PME support=0x00, PME_Enable=off
 // Donor MSI: multiple-msg=0x00, 64-bit=off
 // Donor PCIe: ASPM cap=0x0, ASPM enable=0x0, link=x0 0GT/s
 //
 // Features:
 //   - NVMe CC->CSTS state machine (dynamic handshake)
+//   - MSI-X interrupt controller
 //   - TLP latency emulation (min=3, max=12, avg=6)
 
 
@@ -47,12 +48,19 @@ package device_config;
     localparam LATENCY_MAX      = 12;
     localparam LATENCY_AVG      = 6;
 
+    // MSI-X Table Replication
+    localparam MSIX_NUM_VECTORS = 5;
+    localparam MSIX_TABLE_OFF   = 32'h00002000;
+    localparam MSIX_PBA_OFF     = 32'h00003000;
+    localparam MSIX_TABLE_BIR   = 0;
+    localparam MSIX_PBA_BIR     = 0;
+
     // Feature flags
     localparam HAS_NVME_FSM     = 1;
     localparam HAS_NVME_RESP    = 1;
     localparam HAS_XHCI_FSM     = 0;
     localparam HAS_AUDIO_FSM    = 0;
-    localparam HAS_MSIX_INT     = 0;
+    localparam HAS_MSIX_INT     = 1;
     localparam HAS_DONOR_PM_CAP   = 1;
     localparam HAS_DONOR_MSI_CAP  = 1;
     localparam HAS_DONOR_MSIX_CAP = 0;
@@ -69,7 +77,7 @@ package device_config;
     localparam [11:0] DONOR_LTR_CAP_OFF   = 12'h000;
     localparam [11:0] DONOR_L1PM_CAP_OFF  = 12'h000;
     localparam [11:0] DONOR_DSN_CAP_OFF   = 12'h000;
-    localparam [7:0] DONOR_PME_SUPPORT_MASK   = 8'h04;
+    localparam [7:0] DONOR_PME_SUPPORT_MASK   = 8'h00;
     localparam       DONOR_MSI_DISABLE_64      = 1;
     localparam [2:0] DONOR_MSI_MULTIPLE_MSG    = 3'b000;
     localparam [1:0] DONOR_PCIE_ASPM_CAP       = 2'b00;

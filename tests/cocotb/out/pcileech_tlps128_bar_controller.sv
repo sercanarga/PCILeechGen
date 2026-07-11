@@ -477,6 +477,12 @@ module pcileech_tlps128_bar_controller(
 
 
 
+    wire [87:0] msix_rsp_ctx;
+    wire [31:0] msix_rsp_data;
+    wire        msix_rsp_valid;
+    wire [2:0]  msix_rsp_bir;
+    wire        msix_addr_hit;
+
 
     wire        nvme_irq_event_valid;
     wire [15:0] nvme_irq_event_vector;
@@ -491,7 +497,6 @@ module pcileech_tlps128_bar_controller(
     wire        nvme_msix_pba_set_valid;
     wire        nvme_msix_pba_clear_valid;
     wire [15:0] nvme_msix_pba_vector;
-    wire        nvme_intr_req;
 
     wire        nvme_disk_req_valid;
     wire        nvme_disk_req_write;
@@ -504,9 +509,6 @@ module pcileech_tlps128_bar_controller(
     wire        nvme_disk_req_hit;
     wire        nvme_disk_busy;
     wire        nvme_disk_error;
-    assign nvme_msix_vector_addr   = 64'h0;
-    assign nvme_msix_vector_data   = 32'h0;
-    assign nvme_msix_vector_masked = 1'b1;
 
 
 
@@ -535,9 +537,9 @@ module pcileech_tlps128_bar_controller(
     assign bar_rsp_data[5]  = bar_base_data[5];
     assign bar_rsp_valid[5] = bar_base_valid[5];
 
-    assign bar_rsp_ctx[6]   = 88'h0;
-    assign bar_rsp_data[6]  = 32'h0;
-    assign bar_rsp_valid[6] = 1'b0;
+    assign bar_rsp_ctx[6]   = msix_rsp_ctx;
+    assign bar_rsp_data[6]  = msix_rsp_data;
+    assign bar_rsp_valid[6] = msix_rsp_valid;
 
     wire [6:0] bar_rsp_ready;
     pcileech_bar_rsp_arbiter i_bar_rsp_arbiter(
@@ -575,10 +577,10 @@ module pcileech_tlps128_bar_controller(
         .wr_addr        ( wr_addr_bar0 ),
         .wr_be          ( wr_be                         ),
         .wr_data        ( wr_data                       ),
-        .wr_valid       ( wr_valid && wr_bar[0] && bar0_wr_hit ),
+        .wr_valid       ( wr_valid && wr_bar[0] && bar0_wr_hit && !msix_wr_table_select && !msix_wr_pba_select ),
         .rd_req_ctx     ( rd_req_ctx                    ),
         .rd_req_addr    ( rd_req_addr_bar0 ),
-        .rd_req_valid   ( rd_req_valid && rd_req_bar[0] && bar0_rd_hit ),
+        .rd_req_valid   ( rd_req_valid && rd_req_bar[0] && bar0_rd_hit && !msix_addr_hit ),
 
         .rd_rsp_ctx     ( bar0_raw_ctx                  ),
         .rd_rsp_data    ( bar0_raw_data                 ),
@@ -612,7 +614,7 @@ module pcileech_tlps128_bar_controller(
         .rsp_data       ( bar0_emu_data                 ),
 
         .rsp_ready      ( bar0_emu_ready ),
-        .wr_valid       ( wr_valid && wr_bar[0] && bar0_wr_hit ),
+        .wr_valid       ( wr_valid && wr_bar[0] && bar0_wr_hit && !msix_wr_table_select && !msix_wr_pba_select ),
         .wr_addr        ( wr_addr_bar0 ),
         .wr_ack         ( bar0_wr_ack                   ),
         .busy           ( bar0_emu_busy                 )
@@ -674,6 +676,56 @@ module pcileech_tlps128_bar_controller(
 
 
 
+
+
+    wire msix_wr_table_select = wr_valid && wr_bar[0] &&
+                                (wr_addr >= 8192) &&
+                                (wr_addr < 8272);
+    wire msix_wr_pba_select   = wr_valid && wr_bar[0] &&
+                                (wr_addr >= 12288) &&
+                                (wr_addr < 12296);
+    wire msix_rd_table_select = rd_req_valid && rd_req_bar[0] &&
+                                (rd_req_addr >= 8192) &&
+                                (rd_req_addr < 8272);
+    wire msix_rd_pba_select   = rd_req_valid && rd_req_bar[0] &&
+                                (rd_req_addr >= 12288) &&
+                                (rd_req_addr < 12296);
+
+    pcileech_msix_table #(
+        .NUM_VECTORS    ( 5  ),
+        .TABLE_BIR      ( 0     ),
+        .TABLE_OFFSET   ( 32'h00002000 ),
+        .PBA_BIR        ( 0       ),
+        .PBA_OFFSET     ( 32'h00003000   )
+    ) i_msix_table(
+        .rst            ( device_reset                  ),
+        .clk            ( clk                           ),
+        .wr_addr        ( wr_addr                       ),
+        .wr_data        ( wr_data                       ),
+        .wr_be          ( wr_be                         ),
+        .wr_valid       ( wr_valid                      ),
+        .wr_table_select( msix_wr_table_select          ),
+        .wr_pba_select  ( msix_wr_pba_select            ),
+        .rd_req_ctx     ( rd_req_ctx                    ),
+        .rd_req_addr    ( rd_req_addr                   ),
+        .rd_req_valid   ( msix_rd_table_select || msix_rd_pba_select ),
+        .rd_table_select( msix_rd_table_select          ),
+        .rd_pba_select  ( msix_rd_pba_select            ),
+        .rd_rsp_ctx     ( msix_rsp_ctx                  ),
+        .rd_rsp_data    ( msix_rsp_data                 ),
+        .rd_rsp_valid   ( msix_rsp_valid                ),
+        .rd_rsp_bir     ( msix_rsp_bir                  ),
+
+        .vector_select  ( nvme_msix_vector_select       ),
+        .vector_addr    ( nvme_msix_vector_addr         ),
+        .vector_data    ( nvme_msix_vector_data         ),
+        .vector_masked  ( nvme_msix_vector_masked       ),
+        .pba_set_valid   ( nvme_msix_pba_set_valid       ),
+        .pba_set_vector  ( nvme_msix_pba_vector          ),
+        .pba_clear_valid ( nvme_msix_pba_clear_valid     ),
+        .pba_clear_vector( nvme_msix_pba_vector          ),
+        .addr_hit       ( msix_addr_hit                 )
+    );
 
 
 
@@ -742,26 +794,27 @@ module pcileech_tlps128_bar_controller(
 
 
     pcileech_interrupt_service #(
-        .NUM_VECTORS       ( 1 )
+        .NUM_VECTORS       ( 5 ),
+        .DEFER_MSIX_CLEAR  ( 1 )
     ) i_nvme_interrupt_service(
         .clk               ( clk                           ),
         .rst               ( device_reset                  ),
         .quiesce           ( lifecycle_quiesce             ),
-        .msix_mode         ( 1'b0                          ),
-        .function_enable   ( cfg_msi_enable                ),
-        .function_mask     ( 1'b0                          ),
-        .event_valid       ( nvme_irq_event_valid          ),
-        .event_vector      ( 16'd0                         ),
-        .vector_select     (                               ),
-        .vector_masked     ( 1'b0                          ),
-        .delivery_ready    ( 1'b1                          ),
-        .delivery_done     ( 1'b0                          ),
-        .delivery_valid    ( nvme_irq_delivery_valid       ),
-        .delivery_vector   ( nvme_irq_delivery_vector      ),
-        .msi_pulse         ( nvme_intr_req                 ),
-        .pba_set_valid     (                               ),
-        .pba_clear_valid   (                               ),
-        .pba_vector        (                               )
+        .msix_mode         ( 1'b1                          ),
+        .function_enable   ( cfg_msix_enable               ),
+        .function_mask     ( cfg_msix_function_mask        ),
+        .event_valid     ( nvme_irq_event_valid          ),
+        .event_vector      ( nvme_irq_event_vector         ),
+        .vector_select     ( nvme_msix_vector_select       ),
+        .vector_masked     ( nvme_msix_vector_masked       ),
+        .delivery_ready    ( nvme_irq_delivery_ready       ),
+        .delivery_done   ( nvme_irq_delivery_done        ),
+        .delivery_valid  ( nvme_irq_delivery_valid       ),
+        .delivery_vector ( nvme_irq_delivery_vector      ),
+        .msi_pulse         (                               ),
+        .pba_set_valid   ( nvme_msix_pba_set_valid       ),
+        .pba_clear_valid ( nvme_msix_pba_clear_valid     ),
+        .pba_vector        ( nvme_msix_pba_vector          )
     );
 
 
@@ -1038,7 +1091,7 @@ module pcileech_tlps128_bar_controller(
     );
 
 
-    assign intr_req = 1'b0 | nvme_intr_req;
+    assign intr_req = 1'b0;
 
 endmodule
 `default_nettype wire

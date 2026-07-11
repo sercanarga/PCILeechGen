@@ -181,7 +181,17 @@ if { $pcie_ip != "" } {
     CONFIG.Multiple_Message_Capable 1_vector \
   ] $pcie_ip
 
-  puts "PCIe IP configured: 144D:A809 Link=X4 5.0_GT/s DSN=disabled MSI=1_vector"
+  # MSI-X: enable first, then configure table/PBA (4 entries)
+  set_property CONFIG.MSIx_Enabled {true} $pcie_ip
+  set_property -dict [list \
+    CONFIG.MSIx_Table_Size          004 \
+    CONFIG.MSIx_Table_BIR           BAR_0 \
+    CONFIG.MSIx_Table_Offset        00002000 \
+    CONFIG.MSIx_PBA_BIR             BAR_0 \
+    CONFIG.MSIx_PBA_Offset          00003000 \
+  ] $pcie_ip
+
+  puts "PCIe IP configured: 144D:A809 Link=X4 5.0_GT/s DSN=disabled MSI=1_vector MSI-X=4vec"
 } else {
   puts "WARNING: PCIe IP core pcie_7x_0 not found, skipping donor identity configuration"
 }
