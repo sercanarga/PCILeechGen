@@ -60,7 +60,7 @@ func parseTextTraceLine(line string, barBase uint64) (AccessRecord, bool) {
 		return AccessRecord{}, false
 	}
 
-	var rec AccessRecord
+	rec := AccessRecord{CPU: -1}
 	switch fields[0] {
 	case "R":
 		rec.Type = AccessRead
@@ -68,6 +68,17 @@ func parseTextTraceLine(line string, barBase uint64) (AccessRecord, bool) {
 		rec.Type = AccessWrite
 	default:
 		return AccessRecord{}, false
+	}
+	width, err := strconv.ParseUint(fields[1], 10, 8)
+	if err != nil || (width != 1 && width != 2 && width != 4) {
+		return AccessRecord{}, false
+	}
+	rec.Width = uint8(width)
+	if !strings.HasPrefix(fields[3], "0x") {
+		cpu, cpuErr := strconv.Atoi(fields[3])
+		if cpuErr == nil {
+			rec.CPU = cpu
+		}
 	}
 
 	addrField, valueField, ok := traceAddressValueFields(fields)
@@ -85,12 +96,24 @@ func parseTextTraceLine(line string, barBase uint64) (AccessRecord, bool) {
 	}
 
 	rec.Offset = traceOffset(addr, barBase)
+	rec.ByteEnable = accessByteEnable(rec.Offset, rec.Width)
 	rec.Value = value
 	if ts, err := strconv.ParseFloat(fields[2], 64); err == nil {
 		rec.Timestamp = time.Duration(ts * float64(time.Second))
 	}
 
 	return rec, true
+}
+
+func accessByteEnable(offset uint32, width uint8) uint8 {
+	switch width {
+	case 1:
+		return 1 << (offset & 3)
+	case 2:
+		return 3 << (offset & 2)
+	default:
+		return 0xF
+	}
 }
 
 func traceAddressValueFields(fields []string) (string, string, bool) {

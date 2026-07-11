@@ -12,21 +12,26 @@ import (
 	"github.com/sercanarga/pcileechgen/internal/color"
 	"github.com/sercanarga/pcileechgen/internal/donor/behavior"
 	"github.com/sercanarga/pcileechgen/internal/donor/mmio"
+	"github.com/sercanarga/pcileechgen/internal/donor/session"
 	"github.com/sercanarga/pcileechgen/internal/pci"
 	"github.com/spf13/cobra"
 )
 
 type mmioTraceOptions struct {
-	bdf               string
-	duration          time.Duration
-	barIndex          int
-	barSize           int
-	barBase           string
-	classCode         string
-	jsonOutput        bool
-	outputFile        string
-	traceFile         string
-	compareTraceFiles []string
+	bdf                string
+	duration           time.Duration
+	barIndex           int
+	barSize            int
+	barBase            string
+	classCode          string
+	jsonOutput         bool
+	outputFile         string
+	traceFile          string
+	compareTraceFiles  []string
+	sessionDir         string
+	scenario           string
+	forceSession       bool
+	compareSessionDirs []string
 }
 
 var mmioTraceOpts mmioTraceOptions
@@ -41,6 +46,9 @@ Example:
   pcileechgen mmio-trace --bdf 03:00.0 --bar-size 4096 --class-code 0x010802
   pcileechgen mmio-trace --trace-file mmiotrace.txt --bar-base 0xf7800000 --bar-index 2 --json`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if len(mmioTraceOpts.compareSessionDirs) > 0 {
+			return runSessionAnalysis(cmd.OutOrStdout(), mmioTraceOpts.compareSessionDirs, mmioTraceOpts.jsonOutput)
+		}
 		if mmioTraceOpts.traceFile == "" {
 			if _, err := pci.ParseBDF(mmioTraceOpts.bdf); err != nil {
 				return fmt.Errorf("invalid BDF %q: %w", mmioTraceOpts.bdf, err)
@@ -64,6 +72,23 @@ Example:
 		barBase, err := parseTraceBARBase(mmioTraceOpts.barBase)
 		if err != nil {
 			return err
+		}
+		if mmioTraceOpts.sessionDir != "" {
+			bdf, parseErr := pci.ParseBDF(mmioTraceOpts.bdf)
+			if parseErr != nil {
+				return fmt.Errorf("--session-dir requires a valid --bdf: %w", parseErr)
+			}
+			scenario := session.Scenario(mmioTraceOpts.scenario)
+			if scenario != session.ScenarioTrace && scenario != session.ScenarioUnbindBind && scenario != session.ScenarioInterfaceUp {
+				return fmt.Errorf("--scenario must be trace, unbind-bind, or interface-up")
+			}
+			source := newLinuxSessionSource(bdf, mmioTraceOpts, barBase, scenario, mmioTraceOpts.forceSession)
+			manifest, captureErr := session.Capture(mmioTraceOpts.sessionDir, scenario, source)
+			if captureErr != nil {
+				return captureErr
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "saved initialization session to %s (%d artifacts)\n", mmioTraceOpts.sessionDir, len(manifest.Artifacts))
+			return nil
 		}
 
 		trace, err := loadMMIOTrace(mmioTraceOpts, barBase)
@@ -236,6 +261,10 @@ func init() {
 	mmioTraceCmd.Flags().StringVar(&mmioTraceOpts.outputFile, "output", "", "save raw trace JSON to file")
 	mmioTraceCmd.Flags().StringVar(&mmioTraceOpts.traceFile, "trace-file", "", "analyze an existing mmiotrace text file instead of capturing live")
 	mmioTraceCmd.Flags().StringSliceVar(&mmioTraceOpts.compareTraceFiles, "compare-trace", nil, "additional mmiotrace text file to compare (repeatable)")
+	mmioTraceCmd.Flags().StringVar(&mmioTraceOpts.sessionDir, "session-dir", "", "save a checksummed initialization capture session")
+	mmioTraceCmd.Flags().StringVar(&mmioTraceOpts.scenario, "scenario", string(session.ScenarioTrace), "capture scenario: trace, unbind-bind, or interface-up")
+	mmioTraceCmd.Flags().BoolVar(&mmioTraceOpts.forceSession, "force-session", false, "allow disruptive capture on an active default-route NIC")
+	mmioTraceCmd.Flags().StringSliceVar(&mmioTraceOpts.compareSessionDirs, "compare-session", nil, "initialization session directory to analyze (repeatable)")
 	mmioTraceCmd.Flags().BoolVar(&mmioTraceOpts.jsonOutput, "json", false, "emit machine-readable report")
 	rootCmd.AddCommand(mmioTraceCmd)
 }

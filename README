@@ -99,6 +99,26 @@ COMMANDS
     pcileechgen mmio-trace --trace-file first.log --compare-trace second.log \
       --bar-base 0xf7800000 --bar-index 2 --bar-size 4096
 
+  Capture a checksummed initialization session:
+    sudo pcileechgen mmio-trace --bdf 0000:03:00.0 --bar-index 2 \
+      --bar-size 4096 --session-dir captures/run-01 --scenario trace
+
+  Capture a driver unbind/bind or interface down/up transition:
+    sudo pcileechgen mmio-trace --bdf 0000:03:00.0 --bar-index 2 \
+      --session-dir captures/rebind-01 --scenario unbind-bind
+    sudo pcileechgen mmio-trace --bdf 0000:03:00.0 --bar-index 2 \
+      --session-dir captures/link-01 --scenario interface-up
+
+  Analyze repeated sessions:
+    pcileechgen mmio-trace \
+      --compare-session captures/run-01,captures/run-02,captures/run-03
+
+  Session captures include before/after config space, PCI resources, interrupt
+  snapshots, access width/byte-enable metadata, raw trace JSON, and a SHA256
+  manifest. Disruptive scenarios refuse the active default-route NIC unless
+  --force-session is explicitly supplied. Run them only on authorized lab
+  hardware from a recoverable local console.
+
 
 FEATURES
 --------

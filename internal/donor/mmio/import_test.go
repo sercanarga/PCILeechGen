@@ -74,3 +74,14 @@ func TestParseTextTrace_DurationUsesLastTimestamp(t *testing.T) {
 		t.Fatalf("duration = %s, want 250ms", trace.Duration)
 	}
 }
+
+func TestParseTextTracePreservesWidthByteEnableAndCPU(t *testing.T) {
+	trace, err := ParseTextTrace(strings.NewReader("W 1 1.000 2 0x1003 0xaa 0x0 0\n"), TextTraceOptions{BARBase: 0x1000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := trace.Records[0]
+	if record.Width != 1 || record.ByteEnable != 0x8 || record.CPU != 2 {
+		t.Fatalf("record metadata = %+v, want width=1 byte_enable=8 cpu=2", record)
+	}
+}

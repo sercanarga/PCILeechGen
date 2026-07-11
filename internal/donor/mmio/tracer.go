@@ -25,10 +25,13 @@ func (a AccessType) String() string {
 
 // AccessRecord is one captured BAR read or write.
 type AccessRecord struct {
-	Offset    uint32        // byte offset within the BAR
-	Type      AccessType    // read or write
-	Value     uint32        // value read or written
-	Timestamp time.Duration // time since trace started
+	Offset     uint32        `json:"offset"`      // byte offset within the BAR
+	Width      uint8         `json:"width"`       // access width in bytes
+	ByteEnable uint8         `json:"byte_enable"` // DWORD byte-enable mask
+	CPU        int           `json:"cpu"`         // tracing CPU, -1 when unavailable
+	Type       AccessType    `json:"type"`        // read or write
+	Value      uint32        `json:"value"`       // value read or written
+	Timestamp  time.Duration `json:"timestamp"`   // time since trace started
 }
 
 // TraceResult is everything captured during one tracing session.
