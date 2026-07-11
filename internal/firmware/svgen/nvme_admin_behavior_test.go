@@ -18,6 +18,8 @@ import (
 //   - Get Log Page LID=0x02 (SMART/Health)  -> SUCCESS, log-page DW0/DW1/DW36
 //     content asserted against the LOG_PAGE_SMART template
 //   - Asynchronous Event Request (opc 0x0C) -> NO synchronous CQE, returns idle
+//   - DSM Deallocate (opc 0x09, cdw11[2]=1) -> SUCCESS, exercises the DMA range
+//     descriptor fetch + disk_req invalidate path (auto-acked), returns idle
 //
 // NVME_SC_INVALID_FIELD = 15'h0002. The CQE status lives in DWORD3[31:17].
 func nvmeAdminBehaviorBench() string {
@@ -64,7 +66,20 @@ wire disk_req_flush;
 wire [63:0] disk_req_lba;
 wire [6:0] disk_req_word;
 wire [31:0] disk_req_wdata;
-wire disk_req_done = 1'b0;
+// Auto-ack disk_req: pulse done one cycle after valid rises. The DSM Deallocate
+// invalidate path (S_DSM_CLEAR_WAIT) waits on disk_req_done; no prior scenario
+// asserts disk_req_valid so this only arms for the DSM flow.
+reg disk_req_done;
+reg disk_req_valid_prev;
+always @(posedge clk) begin
+    if (rst) begin
+        disk_req_done <= 1'b0;
+        disk_req_valid_prev <= 1'b0;
+    end else begin
+        disk_req_valid_prev <= disk_req_valid;
+        disk_req_done <= disk_req_valid && !disk_req_valid_prev;
+    end
+end
 wire [31:0] disk_req_rdata = 32'h0;
 wire disk_req_hit = 1'b0;
 wire disk_busy = 1'b0;
@@ -332,6 +347,23 @@ initial begin
     if (cqe_count !== cqe_snapshot) $fatal(8, "AER posted a synchronous CQE");
     #1;
     if (dbg_state !== 8'd0) $fatal(9, "AER did not return to idle");
+
+    // (8) DSM Deallocate (opc 0x09, I/O qid=1). cdw11[2]=Deallocate, cdw10=0
+    // (NR=0 -> 1 range). One 16-byte range descriptor pre-poked at PRP1=0x7000.
+    // The responder fetches 4 DWORDs/range via DMA then invalidates the cache
+    // slot through the disk_req path (S_DSM_CLEAR_WAIT), which the tb auto-acks.
+    // Descriptor layout in memory (beat order): DW0=rsvd, DW1=NLB, DW2=SLBAlo, DW3=SLBAhi.
+    host_mem[16'h1C00] = 32'h00000000; // DW0 (unused)
+    host_mem[16'h1C01] = 32'h00000008; // DW1 = NLB (non-zero -> disk invalidate path)
+    host_mem[16'h1C02] = 32'h00000000; // DW2 = SLBA lo
+    host_mem[16'h1C03] = 32'h00000000; // DW3 = SLBA hi
+    poke_sqe(16'hC10, 8'h09, 32'h00000001,
+             32'h00007000, 32'h0, 32'h0, 32'h0,
+             32'h00000000, 32'h00000004, 32'h0);
+    ring_sq(16'd1, 16'd2);
+    wait_cqe(15'h0000);
+    #1;
+    if (dbg_state !== 8'd0) $fatal(10, "DSM did not return to idle");
 
     // Responder must return to S_IDLE (8'd0) after the flow.
     repeat (8) @(posedge clk);
