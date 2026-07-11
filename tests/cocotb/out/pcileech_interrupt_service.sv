@@ -1,0 +1,117 @@
+`timescale 1ns / 1ps
+
+module pcileech_interrupt_service #(
+    parameter integer NUM_VECTORS = 1,
+    parameter integer DEFER_MSIX_CLEAR = 0
+)(
+    input               clk,
+    input               rst,
+    input               quiesce,
+    input               msix_mode,
+    input               function_enable,
+    input               function_mask,
+    input               event_valid,
+    input [15:0]        event_vector,
+    output reg [15:0]   vector_select,
+    input               vector_masked,
+    input               delivery_ready,
+    input               delivery_done,
+    output reg          delivery_valid,
+    output reg [15:0]   delivery_vector,
+    output reg          msi_pulse,
+    output reg          pba_set_valid,
+    output reg          pba_clear_valid,
+    output reg [15:0]   pba_vector
+);
+    localparam Q_SELECT = 2'd0;
+    localparam Q_WAIT   = 2'd1;
+    localparam Q_CHECK  = 2'd2;
+    localparam integer INDEX_WIDTH = (NUM_VECTORS <= 1) ? 1 : $clog2(NUM_VECTORS);
+
+    reg [NUM_VECTORS-1:0] pending;
+    reg [INDEX_WIDTH-1:0] scan_vector;
+    reg [1:0] query_state;
+
+    always @(posedge clk) begin
+        pba_set_valid <= 1'b0;
+        pba_clear_valid <= 1'b0;
+
+        if (rst) begin
+            pending <= {NUM_VECTORS{1'b0}};
+            vector_select <= 16'd0;
+            delivery_valid <= 1'b0;
+            delivery_vector <= 16'd0;
+            msi_pulse <= 1'b0;
+            scan_vector <= {INDEX_WIDTH{1'b0}};
+            query_state <= Q_SELECT;
+            pba_vector <= 16'd0;
+        end else if (quiesce) begin
+            delivery_valid <= 1'b0;
+            msi_pulse <= 1'b0;
+            query_state <= Q_SELECT;
+            if (event_valid && (event_vector < 16'(NUM_VECTORS))) begin
+                pending[event_vector[INDEX_WIDTH-1:0]] <= 1'b1;
+                if (msix_mode) begin
+                    pba_set_valid <= 1'b1;
+                    pba_vector <= event_vector;
+                end
+            end
+        end else begin
+            if (event_valid && (event_vector < 16'(NUM_VECTORS))) begin
+                pending[event_vector[INDEX_WIDTH-1:0]] <= 1'b1;
+                if (msix_mode) begin
+                    pba_set_valid <= 1'b1;
+                    pba_vector <= event_vector;
+                end
+            end
+
+            if (delivery_valid) begin
+                if (DEFER_MSIX_CLEAR && msix_mode) begin
+                    if (delivery_done) begin
+                        delivery_valid <= 1'b0;
+                        if (!(event_valid && (event_vector == delivery_vector)))
+                            pending[delivery_vector[INDEX_WIDTH-1:0]] <= 1'b0;
+                        pba_clear_valid <= 1'b1;
+                        pba_vector <= delivery_vector;
+                    end
+                end else if (delivery_ready) begin
+                    delivery_valid <= 1'b0;
+                    if (!(event_valid && (event_vector == delivery_vector)))
+                        pending[delivery_vector[INDEX_WIDTH-1:0]] <= 1'b0;
+                    pba_clear_valid <= 1'b1;
+                    pba_vector <= delivery_vector;
+                end
+            end else if (msi_pulse) begin
+                if (delivery_ready) begin
+                    msi_pulse <= 1'b0;
+                    if (!(event_valid && (event_vector == delivery_vector)))
+                        pending[delivery_vector[INDEX_WIDTH-1:0]] <= 1'b0;
+                end
+            end else begin
+                case (query_state)
+                    Q_SELECT: begin
+                        vector_select <= 16'(scan_vector);
+                        query_state <= Q_WAIT;
+                    end
+                    Q_WAIT: query_state <= Q_CHECK;
+                    Q_CHECK: begin
+                        if (pending[vector_select[INDEX_WIDTH-1:0]] && function_enable &&
+                            !function_mask) begin
+                            delivery_vector <= vector_select;
+                            if (!msix_mode)
+                                msi_pulse <= 1'b1;
+                            else if (!vector_masked)
+                                delivery_valid <= 1'b1;
+                        end
+                        if (scan_vector == INDEX_WIDTH'(NUM_VECTORS - 1))
+                            scan_vector <= {INDEX_WIDTH{1'b0}};
+                        else
+                            scan_vector <= scan_vector + 1'b1;
+                        query_state <= Q_SELECT;
+                    end
+                    default: query_state <= Q_SELECT;
+                endcase
+            end
+        end
+    end
+endmodule
