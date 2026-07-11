@@ -5,21 +5,7 @@ import (
 	"testing"
 )
 
-// nvmeAdminBehaviorBench builds a Verilator testbench that instantiates
-// pcileech_nvme_admin_responder and drives a realistic admin-command flow:
-// host memory (ASQ/ACQ) is modeled as an SV array, doorbells submit SQEs, the
-// tb short-circuits DMA by feeding SQE DWORDs on the read port and capturing
-// CQE DWORDs on the write port, and DMA write beats are written back into
-// host_mem so data payloads can be inspected. Coverage:
-//   - Get Features with an unsupported FID  -> INVALID_FIELD (0x0002)
-//   - Identify CNS=0x01                     -> SUCCESS (0x0000)
-//   - Create I/O CQ / Create I/O SQ         -> SUCCESS (gates the MDTS path)
-//   - Oversized I/O read (nlb=64 -> 8320 DW > MAX_XFER_DW=8192) -> INVALID_FIELD
-//   - Get Log Page LID=0x02 (SMART/Health)  -> SUCCESS, log-page DW0/DW1/DW36
-//     content asserted against the LOG_PAGE_SMART template
-//   - Asynchronous Event Request (opc 0x0C) -> NO synchronous CQE, returns idle
-//
-// NVME_SC_INVALID_FIELD = 15'h0002. The CQE status lives in DWORD3[31:17].
+// nvmeAdminBehaviorBench returns a Verilator bench exercising the NVMe admin responder.
 func nvmeAdminBehaviorBench() string {
 	return "`timescale 1ns/1ps\n" + `module tb;
 reg clk = 0;
@@ -64,7 +50,18 @@ wire disk_req_flush;
 wire [63:0] disk_req_lba;
 wire [6:0] disk_req_word;
 wire [31:0] disk_req_wdata;
-wire disk_req_done = 1'b0;
+// Auto-ack disk_req one cycle after valid (arms the DSM Deallocate path).
+reg disk_req_done;
+reg disk_req_valid_prev;
+always @(posedge clk) begin
+    if (rst) begin
+        disk_req_done <= 1'b0;
+        disk_req_valid_prev <= 1'b0;
+    end else begin
+        disk_req_valid_prev <= disk_req_valid;
+        disk_req_done <= disk_req_valid && !disk_req_valid_prev;
+    end
+end
 wire [31:0] disk_req_rdata = 32'h0;
 wire disk_req_hit = 1'b0;
 wire disk_busy = 1'b0;
@@ -89,8 +86,7 @@ assign dma_wr_done = dma_wr_valid;
 reg [31:0] host_mem [0:16383];
 integer i;
 
-// DMA read model: when the responder raises dma_rd_req, latch addr+len and
-// stream len beats from host_mem, pulsing dma_rd_done on the last beat.
+// DMA read model: stream len beats from host_mem on dma_rd_req.
 reg [63:0] rd_addr_q;
 reg [9:0]  rd_len_q;
 reg [9:0]  rd_beat_q;
@@ -124,8 +120,7 @@ always @(posedge clk) begin
     end
 end
 
-// CQE status capture: the status DWORD is CQE DW3 (addr offset +12, i.e.
-// addr[3:2]==2'b11) written to the ACQ (base 0x2000) or IOCQ (base 0x4000).
+// Capture CQE status DW3 (addr[3:2]==2'b11) on ACQ/IOCQ writes.
 integer cqe_count = 0;
 integer cqe_snapshot = 0;
 reg [31:0] last_cqe_status = 32'h0;
@@ -137,9 +132,7 @@ always @(posedge clk) begin
     end
 end
 
-// Host memory write-back: capture every DMA write beat into host_mem so that
-// data payloads (Get Log Page, Identify) landed in host RAM can be inspected
-// after the command completes. Byte-addressed; DWORD index = addr[15:2].
+// Write back DMA writes into host_mem for payload inspection.
 always @(posedge clk) begin
     if (!rst && dma_wr_valid)
         host_mem[dma_wr_addr[15:2]] <= dma_wr_data;
@@ -333,6 +326,19 @@ initial begin
     #1;
     if (dbg_state !== 8'd0) $fatal(9, "AER did not return to idle");
 
+    // (8) DSM Deallocate (opc 0x09, I/O qid=1) -> SUCCESS.
+    host_mem[16'h1C00] = 32'h00000000; // DW0 (unused)
+    host_mem[16'h1C01] = 32'h00000008; // DW1 = NLB (non-zero -> disk invalidate path)
+    host_mem[16'h1C02] = 32'h00000000; // DW2 = SLBA lo
+    host_mem[16'h1C03] = 32'h00000000; // DW3 = SLBA hi
+    poke_sqe(16'hC10, 8'h09, 32'h00000001,
+             32'h00007000, 32'h0, 32'h0, 32'h0,
+             32'h00000000, 32'h00000004, 32'h0);
+    ring_sq(16'd1, 16'd2);
+    wait_cqe(15'h0000);
+    #1;
+    if (dbg_state !== 8'd0) $fatal(10, "DSM did not return to idle");
+
     // Responder must return to S_IDLE (8'd0) after the flow.
     repeat (8) @(posedge clk);
     #1;
@@ -350,9 +356,7 @@ endmodule
 `
 }
 
-// TestNVMeAdminBehaviorScenarios builds the generated NVMe admin responder and
-// drives a DMA-backed admin/I-O command flow through Verilator, asserting the
-// CQE status DWORD for each path under test.
+// TestNVMeAdminBehaviorScenarios drives a DMA-backed admin/I-O flow through Verilator.
 func TestNVMeAdminBehaviorScenarios(t *testing.T) {
 	if _, err := exec.LookPath("verilator"); err != nil {
 		t.Skip("verilator not installed")
