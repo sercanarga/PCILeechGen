@@ -539,6 +539,8 @@ module pcileech_tlps128_bar_controller(
     wire        nvme_msix_pba_set_valid;
     wire        nvme_msix_pba_clear_valid;
     wire [15:0] nvme_msix_pba_vector;
+{{ if not .MSIXConfig }}    wire        nvme_intr_req;
+{{ end }}
     wire        nvme_disk_req_valid;
     wire        nvme_disk_req_write;
     wire        nvme_disk_req_flush;
@@ -881,14 +883,15 @@ module pcileech_tlps128_bar_controller(
     wire [8:0]   hda_tlp_tx_tuser = 9'h0;
 {{ end }}
 
-    // doorbell page: bit[2]=SQ/CQ, bits[13:3]=QID
+    // doorbell page: index bit[0]=SQ/CQ, remaining bits=QID
     wire [31:0] nvme_db_base  = 32'h{{ printf "%08X" .NVMeSQ0DoorbellOffset }};
     wire        nvme_db_wr    = wr_valid && wr_bar[{{ .PrimaryBIR }}] && bar0_wr_hit &&
                                 (wr_addr_bar0 >= nvme_db_base) &&
                                 (wr_addr_bar0 <  nvme_db_base + 32'h00001000);
     wire [31:0] nvme_db_off   = wr_addr_bar0 - nvme_db_base;
-    wire        nvme_db_is_cq = nvme_db_off[2];
-    wire [15:0] nvme_db_qid   = {5'h00, nvme_db_off[13:3]};
+    wire [31:0] nvme_db_index = nvme_db_off >> (2 + {{ .NVMeDoorbellStride }});
+    wire        nvme_db_is_cq = nvme_db_index[0];
+    wire [15:0] nvme_db_qid   = nvme_db_index[16:1];
     wire [15:0] nvme_db_val   = wr_data[15:0];
 
     // CC register write -> enable/disable strobes
@@ -955,7 +958,28 @@ module pcileech_tlps128_bar_controller(
         .pba_vector        ( nvme_msix_pba_vector          )
     );
 {{ else }}
-    assign nvme_irq_delivery_valid = 1'b0;
+    pcileech_interrupt_service #(
+        .NUM_VECTORS       ( 1 )
+    ) i_nvme_interrupt_service(
+        .clk               ( clk                           ),
+        .rst               ( device_reset                  ),
+        .quiesce           ( lifecycle_quiesce             ),
+        .msix_mode         ( 1'b0                          ),
+        .function_enable   ( cfg_msi_enable                ),
+        .function_mask     ( 1'b0                          ),
+        .event_valid       ( nvme_irq_event_valid          ),
+        .event_vector      ( 16'd0                         ),
+        .vector_select     (                               ),
+        .vector_masked     ( 1'b0                          ),
+        .delivery_ready    ( 1'b1                          ),
+        .delivery_done     ( 1'b0                          ),
+        .delivery_valid    ( nvme_irq_delivery_valid       ),
+        .delivery_vector   ( nvme_irq_delivery_vector      ),
+        .msi_pulse         ( nvme_intr_req                 ),
+        .pba_set_valid     (                               ),
+        .pba_clear_valid   (                               ),
+        .pba_vector        (                               )
+    );
 {{ end }}
 
     pcileech_nvme_admin_responder #(
@@ -1227,7 +1251,7 @@ module pcileech_tlps128_bar_controller(
     );
 {{ end }}{{ end }}{{ end }}
 
-    assign intr_req = 1'b0{{ if and (eq .DeviceClass "audio") .HasClassEndpoint }} | hda_intr_req{{ end }};
+    assign intr_req = 1'b0{{ if and (eq .DeviceClass "audio") .HasClassEndpoint }} | hda_intr_req{{ end }}{{ if and (eq .DeviceClass "nvme") .NVMeIdentify (not .MSIXConfig) }} | nvme_intr_req{{ end }};
 
 endmodule
 `default_nettype wire

@@ -101,3 +101,74 @@ func TestGenerateBarControllerSV_WiresNVMeDoorbellsAndDisk(t *testing.T) {
 		t.Fatal("NVMe bar controller should emit `define NVME_DISK_WORDS from cfg.NVMeDiskWords")
 	}
 }
+
+func TestGenerateBarControllerSV_NVMeDoorbellStride(t *testing.T) {
+	cfg := testConfig()
+	cfg.NVMeIdentify = &nvme.IdentifyData{}
+	cfg.NVMeDoorbellStride = 1
+
+	result, err := GenerateBarControllerSV(cfg)
+	if err != nil {
+		t.Fatalf("GenerateBarControllerSV failed: %v", err)
+	}
+
+	for _, want := range []string{
+		"wire [31:0] nvme_db_index = nvme_db_off >> (2 + 1);",
+		"wire        nvme_db_is_cq = nvme_db_index[0];",
+		"wire [15:0] nvme_db_qid   = nvme_db_index[16:1];",
+	} {
+		if !strings.Contains(result, want) {
+			t.Fatalf("DSTRD=1 NVMe doorbell decode should contain %q", want)
+		}
+	}
+
+	for _, tc := range []struct {
+		name  string
+		addr  uint32
+		qid   uint32
+		isCQ  bool
+	}{
+		{name: "SQ0", addr: 0x1000, qid: 0},
+		{name: "CQ0", addr: 0x1008, qid: 0, isCQ: true},
+		{name: "SQ1", addr: 0x1010, qid: 1},
+		{name: "CQ1", addr: 0x1018, qid: 1, isCQ: true},
+	} {
+		index := (tc.addr - cfg.NVMeSQ0DoorbellOffset()) >> (2 + cfg.NVMeDoorbellStride)
+		if qid, isCQ := index>>1, index&1 != 0; qid != tc.qid || isCQ != tc.isCQ {
+			t.Errorf("%s at %#x decoded as qid=%d cq=%v", tc.name, tc.addr, qid, isCQ)
+		}
+	}
+}
+
+func TestGenerateBarControllerSV_NVMeMSIWithoutMSIX(t *testing.T) {
+	cfg := testConfig()
+	cfg.NVMeIdentify = &nvme.IdentifyData{}
+
+	result, err := GenerateBarControllerSV(cfg)
+	if err != nil {
+		t.Fatalf("GenerateBarControllerSV failed: %v", err)
+	}
+
+	for _, want := range []string{
+		") i_nvme_interrupt_service(",
+		".msix_mode         ( 1'b0",
+		".function_enable   ( cfg_msi_enable",
+		".event_valid       ( nvme_irq_event_valid",
+		".event_vector      ( 16'd0",
+		".msi_pulse         ( nvme_intr_req",
+		"assign intr_req = 1'b0 | nvme_intr_req;",
+	} {
+		if !strings.Contains(result, want) {
+			t.Fatalf("NVMe without MSI-X should contain %q", want)
+		}
+	}
+
+	for _, mustNot := range []string{
+		"assign nvme_irq_delivery_valid = 1'b0;",
+		".event_valid       ( 1'b0",
+	} {
+		if strings.Contains(result, mustNot) {
+			t.Fatalf("NVMe without MSI-X should not contain %q", mustNot)
+		}
+	}
+}
