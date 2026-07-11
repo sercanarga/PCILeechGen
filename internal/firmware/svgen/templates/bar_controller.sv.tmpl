@@ -355,7 +355,7 @@ module pcileech_tlps128_bar_controller(
     wire        wrengine_ready;
 
     pcileech_tlps128_bar_wrengine i_pcileech_tlps128_bar_wrengine(
-        .rst            ( rst                           ),
+        .rst            ( device_reset                  ),
         .clk            ( clk                           ),
         .tlps_in        ( tlps_in                       ),
         .tlps_in_valid  ( tlps_in.tvalid && in_is_bar && in_is_wr &&

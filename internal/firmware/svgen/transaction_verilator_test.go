@@ -687,6 +687,17 @@ endmodule
 	runVerilatorBinary(t, dut, bench)
 }
 
+func TestBarControllerWriteEngineUsesDeviceReset(t *testing.T) {
+	controller, err := GenerateBarControllerSV(testConfig())
+	if err != nil {
+		t.Fatalf("GenerateBarControllerSV() error = %v", err)
+	}
+	instance := extractHDLBlock(t, controller, "    pcileech_tlps128_bar_wrengine ", "\n    );")
+	if !strings.Contains(instance, ".rst            ( device_reset") {
+		t.Fatal("write engine must reset with device_reset")
+	}
+}
+
 func extractHDLThroughAlways(t *testing.T, source, start, always string) string {
 	t.Helper()
 	startIndex := strings.Index(source, start)
