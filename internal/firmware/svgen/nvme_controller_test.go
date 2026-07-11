@@ -107,68 +107,191 @@ func TestGenerateBarControllerSV_NVMeDoorbellStride(t *testing.T) {
 	cfg.NVMeIdentify = &nvme.IdentifyData{}
 	cfg.NVMeDoorbellStride = 1
 
-	result, err := GenerateBarControllerSV(cfg)
+	controller, err := GenerateBarControllerSV(cfg)
 	if err != nil {
 		t.Fatalf("GenerateBarControllerSV failed: %v", err)
 	}
+	decode := extractHDLBlock(t, controller,
+		"    wire [31:0] nvme_db_base",
+		"    wire [15:0] nvme_db_val")
+	dut := `module nvme_doorbell_decode(
+    input [31:0] wr_addr_bar0,
+    input wr_valid,
+    input [5:0] wr_bar,
+    input bar0_wr_hit,
+    output doorbell_wr,
+    output doorbell_is_cq,
+    output [15:0] doorbell_qid
+);
+` + decode + `
+assign doorbell_wr = nvme_db_wr;
+assign doorbell_is_cq = nvme_db_is_cq;
+assign doorbell_qid = nvme_db_qid;
+endmodule
+`
+	testbench := `module tb;
+reg [31:0] wr_addr_bar0 = 0;
+reg wr_valid = 1;
+reg [5:0] wr_bar = 1;
+reg bar0_wr_hit = 1;
+wire doorbell_wr;
+wire doorbell_is_cq;
+wire [15:0] doorbell_qid;
 
-	for _, want := range []string{
-		"wire [31:0] nvme_db_index = nvme_db_off >> (2 + 1);",
-		"wire        nvme_db_is_cq = nvme_db_index[0];",
-		"wire [15:0] nvme_db_qid   = nvme_db_index[16:1];",
-	} {
-		if !strings.Contains(result, want) {
-			t.Fatalf("DSTRD=1 NVMe doorbell decode should contain %q", want)
-		}
-	}
+nvme_doorbell_decode dut(.*);
 
-	for _, tc := range []struct {
-		name  string
-		addr  uint32
-		qid   uint32
-		isCQ  bool
-	}{
-		{name: "SQ0", addr: 0x1000, qid: 0},
-		{name: "CQ0", addr: 0x1008, qid: 0, isCQ: true},
-		{name: "SQ1", addr: 0x1010, qid: 1},
-		{name: "CQ1", addr: 0x1018, qid: 1, isCQ: true},
-	} {
-		index := (tc.addr - cfg.NVMeSQ0DoorbellOffset()) >> (2 + cfg.NVMeDoorbellStride)
-		if qid, isCQ := index>>1, index&1 != 0; qid != tc.qid || isCQ != tc.isCQ {
-			t.Errorf("%s at %#x decoded as qid=%d cq=%v", tc.name, tc.addr, qid, isCQ)
-		}
-	}
+task check_doorbell(input [31:0] addr, input [15:0] qid, input is_cq);
+begin
+    wr_addr_bar0 = addr;
+    #1;
+    if (!doorbell_wr || doorbell_qid !== qid || doorbell_is_cq !== is_cq)
+        $fatal(1, "doorbell 0x%0h decoded qid=%0d cq=%0b", addr, doorbell_qid, doorbell_is_cq);
+end
+endtask
+
+initial begin
+    check_doorbell(32'h1000, 16'd0, 1'b0);
+    check_doorbell(32'h1008, 16'd0, 1'b1);
+    check_doorbell(32'h1010, 16'd1, 1'b0);
+    check_doorbell(32'h1018, 16'd1, 1'b1);
+    $finish;
+end
+endmodule
+`
+	runVerilatorSimulation(t, map[string]string{
+		"dut.sv": dut,
+		"tb.sv":  testbench,
+	})
 }
 
 func TestGenerateBarControllerSV_NVMeMSIWithoutMSIX(t *testing.T) {
 	cfg := testConfig()
 	cfg.NVMeIdentify = &nvme.IdentifyData{}
 
-	result, err := GenerateBarControllerSV(cfg)
+	controller, err := GenerateBarControllerSV(cfg)
 	if err != nil {
 		t.Fatalf("GenerateBarControllerSV failed: %v", err)
 	}
-
-	for _, want := range []string{
-		") i_nvme_interrupt_service(",
-		".msix_mode         ( 1'b0",
-		".function_enable   ( cfg_msi_enable",
-		".event_valid       ( nvme_irq_event_valid",
-		".event_vector      ( 16'd0",
-		".msi_pulse         ( nvme_intr_req",
-		"assign intr_req = 1'b0 | nvme_intr_req;",
-	} {
-		if !strings.Contains(result, want) {
-			t.Fatalf("NVMe without MSI-X should contain %q", want)
-		}
+	service, err := GenerateInterruptServiceSV(cfg)
+	if err != nil {
+		t.Fatalf("GenerateInterruptServiceSV failed: %v", err)
 	}
+	instance := extractHDLBlock(t, controller,
+		"    pcileech_interrupt_service #(",
+		"\n\n    pcileech_nvme_admin_responder")
+	intrAssign := extractHDLBlock(t, controller,
+		"    assign intr_req =",
+		"\n\nendmodule")
+	dut := `module nvme_msi_only(
+    input clk,
+    input device_reset,
+    input lifecycle_quiesce,
+    input cfg_msi_enable,
+    input nvme_irq_event_valid,
+    output intr_req
+);
+wire nvme_irq_delivery_valid;
+wire nvme_irq_delivery_ready;
+wire nvme_irq_delivery_done;
+wire [15:0] nvme_irq_delivery_vector;
+wire nvme_intr_req;
+` + instance + "\n" + intrAssign + `
+endmodule
+`
+	testbench := `module tb;
+reg clk = 0;
+always #1 clk = ~clk;
+reg device_reset = 1;
+reg lifecycle_quiesce = 0;
+reg cfg_msi_enable = 0;
+reg nvme_irq_event_valid = 0;
+wire intr_req;
+integer i;
+reg found;
 
-	for _, mustNot := range []string{
-		"assign nvme_irq_delivery_valid = 1'b0;",
-		".event_valid       ( 1'b0",
-	} {
-		if strings.Contains(result, mustNot) {
-			t.Fatalf("NVMe without MSI-X should not contain %q", mustNot)
-		}
-	}
+nvme_msi_only dut(.*);
+
+task cycle;
+begin
+    @(posedge clk);
+    #1ps;
+end
+endtask
+
+task wait_for_pulse;
+begin
+    found = 0;
+    for (i = 0; i < 16; i = i + 1) begin
+        cycle();
+        if (intr_req) begin
+            found = 1;
+            i = 16;
+        end
+    end
+    if (!found) $fatal(1, "NVMe MSI event produced no interrupt pulse");
+end
+endtask
+
+initial begin
+    cycle();
+    cycle();
+    @(negedge clk);
+    device_reset = 0;
+    nvme_irq_event_valid = 1;
+    cycle();
+    @(negedge clk);
+    nvme_irq_event_valid = 0;
+    repeat (6) begin
+        cycle();
+        if (intr_req) $fatal(1, "MSI asserted while disabled");
+    end
+
+    @(negedge clk);
+    cfg_msi_enable = 1;
+    wait_for_pulse();
+    cycle();
+    if (intr_req) $fatal(1, "acknowledged MSI remained asserted");
+    repeat (6) begin
+        cycle();
+        if (intr_req) $fatal(1, "acknowledged MSI was redelivered");
+    end
+
+    @(negedge clk);
+    lifecycle_quiesce = 1;
+    nvme_irq_event_valid = 1;
+    cycle();
+    @(negedge clk);
+    nvme_irq_event_valid = 0;
+    repeat (4) begin
+        cycle();
+        if (intr_req) $fatal(1, "MSI asserted while quiesced");
+    end
+    @(negedge clk);
+    lifecycle_quiesce = 0;
+    wait_for_pulse();
+    cycle();
+    if (intr_req) $fatal(1, "resumed MSI was not acknowledged");
+
+    @(negedge clk);
+    nvme_irq_event_valid = 1;
+    cycle();
+    @(negedge clk);
+    nvme_irq_event_valid = 0;
+    device_reset = 1;
+    cycle();
+    @(negedge clk);
+    device_reset = 0;
+    repeat (8) begin
+        cycle();
+        if (intr_req) $fatal(1, "reset-cancelled MSI was delivered");
+    end
+    $finish;
+end
+endmodule
+`
+	runVerilatorSimulation(t, map[string]string{
+		"pcileech_interrupt_service.sv": service,
+		"dut.sv":                        dut,
+		"tb.sv":                         testbench,
+	})
 }
