@@ -335,6 +335,8 @@ module {{ .BARImplementationModuleName }} #(
     // sets INTFL. Instead, we produce a clear request that the main FSM
     // merges into the single reg_0x00000060[0] driver.
     reg rirbintsts_rw1c;
+    reg [31:0] hda_wr_data;
+    reg [3:0] hda_wr_be;
 
     always @(posedge clk) begin
         if (rst) begin
@@ -342,11 +344,13 @@ module {{ .BARImplementationModuleName }} #(
         end else begin
             // Detect write to RIRBINTSTS at 0x60
             rirbintsts_rw1c <= wr_valid && (wr_addr[31:0] & 32'hFFFFFFFC) == 32'h00000060;
+            hda_wr_data <= wr_data;
+            hda_wr_be <= wr_be;
         end
     end
 
     // Clear request: driver writes 1 to bit 0 → clear INTFL.
-    wire intfl_clear_req = rirbintsts_rw1c && wr_be[0] && wr_data[0];
+    wire intfl_clear_req = rirbintsts_rw1c && hda_wr_be[0] && hda_wr_data[0];
 
     // CRST rising edge clear request: same as crst_rising
     wire intfl_crst_clear_req = crst_rising;
@@ -377,10 +381,10 @@ module {{ .BARImplementationModuleName }} #(
     end
 
     // RIRBCTL/RIRBSTS write requests - consumed by main FSM to avoid multi-driver.
-    wire rirbctl_wr_rintctl_val = wr_data[0];  // RINTCTL (bit 0)
-    wire rirbctl_wr_cte_val = wr_data[1];  // RIRBDMAEN (bit 1)
-    wire rirbctl_wr_oie_val = wr_data[2];  // OIC (bit 2)
-    wire [2:0] rirbsts_clear_mask = wr_data[10:8];
+    wire rirbctl_wr_rintctl_val = hda_wr_data[0];  // RINTCTL (bit 0)
+    wire rirbctl_wr_cte_val = hda_wr_data[1];  // RIRBDMAEN (bit 1)
+    wire rirbctl_wr_oie_val = hda_wr_data[2];  // OIC (bit 2)
+    wire [2:0] rirbsts_clear_mask = hda_wr_data[10:8];
 
     // ========================================================================
     // CORBCTL/CORBSTS (0x4C) driver write handler.
@@ -402,9 +406,9 @@ module {{ .BARImplementationModuleName }} #(
     end
 
     // CORBCTL/CORBSTS write requests - consumed by write handler to avoid multi-driver.
-    wire corbctl_wr_cmeie_val = wr_data[0];
-    wire corbctl_wr_run_val = wr_data[1];
-    wire corbsts_clear_bit = wr_data[8];
+    wire corbctl_wr_cmeie_val = hda_wr_data[0];
+    wire corbctl_wr_run_val = hda_wr_data[1];
+    wire corbsts_clear_bit = hda_wr_data[8];
 
     // CA0132 codec response ROM — provides unique responses per VERB
     // so hdaudio.sys can complete codec topology discovery.
@@ -729,12 +733,12 @@ module {{ .BARImplementationModuleName }} #(
 
             // RIRBCTL/RIRBSTS driver write - merged into FSM to avoid multi-driver
             if (rirbctl_rw1c && !rb_reinit) begin
-                if (wr_be[0]) begin
+                if (hda_wr_be[0]) begin
                     reg_0x0000005C[0] <= rirbctl_wr_rintctl_val;
                     reg_0x0000005C[1] <= rirbctl_wr_cte_val;
                     reg_0x0000005C[2] <= rirbctl_wr_oie_val;
                 end
-                if (wr_be[1]) begin
+                if (hda_wr_be[1]) begin
                     reg_0x0000005C[10:8] <= reg_0x0000005C[10:8] & ~rirbsts_clear_mask;
                 end
             end
@@ -1133,11 +1137,11 @@ module {{ .BARImplementationModuleName }} #(
 {{ if eq .DeviceClass "audio" }}
         // CORBCTL/CORBSTS - delayed RW1C handler (1 cycle after wr_valid)
         if (!rst && corbsts_rw1c) begin
-            if (wr_be[0]) begin
+            if (hda_wr_be[0]) begin
                 reg_0x0000004C[0] <= corbctl_wr_cmeie_val;
                 reg_0x0000004C[1] <= corbctl_wr_run_val;
             end
-            if (wr_be[1]) begin
+            if (hda_wr_be[1]) begin
                 reg_0x0000004C[8] <= reg_0x0000004C[8] & ~corbsts_clear_bit;
             end
         end
