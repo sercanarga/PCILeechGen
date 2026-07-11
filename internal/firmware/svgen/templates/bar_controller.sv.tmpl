@@ -837,7 +837,7 @@ module pcileech_tlps128_bar_controller(
         .tlp_tx_tvalid  ( hda_tlp_tx_tvalid             ),
         .tlp_tx_tlast   ( hda_tlp_tx_tlast              ),
         .tlp_tx_tuser   ( hda_tlp_tx_tuser              ),
-        .tlp_tx_tready  ( tlps_out.tready && !dma_yield  )
+        .tlp_tx_tready  ( hda_tlp_tx_tready             )
     );
 
     wire        hda_msi_trigger;
