@@ -357,18 +357,27 @@ func (p *SVPatcher) patchTLPServiceWiring() error {
 			label:       "services: add interrupt request port",
 		})
 	}
-	if !instanceHasPort(content, "pcileech_tlps128_bar_controller", "cfg_command") {
-		ports := "        .cfg_command     ( ctx.cfg_command                ),\n" +
-			"        .cfg_power_state ( ctx.cfg_pmcsr_powerstate       ),\n" +
-			"        .cfg_flr_in_process( ctx.cfg_received_func_lvl_rst ),\n" +
-			"        .cfg_to_turnoff  ( ctx.cfg_to_turnoff             ),\n" +
-			"        .cfg_link_up     ( ctx.pl_phy_lnk_up               ),\n" +
-			"        .cfg_msi_enable  ( ctx.cfg_interrupt_msienable     ),\n" +
-			"        .cfg_msix_enable ( ctx.cfg_interrupt_msixenable    ),\n" +
-			"        .cfg_msix_function_mask( ctx.cfg_interrupt_msixfm  ),\n"
-		if !instanceHasPort(content, "pcileech_tlps128_bar_controller", "intr_req") {
-			ports += "        .intr_req        ( " + requestPort + "          ),\n"
+	type portConn struct{ port, conn string }
+	desired := []portConn{
+		{"cfg_command", "ctx.cfg_command"},
+		{"cfg_power_state", "ctx.cfg_pmcsr_powerstate"},
+		{"cfg_flr_in_process", "ctx.cfg_received_func_lvl_rst"},
+		{"cfg_to_turnoff", "ctx.cfg_to_turnoff"},
+		{"cfg_link_up", "ctx.pl_phy_lnk_up"},
+		{"cfg_msi_enable", "ctx.cfg_interrupt_msienable"},
+		{"cfg_msix_enable", "ctx.cfg_interrupt_msixenable"},
+		{"cfg_msix_function_mask", "ctx.cfg_interrupt_msixfm"},
+	}
+	var ports string
+	for _, pc := range desired {
+		if !instanceHasPort(content, "pcileech_tlps128_bar_controller", pc.port) {
+			ports += fmt.Sprintf("        .%-22s ( %-28s ),\n", pc.port, pc.conn)
 		}
+	}
+	if !instanceHasPort(content, "pcileech_tlps128_bar_controller", "intr_req") {
+		ports += fmt.Sprintf("        .intr_req        ( %-28s ),\n", requestPort)
+	}
+	if ports != "" {
 		patches = append(patches, svRegexPatch{
 			pattern:     `(pcileech_tlps128_bar_controller\s+\w+\s*\(\s*\r?\n)`,
 			replacement: "${1}" + ports,
