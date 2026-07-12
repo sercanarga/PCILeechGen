@@ -306,9 +306,19 @@ func buildNVMeBARModel(barData []byte) *BARModel {
 	// VS must match Identify Controller VER; stornvme raises Code 10 on mismatch.
 	// Default to 1.4 like identify.go when the donor VS is absent/0.
 	for i := range regs {
-		if regs[i].Offset == 0x08 && regs[i].Reset == 0 {
-			regs[i].Reset = 0x00010400
-			break
+		switch regs[i].Offset {
+		case 0x00:
+			if regs[i].Reset == 0 {
+				regs[i].Reset = 0x0040FF17
+			}
+		case 0x04:
+			if regs[i].Reset == 0 {
+				regs[i].Reset = 0x00000020
+			}
+		case 0x08:
+			if regs[i].Reset == 0 {
+				regs[i].Reset = 0x00010400
+			}
 		}
 	}
 

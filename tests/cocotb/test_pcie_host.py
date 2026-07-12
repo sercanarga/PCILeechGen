@@ -667,3 +667,124 @@ async def test_nvme_aer_async(dut):
     cqe_dw3 = await peek(dut, 0x803)
     dut._log.info(f"aer: cqe_dw3={cqe_dw3:#x} (async, no event pending -> should be 0)")
     assert cqe_dw3 == 0, "AER posted a CQE without a pending async event"
+
+
+# --- full driver enumeration sequence (Windows stornvme-like) ---
+
+def cfgrd0(offset, tag=0x40, req_id=0x0000):
+    dw0 = (0b000 << 29) | (0b00101 << 24) | 1
+    dw1 = ((req_id & 0xFFFF) << 16) | ((tag & 0xFF) << 8) | 0x000F
+    dw2 = offset & 0xFFC
+    return dw0 | (dw1 << 32) | (dw2 << 64)
+
+
+def cfgwr0(offset, data, tag=0x40, req_id=0x0000):
+    dw0 = (0b010 << 29) | (0b00101 << 24) | 1
+    dw1 = ((req_id & 0xFFFF) << 16) | ((tag & 0xFF) << 8) | 0xF
+    dw2 = offset & 0xFFC
+    return dw0 | (dw1 << 32) | (dw2 << 64) | ((data & 0xFFFFFFFF) << 96)
+
+
+async def _cfg_send(dut, tdata):
+    dut.tlps_in_tdata.value = tdata
+    dut.tlps_in_tvalid.value = 1
+    dut.tlps_in_tlast.value = 1
+    dut.tlps_in_tuser.value = 1
+    dut.tlps_in_tkeepdw.value = 0xF
+    await RisingEdge(dut.clk)
+    dut.tlps_in_tvalid.value = 0
+    dut.tlps_in_tlast.value = 0
+    dut.tlps_in_tuser.value = 0
+
+
+async def recv_cfg(dut, timeout=10000):
+    cpls = []
+    for _ in range(timeout):
+        await RisingEdge(dut.clk)
+        if dut.tlps_cfg_rsp_tvalid.value == 1:
+            raw = dut.tlps_cfg_rsp_tdata.value.integer
+            cpls.append([(raw >> (i * 32)) & 0xFFFFFFFF for i in range(4)])
+            if dut.tlps_cfg_rsp_tlast.value == 1:
+                break
+    return cpls
+
+
+@cocotb.test()
+async def test_driver_full_enumeration(dut):
+    """Windows stornvme-like full enumeration: config -> BAR -> caps -> NVMe init."""
+    await reset(dut)
+    tag = 1
+    results = {}
+
+    # 1. PCI config: VID/DID
+    await _cfg_send(dut, cfgrd0(0x00, tag)); tag += 1
+    c = await recv_cfg(dut)
+    results["vid_did"] = c[0][3] if c else 0
+
+    # 2. Class code
+    await _cfg_send(dut, cfgrd0(0x08, tag)); tag += 1
+    c = await recv_cfg(dut)
+    results["class"] = c[0][3] if c else 0
+
+    # 3. Subsystem ID
+    await _cfg_send(dut, cfgrd0(0x2C, tag)); tag += 1
+    c = await recv_cfg(dut)
+    results["subsys"] = c[0][3] if c else 0
+
+    # 4. Cap pointer
+    await _cfg_send(dut, cfgrd0(0x34, tag)); tag += 1
+    c = await recv_cfg(dut)
+    cap_ptr = (c[0][3] if c else 0) & 0xFF
+
+    # 5. Walk capability chain
+    caps_found = []
+    msix_offset = 0
+    while cap_ptr != 0 and tag < 20:
+        await _cfg_send(dut, cfgrd0(cap_ptr, tag)); tag += 1
+        c = await recv_cfg(dut)
+        val = c[0][3] if c else 0
+        cap_id = val & 0xFF
+        next_ptr = (val >> 8) & 0xFF
+        caps_found.append((cap_id, cap_ptr))
+        if cap_id == 0x11:
+            msix_offset = cap_ptr
+        cap_ptr = next_ptr
+
+    # 6. MSI-X table offset (if cap found)
+    if msix_offset:
+        await _cfg_send(dut, cfgrd0(msix_offset + 4, tag)); tag += 1
+        c = await recv_cfg(dut)
+        results["msix_table"] = c[0][3] if c else 0
+
+    # 7. NVMe CAP register (BAR0 memory read)
+    await send(dut, mrd3(addr=0x0000, tag=tag)); tag += 1
+    c = await recv_all(dut)
+    results["nvme_cap"] = c[0][3] if c else 0
+
+    # 8. Admin queue setup + CC.EN
+    await setup_admin_queues(dut)
+    await send(dut, mwr3(addr=0x0014, data=0x00000001))
+    for _ in range(200): await RisingEdge(dut.clk)
+
+    # 9. Identify Controller
+    await poke_sqe(dut, 0x400, op=0x06, prp1=0x5000, cdw10=0x00000001)
+    await send(dut, mwr3(addr=0x1000, data=0x00000001))
+    for _ in range(60000): await RisingEdge(dut.clk)
+
+    nonzero = 0
+    for dw in range(0x1400, 0x1800, 32):
+        if await peek(dut, dw) != 0: nonzero += 1
+    cqe = await peek(dut, 0x803)
+    status = (cqe >> 17) & 0x7FFF
+
+    dut._log.info(f"enum: vid_did={results.get('vid_did',0):#x} class={results.get('class',0):#x} subsys={results.get('subsys',0):#x}")
+    dut._log.info(f"caps: {[(hex(i), hex(o)) for i,o in caps_found]}")
+    dut._log.info(f"msix_table={results.get('msix_table',0):#x} nvme_cap={results.get('nvme_cap',0):#x}")
+    dut._log.info(f"identify nonzero={nonzero} cqe_status={status}")
+
+    assert results.get("vid_did", 0) != 0, "VID/DID = 0 — device not detected"
+    assert results.get("subsys", 0) != 0, "subsystem ID = 0 — Code-10 INF match failure"
+    assert len(caps_found) >= 2, f"too few capabilities: {caps_found}"
+    assert results.get("nvme_cap", 0) != 0, "NVMe CAP register = 0 — BAR0 not accessible"
+    assert nonzero > 0, "Identify data not written — NVMe init failed"
+    assert status == 0, f"CQE status={status:#x} — NVMe command failed"
