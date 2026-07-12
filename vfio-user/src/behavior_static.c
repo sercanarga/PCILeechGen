@@ -157,5 +157,8 @@ int behavior_create(const struct device_model *model,
     if (model->class_code == 0x000000) {
         return behavior_static_create(model, out, err, err_len);
     }
+    if (model->class_code == 0x010802) {
+        return behavior_nvme_create(model, out, err, err_len);
+    }
     return fail(err, err_len, "no behavior for PCI class 0x%06x", model->class_code);
 }

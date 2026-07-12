@@ -20,5 +20,7 @@ int behavior_create(const struct device_model *model,
                     struct device_behavior *out, char *err, size_t err_len);
 int behavior_static_create(const struct device_model *model,
                            struct device_behavior *out, char *err, size_t err_len);
+int behavior_nvme_create(const struct device_model *model,
+                         struct device_behavior *out, char *err, size_t err_len);
 
 #endif
