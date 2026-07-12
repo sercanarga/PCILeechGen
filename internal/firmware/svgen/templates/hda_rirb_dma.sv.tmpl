@@ -81,7 +81,7 @@ module pcileech_hda_rirb_dma(
 
             // CRST falling: reset to IDLE and clear ALL latched data. Without clearing,
             // a still-asserted dma_req_valid_r re-accepts stale data next cycle -> corrupt RIRB entries.
-            if (crst_falling && (dstate == D_IDLE)) begin
+            if (crst_falling) begin
                 dstate          <= D_IDLE;
                 dma_req_ready   <= 1'b1;
                 d_tlp_timeout   <= 20'h0;

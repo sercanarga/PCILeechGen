@@ -96,7 +96,7 @@ func TestHDADMABridgeIntegration(t *testing.T) {
 
 	for _, c := range []string{
 		"pcileech_hda_rirb_dma", "D_WR_TLP1", "D_WR_TLP2",
-		"D_WR_TLP3", "D_DONE", "d_is_64bit",
+		"D_WR_TLP3", "D_DONE", "d_is_64bit", "if (crst_falling) begin",
 	} {
 		if !strings.Contains(dmaSV, c) {
 			t.Errorf("hda_rirb_dma missing: %s", c)
