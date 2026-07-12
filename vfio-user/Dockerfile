@@ -40,6 +40,9 @@ RUN set -eu; \
     version="${kernel#vmlinuz-}"; \
     mkdir -p "$root/bin" "$root/sbin" "$root/proc" "$root/sys" "$root/dev" "$root/run" "$root/lib/modules/$version"; \
     cp /bin/busybox "$root/bin/busybox"; \
+    mkdir -p "$root/lib/firmware"; \
+    curl -fsSL "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/main/intel/iwlwifi-8265-36.ucode" \
+      -o "$root/lib/firmware/iwlwifi-8265-36.ucode"; \
     for applet in sh mount sleep poweroff cat grep cut tr basename dirname readlink; do ln -s busybox "$root/bin/$applet"; done; \
     ln -s ../bin/busybox "$root/sbin/modprobe"; \
     cp /guest-source/init "$root/init"; \
