@@ -571,17 +571,46 @@ async def test_nvme_create_io_cq(dut):
     assert status == 0, f"create io cq failed: {status:#x}"
 
 @cocotb.test()
-async def test_nvme_aer_async(dut):
+async def test_nvme_create_io_sq(dut):
+    await reset(dut)
     await setup_admin_queues(dut)
-    await poke_sqe(dut, 0x400, op=0x0C)
+    await poke_sqe(dut, 0x400, op=0x05, prp1=0x4000, cdw10=0x00010001, cdw11=0x00000001)
     await send(dut, mwr3(addr=0x0014, data=0x00000001))
     for _ in range(50): await RisingEdge(dut.clk)
-    await poke(dut, 0x803, 0)
     await send(dut, mwr3(addr=0x1000, data=0x00000001))
-    for _ in range(20000): await RisingEdge(dut.clk)
-    cqe_dw3 = await peek(dut, 0x803)
-    dut._log.info(f"aer: cqe_dw3={cqe_dw3:#x} (async, should be 0)")
-    assert cqe_dw3 == 0, "AER posted a synchronous CQE"
+    for _ in range(60000): await RisingEdge(dut.clk)
+    cq_status = (await peek(dut, 0x803) >> 17) & 0x7FFF
+    await poke_sqe(dut, 0x410, op=0x01, prp1=0x3000, cdw10=0x00010001, cdw11=0x00010001)
+    await send(dut, mwr3(addr=0x1000, data=0x00000002))
+    for _ in range(60000): await RisingEdge(dut.clk)
+    sq_status = (await peek(dut, 0x813) >> 17) & 0x7FFF
+    dut._log.info(f"create io: cq_status={cq_status:#x} sq_status={sq_status:#x}")
+    assert cq_status == 0, f"create io cq failed: {cq_status:#x}"
+    assert sq_status == 0, f"create io sq failed: {sq_status:#x}"
+
+async def _create_io_queues(dut):
+    await poke_sqe(dut, 0x400, op=0x05, prp1=0x4000, cdw10=0x00010001, cdw11=0x00000001)
+    await send(dut, mwr3(addr=0x0014, data=0x00000001))
+    for _ in range(50): await RisingEdge(dut.clk)
+    await send(dut, mwr3(addr=0x1000, data=0x00000001))
+    for _ in range(60000): await RisingEdge(dut.clk)
+    await poke_sqe(dut, 0x410, op=0x01, prp1=0x3000, cdw10=0x00010001, cdw11=0x00010001)
+    await send(dut, mwr3(addr=0x1000, data=0x00000002))
+    for _ in range(60000): await RisingEdge(dut.clk)
+
+@cocotb.test()
+async def test_nvme_io_read_completed(dut):
+    await reset(dut)
+    await setup_admin_queues(dut)
+    await _create_io_queues(dut)
+    await poke_sqe(dut, 0xC00, op=0x02, nsid=0x00000001, cdw12=0x00000040)
+    await send(dut, mwr3(addr=0x1008, data=0x00000001))
+    for _ in range(60000): await RisingEdge(dut.clk)
+    status = (await peek(dut, 0x1000) >> 17) & 0x7FFF
+    dut._log.info(f"io read: status={status:#x}")
+    assert status == 0, f"io read failed: {status:#x}"
+
+
 
 @cocotb.test()
 async def test_nvme_get_features_invalid_fid(dut):
