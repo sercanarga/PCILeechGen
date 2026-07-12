@@ -93,6 +93,15 @@
       "type": "mem32",
       "prefetchable": false,
       "is_64bit": false
+    },
+    {
+      "index": 1,
+      "raw_value": 0,
+      "address": 0,
+      "size": 268435456,
+      "type": "mem32",
+      "prefetchable": true,
+      "is_64bit": false
     }
   ],
   "capabilities": [
