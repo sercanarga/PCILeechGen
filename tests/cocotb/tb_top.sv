@@ -112,8 +112,8 @@ module tb_top;
                             cpld_in_tdata[31:0]   <= (3'b010 << 29) | (5'b01010 << 24) | 10'd1;
                             cpld_in_tdata[63:32]  <= (16'h0000 << 16) | (3'b000 << 13) | 12'd4;
                             cpld_in_tdata[95:64]  <= {tlps_dma_out_if.tdata[63:48],
-                                                       tlps_dma_out_if.tdata[79:72],
-                                                       tlps_dma_out_if.tdata[102:96]};
+                                                       tlps_dma_out_if.tdata[47:40],
+                                                       tlps_dma_out_if.tdata[103:96]};
                             cpld_in_tdata[127:96] <= swap32(host_mem[tlps_dma_out_if.tdata[111:98]]);
                             cpld_in_tuser   <= 9'h001;
                             cpld_in_tlast   <= 1'b1;
@@ -128,7 +128,7 @@ module tb_top;
                 end
                 LB_MWR_DATA: begin
                     if (tlps_dma_out_if.tvalid) begin
-                        host_mem[mwr_addr_q[15:2]] <= swap32(tlps_dma_out_if.tdata[127:96]);
+                        host_mem[mwr_addr_q[15:2]] <= swap32(tlps_dma_out_if.tdata[31:0]);
                         lb_state <= LB_IDLE;
                     end
                 end

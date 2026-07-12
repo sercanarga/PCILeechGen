@@ -338,11 +338,14 @@ async def test_nvme_identify_full_dma(dut):
     await send(dut, mwr3(addr=0x1000, data=0x00000001))
     for _ in range(60000): await RisingEdge(dut.clk)
     nonzero = 0
-    for i in range(0, 1024, 64):
-        v = await peek(dut, 0x1400 + i)
-        if v != 0: nonzero += 1
+    for dw in range(0x1400, 0x1800):
+        if await peek(dut, dw) != 0: nonzero += 1
     cqe_dw3 = await peek(dut, 0x803)
-    dut._log.info(f"identify non-zero dwords @0x5000: {nonzero}, cqe dw3={hex(cqe_dw3)}")
+    status = (cqe_dw3 >> 17) & 0x7FFF
+    dut._log.info(f"identify non-zero dwords @0x5000: {nonzero}, cqe status={status}")
+    assert nonzero > 0, "identify data not written to host memory"
+    assert cqe_dw3 != 0, "no CQE posted to ACQ"
+    assert status == 0, f"cqe status not SUCCESS: {status}"
 
 @cocotb.test()
 async def test_nvme_cc_en_gate_blocks_doorbell(dut):
@@ -356,5 +359,6 @@ async def test_nvme_cc_en_gate_blocks_doorbell(dut):
         if dut.tlps_dma_out_tvalid.value == 1:
             beats += 1
     dut._log.info(f"dma beats before CC.EN: {beats}")
+
 
 

@@ -17,25 +17,39 @@ module fifo_134_134_clk1_bar_rdrsp (
     output wire prog_full,
     output wire valid
 );
+    // Standard FIFO (registered dout/valid, one-cycle read latency) to match the .xci.
     reg [133:0] mem [0:1023];
     reg [10:0] wr_ptr, rd_ptr;
     reg [10:0] count;
+    reg [133:0] dout_r;
+    reg         valid_r;
+    wire do_wr = wr_en & ~full;
+    wire do_rd = rd_en & ~empty;
     assign full = (count == 11'd1024);
     assign empty = (count == 11'd0);
     assign prog_full = 1'b0;
     assign prog_empty = 1'b1;
-    assign dout = mem[rd_ptr];
+    assign dout = dout_r;
+    assign valid = valid_r;
     assign rd_data_count = count;
     assign wr_data_count = count;
-    assign valid = rd_en & ~empty;
     always @(posedge clk) begin
         if (srst) begin
             wr_ptr <= 0; rd_ptr <= 0; count <= 0;
+            dout_r <= 134'h0; valid_r <= 1'b0;
         end else begin
-            case ({wr_en & ~full, rd_en & ~empty})
-                2'b10: begin mem[wr_ptr] <= din; wr_ptr <= wr_ptr + 1; count <= count + 1; end
-                2'b01: begin rd_ptr <= rd_ptr + 1; count <= count - 1; end
-                2'b11: begin mem[wr_ptr] <= din; wr_ptr <= wr_ptr + 1; rd_ptr <= rd_ptr + 1; end
+            if (do_wr) begin mem[wr_ptr] <= din; wr_ptr <= wr_ptr + 1; end
+            if (do_rd) begin
+                dout_r  <= mem[rd_ptr];
+                rd_ptr  <= rd_ptr + 1;
+                valid_r <= 1'b1;
+            end else begin
+                valid_r <= 1'b0;
+            end
+            case ({do_wr, do_rd})
+                2'b10: count <= count + 1;
+                2'b01: count <= count - 1;
+                default: count <= count;
             endcase
         end
     end
@@ -57,21 +71,33 @@ module fifo_141_141_clk1_bar_wr (
     output wire prog_empty,
     output wire valid
 );
+    // Standard FIFO (registered dout/valid, one-cycle read latency) to match the .xci.
     reg [140:0] mem [0:1023];
     reg [10:0] wr_ptr, rd_ptr;
     reg [10:0] count;
+    reg [140:0] dout_r;
+    reg         valid_r;
+    wire do_wr = wr_en & ~full;
+    wire do_rd = rd_en & ~empty;
     assign full = (count == 11'd1024);
     assign empty = (count == 11'd0);
     assign prog_empty = 1'b1;
-    assign dout = mem[rd_ptr];
-    assign valid = ~empty;
+    assign dout = dout_r;
+    assign valid = valid_r;
     always @(posedge clk) begin
         if (srst) begin
             wr_ptr <= 0; rd_ptr <= 0; count <= 0;
+            dout_r <= 0; valid_r <= 1'b0;
         end else begin
-            if (wr_en & ~full) begin mem[wr_ptr] <= din; wr_ptr <= wr_ptr + 1; end
-            if (rd_en & ~empty) begin rd_ptr <= rd_ptr + 1; end
-            case ({wr_en & ~full, rd_en & ~empty})
+            if (do_wr) begin mem[wr_ptr] <= din; wr_ptr <= wr_ptr + 1; end
+            if (do_rd) begin
+                dout_r  <= mem[rd_ptr];
+                rd_ptr  <= rd_ptr + 1;
+                valid_r <= 1'b1;
+            end else begin
+                valid_r <= 1'b0;
+            end
+            case ({do_wr, do_rd})
                 2'b10: count <= count + 1;
                 2'b01: count <= count - 1;
                 default: count <= count;
