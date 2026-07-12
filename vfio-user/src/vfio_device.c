@@ -67,6 +67,27 @@ static int device_reset(vfu_ctx_t *context, vfu_reset_type_t type)
 }
 
 
+static ssize_t config_access(vfu_ctx_t *context, char *buf, size_t count,
+                             loff_t offset, bool is_write)
+{
+    struct server_state *state = vfu_get_private(context);
+
+    if (offset < 0 || (uint64_t)offset > state->model->config_space_size ||
+        count > state->model->config_space_size - (size_t)offset) {
+        errno = EINVAL;
+        return -1;
+    }
+    uint8_t *config = (uint8_t *)vfu_pci_get_config_space(context);
+
+    if (is_write) {
+        memcpy(config + offset, buf, count);
+    } else {
+        memcpy(buf, config + offset, count);
+    }
+    return (ssize_t)count;
+}
+
+
 static void dma_register(vfu_ctx_t *context, vfu_dma_info_t *info)
 {
     (void)context;
@@ -137,6 +158,25 @@ static int host_irq(void *opaque, unsigned vector)
 }
 
 
+static bool config_has_capability(const struct device_model *model, uint8_t id)
+{
+    uint8_t offset;
+    unsigned steps = 0;
+
+    if (model->config_space_size <= 0x35) {
+        return false;
+    }
+    offset = model->config_space[0x34];
+    while (offset >= 0x40 && (size_t)offset + 2 <= model->config_space_size && steps++ < 48) {
+        if (model->config_space[offset] == id) {
+            return true;
+        }
+        offset = model->config_space[offset + 1];
+    }
+    return false;
+}
+
+
 static int setup_regions(struct server_state *state)
 {
     size_t index;
@@ -186,6 +226,12 @@ int vfio_device_run(const struct device_model *model,
         goto done;
     }
     memcpy(vfu_pci_get_config_space(state.context), model->config_space, model->config_space_size);
+    if (vfu_setup_region(state.context, VFU_PCI_DEV_CFG_REGION_IDX,
+                         model->config_space_size, config_access,
+                         VFU_REGION_FLAG_RW | VFU_REGION_FLAG_ALWAYS_CB,
+                         NULL, 0, -1, 0) < 0) {
+        goto done;
+    }
     struct behavior_host_ops host = {
         .opaque = &state,
         .dma_read = host_dma_read,
@@ -210,7 +256,7 @@ int vfio_device_run(const struct device_model *model,
         vfu_setup_device_nr_irqs(state.context, VFU_DEV_INTX_IRQ, 1) < 0) {
         goto done;
     }
-    if (model->msix_vectors > 0 &&
+    if (model->msix_vectors > 0 && config_has_capability(model, PCI_CAP_ID_MSIX) &&
         vfu_setup_device_nr_irqs(state.context, VFU_DEV_MSIX_IRQ, model->msix_vectors) < 0) {
         goto done;
     }

@@ -33,7 +33,11 @@ if [ -L "$found/driver" ]; then
 fi
 bars=0
 if [ -f "$found/resource" ]; then
-    bars="$(grep -vc '^0* 0* 0*$' "$found/resource")"
+    while read -r start end flags; do
+        if [ "$start" != 0 ] || [ "$end" != 0 ]; then
+            bars=$((bars + 1))
+        fi
+    done <"$found/resource"
 fi
 status=pass
 detail=driver-bound

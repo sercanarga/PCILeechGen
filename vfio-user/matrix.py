@@ -13,6 +13,7 @@ from typing import Sequence
 
 
 ROOT = Path(__file__).resolve().parents[1]
+GENERATOR = Path(os.environ.get("PCILEECHGEN_BIN", ROOT / "bin" / "pcileechgen"))
 
 
 class CaseFailure(RuntimeError):
@@ -86,7 +87,7 @@ def _case(name: str, behavior: str, mandatory_probe: str, board: str = "PCIeSqui
 
 def build_command(case: Case, output: Path) -> list[str]:
     return [
-        str(ROOT / "bin" / "pcileechgen"),
+        str(GENERATOR),
         "build",
         "--from-json",
         str(case.fixture),
@@ -99,7 +100,7 @@ def build_command(case: Case, output: Path) -> list[str]:
     ]
 
 
-def run_server_smoke(case: Case, artifacts: Path, work_dir: Path, timeout: int = 10) -> dict:
+def start_server(case: Case, artifacts: Path, work_dir: Path, timeout: int = 10):
     binary = ROOT / "vfio-user" / "build" / "vfio-device"
     if not binary.is_file():
         raise CaseFailure(f"VFIO server binary is missing: {binary}")
@@ -123,20 +124,67 @@ def run_server_smoke(case: Case, artifacts: Path, work_dir: Path, timeout: int =
             record = json.loads(line)
             if record.get("event") != "ready":
                 raise CaseFailure(f"{case.name}: invalid readiness record")
-            return record
+            return process, process.stdout, socket_path, record
         finally:
-            if process.poll() is None:
-                process.terminate()
-                try:
-                    process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait()
-            if process.stdout is not None:
+            if process.poll() is not None:
                 process.stdout.close()
 
 
-def run_case(case: Case, work_root: Path, timeout: int = 120) -> dict:
+def stop_server(process: subprocess.Popen, output) -> None:
+    if process.poll() is None:
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+    output.close()
+
+
+def run_server_smoke(case: Case, artifacts: Path, work_dir: Path, timeout: int = 10) -> dict:
+    process, output, _, record = start_server(case, artifacts, work_dir, timeout)
+    stop_server(process, output)
+    return record
+
+
+def run_qemu_case(case: Case, artifacts: Path, work_dir: Path,
+                  qemu: Path, kernel: Path, initrd: Path, timeout: int = 30) -> GuestResult:
+    process, output, socket_path, _ = start_server(case, artifacts, work_dir)
+    qemu_log = work_dir / "qemu.log"
+    command = [
+        str(qemu), "-machine", "virt", "-cpu", "max", "-m", "512", "-nographic",
+        "-kernel", str(kernel), "-initrd", str(initrd),
+        "-append", f"console=ttyAMA0 rdinit=/init vfio_case={case.name} "
+        f"vfio_vendor={vendor_for(artifacts)} vfio_device={device_for(artifacts)}",
+        "-device", json.dumps({"driver": "vfio-user-pci",
+                               "socket": {"path": str(socket_path), "type": "unix"}}),
+    ]
+    try:
+        with qemu_log.open("w", encoding="utf-8") as log:
+            result = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT,
+                                    timeout=timeout, check=False)
+        text = qemu_log.read_text(encoding="utf-8")
+        guest = parse_guest_results(text, case)
+        if result.returncode != 0 and guest.status != "pass":
+            raise CaseFailure(f"{case.name}: QEMU exited {result.returncode}")
+        return guest
+    finally:
+        stop_server(process, output)
+
+
+def vendor_for(artifacts: Path) -> str:
+    data = json.loads((artifacts / "device_model.json").read_text(encoding="utf-8"))
+    return f"{data['functions'][0]['vendor_id']:04x}"
+
+
+def device_for(artifacts: Path) -> str:
+    data = json.loads((artifacts / "device_model.json").read_text(encoding="utf-8"))
+    return f"{data['functions'][0]['device_id']:04x}"
+
+
+def run_case(case: Case, work_root: Path, timeout: int = 120,
+             qemu: Path | None = None, kernel: Path | None = None,
+             initrd: Path | None = None) -> dict:
     case_dir = work_root / case.name
     artifacts = case_dir / "artifacts"
     case_dir.mkdir(parents=True, exist_ok=True)
@@ -145,6 +193,13 @@ def run_case(case: Case, work_root: Path, timeout: int = 120) -> dict:
         run_command(build_command(case, artifacts), generation_log, timeout)
         readiness = run_server_smoke(case, artifacts, case_dir)
         result = {"case": case.name, "status": "pass", "readiness": readiness}
+        if qemu is not None:
+            if kernel is None or initrd is None:
+                raise CaseFailure("QEMU mode requires --kernel and --initrd")
+            guest = run_qemu_case(case, artifacts, case_dir, qemu, kernel, initrd)
+            if guest.status == "fail" or (case.mandatory_probe == "driver" and guest.status == "fail"):
+                raise CaseFailure(f"{case.name}: guest probe failed: {guest.detail}")
+            result["guest"] = guest.__dict__
     except (CaseFailure, OSError, json.JSONDecodeError) as exc:
         result = {"case": case.name, "status": "fail", "detail": str(exc)}
     result_path = case_dir / "result.json"
@@ -158,9 +213,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     group.add_argument("--case", choices=sorted(CASES))
     group.add_argument("--all", action="store_true")
     parser.add_argument("--work-dir", type=Path, default=ROOT / "vfio-user" / "build" / "matrix")
+    parser.add_argument("--qemu", type=Path)
+    parser.add_argument("--kernel", type=Path)
+    parser.add_argument("--initrd", type=Path)
     args = parser.parse_args(argv)
     selected = [CASES[args.case]] if args.case else list(CASES.values())
-    results = [run_case(case, args.work_dir) for case in selected]
+    results = [run_case(case, args.work_dir, qemu=args.qemu, kernel=args.kernel, initrd=args.initrd)
+               for case in selected]
     print(json.dumps(results, indent=2))
     return 0 if all(result["status"] == "pass" for result in results) else 1
 
