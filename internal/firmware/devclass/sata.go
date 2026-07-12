@@ -72,6 +72,14 @@ func sataProfile() *DeviceProfile {
 			{Offset: 0x108, Width: 4, Name: "PxFB", Reset: 0x00000000, RWMask: 0xFFFFFF00},
 			// Port 0: PxIS
 			{Offset: 0x110, Width: 4, Name: "PxIS", Reset: 0x00000000, RWMask: 0xFDC000AF},
+			// Port 0: PxIE - interrupt enable
+			{Offset: 0x114, Width: 4, Name: "PxIE", Reset: 0x00000000, RWMask: 0xFDC000FF},
+			// Port 0: PxCMD - ST=bit0, SUD=bit1, POD=bit2, FRE=bit4
+			{Offset: 0x118, Width: 4, Name: "PxCMD", Reset: 0x00000000, RWMask: 0x00000017},
+			// Port 0: PxSCTL - SATA control
+			{Offset: 0x12C, Width: 4, Name: "PxSCTL", Reset: 0x00000000, RWMask: 0x0000000F},
+			// Port 0: PxSERR - SATA error (RW1C)
+			{Offset: 0x130, Width: 4, Name: "PxSERR", Reset: 0x00000000, RWMask: 0xFFFFFFFF, IsRW1C: true},
 			// Port 0: PxCI - no commands pending
 			{Offset: 0x138, Width: 4, Name: "PxCI", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
 			// Port 0: PxSSTS - device detected, phy established

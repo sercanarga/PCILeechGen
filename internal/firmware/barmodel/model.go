@@ -110,6 +110,11 @@ func BuildBARModels(
 		profile := profiles[bir]
 		var model *BARModel
 		classSpecific := bir == preferredBIR
+		if !classSpecific && preferredBIR >= 0 && preferredBIR < 6 {
+			if _, preferredExists := byBIR[preferredBIR]; !preferredExists {
+				classSpecific = bir == birs[0]
+			}
+		}
 		if classSpecific {
 			model = BuildBARModel(data, classCode, profile)
 		} else if profile != nil && len(profile.Probes) > 0 && isProbeDataReliable(profile) {
