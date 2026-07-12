@@ -85,12 +85,29 @@ static void starts_from_generated_bar_reset_image(void **state)
 }
 
 
+static void rejects_invalid_bar_definitions(void **state)
+{
+    struct device_model model = one_bar_model();
+    struct device_behavior behavior = {0};
+    char err[128] = {0};
+
+    (void)state;
+    model.bars[0].bir = DEVICE_MAX_BARS;
+    assert_int_equal(behavior_static_create(&model, &behavior, err, sizeof(err)), -1);
+
+    model = one_bar_model();
+    model.bars[0].size = 0;
+    assert_int_equal(behavior_static_create(&model, &behavior, err, sizeof(err)), -1);
+}
+
+
 int main(void)
 {
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(supports_partial_writes_and_reset),
         cmocka_unit_test(rejects_out_of_range_access),
         cmocka_unit_test(starts_from_generated_bar_reset_image),
+        cmocka_unit_test(rejects_invalid_bar_definitions),
     };
 
     return cmocka_run_group_tests(tests, NULL, NULL);

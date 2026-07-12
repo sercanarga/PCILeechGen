@@ -123,8 +123,14 @@ int behavior_static_create(const struct device_model *model,
     }
     for (index = 0; index < model->bar_count; ++index) {
         const struct device_bar *source = &model->bars[index];
-        struct static_bar *bar = &state->bars[source->bir];
+        struct static_bar *bar;
 
+        if (source->bir >= DEVICE_MAX_BARS || source->size == 0 ||
+            state->bars[source->bir].data != NULL) {
+            static_destroy(state);
+            return fail(err, err_len, "invalid BAR%u definition", source->bir);
+        }
+        bar = &state->bars[source->bir];
         if (source->size > SIZE_MAX) {
             static_destroy(state);
             return fail(err, err_len, "BAR%u is too large for this host", source->bir);
