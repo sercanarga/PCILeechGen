@@ -152,15 +152,25 @@ def run_server_smoke(case: Case, artifacts: Path, work_dir: Path, timeout: int =
 
 
 def run_qemu_case(case: Case, artifacts: Path, work_dir: Path,
-                  qemu: Path, kernel: Path, initrd: Path, timeout: int = 30) -> GuestResult:
+                  qemu: Path, kernel: Path, initrd: Path, timeout: int = 30,
+                  shared_memory: bool = False) -> GuestResult:
     if qemu_requires_kvm(case):
         raise CaseFailure(f"{case.name}: /dev/kvm is required for QEMU MSI-X E2E")
     process, output, socket_path, _ = start_server(case, artifacts, work_dir)
     qemu_log = work_dir / "qemu.log"
+    machine_args = ["-machine", "virt", "-cpu", "max", "-m", "512"]
+    console = "ttyAMA0"
+    if shared_memory:
+        machine_args = [
+            "-machine", "q35,memory-backend=mem",
+            "-object", "memory-backend-memfd,id=mem,size=512M,share=on",
+            "-cpu", "max", "-m", "512",
+        ]
+        console = "ttyS0"
     command = [
-        str(qemu), "-machine", "virt", "-cpu", "max", "-m", "512", "-nographic",
+        str(qemu), *machine_args, "-nographic",
         "-kernel", str(kernel), "-initrd", str(initrd),
-        "-append", f"console=ttyAMA0 rdinit=/init vfio_case={case.name} "
+        "-append", f"console={console} rdinit=/init vfio_case={case.name} "
         f"vfio_vendor={vendor_for(artifacts)} vfio_device={device_for(artifacts)}",
         "-device", json.dumps({"driver": "vfio-user-pci",
                                "socket": {"path": str(socket_path), "type": "unix"}}),
@@ -190,7 +200,7 @@ def device_for(artifacts: Path) -> str:
 
 def run_case(case: Case, work_root: Path, timeout: int = 120,
              qemu: Path | None = None, kernel: Path | None = None,
-             initrd: Path | None = None) -> dict:
+             initrd: Path | None = None, shared_memory: bool = False) -> dict:
     case_dir = work_root / case.name
     artifacts = case_dir / "artifacts"
     case_dir.mkdir(parents=True, exist_ok=True)
@@ -202,7 +212,8 @@ def run_case(case: Case, work_root: Path, timeout: int = 120,
         if qemu is not None:
             if kernel is None or initrd is None:
                 raise CaseFailure("QEMU mode requires --kernel and --initrd")
-            guest = run_qemu_case(case, artifacts, case_dir, qemu, kernel, initrd)
+            guest = run_qemu_case(case, artifacts, case_dir, qemu, kernel, initrd,
+                                  shared_memory=shared_memory)
             if guest.status == "fail" or (case.mandatory_probe == "driver" and guest.status == "fail"):
                 raise CaseFailure(f"{case.name}: guest probe failed: {guest.detail}")
             result["guest"] = guest.__dict__
@@ -222,9 +233,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--qemu", type=Path)
     parser.add_argument("--kernel", type=Path)
     parser.add_argument("--initrd", type=Path)
+    parser.add_argument("--shared-memory", action="store_true")
     args = parser.parse_args(argv)
     selected = [CASES[args.case]] if args.case else list(CASES.values())
-    results = [run_case(case, args.work_dir, qemu=args.qemu, kernel=args.kernel, initrd=args.initrd)
+    results = [run_case(case, args.work_dir, qemu=args.qemu, kernel=args.kernel,
+                        initrd=args.initrd, shared_memory=args.shared_memory)
                for case in selected]
     print(json.dumps(results, indent=2))
     return 0 if all(result["status"] == "pass" for result in results) else 1
