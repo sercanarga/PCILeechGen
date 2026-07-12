@@ -20,5 +20,7 @@ if [ -n "$module" ]; then
     fi
 fi
 sleep 2
-/bin/vfio-probe
+status=0
+/bin/vfio-probe || status=$?
 poweroff -f
+exit "$status"
