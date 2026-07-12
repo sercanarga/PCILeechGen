@@ -17,7 +17,9 @@ struct nvme_state {
     uint64_t acq;
     uint16_t sq_head;
     uint16_t cq_tail;
+    uint16_t cq_head;
     uint8_t cq_phase;
+    uint8_t cq_head_phase;
     uint16_t pending_tail;
     bool admin_pending;
 };
@@ -165,6 +167,11 @@ static int process_admin(struct nvme_state *state, uint16_t tail)
         return -EINVAL;
     }
     while (state->sq_head != tail) {
+        if (state->cq_tail == state->cq_head &&
+            state->cq_phase != state->cq_head_phase) {
+            state->admin_pending = true;
+            return 0;
+        }
         struct nvme_sqe sqe;
         struct nvme_cqe cqe = {0};
         uint16_t status = 0;
@@ -245,7 +252,9 @@ static int nvme_reset(void *opaque)
     state->acq = 0;
     state->sq_head = 0;
     state->cq_tail = 0;
+    state->cq_head = 0;
     state->cq_phase = 1;
+    state->cq_head_phase = 1;
     state->pending_tail = 0;
     state->admin_pending = false;
     return set_csts(state, 0);
@@ -291,6 +300,18 @@ static ssize_t nvme_write(void *opaque, unsigned bir, uint64_t offset,
         case 0x2c: state->asq = (state->asq & 0xffffffffULL) | ((uint64_t)value << 32); break;
         case 0x30: state->acq = (state->acq & 0xffffffff00000000ULL) | value; break;
         case 0x34: state->acq = (state->acq & 0xffffffffULL) | ((uint64_t)value << 32); break;
+        case 0x1004: {
+            uint16_t cq_size = (uint16_t)(((state->aqa >> 16) & 0xfff) + 1);
+
+            if (value >= cq_size) {
+                return -EINVAL;
+            }
+            if ((uint16_t)value < state->cq_head) {
+                state->cq_head_phase ^= 1;
+            }
+            state->cq_head = (uint16_t)value;
+            break;
+        }
         case 0x1000:
             state->pending_tail = (uint16_t)value;
             state->admin_pending = true;
@@ -307,7 +328,9 @@ static ssize_t nvme_write(void *opaque, unsigned bir, uint64_t offset,
     if ((cc & 1) == 0) {
         state->sq_head = 0;
         state->cq_tail = 0;
+        state->cq_head = 0;
         state->cq_phase = 1;
+        state->cq_head_phase = 1;
         state->pending_tail = 0;
         state->admin_pending = false;
     }
