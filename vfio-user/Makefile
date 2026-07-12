@@ -10,9 +10,9 @@ endif
 TARGET = nvme_vfio_server
 SRC = nvme_vfio_server.c
 
-.PHONY: test test-matrix test-device-model
+.PHONY: test test-matrix test-device-model test-behavior-static
 
-test: test-matrix test-device-model
+test: test-matrix test-device-model test-behavior-static
 
 test-matrix:
 	python3 -m unittest tests/test_matrix.py -v
@@ -26,6 +26,15 @@ build/test_device_model: tests/test_device_model.c src/device_model.c include/de
 
 test-device-model: build/test_device_model
 	./build/test_device_model
+
+build/test_behavior_static: tests/test_behavior_static.c src/behavior_static.c include/device_behavior.h include/device_model.h
+	mkdir -p build
+	$(CC) -std=c11 -Wall -Wextra -Werror -g $(SANITIZE) -Iinclude \
+		$$(pkg-config --cflags cmocka) -o $@ tests/test_behavior_static.c src/behavior_static.c \
+		$$(pkg-config --libs cmocka)
+
+test-behavior-static: build/test_behavior_static
+	./build/test_behavior_static
 
 $(TARGET): $(SRC)
 	$(CC) $(CFLAGS) -o $(TARGET) $(SRC) $(LDFLAGS)

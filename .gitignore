@@ -2,6 +2,7 @@
 /pcileechgen
 /bin/
 /dist/
+/vfio-user/build/
 
 # Build output
 pcileech_datastore/
