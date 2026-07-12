@@ -29,10 +29,13 @@ static void ahci_reset_self_clears(void **state)
     (void)state;
     assert_int_equal(device_model_load("../tests/cocotb/out_sata", &model, err, sizeof(err)), 0);
     assert_int_equal(behavior_ahci_create(model, &behavior, err, sizeof(err)), 0);
-    assert_int_equal(read32(&behavior, 0x0c), 1);
+    uint32_t value = 0;
+    assert_int_equal(behavior.read(behavior.state, 5, 0x0c, &value, 4), 4);
+    assert_int_equal(value, 1);
     ghc = 0x80000001;
-    assert_int_equal(behavior.write(behavior.state, 0, 0x04, &ghc, 4), 4);
-    assert_int_equal(read32(&behavior, 0x04) & 1, 0);
+    assert_int_equal(behavior.write(behavior.state, 5, 0x04, &ghc, 4), 4);
+    assert_int_equal(behavior.read(behavior.state, 5, 0x04, &value, 4), 4);
+    assert_int_equal(value & 1, 0);
     behavior.destroy(behavior.state);
     device_model_free(model);
 }
@@ -56,6 +59,8 @@ static void xhci_reset_and_run_state(void **state)
     command = 1;
     assert_int_equal(behavior.write(behavior.state, 0, 0x20, &command, 4), 4);
     assert_int_equal(read32(&behavior, 0x24) & 1, 0);
+    assert_int_equal(read32(&behavior, 0x10), 0x00100001);
+    assert_int_equal(read32(&behavior, 0x40), 2);
     behavior.destroy(behavior.state);
     device_model_free(model);
 }

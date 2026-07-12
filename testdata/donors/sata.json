@@ -86,7 +86,7 @@
   "config_space_size": 256,
   "bars": [
     {
-      "index": 0,
+      "index": 5,
       "raw_value": 4294959104,
       "address": 0,
       "size": 8192,

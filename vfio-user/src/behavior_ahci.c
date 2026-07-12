@@ -37,12 +37,12 @@ static ssize_t ahci_write(void *opaque, unsigned bir, uint64_t offset,
     struct ahci_state *state = opaque;
     ssize_t result = state->registers.write(state->registers.state, bir, offset, data, length);
 
-    if (result >= 0 && bir == 0 && offset == 0x04 && length == 4) {
+    if (result >= 0 && (bir == 0 || bir == 5) && offset == 0x04 && length == 4) {
         uint32_t value;
         memcpy(&value, data, sizeof(value));
         if ((value & 1) != 0) {
             value &= ~1u;
-            result = state->registers.write(state->registers.state, 0, 0x04, &value, 4);
+            result = state->registers.write(state->registers.state, bir, 0x04, &value, 4);
         }
     }
     return result;
