@@ -80,6 +80,11 @@ static void ethernet_link_status_and_reset(void **state)
     assert_int_equal(behavior_ethernet_create(model, &behavior, err, sizeof(err)), 0);
     assert_int_equal(behavior.read(behavior.state, 0, 0x6c, &value, 4), 4);
     assert_int_equal(value, 0x3010);
+    command = (1u << 26) | (1u << 21);
+    assert_int_equal(behavior.write(behavior.state, 0, 0x20, &command, 4), 4);
+    assert_int_equal(behavior.read(behavior.state, 0, 0x20, &value, 4), 4);
+    assert_true((value & 0x10000000u) != 0);
+    command = 0x10000000;
     assert_int_equal(behavior.write(behavior.state, 0, 0x34, &command, 4), 4);
     assert_int_equal(behavior.read(behavior.state, 0, 0x34, &value, 4), 4);
     assert_int_equal(value, 0x0c000000);

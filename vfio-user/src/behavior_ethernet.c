@@ -8,7 +8,7 @@
 struct ethernet_state {
     struct device_behavior registers;
     struct behavior_host_ops host;
-    uint32_t ctrl, status, eerd, icr, ims;
+    uint32_t ctrl, status, eerd, mdic, icr, ims;
     uint64_t rdbal, tdbal;
     uint32_t rdlen, rdh, rdt, tdlen, tdh, tdt;
 };
@@ -17,7 +17,7 @@ static uint32_t *reg32(struct ethernet_state *s, uint64_t off)
 {
     switch (off) {
     case 0x0000: return &s->ctrl; case 0x0008: return &s->status;
-    case 0x0014: return &s->eerd; case 0x00c0: return &s->icr;
+    case 0x0014: return &s->eerd; case 0x0020: return &s->mdic; case 0x00c0: return &s->icr;
     case 0x00d0: return &s->ims; case 0x0288: return &s->rdlen;
     case 0x2810: return &s->rdh; case 0x2818: return &s->rdt;
     case 0x0388: return &s->tdlen; case 0x3810: return &s->tdh;
@@ -45,7 +45,7 @@ static int ethernet_reset(void *opaque)
 {
     struct ethernet_state *state = opaque;
     int rc = state->registers.reset(state->registers.state);
-    state->ctrl = 0; state->status = 0x80080783; state->eerd = 0;
+    state->ctrl = 0; state->status = 0x80080783; state->eerd = 0; state->mdic = 0x08000000;
     state->icr = 0; state->ims = 0; state->rdbal = state->tdbal = 0;
     state->rdlen = state->rdh = state->rdt = 0;
     state->tdlen = state->tdh = state->tdt = 0;
@@ -80,6 +80,12 @@ static ssize_t ethernet_write(void *opaque, unsigned bir, uint64_t offset,
     if (bir == 0 && length == 4 && reg32(state, offset) != NULL) {
         memcpy(&value, data, 4);
         if (offset == 0x0014) { state->eerd = (value & 1) | (2u << 4) | (0x1100u << 16); return 4; }
+        if (offset == 0x0020) {
+            uint16_t phy_reg = (uint16_t)((value >> 16) & 0x1f);
+            uint16_t phy_data = phy_reg == 1 ? 0x796d : (phy_reg == 0 ? 0x1140 : 0);
+            state->mdic = (value & 0x03ff0000u) | phy_data | 0x10000000u;
+            return 4;
+        }
         if (offset == 0x00c0) { state->icr &= ~value; return 4; }
         if (offset == 0x00d0) { state->ims = value; return 4; }
         *reg32(state, offset) = value;
