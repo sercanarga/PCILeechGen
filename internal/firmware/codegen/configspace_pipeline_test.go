@@ -81,3 +81,81 @@ func TestPipeline_NVMeCapabilityChain(t *testing.T) {
 		t.Error("MSI-X capability missing (inject failed)")
 	}
 }
+
+func TestPipeline_AllDonorsIdentity(t *testing.T) {
+	donors := []struct {
+		name  string
+		vid   uint16
+		did   uint16
+		class uint32
+	}{
+		{"audio", 0x8086, 0x9D71, 0x040300},
+		{"ethernet", 0x8086, 0x15B7, 0x020000},
+		{"gpu", 0x10DE, 0x1B06, 0x030000},
+		{"multibar", 0x1234, 0x5678, 0x000000},
+		{"nvme", 0x144D, 0xA809, 0x010802},
+		{"sata", 0x8086, 0x9D03, 0x010601},
+		{"thunderbolt", 0x8086, 0x15D9, 0x080700},
+		{"wifi", 0x8086, 0x24FD, 0x028000},
+		{"xhci", 0x8086, 0x9D2F, 0x0C0330},
+		{"generic", 0x1234, 0x5678, 0x000000},
+	}
+	for _, d := range donors {
+		t.Run(d.name, func(t *testing.T) {
+			cs := loadAndScrubDonor(t, d.name+".json")
+			if vid := cs.VendorID(); vid != d.vid {
+				t.Errorf("VID: got 0x%04X, want 0x%04X", vid, d.vid)
+			}
+			if did := cs.DeviceID(); did != d.did {
+				t.Errorf("DID: got 0x%04X, want 0x%04X", did, d.did)
+			}
+			if sv := cs.SubsysVendorID(); sv == 0 {
+				t.Error("subsys vendor ID = 0 after scrub")
+			}
+			if sd := cs.SubsysDeviceID(); sd == 0 {
+				t.Error("subsys device ID = 0 after scrub")
+			}
+			if d.class > 0 {
+				if class := cs.ReadU32(0x08) >> 8; class != d.class {
+					t.Errorf("class: got 0x%06X, want 0x%06X", class, d.class)
+				}
+			}
+			caps := pci.ParseCapabilities(cs)
+			if len(caps) == 0 {
+				t.Error("no capabilities in scrubbed config space")
+			}
+		})
+	}
+}
+
+func TestPipeline_MultibarTopology(t *testing.T) {
+	cs := loadAndScrubDonor(t, "multibar.json")
+	for _, off := range []int{0x10, 0x14, 0x18, 0x1C, 0x20, 0x24} {
+		bar := cs.ReadU32(off)
+		if bar != 0 {
+			t.Logf("BAR at 0x%02X = 0x%08X", off, bar)
+		}
+	}
+	bar0 := cs.ReadU32(0x10)
+	if bar0 == 0 {
+		t.Error("BAR0 = 0, expected non-zero (multibar fixture should have BAR0)")
+	}
+}
+
+func TestPipeline_EthernetNoMSIX(t *testing.T) {
+	cs := loadAndScrubDonor(t, "ethernet.json")
+	info := pci.ParseMSIXCap(cs)
+	if info != nil {
+		t.Error("ethernet donor should not have MSI-X capability injected (no msix_data in donor JSON)")
+	}
+	caps := pci.ParseCapabilities(cs)
+	hasMSI := false
+	for _, c := range caps {
+		if c.ID == pci.CapIDMSI {
+			hasMSI = true
+		}
+	}
+	if !hasMSI {
+		t.Error("ethernet donor should retain MSI capability")
+	}
+}
