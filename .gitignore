@@ -49,3 +49,4 @@ tests/cocotb/sim_build/
 results.xml
 __pycache__/
 config_space_init.hex
+docs/
