@@ -164,8 +164,11 @@ def run_qemu_case(case: Case, artifacts: Path, work_dir: Path,
                                  rebind=rebind)
     try:
         with qemu_log.open("w", encoding="utf-8") as log:
-            result = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT,
-                                    timeout=timeout, check=False)
+            try:
+                result = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT,
+                                        timeout=timeout, check=False)
+            except subprocess.TimeoutExpired as exc:
+                raise CaseFailure(f"{case.name}: QEMU timed out after {timeout}s") from exc
         text = qemu_log.read_text(encoding="utf-8")
         guest = parse_guest_results(text, case)
         if result.returncode != 0 and guest.status != "pass":
