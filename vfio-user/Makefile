@@ -9,13 +9,13 @@ SANITIZE := -fsanitize=address,undefined
 endif
 
 TARGET = build/vfio-device
-SRC = src/main.c src/vfio_device.c src/device_model.c src/behavior_static.c src/behavior_nvme.c src/behavior_ahci.c src/behavior_xhci.c
+SRC = src/main.c src/vfio_device.c src/device_model.c src/behavior_static.c src/behavior_nvme.c src/behavior_hda.c src/behavior_ahci.c src/behavior_xhci.c src/behavior_ethernet.c
 
-.PHONY: all image test test-matrix test-device-model test-behavior-static test-behavior-nvme test-behavior-storage test-server matrix
+.PHONY: all image test test-matrix test-device-model test-behavior-static test-behavior-nvme test-behavior-hda test-behavior-storage test-server matrix
 
 all: $(TARGET)
 
-test: test-matrix test-device-model test-behavior-static test-behavior-nvme test-behavior-storage
+test: test-matrix test-device-model test-behavior-static test-behavior-nvme test-behavior-hda test-behavior-storage
 
 test-matrix:
 	python3 -m unittest tests/test_matrix.py -v
@@ -30,31 +30,41 @@ build/test_device_model: tests/test_device_model.c src/device_model.c include/de
 test-device-model: build/test_device_model
 	./build/test_device_model
 
-build/test_behavior_static: tests/test_behavior_static.c src/behavior_static.c src/behavior_nvme.c src/behavior_ahci.c src/behavior_xhci.c include/device_behavior.h include/device_model.h
+build/test_behavior_static: tests/test_behavior_static.c src/behavior_static.c src/behavior_nvme.c src/behavior_hda.c src/behavior_ahci.c src/behavior_xhci.c src/behavior_ethernet.c include/device_behavior.h include/device_model.h
 	mkdir -p build
 	$(CC) $(CFLAGS) $(SANITIZE) \
-		$$(pkg-config --cflags cmocka) -o $@ tests/test_behavior_static.c src/behavior_static.c src/behavior_nvme.c src/behavior_ahci.c src/behavior_xhci.c \
+		$$(pkg-config --cflags cmocka) -o $@ tests/test_behavior_static.c src/behavior_static.c src/behavior_nvme.c src/behavior_hda.c src/behavior_ahci.c src/behavior_xhci.c src/behavior_ethernet.c \
 		$$(pkg-config --libs cmocka)
 
 test-behavior-static: build/test_behavior_static
 	./build/test_behavior_static
 
-build/test_behavior_nvme: tests/test_behavior_nvme.c src/behavior_nvme.c src/behavior_static.c src/behavior_ahci.c src/behavior_xhci.c src/device_model.c include/device_behavior.h include/device_model.h
+build/test_behavior_nvme: tests/test_behavior_nvme.c src/behavior_nvme.c src/behavior_static.c src/behavior_hda.c src/behavior_ahci.c src/behavior_xhci.c src/behavior_ethernet.c src/device_model.c include/device_behavior.h include/device_model.h
 	mkdir -p build
 	$(CC) $(CFLAGS) $(SANITIZE) \
 		$$(pkg-config --cflags cmocka json-c openssl) -o $@ \
-		tests/test_behavior_nvme.c src/behavior_nvme.c src/behavior_static.c src/behavior_ahci.c src/behavior_xhci.c src/device_model.c \
+		tests/test_behavior_nvme.c src/behavior_nvme.c src/behavior_static.c src/behavior_hda.c src/behavior_ahci.c src/behavior_xhci.c src/behavior_ethernet.c src/device_model.c \
 		$$(pkg-config --libs cmocka json-c openssl)
 
 test-behavior-nvme: build/test_behavior_nvme
 	./build/test_behavior_nvme
 
-build/test_behavior_storage: tests/test_behavior_storage.c src/behavior_ahci.c src/behavior_xhci.c src/behavior_static.c src/behavior_nvme.c src/device_model.c include/device_behavior.h include/device_model.h
+build/test_behavior_hda: tests/test_behavior_hda.c src/behavior_hda.c src/behavior_ethernet.c src/behavior_static.c src/behavior_nvme.c src/behavior_ahci.c src/behavior_xhci.c src/device_model.c include/device_behavior.h include/device_model.h
+	mkdir -p build
+	$(CC) $(CFLAGS) $(SANITIZE) \
+		$$(pkg-config --cflags cmocka json-c openssl) -o $@ \
+		tests/test_behavior_hda.c src/behavior_hda.c src/behavior_ethernet.c src/behavior_static.c src/behavior_nvme.c src/behavior_ahci.c src/behavior_xhci.c src/device_model.c \
+		$$(pkg-config --libs cmocka json-c openssl)
+
+test-behavior-hda: build/test_behavior_hda
+	./build/test_behavior_hda
+
+build/test_behavior_storage: tests/test_behavior_storage.c src/behavior_ahci.c src/behavior_xhci.c src/behavior_static.c src/behavior_nvme.c src/behavior_hda.c src/behavior_ethernet.c src/device_model.c include/device_behavior.h include/device_model.h
 	mkdir -p build
 	$(CC) $(CFLAGS) $(SANITIZE) \
 		$$(pkg-config --cflags cmocka json-c openssl) -o $@ \
 		tests/test_behavior_storage.c src/behavior_ahci.c src/behavior_xhci.c \
-		src/behavior_static.c src/behavior_nvme.c src/device_model.c \
+		src/behavior_static.c src/behavior_nvme.c src/behavior_hda.c src/behavior_ethernet.c src/device_model.c \
 		$$(pkg-config --libs cmocka json-c openssl)
 
 test-behavior-storage: build/test_behavior_storage

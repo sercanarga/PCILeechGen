@@ -175,11 +175,17 @@ int behavior_create(const struct device_model *model,
     if (model->class_code == 0x010802) {
         return behavior_nvme_create(model, out, err, err_len);
     }
+    if (model->class_code == 0x040300) {
+        return behavior_hda_create(model, out, err, err_len);
+    }
     if (model->class_code == 0x010601) {
         return behavior_ahci_create(model, out, err, err_len);
     }
     if (model->class_code == 0x0c0330) {
         return behavior_xhci_create(model, out, err, err_len);
+    }
+    if (model->class_code == 0x020000) {
+        return behavior_ethernet_create(model, out, err, err_len);
     }
     return behavior_static_create(model, out, err, err_len);
 }

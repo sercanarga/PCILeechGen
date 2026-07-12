@@ -66,11 +66,34 @@ static void xhci_reset_and_run_state(void **state)
 }
 
 
+static void ethernet_link_status_and_reset(void **state)
+{
+    struct device_model *model = NULL;
+    struct device_behavior behavior = {0};
+    char err[256] = {0};
+    uint32_t value;
+    uint32_t command = 0x10000000;
+
+    (void)state;
+    assert_int_equal(device_model_load("../tests/cocotb/out_ethernet", &model,
+                                      err, sizeof(err)), 0);
+    assert_int_equal(behavior_ethernet_create(model, &behavior, err, sizeof(err)), 0);
+    assert_int_equal(behavior.read(behavior.state, 0, 0x6c, &value, 4), 4);
+    assert_int_equal(value, 0x3010);
+    assert_int_equal(behavior.write(behavior.state, 0, 0x34, &command, 4), 4);
+    assert_int_equal(behavior.read(behavior.state, 0, 0x34, &value, 4), 4);
+    assert_int_equal(value, 0x0c000000);
+    behavior.destroy(behavior.state);
+    device_model_free(model);
+}
+
+
 int main(void)
 {
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(ahci_reset_self_clears),
         cmocka_unit_test(xhci_reset_and_run_state),
+        cmocka_unit_test(ethernet_link_status_and_reset),
     };
 
     return cmocka_run_group_tests(tests, NULL, NULL);
