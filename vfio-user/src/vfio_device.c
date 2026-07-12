@@ -190,6 +190,27 @@ static bool config_has_capability(const struct device_model *model, uint8_t id)
     return false;
 }
 
+static int register_standard_capabilities(vfu_ctx_t *context,
+                                          const struct device_model *model)
+{
+    uint8_t *config = (uint8_t *)vfu_pci_get_config_space(context);
+    uint8_t offset = model->config_space[0x34];
+    unsigned steps = 0;
+
+    while (offset >= 0x40 && (size_t)offset + 2 <= model->config_space_size &&
+           steps++ < 48) {
+        uint8_t id = config[offset];
+
+        if (id == PCI_CAP_ID_MSI || id == PCI_CAP_ID_MSIX) {
+            if (vfu_pci_add_capability(context, offset, 0, config + offset) < 0) {
+                return -1;
+            }
+        }
+        offset = config[offset + 1];
+    }
+    return 0;
+}
+
 
 static int setup_regions(struct server_state *state)
 {
@@ -241,6 +262,9 @@ int vfio_device_run(const struct device_model *model,
         goto done;
     }
     memcpy(vfu_pci_get_config_space(state.context), model->config_space, model->config_space_size);
+    if (register_standard_capabilities(state.context, model) < 0) {
+        goto done;
+    }
     if (vfu_setup_region(state.context, VFU_PCI_DEV_CFG_REGION_IDX,
                          model->config_space_size, config_access,
                          VFU_REGION_FLAG_RW | VFU_REGION_FLAG_ALWAYS_CB,

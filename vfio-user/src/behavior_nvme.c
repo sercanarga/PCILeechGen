@@ -166,6 +166,7 @@ static int process_admin(struct nvme_state *state, uint16_t tail)
         struct nvme_sqe sqe;
         struct nvme_cqe cqe = {0};
         uint16_t status = 0;
+        uint32_t result = 0;
         uint8_t data[4096];
 
         if (state->host.dma_read(state->host.opaque,
@@ -184,14 +185,19 @@ static int process_admin(struct nvme_state *state, uint16_t tail)
                 memset(data, 0, sizeof(data));
                 put32(data, 0, 1);
             } else {
-                status = 2;
+                status = 0xb;
                 memset(data, 0, sizeof(data));
             }
             if (status == 0 && write_prps(state, &sqe, data, sizeof(data)) < 0) {
                 return -EIO;
             }
+        } else if (sqe.opcode == 0x09 || sqe.opcode == 0x0a) {
+            if ((sqe.cdw10 & 0xff) != 0x07) {
+                status = 2;
+            }
         }
         state->sq_head = (uint16_t)((state->sq_head + 1) % sq_size);
+        cqe.result = result;
         cqe.sq_head = state->sq_head;
         cqe.cid = sqe.cid;
         cqe.status = (uint16_t)((status << 1) | state->cq_phase);
