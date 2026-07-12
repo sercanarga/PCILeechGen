@@ -1,7 +1,0 @@
-=== Config Space Overlay (6 changes) ===
-  [03D] 00 -> 01 - set Interrupt Pin to INTA# (was 0, prevents driver load)
-  [004] 0000 -> 0006 - sanitize Command register (force BME+MSE)
-  [014] 00000000 -> FFFFFFFF - create BAR1 upper for 64-bit BAR0 16KB
-  [010] 00000000 -> FFFFC004 - create BAR0 as 16KB memory (donor had none)
-  [084] 0000 -> 0002 - clamp Link Control 2 target speed
-  [05C] 0000 -> 0010 - clamp Device Control (MPS/MRRS/phantom/exttag)
