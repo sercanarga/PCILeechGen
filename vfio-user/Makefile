@@ -22,8 +22,8 @@ test-matrix:
 
 build/test_device_model: tests/test_device_model.c src/device_model.c include/device_model.h
 	mkdir -p build
-	$(CC) -std=c11 -Wall -Wextra -Werror -g $(SANITIZE) \
-		-Iinclude $$(pkg-config --cflags json-c openssl cmocka) \
+	$(CC) $(CFLAGS) $(SANITIZE) \
+		$$(pkg-config --cflags json-c openssl cmocka) \
 		-o $@ tests/test_device_model.c src/device_model.c \
 		$$(pkg-config --libs json-c openssl cmocka)
 
@@ -32,7 +32,7 @@ test-device-model: build/test_device_model
 
 build/test_behavior_static: tests/test_behavior_static.c src/behavior_static.c src/behavior_nvme.c src/behavior_ahci.c src/behavior_xhci.c include/device_behavior.h include/device_model.h
 	mkdir -p build
-	$(CC) -std=c11 -Wall -Wextra -Werror -g $(SANITIZE) -Iinclude \
+	$(CC) $(CFLAGS) $(SANITIZE) \
 		$$(pkg-config --cflags cmocka) -o $@ tests/test_behavior_static.c src/behavior_static.c src/behavior_nvme.c src/behavior_ahci.c src/behavior_xhci.c \
 		$$(pkg-config --libs cmocka)
 
@@ -41,7 +41,7 @@ test-behavior-static: build/test_behavior_static
 
 build/test_behavior_nvme: tests/test_behavior_nvme.c src/behavior_nvme.c src/behavior_static.c src/behavior_ahci.c src/behavior_xhci.c src/device_model.c include/device_behavior.h include/device_model.h
 	mkdir -p build
-	$(CC) -std=c11 -Wall -Wextra -Werror -g $(SANITIZE) -Iinclude \
+	$(CC) $(CFLAGS) $(SANITIZE) \
 		$$(pkg-config --cflags cmocka json-c openssl) -o $@ \
 		tests/test_behavior_nvme.c src/behavior_nvme.c src/behavior_static.c src/behavior_ahci.c src/behavior_xhci.c src/device_model.c \
 		$$(pkg-config --libs cmocka json-c openssl)
@@ -51,7 +51,7 @@ test-behavior-nvme: build/test_behavior_nvme
 
 build/test_behavior_storage: tests/test_behavior_storage.c src/behavior_ahci.c src/behavior_xhci.c src/behavior_static.c src/behavior_nvme.c src/device_model.c include/device_behavior.h include/device_model.h
 	mkdir -p build
-	$(CC) -std=c11 -Wall -Wextra -Werror -g $(SANITIZE) -Iinclude \
+	$(CC) $(CFLAGS) $(SANITIZE) \
 		$$(pkg-config --cflags cmocka json-c openssl) -o $@ \
 		tests/test_behavior_storage.c src/behavior_ahci.c src/behavior_xhci.c \
 		src/behavior_static.c src/behavior_nvme.c src/device_model.c \
