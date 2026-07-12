@@ -1,6 +1,7 @@
 #include "device_behavior.h"
 
 #include <errno.h>
+#include <stdbool.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -17,6 +18,8 @@ struct nvme_state {
     uint16_t sq_head;
     uint16_t cq_tail;
     uint8_t cq_phase;
+    uint16_t pending_tail;
+    bool admin_pending;
 };
 
 struct nvme_sqe {
@@ -209,6 +212,18 @@ static int process_admin(struct nvme_state *state, uint16_t tail)
 }
 
 
+static int nvme_service(void *opaque)
+{
+    struct nvme_state *state = opaque;
+
+    if (!state->admin_pending) {
+        return 0;
+    }
+    state->admin_pending = false;
+    return process_admin(state, state->pending_tail);
+}
+
+
 static int nvme_reset(void *opaque)
 {
     struct nvme_state *state = opaque;
@@ -223,6 +238,8 @@ static int nvme_reset(void *opaque)
     state->sq_head = 0;
     state->cq_tail = 0;
     state->cq_phase = 1;
+    state->pending_tail = 0;
+    state->admin_pending = false;
     return set_csts(state, 0);
 }
 
@@ -255,7 +272,9 @@ static ssize_t nvme_write(void *opaque, unsigned bir, uint64_t offset,
         case 0x30: state->acq = (state->acq & 0xffffffff00000000ULL) | value; break;
         case 0x34: state->acq = (state->acq & 0xffffffffULL) | ((uint64_t)value << 32); break;
         case 0x1000:
-            return process_admin(state, (uint16_t)value) < 0 ? -EIO : result;
+            state->pending_tail = (uint16_t)value;
+            state->admin_pending = true;
+            return result;
         default: break;
         }
         return result;
@@ -311,6 +330,7 @@ int behavior_nvme_create(const struct device_model *model,
         .state = state,
         .bind_host = nvme_bind_host,
         .reset = nvme_reset,
+        .service = nvme_service,
         .read = nvme_read,
         .write = nvme_write,
         .destroy = nvme_destroy,

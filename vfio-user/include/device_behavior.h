@@ -20,6 +20,7 @@ struct device_behavior {
     void *state;
     int (*bind_host)(void *state, const struct behavior_host_ops *ops);
     int (*reset)(void *state);
+    int (*service)(void *state);
     ssize_t (*read)(void *state, unsigned bir, uint64_t offset, void *buf, size_t len);
     ssize_t (*write)(void *state, unsigned bir, uint64_t offset, const void *buf, size_t len);
     void (*destroy)(void *state);

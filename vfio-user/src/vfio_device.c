@@ -278,6 +278,10 @@ int vfio_device_run(const struct device_model *model,
         int run = vfu_run_ctx(state.context);
 
         if (run >= 0 || errno == EINTR || errno == EBUSY) {
+            if (run >= 0 && behavior->service != NULL &&
+                behavior->service(behavior->state) < 0) {
+                goto done;
+            }
             continue;
         }
         if (errno == ENOTCONN) {

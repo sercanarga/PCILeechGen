@@ -168,6 +168,8 @@ static void completes_identify_controller(void **state)
     sqe->cdw10 = 1;
     value = 1;
     assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x1000, &value, 4), 4);
+    assert_non_null(fixture->behavior.service);
+    assert_int_equal(fixture->behavior.service(fixture->behavior.state), 0);
 
     assert_memory_equal(&host.memory[0x3000], "\x4d\x14", 2);
     assert_int_equal(cqe->cid, 7);
