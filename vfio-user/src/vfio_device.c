@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <vfio-user/libvfio-user.h>
@@ -220,7 +221,8 @@ int vfio_device_run(const struct device_model *model,
         return -1;
     }
     unlink(socket_path);
-    state.context = vfu_create_ctx(VFU_TRANS_SOCK, socket_path, 0, &state, VFU_DEV_TYPE_PCI);
+    state.context = vfu_create_ctx(VFU_TRANS_SOCK, socket_path,
+                                   LIBVFIO_USER_FLAG_ATTACH_NB, &state, VFU_DEV_TYPE_PCI);
     if (state.context == NULL ||
         vfu_pci_init(state.context, VFU_PCI_TYPE_EXPRESS, PCI_HEADER_TYPE_NORMAL, 0) < 0) {
         goto done;
@@ -270,17 +272,24 @@ int vfio_device_run(const struct device_model *model,
         if (vfu_attach_ctx(state.context) == 0) {
             break;
         }
-        if (errno != EINTR) {
+        if (errno != EINTR && errno != EAGAIN && errno != EWOULDBLOCK) {
             goto done;
         }
+        struct timespec delay = {.tv_sec = 0, .tv_nsec = 1000000};
+        nanosleep(&delay, NULL);
     }
     while (!*stop) {
         int run = vfu_run_ctx(state.context);
 
-        if (run >= 0 || errno == EINTR || errno == EBUSY) {
+        if (run >= 0 || errno == EINTR || errno == EBUSY ||
+            errno == EAGAIN || errno == EWOULDBLOCK) {
             if (run >= 0 && behavior->service != NULL &&
                 behavior->service(behavior->state) < 0) {
                 goto done;
+            }
+            if (run == 0) {
+                struct timespec delay = {.tv_sec = 0, .tv_nsec = 1000000};
+                nanosleep(&delay, NULL);
             }
             continue;
         }
