@@ -242,3 +242,60 @@ async def test_config_writable_interrupt_line(dut):
     dut._log.info(f"cfg intline after write 0xDE: {val:#x}")
     assert (val & 0xFF) == 0xDE, f"interrupt line byte not writable: {val:#x}"
     assert (val & 0xFFFFFF00) == 0x100, f"intpin/ro bytes not preserved: {val:#x}"
+
+
+@cocotb.test()
+async def test_driver_pci_enumeration(dut):
+    """Generic PCI enumeration sequence (applies to all device types)."""
+    await reset(dut)
+    tag = 1
+    results = {}
+
+    # 1. VID/DID
+    await _cfg_send(dut, cfgrd0(0x00, tag)); tag += 1
+    c = await recv_cfg(dut)
+    results["vid_did"] = c[0][3] if c else 0
+
+    # 2. Revision + Class
+    await _cfg_send(dut, cfgrd0(0x08, tag)); tag += 1
+    c = await recv_cfg(dut)
+    results["class"] = c[0][3] if c else 0
+
+    # 3. Subsystem ID
+    await _cfg_send(dut, cfgrd0(0x2C, tag)); tag += 1
+    c = await recv_cfg(dut)
+    results["subsys"] = c[0][3] if c else 0
+
+    # 4. BAR0 sizing
+    await _cfg_send(dut, cfgwr0(0x10, 0xFFFFFFFF))
+    for _ in range(10): await RisingEdge(dut.clk)
+    await _cfg_send(dut, cfgrd0(0x10, tag)); tag += 1
+    c = await recv_cfg(dut)
+    results["bar0_raw"] = c[0][3] if c else 0
+    await _cfg_send(dut, cfgwr0(0x10, 0x00000000))
+    for _ in range(10): await RisingEdge(dut.clk)
+
+    # 5. Cap chain walk
+    await _cfg_send(dut, cfgrd0(0x34, tag)); tag += 1
+    c = await recv_cfg(dut)
+    cap_ptr = (c[0][3] if c else 0) & 0xFC
+    caps_found = []
+    visited = set()
+    while cap_ptr != 0 and cap_ptr not in visited and tag < 30:
+        visited.add(cap_ptr)
+        await _cfg_send(dut, cfgrd0(cap_ptr, tag)); tag += 1
+        c = await recv_cfg(dut)
+        val = c[0][3] if c else 0
+        cap_id = val & 0xFF
+        next_ptr = (val >> 8) & 0xFC
+        caps_found.append((cap_id, cap_ptr))
+        cap_ptr = next_ptr
+
+    dut._log.info(f"pci enum: vid_did={results['vid_did']:#x} class={results['class']:#x} subsys={results['subsys']:#x}")
+    dut._log.info(f"caps: {[(hex(i), hex(o)) for i,o in caps_found]}")
+    dut._log.info(f"bar0 sizing: {results['bar0_raw']:#x}")
+
+    assert results["vid_did"] != 0, "VID/DID = 0 — device not detected by PCI bus"
+    assert results["subsys"] != 0, "subsystem ID = 0 — Code-10 INF match failure"
+    assert len(caps_found) >= 2, f"too few capabilities: {caps_found}"
+    assert results["bar0_raw"] != 0, "BAR0 sizing = 0 — BAR0 not responding"
