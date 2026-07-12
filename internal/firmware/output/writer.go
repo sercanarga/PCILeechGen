@@ -138,7 +138,15 @@ func (ow *OutputWriter) writeDeviceContext(ctx *donor.DeviceContext) error {
 }
 
 func (ow *OutputWriter) writeDeviceModel(ctx *donor.DeviceContext, scrubbedCS *pci.ConfigSpace, cfg *svgen.SVGeneratorConfig) error {
-	model, err := devicemodel.Build(ctx)
+	modelContext := ctx
+	if scrubbedCS != nil {
+		finalContext := *ctx
+		finalContext.ConfigSpace = scrubbedCS
+		finalContext.Capabilities = pci.ParseCapabilities(scrubbedCS)
+		finalContext.ExtCapabilities = pci.ParseExtCapabilities(scrubbedCS)
+		modelContext = &finalContext
+	}
+	model, err := devicemodel.Build(modelContext)
 	if err != nil {
 		return fmt.Errorf("failed to build device model: %w", err)
 	}

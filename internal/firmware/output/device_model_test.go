@@ -127,6 +127,12 @@ endmodule`,
 	if len(model.Functions) != 1 || model.Functions[0].VendorID != ctx.Device.VendorID {
 		t.Fatalf("WriteAll device model lost donor identity: %+v", model.Functions)
 	}
+	for _, capability := range model.Capabilities {
+		if capability.ID == 0x11 {
+			return
+		}
+	}
+	t.Fatal("WriteAll device model lost final MSI-X capability")
 }
 
 func outputModelContext() *donor.DeviceContext {
