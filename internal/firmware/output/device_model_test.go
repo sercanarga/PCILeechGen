@@ -19,7 +19,7 @@ func TestOutputWriterDeviceModelArtifactAndManifest(t *testing.T) {
 
 	outputDir := t.TempDir()
 	writer := NewOutputWriter(outputDir, "unused", 1, 1)
-	if err := writer.writeDeviceModel(ctx); err != nil {
+	if err := writer.writeDeviceModel(ctx, nil, nil); err != nil {
 		t.Fatalf("writeDeviceModel: %v", err)
 	}
 

@@ -20,6 +20,7 @@ struct device_bar {
     uint64_t size;
     bool prefetchable;
     bool is_64bit;
+    uint8_t *reset_image;
 };
 
 struct device_model {

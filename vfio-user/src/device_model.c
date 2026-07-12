@@ -281,6 +281,7 @@ static int parse_bars(json_object *root, struct device_model *model,
         json_object *size = required(bar, "size", err, err_len);
         json_object *prefetchable = required(bar, "prefetchable", err, err_len);
         json_object *width = required(bar, "address_width", err, err_len);
+        json_object *reset_image = NULL;
         const char *type_name;
 
         if (bir == NULL || type == NULL || size == NULL || prefetchable == NULL || width == NULL) {
@@ -290,6 +291,24 @@ static int parse_bars(json_object *root, struct device_model *model,
         model->bars[index].size = (uint64_t)json_object_get_int64(size);
         model->bars[index].prefetchable = json_object_get_boolean(prefetchable);
         model->bars[index].is_64bit = json_object_get_int(width) == 64;
+        if (json_object_object_get_ex(bar, "reset_image", &reset_image) &&
+            json_object_is_type(reset_image, json_type_string) &&
+            json_object_get_string_len(reset_image) > 0) {
+            if (model->bars[index].size > SIZE_MAX) {
+                return fail(err, err_len, "BAR%u reset image is too large", model->bars[index].bir);
+            }
+            model->bars[index].reset_image = malloc((size_t)model->bars[index].size);
+            if (model->bars[index].reset_image == NULL) {
+                return fail(err, err_len, "allocate BAR%u reset image", model->bars[index].bir);
+            }
+            if (decode_config_image(json_object_get_string(reset_image),
+                                    model->bars[index].reset_image,
+                                    (size_t)model->bars[index].size,
+                                    (size_t)model->bars[index].size,
+                                    err, err_len) < 0) {
+                return -1;
+            }
+        }
         type_name = json_object_get_string(type);
         if (strcmp(type_name, "io") == 0) {
             model->bars[index].type = DEVICE_BAR_IO;
@@ -510,7 +529,7 @@ int device_model_load(const char *artifact_dir, struct device_model **out,
     result = 0;
 
 done:
-    free(model);
+    device_model_free(model);
     json_object_put(root);
     free(model_data);
     return result;
@@ -519,5 +538,13 @@ done:
 
 void device_model_free(struct device_model *model)
 {
+    size_t index;
+
+    if (model == NULL) {
+        return;
+    }
+    for (index = 0; index < model->bar_count; ++index) {
+        free(model->bars[index].reset_image);
+    }
     free(model);
 }

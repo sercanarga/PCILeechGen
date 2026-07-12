@@ -62,9 +62,6 @@ func (ow *OutputWriter) WriteAll(ctx *donor.DeviceContext, b *board.Board) error
 	if err := ow.writeDeviceContext(ctx); err != nil {
 		return err
 	}
-	if err := ow.writeDeviceModel(ctx); err != nil {
-		return err
-	}
 
 	scrubbedCS, entropy, overlayMap := ow.scrubAndVary(ctx, b, ids)
 	if ids.SubsysVendorID == 0 {
@@ -86,6 +83,9 @@ func (ow *OutputWriter) WriteAll(ctx *donor.DeviceContext, b *board.Board) error
 		if err != nil {
 			return fmt.Errorf("SV module generation failed: %w", err)
 		}
+	}
+	if err := ow.writeDeviceModel(ctx, scrubbedCS, svCfg); err != nil {
+		return err
 	}
 
 	if err := ow.writeConfigSpaceArtifacts(ctx, scrubbedCS, b); err != nil {
@@ -137,10 +137,48 @@ func (ow *OutputWriter) writeDeviceContext(ctx *donor.DeviceContext) error {
 	return nil
 }
 
-func (ow *OutputWriter) writeDeviceModel(ctx *donor.DeviceContext) error {
+func (ow *OutputWriter) writeDeviceModel(ctx *donor.DeviceContext, scrubbedCS *pci.ConfigSpace, cfg *svgen.SVGeneratorConfig) error {
 	model, err := devicemodel.Build(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to build device model: %w", err)
+	}
+	if scrubbedCS != nil {
+		size := scrubbedCS.Size
+		if size > len(scrubbedCS.Data) {
+			size = len(scrubbedCS.Data)
+		}
+		model.ConfigSpace.Size = uint32(size)
+		model.ConfigSpace.ResetImage = append(model.ConfigSpace.ResetImage[:0], scrubbedCS.Data[:size]...)
+		for index := range model.ConfigSpace.Fields {
+			field := &model.ConfigSpace.Fields[index]
+			end := int(field.Offset) + int(field.Width)
+			if end <= len(model.ConfigSpace.ResetImage) {
+				field.ResetValue = readModelField(model.ConfigSpace.ResetImage[field.Offset:end]) & field.Mask
+			}
+		}
+		for index := range model.Registers {
+			register := &model.Registers[index]
+			end := int(register.Offset) + int(register.Width)
+			if register.Space != devicemodel.SpaceConfig || end > len(model.ConfigSpace.ResetImage) {
+				continue
+			}
+			register.ResetValue = readModelField(model.ConfigSpace.ResetImage[register.Offset:end])
+			for fieldIndex := range register.Fields {
+				field := &register.Fields[fieldIndex]
+				field.ResetValue = register.ResetValue & field.Mask
+			}
+		}
+		if len(model.Functions) == 1 {
+			model.Functions[0].VendorID = scrubbedCS.VendorID()
+			model.Functions[0].DeviceID = scrubbedCS.DeviceID()
+			model.Functions[0].SubsystemVendorID = scrubbedCS.SubsysVendorID()
+			model.Functions[0].SubsystemDeviceID = scrubbedCS.SubsysDeviceID()
+			model.Functions[0].RevisionID = scrubbedCS.RevisionID()
+			model.Functions[0].ClassCode = scrubbedCS.ClassCode()
+		}
+	}
+	if cfg != nil {
+		applyGeneratedBARModels(model, cfg.BARModels)
 	}
 	data, err := model.ToJSON()
 	if err != nil {
@@ -150,6 +188,14 @@ func (ow *OutputWriter) writeDeviceModel(ctx *donor.DeviceContext) error {
 		return fmt.Errorf("failed to write device model: %w", err)
 	}
 	return nil
+}
+
+func readModelField(data []byte) uint64 {
+	var value uint64
+	for index := len(data) - 1; index >= 0; index-- {
+		value = value<<8 | uint64(data[index])
+	}
+	return value
 }
 
 // scrubAndVary runs config space scrubbing and per-build variance.

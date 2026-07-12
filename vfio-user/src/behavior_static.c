@@ -9,6 +9,7 @@
 
 struct static_bar {
     uint8_t *data;
+    uint8_t *reset;
     size_t size;
 };
 
@@ -37,7 +38,11 @@ static int static_reset(void *opaque)
 
     for (bir = 0; bir < DEVICE_MAX_BARS; ++bir) {
         if (state->bars[bir].data != NULL) {
-            memset(state->bars[bir].data, 0, state->bars[bir].size);
+            if (state->bars[bir].reset != NULL) {
+                memcpy(state->bars[bir].data, state->bars[bir].reset, state->bars[bir].size);
+            } else {
+                memset(state->bars[bir].data, 0, state->bars[bir].size);
+            }
         }
     }
     return 0;
@@ -89,6 +94,7 @@ static void static_destroy(void *opaque)
     }
     for (bir = 0; bir < DEVICE_MAX_BARS; ++bir) {
         free(state->bars[bir].data);
+        free(state->bars[bir].reset);
     }
     free(state);
 }
@@ -121,6 +127,15 @@ int behavior_static_create(const struct device_model *model,
             return fail(err, err_len, "allocate BAR%u", source->bir);
         }
         bar->size = (size_t)source->size;
+        if (source->reset_image != NULL) {
+            memcpy(bar->data, source->reset_image, bar->size);
+            bar->reset = malloc(bar->size);
+            if (bar->reset == NULL) {
+                static_destroy(state);
+                return fail(err, err_len, "allocate BAR%u reset snapshot", source->bir);
+            }
+            memcpy(bar->reset, source->reset_image, bar->size);
+        }
     }
     *out = (struct device_behavior){
         .state = state,

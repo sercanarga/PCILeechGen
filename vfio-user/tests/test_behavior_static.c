@@ -61,11 +61,36 @@ static void rejects_out_of_range_access(void **state)
 }
 
 
+static void starts_from_generated_bar_reset_image(void **state)
+{
+    struct device_model model = one_bar_model();
+    struct device_behavior behavior = {0};
+    uint32_t result = 0;
+    char err[128] = {0};
+
+    (void)state;
+    model.bars[0].reset_image = calloc(1, model.bars[0].size);
+    assert_non_null(model.bars[0].reset_image);
+    memcpy(model.bars[0].reset_image, "\x17\xff\x40\x00", 4);
+    assert_int_equal(behavior_static_create(&model, &behavior, err, sizeof(err)), 0);
+    assert_int_equal(behavior.read(behavior.state, 0, 0, &result, sizeof(result)), 4);
+    assert_int_equal(result, 0x0040ff17);
+    result = 0;
+    assert_int_equal(behavior.write(behavior.state, 0, 0, &result, sizeof(result)), 4);
+    assert_int_equal(behavior.reset(behavior.state), 0);
+    assert_int_equal(behavior.read(behavior.state, 0, 0, &result, sizeof(result)), 4);
+    assert_int_equal(result, 0x0040ff17);
+    behavior.destroy(behavior.state);
+    free(model.bars[0].reset_image);
+}
+
+
 int main(void)
 {
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(supports_partial_writes_and_reset),
         cmocka_unit_test(rejects_out_of_range_access),
+        cmocka_unit_test(starts_from_generated_bar_reset_image),
     };
 
     return cmocka_run_group_tests(tests, NULL, NULL);

@@ -23,6 +23,8 @@ static void loads_generated_nvme_model(void **state)
     assert_int_equal(model->device_id, 0xa809);
     assert_int_equal(model->class_code, 0x010802);
     assert_int_equal(model->bars[0].size, 16384);
+    assert_non_null(model->bars[0].reset_image);
+    assert_memory_equal(model->bars[0].reset_image, "\x17\xff\x40\x00", 4);
     assert_memory_equal(model->config_space, "\x4d\x14\x09\xa8", 4);
     device_model_free(model);
 }
