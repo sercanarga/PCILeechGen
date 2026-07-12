@@ -19,7 +19,7 @@ func (s *sataStrategy) ScrubBAR(data []byte) {
 	util.WriteLE32(data, 0x08, 0x00000000)
 
 	if len(data) >= 0x12C {
-		util.WriteLE32(data, 0x128, 0x00000113)
+		util.WriteLE32(data, 0x128, 0x00000000)
 	}
 }
 
@@ -82,14 +82,16 @@ func sataProfile() *DeviceProfile {
 			{Offset: 0x130, Width: 4, Name: "PxSERR", Reset: 0x00000000, RWMask: 0xFFFFFFFF, IsRW1C: true},
 			// Port 0: PxCI - no commands pending
 			{Offset: 0x138, Width: 4, Name: "PxCI", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
-			// Port 0: PxSSTS - device detected, phy established
-			{Offset: 0x128, Width: 4, Name: "PxSSTS", Reset: 0x00000113, RWMask: 0x00000000},
-			// Port 0: PxSIG - ATA signature (disk)
-			{Offset: 0x124, Width: 4, Name: "PxSIG", Reset: 0x00000101, RWMask: 0x00000000},
+			// Port 0: PxSSTS - no device attached.  The VFIO behavior does not
+			// implement an AHCI command engine, so advertising a disk would make
+			// ahci queue DMA commands that can never complete.
+			{Offset: 0x128, Width: 4, Name: "PxSSTS", Reset: 0x00000000, RWMask: 0x00000000},
+			// Port 0: PxSIG - no device signature when DET=0.
+			{Offset: 0x124, Width: 4, Name: "PxSIG", Reset: 0x00000000, RWMask: 0x00000000},
 		},
 
 		Notes: "AHCI 1.3.1 profile. GHC.AE=1 for AHCI mode. " +
-			"Port 0 shows device detected + phy ready via PxSSTS. " +
+			"Port 0 is empty; no command engine is exposed by the VFIO behavior. " +
 			"ABAR is at BAR5 per AHCI spec.",
 	}
 }

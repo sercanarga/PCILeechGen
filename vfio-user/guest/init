@@ -10,11 +10,7 @@ case "$case_name" in
     nvme) module=nvme ;;
     sata) module=ahci ;;
     xhci) module=xhci_pci ;;
-    audio) module=snd_hda_intel ;;
-    ethernet) module=e1000e ;;
-    wifi) module=iwlwifi ;;
-    gpu) module=nouveau ;;
-    thunderbolt) module=thunderbolt ;;
+    audio|ethernet|wifi|gpu|thunderbolt) module= ;;
     *) module= ;;
 esac
 

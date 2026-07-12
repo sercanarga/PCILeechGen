@@ -419,8 +419,8 @@ func TestSATAStrategy_ScrubBAR(t *testing.T) {
 
 	ssts := uint32(data[0x128]) | uint32(data[0x129])<<8 |
 		uint32(data[0x12A])<<16 | uint32(data[0x12B])<<24
-	if ssts != 0x00000113 {
-		t.Errorf("PxSSTS should be 0x113, got 0x%08X", ssts)
+	if ssts != 0 {
+		t.Errorf("PxSSTS should report no attached device, got 0x%08X", ssts)
 	}
 }
 
