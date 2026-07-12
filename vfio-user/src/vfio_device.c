@@ -66,7 +66,7 @@ static int device_reset(vfu_ctx_t *context, vfu_reset_type_t type)
     size_t index;
 
     (void)type;
-    config = vfu_pci_get_config_space(context);
+    config = (uint8_t *)vfu_pci_get_config_space(context);
     for (index = 0; index < 6; ++index) {
         memcpy(&bar_registers[index], config + 0x10 + index * 4,
                sizeof(bar_registers[index]));
