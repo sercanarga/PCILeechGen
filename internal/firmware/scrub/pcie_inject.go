@@ -266,3 +266,44 @@ func boardLanes(b *board.Board) int {
 	}
 	return 1
 }
+
+const msixCapSize = 12
+
+func hasMSIXCap(caps []pci.Capability) bool {
+	for _, c := range caps {
+		if c.ID == pci.CapIDMSIX {
+			return true
+		}
+	}
+	return false
+}
+
+func injectMSIXCapIfMissing(cs *pci.ConfigSpace, om *overlay.Map, ctx *ScrubContext) {
+	if hasMSIXCap(ctx.Caps) {
+		return
+	}
+	if ctx.MSIXData == nil || ctx.MSIXData.TableSize == 0 {
+		return
+	}
+	if len(ctx.Caps) == 0 {
+		return
+	}
+
+	capOffset := findFreeCapSpace(cs, ctx.Caps, msixCapSize)
+	if capOffset < 0 {
+		slog.Warn("no free space for MSI-X capability injection")
+		return
+	}
+
+	om.WriteU8(capOffset, pci.CapIDMSIX, "inject MSI-X cap id")
+	om.WriteU8(capOffset+1, 0x00, "MSI-X cap next (end)")
+	om.WriteU16(capOffset+2, uint16(ctx.MSIXData.TableSize-1), "MSI-X Message Control (TableSize)")
+	om.WriteU32(capOffset+4, uint32(ctx.MSIXData.TableOffset)|uint32(ctx.MSIXData.TableBIR&0x7), "MSI-X Table Offset/BIR")
+	om.WriteU32(capOffset+8, uint32(ctx.MSIXData.PBAOffset)|uint32(ctx.MSIXData.PBABIR&0x7), "MSI-X PBA Offset/BIR")
+
+	lastCap := ctx.Caps[len(ctx.Caps)-1]
+	om.WriteU8(lastCap.Offset+1, uint8(capOffset), fmt.Sprintf("link cap at 0x%02X -> injected MSI-X at 0x%02X", lastCap.Offset, capOffset))
+
+	ctx.Caps = pci.ParseCapabilities(cs)
+	slog.Info("injected MSI-X capability", "offset", fmt.Sprintf("0x%02X", capOffset), "vectors", ctx.MSIXData.TableSize)
+}

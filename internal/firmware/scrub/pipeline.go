@@ -37,6 +37,7 @@ func defaultPipeline() []ScrubPass {
 		&normalizeAERMasksPass{},
 		&filterExtCapsPass{},
 		&clampBARsPass{},
+		&injectMSIXCapPass{},
 		&relocateMSIXPass{},
 		&clampLinkPass{},
 		&scrubASPMPass{},

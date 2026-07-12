@@ -42,6 +42,13 @@ func (p *fixSubsysPass) Apply(cs *pci.ConfigSpace, b *board.Board, om *overlay.M
 	om.WriteU32(0x2C, uint32(sv)|uint32(sd)<<16, "subsys id fallback to vendor/device")
 }
 
+type injectMSIXCapPass struct{}
+
+func (p *injectMSIXCapPass) Name() string { return "inject MSI-X capability" }
+func (p *injectMSIXCapPass) Apply(cs *pci.ConfigSpace, b *board.Board, om *overlay.Map, ctx *ScrubContext) {
+	injectMSIXCapIfMissing(cs, om, ctx)
+}
+
 type sanitizeCmdStatusPass struct{}
 
 func (p *sanitizeCmdStatusPass) Name() string { return "sanitize Command/Status" }

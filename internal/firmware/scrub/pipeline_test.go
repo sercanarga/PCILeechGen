@@ -10,7 +10,7 @@ import (
 
 func TestDefaultPipeline_HasAllPasses(t *testing.T) {
 	pipeline := defaultPipeline()
-	if len(pipeline) != 18 {
+	if len(pipeline) != 19 {
 		t.Errorf("expected 18 passes, got %d", len(pipeline))
 	}
 
