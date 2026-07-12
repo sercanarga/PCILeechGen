@@ -61,10 +61,22 @@ static vfu_region_access_cb_t *const bar_callbacks[DEVICE_MAX_BARS] = {
 static int device_reset(vfu_ctx_t *context, vfu_reset_type_t type)
 {
     struct server_state *state = vfu_get_private(context);
+    uint32_t bar_registers[6];
+    uint8_t *config;
+    size_t index;
 
     (void)type;
-    memcpy(vfu_pci_get_config_space(context), state->model->config_space,
+    config = vfu_pci_get_config_space(context);
+    for (index = 0; index < 6; ++index) {
+        memcpy(&bar_registers[index], config + 0x10 + index * 4,
+               sizeof(bar_registers[index]));
+    }
+    memcpy(config, state->model->config_space,
            state->model->config_space_size);
+    for (index = 0; index < 6; ++index) {
+        memcpy(config + 0x10 + index * 4, &bar_registers[index],
+               sizeof(bar_registers[index]));
+    }
     return state->behavior->reset(state->behavior->state);
 }
 
