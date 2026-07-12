@@ -112,8 +112,19 @@ func TestBuildBARModel_XHCI(t *testing.T) {
 	if model == nil {
 		t.Fatal("xHCI BuildBARModel returned nil")
 	}
+	wantReset := map[string]uint32{
+		"CAPLENGTH_HCIVERSION": 0x01100020,
+		"HCSPARAMS1":           0x02000120,
+		"HCCPARAMS1":           0x00000001,
+		"DBOFF":                0x00000100,
+		"RTSOFF":               0x00000200,
+		"PAGESIZE":             0x00000001,
+	}
 	foundUSBCMD := false
 	for _, reg := range model.Registers {
+		if want, ok := wantReset[reg.Name]; ok && reg.Reset != want {
+			t.Errorf("%s reset = %#08x, want %#08x", reg.Name, reg.Reset, want)
+		}
 		if reg.Name == "USBCMD" {
 			foundUSBCMD = true
 			if reg.Reset&0x01 == 0 {

@@ -388,6 +388,17 @@ func buildXHCIBARModel(barData []byte) *BARModel {
 	}
 
 	populateResetValues(regs, barData)
+	if profile := devclass.ProfileForClass(0x0C0330); profile != nil {
+		defaults := make(map[uint32]uint32, len(profile.BARDefaults))
+		for _, value := range profile.BARDefaults {
+			defaults[value.Offset] = value.Reset
+		}
+		for index := range regs {
+			if regs[index].Reset == 0 && defaults[regs[index].Offset] != 0 {
+				regs[index].Reset = defaults[regs[index].Offset]
+			}
+		}
+	}
 
 	// driver expects a running controller on first probe
 	for i := range regs {

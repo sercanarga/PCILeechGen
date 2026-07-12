@@ -169,5 +169,11 @@ int behavior_create(const struct device_model *model,
     if (model->class_code == 0x010802) {
         return behavior_nvme_create(model, out, err, err_len);
     }
-    return fail(err, err_len, "no behavior for PCI class 0x%06x", model->class_code);
+    if (model->class_code == 0x010601) {
+        return behavior_ahci_create(model, out, err, err_len);
+    }
+    if (model->class_code == 0x0c0330) {
+        return behavior_xhci_create(model, out, err, err_len);
+    }
+    return behavior_static_create(model, out, err, err_len);
 }
