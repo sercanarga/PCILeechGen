@@ -71,6 +71,17 @@ class MatrixTests(unittest.TestCase):
                 matrix.CASES["generic"],
             )
 
+    def test_parse_guest_results_ignores_kernel_log_lines(self):
+        matrix = load_matrix()
+        result = matrix.parse_guest_results(
+            "[    1.2] kernel message\n"
+            '{"event":"result","case":"generic","status":"pass",'
+            '"bdf":"0000:03:00.0","vendor":"1234","device":"5678",'
+            '"class":"000000","driver":"none"}\n',
+            matrix.CASES["generic"],
+        )
+        self.assertEqual(result.status, "pass")
+
     def test_build_command_always_skips_vivado(self):
         matrix = load_matrix()
 

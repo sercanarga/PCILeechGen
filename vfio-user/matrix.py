@@ -44,7 +44,8 @@ class GuestResult:
 def parse_guest_results(text: str, case: Case) -> GuestResult:
     records = []
     for line in text.splitlines():
-        if not line.strip():
+        line = line.strip()
+        if not line or not line.startswith("{"):
             continue
         try:
             record = json.loads(line)
