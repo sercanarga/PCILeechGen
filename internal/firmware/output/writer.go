@@ -67,6 +67,14 @@ func (ow *OutputWriter) WriteAll(ctx *donor.DeviceContext, b *board.Board) error
 	}
 
 	scrubbedCS, entropy, overlayMap := ow.scrubAndVary(ctx, b, ids)
+	if ids.SubsysVendorID == 0 {
+		ids.SubsysVendorID = scrubbedCS.SubsysVendorID()
+		ctx.Device.SubsysVendorID = ids.SubsysVendorID
+	}
+	if ids.SubsysDeviceID == 0 {
+		ids.SubsysDeviceID = scrubbedCS.SubsysDeviceID()
+		ctx.Device.SubsysDeviceID = ids.SubsysDeviceID
+	}
 	var svCfg *svgen.SVGeneratorConfig
 	if !ow.StockBar {
 		var err error

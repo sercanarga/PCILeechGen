@@ -101,7 +101,7 @@ func TestIdentifyController_MetadataConsistency(t *testing.T) {
 	if got := binary.LittleEndian.Uint16(id.Controller[0x10C:]); got != 358 {
 		t.Fatalf("CCTEMP = %d, want 358", got)
 	}
-	if got := id.Controller[0x088]; got != 0x01 {
+	if got := id.Controller[0x06F]; got != 0x01 {
 		t.Fatalf("CNTRLTYPE = 0x%02X, want 0x01", got)
 	}
 	if got := binary.LittleEndian.Uint16(id.Controller[0x208:]); got != 0x000C {
@@ -127,7 +127,7 @@ func TestIdentifyController_NN(t *testing.T) {
 
 func TestIdentifyController_CNTLID(t *testing.T) {
 	id := BuildIdentifyData(sampleIDs(), nil, nil)
-	cntlid := binary.LittleEndian.Uint16(id.Controller[0x050:])
+	cntlid := binary.LittleEndian.Uint16(id.Controller[0x04E:])
 	if cntlid == 0 {
 		t.Errorf("CNTLID @ 0x050 = 0, want nonzero")
 	}
