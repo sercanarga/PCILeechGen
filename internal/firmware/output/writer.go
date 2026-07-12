@@ -269,8 +269,8 @@ func (ow *OutputWriter) patchSVSources(b *board.Board, ids firmware.DeviceIDs) e
 	if !ow.StockBar {
 		ctrlSrc := filepath.Join(srcDir, "pcileech_tlps128_bar_controller.sv")
 		if _, err := os.Stat(ctrlSrc); err == nil {
-			if err := extractSubModules(ctrlSrc, dstDir, barControllerSubModules); err != nil {
-				return fmt.Errorf("failed to extract BAR controller sub-modules: %w", err)
+			if eerr := extractSubModules(ctrlSrc, dstDir, barControllerSubModules); eerr != nil {
+				return fmt.Errorf("failed to extract BAR controller sub-modules: %w", eerr)
 			}
 		} else if !os.IsNotExist(err) {
 			return fmt.Errorf("failed to inspect BAR controller: %w", err)
@@ -795,8 +795,8 @@ func (ow *OutputWriter) writeConditionalArtifacts(cfg *svgen.SVGeneratorConfig, 
 		if err != nil {
 			return fmt.Errorf("generating pcileech_nvme_dma_bridge.sv: %w", err)
 		}
-		if err := ow.writeFile("pcileech_nvme_dma_bridge.sv", bridgeSV); err != nil {
-			return err
+		if werr := ow.writeFile("pcileech_nvme_dma_bridge.sv", bridgeSV); werr != nil {
+			return werr
 		}
 
 		diskSV, err := svgen.GenerateNVMeBRAMDiskSV(cfg)

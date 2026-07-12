@@ -116,7 +116,7 @@ func TestTagAllocatorAllocationWrapCompletionAndError(t *testing.T) {
 	if !ok || completed.Tag != tags[1] || completed.Kind != Completed {
 		t.Fatalf("completion mismatch: outcome=%+v ok=%v", completed, ok)
 	}
-	if _, ok := allocator.Complete(tags[1]); ok {
+	if _, ok2 := allocator.Complete(tags[1]); ok2 {
 		t.Fatal("duplicate completion was accepted")
 	}
 
@@ -232,8 +232,8 @@ func TestInterruptControllerMSIXMasksPBARetentionAndExactlyOnceUnmask(t *testing
 	if interrupts.Pending(2) {
 		t.Fatal("pending bit was not cleared by unmask delivery")
 	}
-	if deliveries := interrupts.SetVectorMask(2, false); len(deliveries) != 0 {
-		t.Fatalf("repeated vector unmask redelivered consumed request: %+v", deliveries)
+	if deliveries2 := interrupts.SetVectorMask(2, false); len(deliveries2) != 0 {
+		t.Fatalf("repeated vector unmask redelivered consumed request: %+v", deliveries2)
 	}
 
 	interrupts.SetFunctionMask(true)
@@ -244,8 +244,8 @@ func TestInterruptControllerMSIXMasksPBARetentionAndExactlyOnceUnmask(t *testing
 	if delivery := interrupts.Request(3); delivery.Valid {
 		t.Fatalf("second function-masked request delivered immediately: %+v", delivery)
 	}
-	if deliveries := interrupts.SetVectorMask(1, false); len(deliveries) != 0 {
-		t.Fatalf("vector unmask bypassed function mask: %+v", deliveries)
+	if deliveries2 := interrupts.SetVectorMask(1, false); len(deliveries2) != 0 {
+		t.Fatalf("vector unmask bypassed function mask: %+v", deliveries2)
 	}
 	if !interrupts.Pending(1) || !interrupts.Pending(3) {
 		t.Fatal("PBA was lost while the function mask remained asserted")

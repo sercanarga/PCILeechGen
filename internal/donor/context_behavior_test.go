@@ -47,14 +47,14 @@ func TestDeviceContext_BehaviorRulesRoundTripDeterministically(t *testing.T) {
 	if loaded.BehaviorRules == nil {
 		t.Fatal("behavior rules were dropped while loading device context")
 	}
-	if err := behavior.Validate(loaded.BehaviorRules); err != nil {
-		t.Fatalf("loaded behavior rules are invalid: %v", err)
+	if verr := behavior.Validate(loaded.BehaviorRules); verr != nil {
+		t.Fatalf("loaded behavior rules are invalid: %v", verr)
 	}
 	if len(loaded.BehaviorRules.Rules) != 1 || loaded.BehaviorRules.Rules[0].ID != "enable-ready" {
 		t.Fatalf("loaded behavior rules = %+v", loaded.BehaviorRules)
 	}
-	if err := SaveContext(loaded, secondPath); err != nil {
-		t.Fatalf("SaveContext second: %v", err)
+	if serr := SaveContext(loaded, secondPath); serr != nil {
+		t.Fatalf("SaveContext second: %v", serr)
 	}
 	firstJSON, err := os.ReadFile(firstPath)
 	if err != nil {

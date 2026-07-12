@@ -105,8 +105,8 @@ func TestGeneratedMultiBARTCLSourcesInTclsh(t *testing.T) {
 	b := &board.Board{Name: "TclSyntax", FPGAPart: "xc7a35tfgg484-2", PCIeLanes: 1, TopModule: "test_top"}
 	generated := GenerateProjectTCLWithConfig(ctx, b, t.TempDir(), false, cfg)
 	tclPath := filepath.Join(t.TempDir(), "vivado_generate_project.tcl")
-	if err := os.WriteFile(tclPath, []byte(generated), 0644); err != nil {
-		t.Fatal(err)
+	if werr := os.WriteFile(tclPath, []byte(generated), 0644); werr != nil {
+		t.Fatal(werr)
 	}
 	harnessPath := filepath.Join(t.TempDir(), "source_generated.tcl")
 	harness := `proc create_project args {}
@@ -124,8 +124,8 @@ proc create_run args {}
 proc get_runs args { return "run" }
 proc current_run args {}
 ` + fmt.Sprintf("source {%s}\n", filepath.ToSlash(tclPath))
-	if err := os.WriteFile(harnessPath, []byte(harness), 0644); err != nil {
-		t.Fatal(err)
+	if werr := os.WriteFile(harnessPath, []byte(harness), 0644); werr != nil {
+		t.Fatal(werr)
 	}
 	output, err := exec.Command(tclsh, harnessPath).CombinedOutput()
 	if err != nil {

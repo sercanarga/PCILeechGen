@@ -34,20 +34,20 @@ func buildNVMeHostSimConfigSpace() *pci.ConfigSpace {
 	cs.WriteU32(0x10, 0xFFFFC000)
 
 	// PM capability @0x40 (8 bytes) -> next MSI-X.
-	cs.WriteU8(0x40, byte(pci.CapIDPowerManagement))
+	cs.WriteU8(0x40, pci.CapIDPowerManagement)
 	cs.WriteU8(0x41, 0x48)
 	cs.WriteU16(0x42, 0x0003) // PMC
 	cs.WriteU32(0x44, 0x00000000)
 
 	// MSI-X capability @0x48 (12 bytes), 8 vectors -> next PCIe.
-	cs.WriteU8(0x48, byte(pci.CapIDMSIX))
+	cs.WriteU8(0x48, pci.CapIDMSIX)
 	cs.WriteU8(0x49, 0x58)
 	cs.WriteU16(0x4A, 0x0007)     // Message Control: TableSize=7 (8 vectors)
 	cs.WriteU32(0x4C, 0x00002000) // Table Offset/BIR: offset 0x2000 in BAR0
 	cs.WriteU32(0x50, 0x00003000) // PBA Offset/BIR: offset 0x3000 in BAR0
 
 	// PCIe capability @0x58, last in chain (next=0).
-	cs.WriteU8(0x58, byte(pci.CapIDPCIExpress))
+	cs.WriteU8(0x58, pci.CapIDPCIExpress)
 	cs.WriteU8(0x59, 0x00)
 	cs.WriteU16(0x5A, 0x0002) // PCIe Cap Register: version 2
 	cs.WriteU32(0x5C, 0x00000000)
@@ -119,7 +119,7 @@ func TestConfigSpace_HostSim_CapabilityChain(t *testing.T) {
 		}
 		capID := cs.ReadU8(ptr)
 		next := int(cs.ReadU8(ptr+1)) & 0xFC
-		if capID == byte(pci.CapIDPCIExpress) {
+		if capID == pci.CapIDPCIExpress {
 			hasPCIe = true
 		}
 		if next != 0 && next <= ptr {

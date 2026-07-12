@@ -50,8 +50,8 @@ func TestMMIOTraceCLI_PersistsRulesWithoutChangingRawTraceOutput(t *testing.T) {
 		t.Fatalf("read raw trace output: %v", err)
 	}
 	var trace mmio.TraceResult
-	if err := json.Unmarshal(rawJSON, &trace); err != nil {
-		t.Fatalf("raw --output is no longer a trace artifact: %v", err)
+	if perr := json.Unmarshal(rawJSON, &trace); perr != nil {
+		t.Fatalf("raw --output is no longer a trace artifact: %v", perr)
 	}
 	if len(trace.Records) != 6 {
 		t.Fatalf("raw trace records = %d, want 6", len(trace.Records))

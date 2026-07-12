@@ -38,8 +38,8 @@ func TestInfer_DeterministicRulesCarryConfidenceAndProvenance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Infer second: %v", err)
 	}
-	if err := Validate(first); err != nil {
-		t.Fatalf("inferred rules are invalid: %v", err)
+	if verr := Validate(first); verr != nil {
+		t.Fatalf("inferred rules are invalid: %v", verr)
 	}
 	if len(first.Rules) == 0 {
 		t.Fatal("expected a repeated write-triggered status transition to produce a rule")

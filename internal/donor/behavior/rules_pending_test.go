@@ -138,8 +138,8 @@ func TestEngineAndReplayComposeTriggerWriteBeforeSameRegisterUpdate(t *testing.T
 		t.Fatalf("NewEngine: %v", err)
 	}
 	record := mmio.AccessRecord{Type: mmio.AccessWrite, Width: 4, Offset: 0x20, Value: 0x12345678}
-	if err := engine.Apply(record); err != nil {
-		t.Fatalf("Apply: %v", err)
+	if aerr := engine.Apply(record); aerr != nil {
+		t.Fatalf("Apply: %v", aerr)
 	}
 	if got, ok := engine.Register(0x20); !ok || got != 0x1234ab78 {
 		t.Fatalf("engine composed value = %#x, present=%v, want 0x1234ab78", got, ok)
@@ -176,8 +176,8 @@ func TestEngineAndReplayApplyWritePolicyBeforeSameRegisterRuleUpdate(t *testing.
 	if err != nil {
 		t.Fatalf("NewEngine: %v", err)
 	}
-	if err := engine.Apply(record); err != nil {
-		t.Fatalf("Apply: %v", err)
+	if aerr := engine.Apply(record); aerr != nil {
+		t.Fatalf("Apply: %v", aerr)
 	}
 	if got, ok := engine.Register(0x20); !ok || got != 0xa5f05a15 {
 		t.Fatalf("engine policy composition = %#x, present=%v, want 0xa5f05a15", got, ok)

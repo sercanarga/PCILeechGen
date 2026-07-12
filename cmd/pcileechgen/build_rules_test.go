@@ -33,8 +33,8 @@ func TestLoadDonorContext_AttachesValidatedBehaviorRules(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal rules: %v", err)
 	}
-	if err := os.WriteFile(rulesPath, data, 0o644); err != nil {
-		t.Fatalf("write rules: %v", err)
+	if werr := os.WriteFile(rulesPath, data, 0o644); werr != nil {
+		t.Fatalf("write rules: %v", werr)
 	}
 
 	previous := buildOpts

@@ -123,8 +123,8 @@ func TestTraceResult_CanonicalV1JSONRoundTripIsDeterministic(t *testing.T) {
 	}
 
 	var schema map[string]any
-	if err := json.Unmarshal(first, &schema); err != nil {
-		t.Fatalf("decode canonical trace schema: %v", err)
+	if derr := json.Unmarshal(first, &schema); derr != nil {
+		t.Fatalf("decode canonical trace schema: %v", derr)
 	}
 	for _, key := range []string{"schema_version", "bdf", "bar_index", "bar_base", "bar_size", "duration_ns", "started_at", "records"} {
 		if _, ok := schema[key]; !ok {

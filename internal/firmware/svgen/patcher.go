@@ -49,8 +49,8 @@ func (p *SVPatcher) PatchAll() error {
 			if requestPort == "" {
 				requestPort = "generated_bar_intr_req"
 			}
-			if err := p.patchCfgInterruptHandshake(requestPort); err != nil {
-				return fmt.Errorf("patching pcileech_pcie_cfg_a7.sv interrupt handshake: %w", err)
+			if perr := p.patchCfgInterruptHandshake(requestPort); perr != nil {
+				return fmt.Errorf("patching pcileech_pcie_cfg_a7.sv interrupt handshake: %w", perr)
 			}
 		}
 	} else if !os.IsNotExist(err) {

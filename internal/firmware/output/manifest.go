@@ -64,9 +64,9 @@ func generateManifest(outputDir, toolVersion, boardName string, vendorID, device
 			if entry.Type()&os.ModeSymlink != 0 {
 				return fmt.Errorf("refusing to include symlink %s", filePath)
 			}
-			rel, err := filepath.Rel(outputDir, filePath)
-			if err != nil {
-				return err
+			rel, rerr := filepath.Rel(outputDir, filePath)
+			if rerr != nil {
+				return rerr
 			}
 			candidates[filepath.ToSlash(rel)] = struct{}{}
 			return nil

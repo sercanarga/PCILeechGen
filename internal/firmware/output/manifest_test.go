@@ -396,20 +396,20 @@ func TestVerifyManifest_RejectsDuplicateAndSymlinkEntries(t *testing.T) {
 	entry := ManifestEntry{Name: "artifact.bin", Size: 7, SHA256: hash}
 	m := &BuildManifest{Files: []ManifestEntry{entry, entry}}
 	manifestPath := filepath.Join(tmpDir, "manifest.json")
-	if err := m.WriteJSON(manifestPath); err != nil {
-		t.Fatal(err)
+	if werr := m.WriteJSON(manifestPath); werr != nil {
+		t.Fatal(werr)
 	}
-	if _, err := VerifyManifest(manifestPath, tmpDir); err == nil {
+	if _, werr := VerifyManifest(manifestPath, tmpDir); werr == nil {
 		t.Fatal("VerifyManifest should reject duplicate entries")
 	}
 
 	linkPath := filepath.Join(tmpDir, "artifact-link.bin")
-	if err := os.Symlink(filePath, linkPath); err != nil {
-		t.Skipf("symlink unavailable: %v", err)
+	if werr := os.Symlink(filePath, linkPath); werr != nil {
+		t.Skipf("symlink unavailable: %v", werr)
 	}
 	m.Files = []ManifestEntry{{Name: "artifact-link.bin", Size: 7, SHA256: hash}}
-	if err := m.WriteJSON(manifestPath); err != nil {
-		t.Fatal(err)
+	if werr := m.WriteJSON(manifestPath); werr != nil {
+		t.Fatal(werr)
 	}
 	verification, err := VerifyManifest(manifestPath, tmpDir)
 	if err != nil {
@@ -421,15 +421,15 @@ func TestVerifyManifest_RejectsDuplicateAndSymlinkEntries(t *testing.T) {
 
 	outsideDir := t.TempDir()
 	outsideFile := filepath.Join(outsideDir, "outside.bin")
-	if err := os.WriteFile(outsideFile, []byte("content"), 0644); err != nil {
-		t.Fatal(err)
+	if werr := os.WriteFile(outsideFile, []byte("content"), 0644); werr != nil {
+		t.Fatal(werr)
 	}
-	if err := os.Symlink(outsideDir, filepath.Join(tmpDir, "linked-dir")); err != nil {
-		t.Skipf("directory symlink unavailable: %v", err)
+	if werr := os.Symlink(outsideDir, filepath.Join(tmpDir, "linked-dir")); werr != nil {
+		t.Skipf("directory symlink unavailable: %v", werr)
 	}
 	m.Files = []ManifestEntry{{Name: "linked-dir/outside.bin", Size: 7, SHA256: hash}}
-	if err := m.WriteJSON(manifestPath); err != nil {
-		t.Fatal(err)
+	if werr := m.WriteJSON(manifestPath); werr != nil {
+		t.Fatal(werr)
 	}
 	verification, err = VerifyManifest(manifestPath, tmpDir)
 	if err != nil {

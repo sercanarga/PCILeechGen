@@ -77,8 +77,8 @@ func TestOutputWriterWriteAllWithRealisticDonor(t *testing.T) {
 
 	libDir := t.TempDir()
 	srcDir := filepath.Join(libDir, "test-board", "src")
-	if err := os.MkdirAll(srcDir, 0755); err != nil {
-		t.Fatal(err)
+	if werr := os.MkdirAll(srcDir, 0755); werr != nil {
+		t.Fatal(werr)
 	}
 	for name, content := range map[string]string{
 		"pcileech_fifo.sv": `module pcileech_fifo;
@@ -90,8 +90,8 @@ endmodule`,
 		"pcileech_tlps128_bar_controller.sv": `module pcileech_tlps128_bar_controller;
 endmodule`,
 	} {
-		if err := os.WriteFile(filepath.Join(srcDir, name), []byte(content), 0644); err != nil {
-			t.Fatalf("write board source %s: %v", name, err)
+		if werr := os.WriteFile(filepath.Join(srcDir, name), []byte(content), 0644); werr != nil {
+			t.Fatalf("write board source %s: %v", name, werr)
 		}
 	}
 
@@ -102,8 +102,8 @@ endmodule`,
 		Name: "test-board", ProjectDir: "test-board", FPGAPart: "xc7a35tfgg484-2",
 		PCIeLanes: 1, BRAMSize: 0x10000, TopModule: "test_top",
 	}
-	if err := writer.WriteAll(ctx, b); err != nil {
-		t.Fatalf("WriteAll realistic donor: %v", err)
+	if werr := writer.WriteAll(ctx, b); werr != nil {
+		t.Fatalf("WriteAll realistic donor: %v", werr)
 	}
 	for _, name := range []string{
 		"device_context.json",
@@ -112,8 +112,8 @@ endmodule`,
 		"vivado_generate_project.tcl",
 		"build_manifest.json",
 	} {
-		if _, err := os.Stat(filepath.Join(outDir, name)); err != nil {
-			t.Errorf("WriteAll did not produce %s: %v", name, err)
+		if _, werr := os.Stat(filepath.Join(outDir, name)); werr != nil {
+			t.Errorf("WriteAll did not produce %s: %v", name, werr)
 		}
 	}
 	data, err := os.ReadFile(filepath.Join(outDir, "device_model.json"))
