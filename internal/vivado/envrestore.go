@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"math"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -177,6 +178,9 @@ func chownOutputs(outputDir string) error {
 		return nil
 	}
 	gid, _ := parseSudoID(os.Getenv("SUDO_GID"))
+	if uid > math.MaxInt32 || gid > math.MaxInt32 {
+		return nil
+	}
 	var firstErr error
 	for _, pattern := range []string{filepath.Join(outputDir, "*.bit"), filepath.Join(outputDir, "*.bin")} {
 		matches, _ := filepath.Glob(pattern)
