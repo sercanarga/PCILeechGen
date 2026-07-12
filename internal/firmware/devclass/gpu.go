@@ -24,7 +24,7 @@ func gpuProfile() *DeviceProfile {
 	return &DeviceProfile{
 		ClassName:         "GPU",
 		PreferredBAR:      0,
-		MinBARSize:        4096, // real VRAM BAR is huge, FPGA maps only 4K window
+		MinBARSize:        65536,
 		Uses64BitBAR:      true,
 		BARIsPrefetchable: true,
 

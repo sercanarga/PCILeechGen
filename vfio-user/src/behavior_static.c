@@ -178,6 +178,9 @@ int behavior_create(const struct device_model *model,
     if (model->class_code == 0x040300) {
         return behavior_hda_create(model, out, err, err_len);
     }
+    if ((model->class_code & 0xffff00) == 0x030000) {
+        return behavior_gpu_create(model, out, err, err_len);
+    }
     if (model->class_code == 0x010601) {
         return behavior_ahci_create(model, out, err, err_len);
     }

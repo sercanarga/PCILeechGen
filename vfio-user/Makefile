@@ -9,13 +9,13 @@ SANITIZE := -fsanitize=address,undefined
 endif
 
 TARGET = build/vfio-device
-SRC = src/main.c src/vfio_device.c src/device_model.c src/behavior_static.c src/behavior_nvme.c src/behavior_hda.c src/behavior_ahci.c src/behavior_xhci.c src/behavior_ethernet.c
+SRC = src/main.c src/vfio_device.c src/device_model.c src/behavior_static.c src/behavior_nvme.c src/behavior_hda.c src/behavior_gpu.c src/behavior_ahci.c src/behavior_xhci.c src/behavior_ethernet.c
 
-.PHONY: all image test test-matrix test-device-model test-behavior-static test-behavior-nvme test-behavior-hda test-behavior-storage test-server matrix
+.PHONY: all image test test-matrix test-device-model test-behavior-static test-behavior-nvme test-behavior-hda test-behavior-gpu test-behavior-storage test-server matrix
 
 all: $(TARGET)
 
-test: test-matrix test-device-model test-behavior-static test-behavior-nvme test-behavior-hda test-behavior-storage
+test: test-matrix test-device-model test-behavior-static test-behavior-nvme test-behavior-hda test-behavior-gpu test-behavior-storage
 
 test-matrix:
 	python3 -m unittest tests/test_matrix.py -v
@@ -58,6 +58,16 @@ build/test_behavior_hda: tests/test_behavior_hda.c src/behavior_hda.c src/behavi
 
 test-behavior-hda: build/test_behavior_hda
 	./build/test_behavior_hda
+
+build/test_behavior_gpu: tests/test_behavior_gpu.c src/behavior_gpu.c src/behavior_ethernet.c src/behavior_static.c src/behavior_nvme.c src/behavior_hda.c src/behavior_ahci.c src/behavior_xhci.c src/device_model.c include/device_behavior.h include/device_model.h
+	mkdir -p build
+	$(CC) $(CFLAGS) $(SANITIZE) \
+		$$(pkg-config --cflags cmocka json-c openssl) -o $@ \
+		tests/test_behavior_gpu.c src/behavior_gpu.c src/behavior_ethernet.c src/behavior_static.c src/behavior_nvme.c src/behavior_hda.c src/behavior_ahci.c src/behavior_xhci.c src/device_model.c \
+		$$(pkg-config --libs cmocka json-c openssl)
+
+test-behavior-gpu: build/test_behavior_gpu
+	./build/test_behavior_gpu
 
 build/test_behavior_storage: tests/test_behavior_storage.c src/behavior_ahci.c src/behavior_xhci.c src/behavior_static.c src/behavior_nvme.c src/behavior_hda.c src/behavior_ethernet.c src/device_model.c include/device_behavior.h include/device_model.h
 	mkdir -p build
