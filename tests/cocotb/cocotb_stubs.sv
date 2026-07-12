@@ -118,6 +118,7 @@ module bram_pcie_cfgspace (
     input wire [9:0] addrb, output wire [31:0] doutb
 );
     reg [31:0] mem [0:1023];
+    reg [31:0] doutb_r;
     integer k;
     initial begin
         for (k = 0; k < 1024; k = k + 1) mem[k] = 32'h0;
@@ -128,8 +129,9 @@ module bram_pcie_cfgspace (
         if (wea[1]) mem[addra][15:8]  <= dina[15:8];
         if (wea[2]) mem[addra][23:16] <= dina[23:16];
         if (wea[3]) mem[addra][31:24] <= dina[31:24];
+        doutb_r <= mem[addrb];
     end
-    assign doutb = mem[addrb];
+    assign doutb = doutb_r;
 endmodule
 
 module drom_pcie_cfgspace_writemask (input wire [9:0] a, output wire [31:0] spo);

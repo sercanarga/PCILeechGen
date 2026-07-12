@@ -35,6 +35,9 @@ module tb_top;
     wire         tlps_dma_out_tlast;
     wire [8:0]   tlps_dma_out_tuser;
     wire         tlps_dma_out_has_data;
+    wire [127:0] tlps_cfg_rsp_tdata;
+    wire         tlps_cfg_rsp_tvalid;
+    wire         tlps_cfg_rsp_tlast;
     wire         intr_req;
 
     reg [31:0] host_mem [0:65535];
@@ -51,6 +54,8 @@ module tb_top;
     IfAXIS128 tlps_in_if();
     IfAXIS128 tlps_out_if();
     IfAXIS128 tlps_dma_out_if();
+    IfAXIS128 tlps_cfg_rsp_if();
+    IfShadow2Fifo dshadow2fifo_if();
 
     wire        lb_cpld = cpld_in_tvalid && loopback_en;
     assign tlps_in_if.tdata   = lb_cpld ? cpld_in_tdata   : tlps_in_tdata;
@@ -91,6 +96,23 @@ module tb_top;
 
     wire        dma_first = tlps_dma_out_if.tvalid && tlps_dma_out_if.tuser[0];
     wire [2:0]  dma_fmt   = tlps_dma_out_if.tdata[31:29];
+
+    assign tlps_cfg_rsp_tdata = tlps_cfg_rsp_if.tdata;
+    assign tlps_cfg_rsp_tvalid = tlps_cfg_rsp_if.tvalid;
+    assign tlps_cfg_rsp_tlast = tlps_cfg_rsp_if.tlast;
+    assign tlps_cfg_rsp_if.tready = 1'b1;
+    assign dshadow2fifo_if.cfgtlp_en = 1'b1;
+    assign dshadow2fifo_if.cfgtlp_wren = 1'b1;
+    assign dshadow2fifo_if.cfgtlp_zero = 1'b0;
+    assign dshadow2fifo_if.cfgtlp_filter = 1'b0;
+    assign dshadow2fifo_if.alltlp_filter = 1'b0;
+    assign dshadow2fifo_if.bar_en = 1'b1;
+    assign dshadow2fifo_if.rx_rden = 1'b0;
+    assign dshadow2fifo_if.rx_wren = 1'b0;
+    assign dshadow2fifo_if.rx_be = 4'h0;
+    assign dshadow2fifo_if.rx_data = 32'h0;
+    assign dshadow2fifo_if.rx_addr = 10'h0;
+    assign dshadow2fifo_if.rx_addr_lo = 1'b0;
 
     always @(posedge clk) begin
         if (!rst && host_poke_valid)
@@ -157,5 +179,13 @@ module tb_top;
         .tlps_out(tlps_out_if.source),
         .tlps_dma_out(tlps_dma_out_if.source),
         .intr_req(intr_req)
+    );
+
+    pcileech_tlps128_cfgspace_shadow i_cfgspace_shadow(
+        .rst(rst), .clk_pcie(clk), .clk_sys(clk),
+        .tlps_in(tlps_in_if.sink_lite),
+        .pcie_id(pcie_id),
+        .tlps_cfg_rsp(tlps_cfg_rsp_if.source),
+        .dshadow2fifo(dshadow2fifo_if.shadow)
     );
 endmodule

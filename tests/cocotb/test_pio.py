@@ -179,9 +179,7 @@ def cfgwr0(offset, data, tag=0x40, req_id=0x0000, be=0xF):
     dw0 = (0b010 << 29) | (0b00101 << 24) | 1
     dw1 = ((req_id & 0xFFFF) << 16) | ((tag & 0xFF) << 8) | (be & 0xF)
     dw2 = offset & 0xFFC
-    d = data & 0xFFFFFFFF
-    swd = ((d & 0xFF) << 24) | ((d & 0xFF00) << 8) | ((d >> 8) & 0xFF00) | ((d >> 24) & 0xFF)
-    return dw0 | (dw1 << 32) | (dw2 << 64) | (swd << 96)
+    return dw0 | (dw1 << 32) | (dw2 << 64) | ((data & 0xFFFFFFFF) << 96)
 
 
 async def recv_cfg(dut, timeout=10000):
@@ -241,4 +239,6 @@ async def test_config_writable_interrupt_line(dut):
     cpls = await recv_cfg(dut)
     assert len(cpls) > 0, "no cfg completion"
     val = cpls[0][3]
-    dut._log.info(f"cfg intline after write 0xDE: {val:#x} (offset decode TBD)")
+    dut._log.info(f"cfg intline after write 0xDE: {val:#x}")
+    assert (val & 0xFF) == 0xDE, f"interrupt line byte not writable: {val:#x}"
+    assert (val & 0xFFFFFF00) == 0x100, f"intpin/ro bytes not preserved: {val:#x}"
