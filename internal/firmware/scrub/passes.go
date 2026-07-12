@@ -27,6 +27,21 @@ func (p *clearMiscPass) Apply(cs *pci.ConfigSpace, b *board.Board, om *overlay.M
 	om.WriteU8(0x0C, 0x00, "clear Cache Line Size")
 }
 
+type fixSubsysPass struct{}
+
+func (p *fixSubsysPass) Name() string { return "fix zero subsystem id" }
+func (p *fixSubsysPass) Apply(cs *pci.ConfigSpace, b *board.Board, om *overlay.Map, ctx *ScrubContext) {
+	sv := cs.SubsysVendorID()
+	sd := cs.SubsysDeviceID()
+	if sv == 0 {
+		sv = cs.VendorID()
+	}
+	if sd == 0 {
+		sd = cs.DeviceID()
+	}
+	om.WriteU32(0x2C, uint32(sv)|uint32(sd)<<16, "subsys id fallback to vendor/device")
+}
+
 type sanitizeCmdStatusPass struct{}
 
 func (p *sanitizeCmdStatusPass) Name() string { return "sanitize Command/Status" }

@@ -173,6 +173,7 @@ if { $pcie_ip != "" } {
 {{if .MSIXEnabled}}
   # MSI-X: enable first, then configure table/PBA ({{.MSIXTableSize}} entries)
   set_property CONFIG.MSIx_Enabled {true} $pcie_ip
+  set_property CONFIG.MSI_Enabled {false} $pcie_ip
   set_property -dict [list \
     CONFIG.MSIx_Table_Size          {{printf "%03X" .MSIXTableSize}} \
     CONFIG.MSIx_Table_BIR           {{.MSIXTableBIR}} \
@@ -181,6 +182,7 @@ if { $pcie_ip != "" } {
     CONFIG.MSIx_PBA_Offset          {{.MSIXPBAOffset}} \
   ] $pcie_ip
 {{end}}
+  set_property CONFIG.AER_Completion_Timeout {true} $pcie_ip
   puts "PCIe IP configured: {{.VendorID}}:{{.DeviceID}} Link={{.LinkWidth}} {{.LinkSpeed}} DSN={{if .DSNEnabled}}enabled{{else}}disabled{{end}} MSI={{.MSICapVectorsStr}}{{if .MSIXEnabled}} MSI-X={{.MSIXTableSize}}vec{{end}}"
 } else {
   puts "WARNING: PCIe IP core pcie_7x_0 not found, skipping donor identity configuration"

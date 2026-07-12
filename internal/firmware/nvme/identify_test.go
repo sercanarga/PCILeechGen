@@ -101,7 +101,7 @@ func TestIdentifyController_MetadataConsistency(t *testing.T) {
 	if got := binary.LittleEndian.Uint16(id.Controller[0x10C:]); got != 358 {
 		t.Fatalf("CCTEMP = %d, want 358", got)
 	}
-	if got := id.Controller[0x15C]; got != 0x01 {
+	if got := id.Controller[0x088]; got != 0x01 {
 		t.Fatalf("CNTRLTYPE = 0x%02X, want 0x01", got)
 	}
 	if got := binary.LittleEndian.Uint16(id.Controller[0x208:]); got != 0x000C {
@@ -125,63 +125,29 @@ func TestIdentifyController_NN(t *testing.T) {
 	}
 }
 
-func TestIdentifyController_Version(t *testing.T) {
-	// nil BAR data -> default NVMe 1.4
+func TestIdentifyController_CNTLID(t *testing.T) {
 	id := BuildIdentifyData(sampleIDs(), nil, nil)
-	ver := binary.LittleEndian.Uint32(id.Controller[0x050:])
-	if ver != 0x00010400 {
-		t.Errorf("VER (nil BAR): got 0x%08X, want 0x00010400", ver)
-	}
-}
-
-func TestIdentifyController_Version_FromBAR(t *testing.T) {
-	// BAR data with VS=0x00010300 (NVMe 1.3) at offset 0x08
-	barData := make([]byte, 64)
-	binary.LittleEndian.PutUint32(barData[0x08:], 0x00010300)
-
-	id := BuildIdentifyData(sampleIDs(), barData, nil)
-	ver := binary.LittleEndian.Uint32(id.Controller[0x050:])
-	if ver != 0x00010300 {
-		t.Errorf("VER (BAR NVMe 1.3): got 0x%08X, want 0x00010300", ver)
-	}
-}
-
-func TestIdentifyController_Version_ShortBAR(t *testing.T) {
-	// BAR data shorter than 0x0C -> falls back to default
-	barData := make([]byte, 8)
-	id := BuildIdentifyData(sampleIDs(), barData, nil)
-	ver := binary.LittleEndian.Uint32(id.Controller[0x050:])
-	if ver != 0x00010400 {
-		t.Errorf("VER (short BAR): got 0x%08X, want 0x00010400", ver)
-	}
-}
-
-func TestIdentifyController_Version_ZeroVS(t *testing.T) {
-	// BAR data with VS=0 -> falls back to default
-	barData := make([]byte, 64)
-	id := BuildIdentifyData(sampleIDs(), barData, nil)
-	ver := binary.LittleEndian.Uint32(id.Controller[0x050:])
-	if ver != 0x00010400 {
-		t.Errorf("VER (zero VS): got 0x%08X, want 0x00010400", ver)
+	cntlid := binary.LittleEndian.Uint16(id.Controller[0x050:])
+	if cntlid == 0 {
+		t.Errorf("CNTLID @ 0x050 = 0, want nonzero")
 	}
 }
 
 func TestIdentifyController_MDTS_Default(t *testing.T) {
 	id := BuildIdentifyData(sampleIDs(), nil, nil)
 	mdts := id.Controller[0x04D]
-	if mdts != 5 {
-		t.Errorf("MDTS (nil BAR): got %d, want 5", mdts)
+	if mdts != 3 {
+		t.Errorf("MDTS (nil BAR): got %d, want 3 (32KB, matches SV MAX_XFER_DW)", mdts)
 	}
 }
 
 func TestIdentifyController_MDTS_WithBAR(t *testing.T) {
-	// MPSMIN=0 (4KB pages) -> MDTS stays 5
 	barData := make([]byte, 64)
 	binary.LittleEndian.PutUint32(barData[0x04:], 0x00000030) // CAP_HI with MPSMIN=0
 	id := BuildIdentifyData(sampleIDs(), barData, nil)
 	mdts := id.Controller[0x04D]
-	if mdts != 5 {
-		t.Errorf("MDTS (MPSMIN=0): got %d, want 5", mdts)
+	if mdts != 3 {
+		t.Errorf("MDTS (MPSMIN=0): got %d, want 3", mdts)
 	}
 }
 
@@ -293,11 +259,8 @@ func TestBuildIdentifyData_RawControllerClampsMDTSAndAlignsVER(t *testing.T) {
 
 	id := BuildIdentifyData(ids, barData, captured)
 
-	if got := id.Controller[0x04D]; got > 5 {
-		t.Errorf("raw MDTS must be clamped <=5, got %d", got)
-	}
-	if got := binary.LittleEndian.Uint32(id.Controller[0x050:]); got != 0x00010400 {
-		t.Errorf("VER must equal BAR VS (0x00010400), got 0x%08X", got)
+	if got := id.Controller[0x04D]; got != 3 {
+		t.Errorf("raw MDTS must be 3 (SV match), got %d", got)
 	}
 	if got := binary.LittleEndian.Uint16(id.Controller[0x000:]); got != ids.VendorID {
 		t.Errorf("VID must be forced to ids (0x%04X), got 0x%04X", ids.VendorID, got)

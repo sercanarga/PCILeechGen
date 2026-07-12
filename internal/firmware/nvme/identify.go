@@ -34,15 +34,14 @@ func BuildIdentifyData(ids firmware.DeviceIDs, barData []byte, identity *Control
 	// Use raw donor data if available, otherwise synthesize.
 	if identity != nil && len(identity.RawControllerIdent) == 4096 {
 		d.Controller = [4096]byte(identity.RawControllerIdent)
-		// Force emulator-critical fields: VID/SSVID, MDTS clamp, VER==BAR VS.
+		// Force emulator-critical fields: VID/SSVID, MDTS clamp.
 		binary.LittleEndian.PutUint16(d.Controller[0x000:], ids.VendorID)
 		binary.LittleEndian.PutUint16(d.Controller[0x002:], ids.SubsysVendorID)
-		d.Controller[0x04D] = deriveMDTS(barData)
-		binary.LittleEndian.PutUint32(d.Controller[0x050:], deriveVER(barData))
+		d.Controller[0x04D] = 3                                // MDTS = 32KB, matches SV MAX_XFER_DW=8192
 		binary.LittleEndian.PutUint32(d.Controller[0x05C:], 0) // OAES
 		binary.LittleEndian.PutUint32(d.Controller[0x060:], 0) // CTRATT
 	} else {
-		d.Controller = buildIdentifyController(ids, barData, identity)
+		d.Controller = buildIdentifyController(ids, identity)
 	}
 
 	if identity != nil && len(identity.RawNamespaceIdent) == 4096 {
@@ -81,7 +80,7 @@ func deriveVER(barData []byte) uint32 {
 }
 
 // buildIdentifyController - CNS=1, NVMe 1.4 spec Figure 247.
-func buildIdentifyController(ids firmware.DeviceIDs, barData []byte, identity *ControllerIdentity) [4096]byte {
+func buildIdentifyController(ids firmware.DeviceIDs, identity *ControllerIdentity) [4096]byte {
 	var data [4096]byte
 
 	// VID / SSVID
@@ -126,14 +125,13 @@ func buildIdentifyController(ids firmware.DeviceIDs, barData []byte, identity *C
 	data[0x04A] = oui[1]
 	data[0x04B] = oui[0]
 
-	data[0x04C] = 0x00                                              // CMIC
-	data[0x04D] = deriveMDTS(barData)                               // MDTS — clamped to backend-safe
-	binary.LittleEndian.PutUint16(data[0x04E:], 0x0001)             // CNTLID
-	binary.LittleEndian.PutUint32(data[0x050:], deriveVER(barData)) // VER — must match BAR VS
-	binary.LittleEndian.PutUint32(data[0x054:], 0x00000064)         // RTD3 Resume Latency (100µs)
-	binary.LittleEndian.PutUint32(data[0x058:], 0x00000064)         // RTD3 Entry Latency (100µs)
-	binary.LittleEndian.PutUint32(data[0x05C:], 0x00000000)         // OAES
-	binary.LittleEndian.PutUint32(data[0x060:], 0x00000000)         // CTRATT
+	data[0x04C] = 0x00                                      // CMIC
+	data[0x04D] = 3                                         // MDTS = 32KB, matches SV MAX_XFER_DW=8192
+	binary.LittleEndian.PutUint16(data[0x050:], 0x0001)     // CNTLID (NVMe 1.4 offset)
+	binary.LittleEndian.PutUint32(data[0x054:], 0x00000064) // RTD3 Resume Latency (100µs)
+	binary.LittleEndian.PutUint32(data[0x058:], 0x00000064) // RTD3 Entry Latency (100µs)
+	binary.LittleEndian.PutUint32(data[0x05C:], 0x00000000) // OAES
+	binary.LittleEndian.PutUint32(data[0x060:], 0x00000000) // CTRATT
 
 	// Admin Command Set Attributes (0x100)
 	binary.LittleEndian.PutUint16(data[0x100:], 0x0003) // OACS - Format NVM + AER
@@ -147,7 +145,7 @@ func buildIdentifyController(ids firmware.DeviceIDs, barData []byte, identity *C
 	data[0x109] = 0x00                                  // APSTA
 	binary.LittleEndian.PutUint16(data[0x10A:], 343)    // WCTEMP
 	binary.LittleEndian.PutUint16(data[0x10C:], 358)    // CCTEMP (matches SMART critical threshold)
-	data[0x15C] = 0x01                                  // CNTRLTYPE - I/O Controller (NVMe 1.4)
+	data[0x088] = 0x01                                  // CNTRLTYPE - I/O Controller (NVMe 1.4)
 
 	// NVM Command Set Attributes (0x200)
 	data[0x200] = 0x66                                  // SQES min=max=64B
