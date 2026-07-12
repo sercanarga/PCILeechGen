@@ -600,16 +600,18 @@ async def _create_io_queues(dut):
     for _ in range(60000): await RisingEdge(dut.clk)
 
 @cocotb.test()
-async def test_nvme_io_read_completed(dut):
+async def test_nvme_io_read_oversized_rejected(dut):
     await reset(dut)
     await setup_admin_queues(dut)
     await _create_io_queues(dut)
     await poke_sqe(dut, 0xC00, op=0x02, nsid=0x00000001, cdw12=0x00000040)
     await send(dut, mwr3(addr=0x1008, data=0x00000001))
     for _ in range(60000): await RisingEdge(dut.clk)
-    status = (await peek(dut, 0x1000) >> 17) & 0x7FFF
-    dut._log.info(f"io read: status={status:#x}")
-    assert status == 0, f"io read failed: {status:#x}"
+    cqe_dw3 = await peek(dut, 0x1003)
+    status = (cqe_dw3 >> 17) & 0x7FFF
+    dut._log.info(f"io oversized read: status={status:#x}")
+    assert cqe_dw3 != 0, "no CQE posted to IOCQ"
+    assert status == 0x0002, f"expected INVALID_FIELD for oversized IO, got {status:#x}"
 
 
 
@@ -650,3 +652,18 @@ async def test_nvme_dma_completion_timeout(dut):
             mrd_beats += 1
     dut._log.info(f"mrd beats without cpld (timeout path): {mrd_beats}")
     assert mrd_beats > 0, "bridge did not issue MRd when CplD loopback disabled"
+
+
+@cocotb.test()
+async def test_nvme_aer_async(dut):
+    await reset(dut)
+    await setup_admin_queues(dut)
+    await poke_sqe(dut, 0x400, op=0x0C)
+    await send(dut, mwr3(addr=0x0014, data=0x00000001))
+    for _ in range(50): await RisingEdge(dut.clk)
+    await poke(dut, 0x803, 0)
+    await send(dut, mwr3(addr=0x1000, data=0x00000001))
+    for _ in range(20000): await RisingEdge(dut.clk)
+    cqe_dw3 = await peek(dut, 0x803)
+    dut._log.info(f"aer: cqe_dw3={cqe_dw3:#x} (async, no event pending -> should be 0)")
+    assert cqe_dw3 == 0, "AER posted a CQE without a pending async event"

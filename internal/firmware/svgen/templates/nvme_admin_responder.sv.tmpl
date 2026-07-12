@@ -285,7 +285,7 @@ module pcileech_nvme_admin_responder #(
                 case (dw_index)
                     // SN/MN/FR (bytes 4..71) come from the donor identify ROM;
                     // only optional feature fields are substituted below.
-                    11'd64: identify_data_word = 32'h07030002; // OACS: Format NVM only.
+                    11'd64: identify_data_word = 32'h07030003; // OACS: Format NVM + AER.
                     11'd65: identify_data_word = 32'h00000002; // ELPE/LPA/one power state.
                     11'd66: identify_data_word = 32'h01570000; // WCTEMP=343K.
                     11'd67: identify_data_word = 32'h00000166; // CCTEMP=358K.

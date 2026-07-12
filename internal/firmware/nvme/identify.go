@@ -136,7 +136,7 @@ func buildIdentifyController(ids firmware.DeviceIDs, barData []byte, identity *C
 	binary.LittleEndian.PutUint32(data[0x060:], 0x00000000)         // CTRATT
 
 	// Admin Command Set Attributes (0x100)
-	binary.LittleEndian.PutUint16(data[0x100:], 0x0002) // OACS - Format NVM only
+	binary.LittleEndian.PutUint16(data[0x100:], 0x0003) // OACS - Format NVM + AER
 	data[0x102] = 3                                     // ACL
 	data[0x103] = 7                                     // AERL
 	data[0x104] = 0x02                                  // FRMW

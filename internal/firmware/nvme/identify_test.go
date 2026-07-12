@@ -83,8 +83,8 @@ func TestIdentifyController_SQES(t *testing.T) {
 func TestIdentifyController_MetadataConsistency(t *testing.T) {
 	id := BuildIdentifyData(sampleIDs(), nil, nil)
 
-	if got := binary.LittleEndian.Uint16(id.Controller[0x100:]); got != 0x0002 {
-		t.Fatalf("OACS = 0x%04X, want 0x0002", got)
+	if got := binary.LittleEndian.Uint16(id.Controller[0x100:]); got != 0x0003 {
+		t.Fatalf("OACS = 0x%04X, want 0x0003", got)
 	}
 	if got := id.Controller[0x104]; got != 0x02 {
 		t.Fatalf("FRMW = 0x%02X, want 0x02", got)

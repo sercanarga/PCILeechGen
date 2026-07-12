@@ -47,7 +47,7 @@ func BuildSMART() *SMART {
 		PowerCycles:       cycles,
 		PowerOnHours:      hours,
 		UnsafeShutdowns:   randU32(1, 30),
-		MediaErrors:       randU32(0, 3),
+		MediaErrors:       0,
 		ErrorLogEntries:   randU32(0, 8),
 	}
 }
