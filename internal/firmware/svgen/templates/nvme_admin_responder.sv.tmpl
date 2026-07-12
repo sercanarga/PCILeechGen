@@ -215,6 +215,8 @@ module pcileech_nvme_admin_responder #(
     wire [15:0] active_cq_last      = active_io ? io_cq_last      : acq_last;
     wire [63:0] active_cq_base      = active_io ? io_cq_base      : acq_base;
     wire        active_cq_phase     = active_io ? io_cq_phase     : cq_phase;
+    wire [63:0] active_cq_offset    = {44'h0, active_cq_tail, 4'h0};
+    wire [63:0] admin_cq_offset     = {44'h0, cq_tail, 4'h0};
 
     reg [31:0] sqe [0:15];
     reg [3:0]  sqe_dw_idx;
@@ -1460,8 +1462,8 @@ module pcileech_nvme_admin_responder #(
                     S_POST_CQE: begin
                         dma_wr_req   <= 1'b1;
                         dma_wr_valid <= 1'b1;
-                        dma_wr_addr  <= active_cq_base + {44'h0, active_cq_tail, 4'h0}
-                                      + {62'h0, cqe_dw_idx, 2'b00};
+                        dma_wr_addr  <= active_cq_base + active_cq_offset +
+                                        {62'h0, cqe_dw_idx, 2'b00};
                         dma_wr_data  <= cqe[cqe_dw_idx];
                         dma_wr_be    <= 4'hF;
 
@@ -1478,8 +1480,8 @@ module pcileech_nvme_admin_responder #(
                     S_AER_POST: begin
                         dma_wr_req   <= 1'b1;
                         dma_wr_valid <= 1'b1;
-                        dma_wr_addr  <= acq_base + {44'h0, cq_tail, 4'h0}
-                                      + {62'h0, cqe_dw_idx, 2'b00};
+                        dma_wr_addr  <= acq_base + admin_cq_offset +
+                                        {62'h0, cqe_dw_idx, 2'b00};
                         dma_wr_data  <= cqe[cqe_dw_idx];
                         dma_wr_be    <= 4'hF;
 
