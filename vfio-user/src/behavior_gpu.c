@@ -35,6 +35,11 @@ static ssize_t gpu_read(void *opaque, unsigned bir, uint64_t offset,
         memcpy(data, &value, sizeof(value));
         return 4;
     }
+    if (bir == 0 && length == 4 && offset == 0x0000) {
+        uint32_t value = 0x134000A1;
+        memcpy(data, &value, sizeof(value));
+        return 4;
+    }
     if (bir == 0 && length == 4 && offset == 0x9410) {
         uint32_t value = (uint32_t)(state->timer >> 32);
         memcpy(data, &value, sizeof(value));

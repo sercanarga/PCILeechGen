@@ -47,7 +47,7 @@ func gpuProfile() *DeviceProfile {
 
 		BARDefaults: []BARDefault{
 			// NV_PMC - boot status, master control
-			{Offset: 0x00, Width: 4, Name: "PMC_BOOT", Reset: 0x00000000, RWMask: 0x00000000},
+			{Offset: 0x00, Width: 4, Name: "PMC_BOOT", Reset: 0x134000A1, RWMask: 0x00000000},
 			// NV_PMC_ENABLE - engine enable bitmask
 			{Offset: 0x200, Width: 4, Name: "PMC_ENABLE", Reset: 0xFFFFFFFF, RWMask: 0xFFFFFFFF},
 			// NV_PBUS_PCI_NV_0 - mirrors VID/DID inside BAR

@@ -89,7 +89,7 @@
       "index": 0,
       "raw_value": 4294950912,
       "address": 0,
-      "size": 16384,
+      "size": 65536,
       "type": "mem32",
       "prefetchable": false,
       "is_64bit": false

@@ -216,6 +216,20 @@ func specBARModelForClass(classCode uint32, barData []byte) *BARModel {
 		})
 	}
 	populateResetValues(regs, barData)
+	if classCode&0xffff00 == 0x030000 {
+		for i := range regs {
+			switch regs[i].Offset {
+			case 0x00:
+				if regs[i].Reset == 0 {
+					regs[i].Reset = 0x134000A1
+				}
+			case 0x1800:
+				if regs[i].Reset == 0 {
+					regs[i].Reset = 0x1B0610DE
+				}
+			}
+		}
+	}
 	return &BARModel{Size: len(barData), Registers: regs}
 }
 
