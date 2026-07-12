@@ -43,12 +43,35 @@ if [ "$rebind" = 1 ] && [ "$driver" != none ]; then
     printf '%s' "$(basename "$found")" >"$driver_path/unbind"
     if [ -w "$found/reset" ]; then
         printf 1 >"$found/reset"
+    elif [ -w "$found/remove" ] && [ -w /sys/bus/pci/rescan ]; then
+        printf 1 >"$found/remove"
+        found=
+        attempt=0
+        while [ "$attempt" -lt 10 ] && [ -z "$found" ]; do
+            printf 1 >/sys/bus/pci/rescan
+            for path in /sys/bus/pci/devices/*; do
+                [ -f "$path/vendor" ] || continue
+                [ "$(cat "$path/vendor")" = "0x$vendor" ] || continue
+                [ "$(cat "$path/device")" = "0x$device" ] || continue
+                found="$path"
+                break
+            done
+            [ -n "$found" ] || sleep 1
+            attempt=$((attempt + 1))
+        done
+        if [ -z "$found" ]; then
+            printf '{"event":"result","case":"%s","status":"fail","bdf":"%s","vendor":"%s","device":"%s","class":"%s","driver":"%s","detail":"reset-unavailable"}\n' \
+                "$case_name" "$bdf" "$vendor" "$device" "$class" "$driver"
+            exit 1
+        fi
     else
         printf '{"event":"result","case":"%s","status":"fail","bdf":"%s","vendor":"%s","device":"%s","class":"%s","driver":"%s","detail":"reset-unavailable"}\n' \
             "$case_name" "$(basename "$found")" "$vendor" "$device" "$class" "$driver"
         exit 1
     fi
-    printf '%s' "$(basename "$found")" >"$driver_path/bind"
+    if [ ! -L "$found/driver" ]; then
+        printf '%s' "$(basename "$found")" >"$driver_path/bind"
+    fi
     driver=none
     if [ -L "$found/driver" ]; then
         driver="$(basename "$(readlink "$found/driver")")"
