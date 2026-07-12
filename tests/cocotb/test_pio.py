@@ -81,7 +81,7 @@ async def test_config_space_vendor_read(dut):
 @cocotb.test()
 async def test_bar0_read(dut):
     await reset(dut)
-    await send(dut, mrd3(addr=0x1000, tag=2))
+    await send(dut, mrd3(addr=0x200, tag=2))
     cpls = await recv_all(dut)
     assert len(cpls) > 0, "no completion for BAR0 read"
 
@@ -89,10 +89,10 @@ async def test_bar0_read(dut):
 @cocotb.test()
 async def test_bar0_write_then_read(dut):
     await reset(dut)
-    await send(dut, mwr3(addr=0x1000, data=0xDEADBEEF))
+    await send(dut, mwr3(addr=0x200, data=0xDEADBEEF))
     for _ in range(20):
         await RisingEdge(dut.clk)
-    await send(dut, mrd3(addr=0x1000, tag=3))
+    await send(dut, mrd3(addr=0x200, tag=3))
     cpls = await recv_all(dut)
     assert len(cpls) > 0, "no completion after BAR0 write+read"
 
@@ -100,7 +100,7 @@ async def test_bar0_write_then_read(dut):
 @cocotb.test()
 async def test_bar0_multi_dword_read(dut):
     await reset(dut)
-    await send(dut, mrd3(addr=0x1000, tag=4, length=4))
+    await send(dut, mrd3(addr=0x200, tag=4, length=4))
     cpls = await recv_all(dut, timeout=100000)
     assert len(cpls) > 0, "no completion for multi-DW BAR0 read"
 
@@ -124,7 +124,7 @@ async def test_no_bar_hit_no_completion(dut):
 async def test_rapid_bar0_reads(dut):
     await reset(dut)
     for t in range(10):
-        await send(dut, mrd3(addr=0x1000 + t * 4, tag=10 + t))
+        await send(dut, mrd3(addr=0x200 + t * 4, tag=10 + t))
         await RisingEdge(dut.clk)
     total = 0
     for _ in range(5000):
@@ -132,3 +132,13 @@ async def test_rapid_bar0_reads(dut):
         if dut.tlps_out_tvalid.value == 1:
             total += 1
     assert total > 0, "no completions for rapid BAR0 reads"
+
+
+@cocotb.test()
+async def test_io_read_returns_ur(dut):
+    await reset(dut)
+    await send(dut, iord3(addr=0, tag=20))
+    cpls = await recv_all(dut)
+    assert len(cpls) > 0, "no completion for IO read"
+    status = (cpls[0][1] >> 13) & 0x7
+    assert status == 0b001, f"expected UR completion status, got {status:#b}"
