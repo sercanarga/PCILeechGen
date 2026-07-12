@@ -1352,7 +1352,7 @@ func runVerilatorSimulation(t *testing.T, sources map[string]string) {
 		t.Skip("verilator not installed")
 	}
 	dir := t.TempDir()
-	var names []string
+	names := make([]string, 0, len(sources))
 	for name := range sources {
 		names = append(names, name)
 	}

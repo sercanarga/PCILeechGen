@@ -94,7 +94,7 @@ func TestLifecycleTurnoffAndLinkDownQuiesceWithoutReset(t *testing.T) {
 func TestTagAllocatorAllocationWrapCompletionAndError(t *testing.T) {
 	allocator := NewTagAllocator(30, 4, 100)
 
-	var tags []uint8
+	tags := make([]uint8, 0, 4)
 	for range 4 {
 		tag, ok := allocator.Allocate(10)
 		if !ok {

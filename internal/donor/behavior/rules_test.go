@@ -176,7 +176,9 @@ func TestEngine_DelayedTransitionIsPollingInsensitive(t *testing.T) {
 		if err := engine.Apply(mmio.AccessRecord{Type: mmio.AccessWrite, Width: 4, Offset: 0x20, Value: 1}); err != nil {
 			t.Fatalf("apply trigger: %v", err)
 		}
-		engine.Advance(4)
+		if err := engine.Advance(4); err != nil {
+			t.Fatalf("advance: %v", err)
+		}
 		for i := range polls {
 			if err := engine.Apply(mmio.AccessRecord{Type: mmio.AccessRead, Width: 4, Offset: 0x24}); err != nil {
 				t.Fatalf("apply poll %d: %v", i, err)
@@ -185,7 +187,9 @@ func TestEngine_DelayedTransitionIsPollingInsensitive(t *testing.T) {
 		if engine.State() != "waiting" {
 			t.Fatalf("state before final cycle = %q, want waiting", engine.State())
 		}
-		engine.Advance(1)
+		if err := engine.Advance(1); err != nil {
+			t.Fatalf("advance: %v", err)
+		}
 		value, ok := engine.Register(0x24)
 		if !ok {
 			t.Fatal("status register missing after delayed update")

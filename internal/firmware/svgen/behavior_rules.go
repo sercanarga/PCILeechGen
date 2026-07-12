@@ -316,4 +316,3 @@ func scaleDelayCycles(delay uint32, sourceClockHz uint64) (uint32, error) {
 	}
 	return uint32(scaled), nil
 }
-

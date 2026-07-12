@@ -170,4 +170,3 @@ func captureLiveTrace(target *TraceTarget, bdf string, duration time.Duration) (
 	result.Duration = time.Since(startedAt)
 	return result, nil
 }
-
