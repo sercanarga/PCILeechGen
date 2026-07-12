@@ -361,4 +361,171 @@ async def test_nvme_cc_en_gate_blocks_doorbell(dut):
     dut._log.info(f"dma beats before CC.EN: {beats}")
 
 
+# --- MSI-X interrupt delivery tests ---
+#
+# Interrupt path (pcileech_tlps128_bar_controller.sv):
+#   responder S_SEND_MSIX -> pba_set_valid/vector (== nvme_irq_event_*)
+#   -> i_nvme_interrupt_service.event_valid  (sets pending[], pulses pba_set)
+#   -> i_msix_table.pba_set_valid            (sets msix_pba[vector] bit)
+#   interrupt_service scan FSM (Q_SELECT->Q_WAIT->Q_CHECK) finds the pending
+#   vector and, if function_enable && !function_mask && !vector_masked, asserts
+#   delivery_valid. The responder then issues a 1-DW Memory-Write TLP to
+#   {msix_vector_addr} with payload msix_vector_data via the DMA bridge ->
+#   tlps_dma_out.  NOTE: bar_controller.intr_req is hardwired 1'b0 (line ~1094),
+#   so the MSI-X message is observable ONLY on tlps_dma_out, never on intr_req.
 
+def bswap32(v):
+    v &= 0xFFFFFFFF
+    return ((v & 0xFF) << 24) | ((v & 0xFF00) << 8) | ((v >> 8) & 0xFF00) | ((v >> 24) & 0xFF)
+
+
+async def read_bar(dut, addr, tag):
+    """Single-DW BAR read; returns the 32-bit register value (byte-de-swapped).
+
+    The rdengine places completion data byte-swapped in tdata[127:96] (DW3);
+    recv_all stores that lane as cpls[0][3], so we bswap it back."""
+    await send(dut, mrd3(addr=addr, tag=tag))
+    cpls = await recv_all(dut)
+    if not cpls:
+        return None
+    return bswap32(cpls[0][3])
+
+
+async def program_msix_vector0(dut, addr_lo, addr_hi, msg_data, masked):
+    """Write MSI-X table entry 0 at BAR0+0x2000.
+
+    Layout per entry (16 bytes): msg_addr_lo, msg_addr_hi, msg_data, vector_ctrl.
+    vector_ctrl bit0 = Mask (1=masked/suppressed)."""
+    await send_write(dut, 0x2000, addr_lo)
+    await send_write(dut, 0x2004, addr_hi)
+    await send_write(dut, 0x2008, msg_data)
+    await send_write(dut, 0x200C, 0x00000001 if masked else 0x00000000)
+
+
+async def run_identify(dut):
+    """Mirror test_nvme_identify_full_dma setup (no final assertions)."""
+    await setup_admin_queues(dut, asq=0x1000, acq=0x2000)
+    await poke_sqe(dut, 0x400, op=0x06, prp1=0x5000, cdw10=0x00000001)
+    await send(dut, mwr3(addr=0x0014, data=0x00000001))   # CC.EN
+    for _ in range(50):
+        await RisingEdge(dut.clk)
+    await send(dut, mwr3(addr=0x1000, data=0x00000001))   # ring admin SQ doorbell
+
+
+async def watch_msix_mwr(dut, full_addr, cycles=60000):
+    """Scan tlps_dma_out for the MSI-X Memory-Write TLP.
+
+    A 1-DW MWr (fmt=0b011, 4DW header) occupies two beats: header (tuser[0]=1,
+    addr in DW2/DW3) then data (tuser[0]=0, tlast). Returns (seen, data_value,
+    mwr_count) where mwr_count is the total number of MWr first-beats seen."""
+    seen = False
+    data_value = None
+    mwr_count = 0
+    in_mwr = False
+    cur_addr = None
+    for _ in range(cycles):
+        await RisingEdge(dut.clk)
+        if dut.tlps_dma_out_tvalid.value != 1:
+            continue
+        raw = dut.tlps_dma_out_tdata.value.integer
+        dws = [(raw >> (i * 32)) & 0xFFFFFFFF for i in range(4)]
+        fmt = (dws[0] >> 29) & 0x7
+        first = dut.tlps_dma_out_tuser.value.integer & 1
+        if first:
+            in_mwr = (fmt == 0b011)
+            if in_mwr:
+                mwr_count += 1
+                cur_addr = (dws[2] << 32) | dws[3]
+            else:
+                cur_addr = None
+        elif in_mwr:
+            if cur_addr == full_addr:
+                seen = True
+                data_value = bswap32(dws[0])
+            in_mwr = False
+    return seen, data_value, mwr_count
+
+
+@cocotb.test()
+async def test_msix_interrupt_after_cqe(dut):
+    """An UNMASKED MSI-X vector fires a Memory-Write TLP on tlps_dma_out after
+    the Identify CQE is posted, carrying the programmed addr/data."""
+    await reset(dut)
+
+    MSIX_ADDR_LO = 0xFEE0C000   # low 16 bits -> host_mem[0x3000] via loopback
+    MSIX_ADDR_HI = 0x00000000
+    MSIX_MSG_DATA = 0x00004400
+    FULL_ADDR = (MSIX_ADDR_HI << 32) | MSIX_ADDR_LO
+
+    await program_msix_vector0(dut, MSIX_ADDR_LO, MSIX_ADDR_HI, MSIX_MSG_DATA, masked=False)
+    ctrl = await read_bar(dut, 0x200C, tag=70)
+    assert ctrl == 0, f"vector 0 ctrl={ctrl:#x}, expected 0 (unmasked)"
+
+    await run_identify(dut)
+
+    intr_pulses = 0
+    seen = [False]
+    data_val = [None]
+    mwr_count = [0]
+
+    async def _watch():
+        s, dv, mc = await watch_msix_mwr(dut, FULL_ADDR, cycles=60000)
+        seen[0], data_val[0], mwr_count[0] = s, dv, mc
+
+    watch_task = cocotb.start_soon(_watch())
+    for _ in range(60000):
+        await RisingEdge(dut.clk)
+        # intr_req is 1-bit -> a cocotb Logic object (no .integer/.binstr).
+        if dut.intr_req.value == 1:
+            intr_pulses += 1
+    await watch_task
+
+    cqe_dw3 = await peek(dut, 0x803)
+    delivered = await peek(dut, 0x3000)
+
+    dut._log.info(
+        f"msix_seen={seen[0]} data={data_val[0] if data_val[0] is not None else 'NA'} "
+        f"mwr_count={mwr_count[0]} intr_pulses={intr_pulses} "
+        f"cqe_dw3={cqe_dw3:#x} host_mem[0x3000]={delivered:#x}")
+
+    # Assert points.
+    assert cqe_dw3 != 0, "no CQE posted to ACQ - identify did not complete"
+    assert seen[0], "MSI-X MWr TLP not observed on tlps_dma_out after CQE"
+    assert data_val[0] == MSIX_MSG_DATA, (
+        f"MSI-X data mismatch: {data_val[0]:#x} != {MSIX_MSG_DATA:#x}")
+    assert mwr_count[0] > 0, "no MWr TLPs at all on tlps_dma_out"
+    assert intr_pulses == 0, (
+        f"intr_req pulsed {intr_pulses}x; it is hardwired 0 in bar_controller "
+        f"- MSI-X uses the MWr TLP path, not intr_req")
+    assert delivered == MSIX_MSG_DATA, (
+        f"MSI-X write not delivered to host_mem[0x3000]: {delivered:#x}")
+
+
+@cocotb.test()
+async def test_msix_pba_pending_when_masked(dut):
+    """A MASKED vector still sets its PBA pending bit (PCIe 6.8.3.4) and the bit
+    stays set because delivery (and thus the PBA clear) is suppressed.
+    Complements test_msix_interrupt_after_cqe."""
+    await reset(dut)
+
+    MSIX_ADDR_LO = 0xFEE0D000
+    MSIX_ADDR_HI = 0x00000000
+    MSIX_MSG_DATA = 0x0000ABCD
+    FULL_ADDR = (MSIX_ADDR_HI << 32) | MSIX_ADDR_LO
+
+    await program_msix_vector0(dut, MSIX_ADDR_LO, MSIX_ADDR_HI, MSIX_MSG_DATA, masked=True)
+    ctrl = await read_bar(dut, 0x200C, tag=71)
+    assert ctrl == 1, f"vector 0 ctrl={ctrl:#x}, expected 1 (masked)"
+
+    await run_identify(dut)
+
+    seen, _dv, _mc = await watch_msix_mwr(dut, FULL_ADDR, cycles=60000)
+
+    pba = await read_bar(dut, 0x3000, tag=72)
+    cqe_dw3 = await peek(dut, 0x803)
+
+    dut._log.info(f"masked: pba={pba:#x} msix_mwr_seen={seen} cqe_dw3={cqe_dw3:#x}")
+
+    assert cqe_dw3 != 0, "no CQE posted to ACQ - identify did not complete"
+    assert pba == 0x1, f"PBA bit 0 not set for masked vector 0: {pba:#x}"
+    assert not seen, "MSI-X MWr leaked to tlps_dma_out for a masked vector"
