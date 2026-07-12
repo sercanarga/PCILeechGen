@@ -185,6 +185,9 @@ if { $pcie_ip != "" } {
   set_property -dict [list \
     CONFIG.AER_Enabled              {true} \
     CONFIG.AER_Completion_Timeout   {true} \
+    CONFIG.Max_Payload_Size         {128_bytes} \
+    CONFIG.Extended_Tag_Field       {false} \
+    CONFIG.Extended_Tag_Default     {false} \
   ] $pcie_ip
   puts "PCIe IP configured: {{.VendorID}}:{{.DeviceID}} Link={{.LinkWidth}} {{.LinkSpeed}} DSN={{if .DSNEnabled}}enabled{{else}}disabled{{end}} MSI={{.MSICapVectorsStr}}{{if .MSIXEnabled}} MSI-X={{.MSIXTableSize}}vec{{end}}"
 } else {

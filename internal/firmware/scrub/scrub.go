@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/sercanarga/pcileechgen/internal/board"
+	"github.com/sercanarga/pcileechgen/internal/donor"
 	"github.com/sercanarga/pcileechgen/internal/firmware"
 	"github.com/sercanarga/pcileechgen/internal/firmware/devclass"
 	"github.com/sercanarga/pcileechgen/internal/firmware/overlay"
@@ -147,21 +148,21 @@ func ScrubConfigSpace(cs *pci.ConfigSpace, b *board.Board, bar0Size ...int) *pci
 // ScrubConfigSpaceWithOverlay scrubs the config space and returns both the
 // scrubbed copy and an overlay map recording every change.
 func ScrubConfigSpaceWithOverlay(cs *pci.ConfigSpace, b *board.Board, bar0Size ...int) (*pci.ConfigSpace, *overlay.Map) {
-	return scrubConfigSpace(cs, b, [6]int{}, bar0Size...)
+	return scrubConfigSpace(cs, b, [6]int{}, nil, bar0Size...)
 }
 
 // ScrubConfigSpaceWithDonor scrubs and preserves donor-declared BAR sizes (donorBARs) for BAR>=1.
-func ScrubConfigSpaceWithDonor(cs *pci.ConfigSpace, b *board.Board, donorBARs []pci.BAR, bar0Size ...int) (*pci.ConfigSpace, *overlay.Map) {
+func ScrubConfigSpaceWithDonor(cs *pci.ConfigSpace, b *board.Board, donorBARs []pci.BAR, msix *donor.MSIXData, bar0Size ...int) (*pci.ConfigSpace, *overlay.Map) {
 	var sizes [6]int
 	for _, br := range donorBARs {
 		if br.Index >= 0 && br.Index < 6 && !br.IsDisabled() {
 			sizes[br.Index] = int(br.Size)
 		}
 	}
-	return scrubConfigSpace(cs, b, sizes, bar0Size...)
+	return scrubConfigSpace(cs, b, sizes, msix, bar0Size...)
 }
 
-func scrubConfigSpace(cs *pci.ConfigSpace, b *board.Board, barSizes [6]int, bar0Size ...int) (*pci.ConfigSpace, *overlay.Map) {
+func scrubConfigSpace(cs *pci.ConfigSpace, b *board.Board, barSizes [6]int, msix *donor.MSIXData, bar0Size ...int) (*pci.ConfigSpace, *overlay.Map) {
 	scrubbed := cs.Clone()
 	om := overlay.NewMap(scrubbed)
 
@@ -183,6 +184,7 @@ func scrubConfigSpace(cs *pci.ConfigSpace, b *board.Board, barSizes [6]int, bar0
 		ClassCode: cs.ReadU32(0x08) >> 8,
 		Bar0Size:  bar0,
 		BARSizes:  barSizes,
+		MSIXData:  msix,
 	}
 
 	for _, pass := range defaultPipeline() {

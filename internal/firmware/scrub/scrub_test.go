@@ -142,7 +142,7 @@ func TestScrubConfigSpace_PreserveDonorBARSize(t *testing.T) {
 	cs.WriteU32(0x18, 0xF7000000) // BAR2 mem32 carrying an assigned address, not a size mask
 
 	donorBARs := []pci.BAR{{Index: 2, Size: 256 << 10, Type: pci.BARTypeMem32}}
-	scrubbed, _ := ScrubConfigSpaceWithDonor(cs, nil, donorBARs)
+	scrubbed, _ := ScrubConfigSpaceWithDonor(cs, nil, donorBARs, nil)
 
 	if got, want := scrubbed.BAR(2), uint32(0xFFFC0000); got != want { // ~(256KB-1)
 		t.Errorf("BAR2 should preserve donor 256KB size from address 0xF7000000: got 0x%08x, want 0x%08x", got, want)

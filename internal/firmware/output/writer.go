@@ -75,6 +75,10 @@ func (ow *OutputWriter) WriteAll(ctx *donor.DeviceContext, b *board.Board) error
 		ids.SubsysDeviceID = scrubbedCS.SubsysDeviceID()
 		ctx.Device.SubsysDeviceID = ids.SubsysDeviceID
 	}
+	ctx.Device.RevisionID = scrubbedCS.RevisionID()
+	ctx.Device.VendorID = scrubbedCS.VendorID()
+	ctx.Device.DeviceID = scrubbedCS.DeviceID()
+	ctx.Device.ClassCode = scrubbedCS.ReadU32(0x08) >> 8
 	var svCfg *svgen.SVGeneratorConfig
 	if !ow.StockBar {
 		var err error
@@ -155,7 +159,7 @@ func (ow *OutputWriter) scrubAndVary(ctx *donor.DeviceContext, b *board.Board, i
 		msixTableSize = ctx.MSIXData.TableSize
 	}
 	bar0Size := firmware.CappedBAR0Size(ctx, b, msixTableSize)
-	scrubbedCS, overlayMap := scrub.ScrubConfigSpaceWithDonor(ctx.ConfigSpace, b, ctx.BARs, bar0Size)
+	scrubbedCS, overlayMap := scrub.ScrubConfigSpaceWithDonor(ctx.ConfigSpace, b, ctx.BARs, ctx.MSIXData, bar0Size)
 	if overlayMap.Count() > 0 {
 		slog.Info("config space scrubbed", "modifications", overlayMap.Count())
 	}
