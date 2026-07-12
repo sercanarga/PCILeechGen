@@ -164,6 +164,9 @@ func generateProjectTCL(ctx *donor.DeviceContext, b *board.Board, libDir string,
 	} else {
 		bars[0] = barTCLConfig{Index: 0, Enabled: bar0.Enabled, Scale: bar0.Scale, Size: bar0.Size, Is64bit: bar0.Is64bit}
 	}
+	if bar0.Is64bit && len(bars) > 1 {
+		bars[1].Enabled = false
+	}
 	srcAbs, _ := filepath.Abs(b.SrcPath(libDir))
 	ipAbs, _ := filepath.Abs(b.IPPath(libDir))
 	srcAbs = tclPath(srcAbs)
