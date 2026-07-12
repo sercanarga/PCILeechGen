@@ -73,9 +73,9 @@ func TestGenerateBarControllerWiresSharedLifecycle(t *testing.T) {
 		t.Fatalf("GenerateBarControllerSV: %v", err)
 	}
 	requireSVContracts(t, controllerSV,
-		"input [15:0]            cfg_command",
-		"input [1:0]             cfg_power_state",
-		"input                   cfg_flr_in_process",
+		"input  wire [15:0]      cfg_command",
+		"input  wire [1:0]       cfg_power_state",
+		"input  wire             cfg_flr_in_process",
 		"pcileech_lifecycle_service i_lifecycle_service",
 		".memory_space_enable ( cfg_mse",
 		".bus_master_enable   ( cfg_bme",
