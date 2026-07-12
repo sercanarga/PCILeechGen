@@ -377,6 +377,8 @@ func buildXHCIBARModel(barData []byte) *BARModel {
 		// Command Ring Control - 64-bit
 		{Offset: 0x38, Width: 4, Name: "CRCR_LO", RWMask: 0xFFFFFFF7},
 		{Offset: 0x3C, Width: 4, Name: "CRCR_HI", RWMask: 0xFFFFFFFF},
+		// Extended capability list terminator (USB Legacy Support).
+		{Offset: 0x40, Width: 4, Name: "XECAP_USB_LEGACY", Reset: 0x00000001, RWMask: 0x00000000},
 		// Device Context Base Address Array Pointer - 64-bit
 		{Offset: 0x50, Width: 4, Name: "DCBAAP_LO", RWMask: 0xFFFFFFC0},
 		{Offset: 0x54, Width: 4, Name: "DCBAAP_HI", RWMask: 0xFFFFFFFF},

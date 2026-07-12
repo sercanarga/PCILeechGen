@@ -115,7 +115,7 @@ func TestBuildBARModel_XHCI(t *testing.T) {
 	wantReset := map[string]uint32{
 		"CAPLENGTH_HCIVERSION": 0x01100020,
 		"HCSPARAMS1":           0x02000120,
-		"HCCPARAMS1":           0x00000001,
+		"HCCPARAMS1":           0x00100001,
 		"DBOFF":                0x00000100,
 		"RTSOFF":               0x00000200,
 		"PAGESIZE":             0x00000001,
