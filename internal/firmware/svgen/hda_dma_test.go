@@ -50,7 +50,6 @@ func TestHDADMABridgeIntegration(t *testing.T) {
 		PRNGSeeds:   [4]uint32{0x12345678, 0x9ABCDEF0, 0xFEDCBA98, 0x76543210},
 	}
 
-	// Check bar_impl_device for DMA interface
 	barSV, err := svgen.GenerateBarImplDeviceSV(cfg)
 	if err != nil {
 		t.Fatalf("GenerateBarImplDeviceSV: %v", err)
@@ -66,7 +65,6 @@ func TestHDADMABridgeIntegration(t *testing.T) {
 		}
 	}
 
-	// Check bar_controller for DMA bridge wiring
 	ctrlSV, err := svgen.GenerateBarControllerSV(cfg)
 	if err != nil {
 		t.Fatalf("GenerateBarControllerSV: %v", err)
@@ -88,7 +86,6 @@ func TestHDADMABridgeIntegration(t *testing.T) {
 		t.Error("bar_controller contains stale dma_yield reference")
 	}
 
-	// Check HDA DMA bridge
 	dmaSV, err := svgen.GenerateHDARIRBDMASV(cfg)
 	if err != nil {
 		t.Fatalf("GenerateHDARIRBDMASV: %v", err)

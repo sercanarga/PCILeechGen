@@ -5,7 +5,6 @@ import (
 	"testing"
 )
 
-// nvmeAdminBehaviorBench returns a Verilator bench exercising the NVMe admin responder.
 func nvmeAdminBehaviorBench() string {
 	return "`timescale 1ns/1ps\n" + `module tb;
 reg clk = 0;
@@ -50,7 +49,6 @@ wire disk_req_flush;
 wire [63:0] disk_req_lba;
 wire [6:0] disk_req_word;
 wire [31:0] disk_req_wdata;
-// Auto-ack disk_req one cycle after valid (arms the DSM Deallocate path).
 reg disk_req_done;
 reg disk_req_valid_prev;
 always @(posedge clk) begin
@@ -79,14 +77,11 @@ wire [7:0] dbg_opcode;
 wire [31:0] dbg_admin_queues;
 wire [31:0] dbg_cmd_info;
 
-// Ack every DMA write combinationally (host always accepts CQE / data writes).
 assign dma_wr_done = dma_wr_valid;
 
-// Minimal host memory: 16K DWORDs = 64 KiB. DWORD-addressed.
 reg [31:0] host_mem [0:16383];
 integer i;
 
-// DMA read model: stream len beats from host_mem on dma_rd_req.
 reg [63:0] rd_addr_q;
 reg [9:0]  rd_len_q;
 reg [9:0]  rd_beat_q;
@@ -120,7 +115,6 @@ always @(posedge clk) begin
     end
 end
 
-// Capture CQE status DW3 (addr[3:2]==2'b11) on ACQ/IOCQ writes.
 integer cqe_count = 0;
 integer cqe_snapshot = 0;
 reg [31:0] last_cqe_status = 32'h0;
@@ -132,7 +126,6 @@ always @(posedge clk) begin
     end
 end
 
-// Write back DMA writes into host_mem for payload inspection.
 always @(posedge clk) begin
     if (!rst && dma_wr_valid)
         host_mem[dma_wr_addr[15:2]] <= dma_wr_data;
@@ -194,7 +187,6 @@ pcileech_nvme_admin_responder responder (
     .dbg_cmd_info(dbg_cmd_info)
 );
 
-// Load a 16-DWORD SQE into host_mem at DWORD index dwbase.
 task poke_sqe(input integer dwbase, input [7:0] op, input [31:0] nsid,
               input [31:0] prp1lo, input [31:0] prp1hi,
               input [31:0] prp2lo, input [31:0] prp2hi,
@@ -219,7 +211,6 @@ begin
 end
 endtask
 
-// Ring an SQ doorbell (qid, new tail value).
 task ring_sq(input [15:0] qid, input [15:0] val);
 begin
     @(negedge clk);
@@ -232,7 +223,6 @@ begin
 end
 endtask
 
-// Wait for the next CQE status DWORD and check DW3[31:17] against exp.
 task wait_cqe(input [14:0] exp);
 integer target;
 integer cyc;
@@ -253,7 +243,6 @@ initial begin
     for (i = 0; i < 16384; i = i + 1)
         host_mem[i] = 32'h0;
 
-    // Admin queue layout: ASQ=0x1000, ACQ=0x2000, 16 entries each.
     asq_lo = 32'h00001000;
     asq_hi = 32'h0;
     acq_lo = 32'h00002000;
@@ -265,9 +254,7 @@ initial begin
     @(negedge clk);
     rst = 1'b0;
     @(negedge clk);
-    // cc_en stays 0 so scenario (0) can prove doorbells are gated until enable.
 
-    // (0) Controller Enable handshake: doorbells before CC.EN must produce no CQE.
     poke_sqe(16'h400, 8'h0A, 32'h0, 32'h0, 32'h0, 32'h0, 32'h0, 32'h000000FF, 32'h0, 32'h0);
     ring_sq(16'd0, 16'd1); // cc_en=0 -> responder must ignore this admin doorbell
     cqe_snapshot = cqe_count;
@@ -275,7 +262,6 @@ initial begin
     if (cqe_count !== cqe_snapshot) $fatal(20, "doorbell processed before CC.EN set");
     #1;
     if (dbg_state !== 8'd0) $fatal(21, "responder left idle while CC.EN=0");
-    // Assert CC.EN and pulse cc_enable_wr one cycle to latch AQA/ASQ/ACQ.
     @(negedge clk);
     cc_en = 1'b1;
     cc_enable_wr = 1'b1;
@@ -286,42 +272,36 @@ initial begin
     if (dbg_state !== 8'd0) $fatal(22, "responder not idle after CC.EN handshake");
     @(negedge clk);
 
-    // (1) Get Features with unsupported FID=0xFF -> INVALID_FIELD (now CC.EN=1 -> CQE).
     poke_sqe(16'h400, 8'h0A, 32'h0,
              32'h0, 32'h0, 32'h0, 32'h0,
              32'h000000FF, 32'h0, 32'h0);
     ring_sq(16'd0, 16'd1);
     wait_cqe(15'h0002);
 
-    // (2) Identify CNS=0x01 (controller) -> SUCCESS. Data to 0x5000.
     poke_sqe(16'h410, 8'h06, 32'h0,
              32'h00005000, 32'h0, 32'h0, 32'h0,
              32'h00000001, 32'h0, 32'h0);
     ring_sq(16'd0, 16'd2);
     wait_cqe(15'h0000);
 
-    // (3) Create I/O Completion Queue qid=1 @0x4000 -> SUCCESS.
     poke_sqe(16'h420, 8'h05, 32'h0,
              32'h00004000, 32'h0, 32'h0, 32'h0,
              32'h00010001, 32'h00000001, 32'h0);
     ring_sq(16'd0, 16'd3);
     wait_cqe(15'h0000);
 
-    // (4) Create I/O Submission Queue qid=1 @0x3000 -> SUCCESS.
     poke_sqe(16'h430, 8'h01, 32'h0,
              32'h00003000, 32'h0, 32'h0, 32'h0,
              32'h00010001, 32'h00010001, 32'h0);
     ring_sq(16'd0, 16'd4);
     wait_cqe(15'h0000);
 
-    // (5) Oversized I/O read (nlb=64 -> 8320 DW > MAX_XFER_DW) -> INVALID_FIELD.
     poke_sqe(16'hC00, 8'h02, 32'h00000001,
              32'h0, 32'h0, 32'h0, 32'h0,
              32'h0, 32'h0, 32'h00000040);
     ring_sq(16'd1, 16'd1);
     wait_cqe(15'h0002);
 
-    // (6) Get Log Page LID=0x02 (SMART/Health) -> SUCCESS.
     poke_sqe(16'h440, 8'h02, 32'h0,
              32'h00006000, 32'h0, 32'h0, 32'h0,
              32'h007F0002, 32'h0, 32'h0);
@@ -333,7 +313,6 @@ initial begin
     if (host_mem[16'h1801] !== 32'h0000000A) $fatal(7, "smart log spare threshold");
     if (host_mem[16'h1824] !== 32'h00000003) $fatal(8, "smart log unsafe shutdowns");
 
-    // (7) AER (opc 0x0C) must not complete synchronously.
     poke_sqe(16'h450, 8'h0C, 32'h0,
              32'h0, 32'h0, 32'h0, 32'h0,
              32'h0, 32'h0, 32'h0);
@@ -344,7 +323,6 @@ initial begin
     #1;
     if (dbg_state !== 8'd0) $fatal(9, "AER did not return to idle");
 
-    // (8) DSM Deallocate (opc 0x09, I/O qid=1) -> SUCCESS.
     host_mem[16'h1C00] = 32'h00000000; // DW0 (unused)
     host_mem[16'h1C01] = 32'h00000008; // DW1 = NLB (non-zero -> disk invalidate path)
     host_mem[16'h1C02] = 32'h00000000; // DW2 = SLBA lo
@@ -357,7 +335,6 @@ initial begin
     #1;
     if (dbg_state !== 8'd0) $fatal(10, "DSM did not return to idle");
 
-    // Responder must return to S_IDLE (8'd0) after the flow.
     repeat (8) @(posedge clk);
     #1;
     if (dbg_state !== 8'd0) $fatal(3, "responder did not return to idle");
@@ -374,7 +351,6 @@ endmodule
 `
 }
 
-// TestNVMeAdminBehaviorScenarios drives a DMA-backed admin/I-O flow through Verilator.
 func TestNVMeAdminBehaviorScenarios(t *testing.T) {
 	if _, err := exec.LookPath("verilator"); err != nil {
 		t.Skip("verilator not installed")

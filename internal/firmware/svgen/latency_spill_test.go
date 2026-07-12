@@ -5,7 +5,6 @@ import (
 	"testing"
 )
 
-// TestLatencySpillBufferNoDrop exercises the BAR0 latency buffer + overflow spill FIFO under saturation.
 func TestLatencySpillBufferNoDrop(t *testing.T) {
 	if _, err := exec.LookPath("verilator"); err != nil {
 		t.Skip("verilator not installed")
@@ -16,12 +15,9 @@ func TestLatencySpillBufferNoDrop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateBarControllerSV: %v", err)
 	}
-	// block1: buffer/spill storage + spill-drain always block.
 	block1 := extractHDLBlock(t, controller, "    wire [87:0] bar0_raw_ctx;", "    wire [87:0] bar_base_ctx[7];")
-	// block2: the 16-deep circular buffer count/pointer FSM always block.
 	block2 := extractHDLThroughAlways(t, controller, "    // 16-deep circular buffer FSM:", "always @(posedge clk)")
 
-	// Wrap the extracted blocks in a self-contained module.
 	dut := "`timescale 1ns/1ps\n" + `module bar0_lat_buf(
     input            clk,
     input            device_reset,
@@ -79,7 +75,6 @@ bar0_lat_buf dut(
     .head_data_o(head_data), .buf_pop_o(buf_pop)
 );
 
-// Incrementing tag per beat: gap => drop, repeat => dup; expect strict increment.
 integer expected;
 integer pushed;
 integer popped;
@@ -95,7 +90,6 @@ end
 localparam integer ACCEPT_PERIOD = 3;
 integer cyc;
 
-// Fill n consecutive beats with consumer paused; n>16 overflows into spill.
 task automatic fill(input integer n);
     integer i;
 begin
@@ -113,7 +107,6 @@ begin
 end
 endtask
 
-// Slowly accept (one pop per ACCEPT_PERIOD cycles) until buffer and spill drain.
 task automatic drain_all;
     integer guard;
 begin
@@ -137,7 +130,6 @@ initial begin
     repeat (3) @(posedge clk);
     @(negedge clk); rst = 0;
 
-    // (1) Spill capture + drain: 17 beats, slow drain, FIFO/no-drop.
     for (iter = 0; iter < 8; iter = iter + 1) begin
         fill(17);
         #1;
@@ -149,7 +141,6 @@ initial begin
         if (!buf_empty || spill_valid) $fatal(6, "iter %0d not drained", iter);
     end
 
-    // (2) Sustained producer honoring almost_full while consumer drains slowly.
     producer_run = 1;
     for (iter = 0; iter < 1000; iter = iter + 1) begin
         @(negedge clk);

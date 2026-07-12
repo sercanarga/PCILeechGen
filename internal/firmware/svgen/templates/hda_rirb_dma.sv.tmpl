@@ -79,8 +79,6 @@ module pcileech_hda_rirb_dma(
             dma_done      <= 1'b0;
             // tvalid/tlast/tdata/tkeepdw/tuser are set per-state below; don't reset (backpressure needs held values).
 
-            // CRST falling: reset to IDLE and clear ALL latched data. Without clearing,
-            // a still-asserted dma_req_valid_r re-accepts stale data next cycle -> corrupt RIRB entries.
             if (crst_falling) begin
                 dstate          <= D_IDLE;
                 dma_req_ready   <= 1'b1;

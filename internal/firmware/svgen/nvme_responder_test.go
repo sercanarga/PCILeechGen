@@ -7,9 +7,6 @@ import (
 	"github.com/sercanarga/pcileechgen/internal/firmware/nvme"
 )
 
-// TestGenerateNVMeResponderSV_UsesPRP2ForPageCrossingAdminData verifies admin
-// data (Identify / log pages / CQE) addresses route through a PRP helper that
-// falls back to PRP2 once the first PRP page is exhausted.
 func TestGenerateNVMeResponderSV_UsesPRP2ForPageCrossingAdminData(t *testing.T) {
 	cfg := testConfig()
 
@@ -29,8 +26,6 @@ func TestGenerateNVMeResponderSV_UsesPRP2ForPageCrossingAdminData(t *testing.T) 
 	}
 }
 
-// TestGenerateNVMeResponderSV_SMARTSeedsResetCounters verifies the wear
-// counters are seeded from the donor-plausible SMART values, not zero/one.
 func TestGenerateNVMeResponderSV_SMARTSeedsResetCounters(t *testing.T) {
 	cfg := testConfig()
 
@@ -60,8 +55,6 @@ func TestGenerateNVMeResponderSV_SMARTSeedsResetCounters(t *testing.T) {
 	}
 }
 
-// TestGenerateNVMeResponderSV_NoHardcodedGigabyteStrings verifies SN/MN/FR are
-// not overridden with hardcoded literals and fall through to the donor ROM.
 func TestGenerateNVMeResponderSV_NoHardcodedGigabyteStrings(t *testing.T) {
 	cfg := testConfig()
 
@@ -84,8 +77,6 @@ func TestGenerateNVMeResponderSV_NoHardcodedGigabyteStrings(t *testing.T) {
 	}
 }
 
-// TestGenerateNVMeResponderSV_ErrorLogPage verifies the Error Information Log
-// (01h) is backed by the last-error capture registers rather than a zero stub.
 func TestGenerateNVMeResponderSV_ErrorLogPage(t *testing.T) {
 	cfg := testConfig()
 
@@ -108,9 +99,6 @@ func TestGenerateNVMeResponderSV_ErrorLogPage(t *testing.T) {
 	}
 }
 
-// TestGenerateNVMeResponderSV_FirmwareSlotLogUsesIdentifyFirmware verifies the
-// Firmware Slot log pulls the active firmware revision from the Identify
-// Controller bytes instead of a hardcoded literal.
 func TestGenerateNVMeResponderSV_FirmwareSlotLogUsesIdentifyFirmware(t *testing.T) {
 	cfg := testConfig()
 	cfg.NVMeIdentify = nvme.BuildIdentifyData(cfg.DeviceIDs, nil, &nvme.ControllerIdentity{
@@ -137,8 +125,6 @@ func TestGenerateNVMeResponderSV_FirmwareSlotLogUsesIdentifyFirmware(t *testing.
 	}
 }
 
-// TestGenerateNVMeResponderSV_QueueValidation verifies admin/I/O queue creation
-// is gated on valid ASQ/ACQ/AQA configuration and page-aligned PRP1.
 func TestGenerateNVMeResponderSV_QueueValidation(t *testing.T) {
 	cfg := testConfig()
 
@@ -161,9 +147,6 @@ func TestGenerateNVMeResponderSV_QueueValidation(t *testing.T) {
 	}
 }
 
-// TestGenerateNVMeResponderSV_HandlesIOAndFormatPath verifies the responder
-// exposes the generalized doorbell interface, admin/I/O queue bookkeeping, the
-// Format NVM clear path, and a real disk-backed read path (read-after-write).
 func TestGenerateNVMeResponderSV_HandlesIOAndFormatPath(t *testing.T) {
 	cfg := testConfig()
 
