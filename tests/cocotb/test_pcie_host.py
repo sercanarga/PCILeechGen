@@ -1,6 +1,6 @@
 import struct, cocotb
 from cocotb.clock import Clock
-from cocotb.triggers import RisingEdge, Timer
+from cocotb.triggers import RisingEdge, Timer, FallingEdge
 
 def mrd3(addr, tag=1, length=1, first_be=0xF, last_be=None, req_id=0):
     if last_be is None:
@@ -14,7 +14,9 @@ def mwr3(addr, data, tag=0, req_id=0, be=0xF):
     dw0 = (0b010 << 29) | 0b00000 << 24 | 1
     dw1 = ((req_id & 0xFFFF) << 16) | ((tag & 0xFF) << 8) | be
     dw2 = addr & 0xFFFFFFFC
-    return dw0 | (dw1 << 32) | (dw2 << 64) | ((data & 0xFFFFFFFF) << 96)
+    d = data & 0xFFFFFFFF
+    swd = ((d & 0xFF) << 24) | ((d & 0xFF00) << 8) | ((d >> 8) & 0xFF00) | ((d >> 24) & 0xFF)
+    return dw0 | (dw1 << 32) | (dw2 << 64) | (swd << 96)
 
 def iord3(addr, tag=1):
     dw0 = (0b000 << 29) | (0b00010 << 24) | 1
@@ -82,6 +84,40 @@ async def reset(dut):
     for _ in range(10): await RisingEdge(dut.clk)
     dut.rst.value = 0
     for _ in range(200): await RisingEdge(dut.clk)
+
+async def poke(dut, dw_idx, data):
+    dut.host_poke_valid.value = 1
+    dut.host_poke_addr.value = dw_idx & 0xFFFF
+    dut.host_poke_data.value = data & 0xFFFFFFFF
+    await RisingEdge(dut.clk)
+    dut.host_poke_valid.value = 0
+
+async def peek(dut, dw_idx):
+    dut.host_peek_addr.value = dw_idx & 0xFFFF
+    await RisingEdge(dut.clk)
+    await RisingEdge(dut.clk)
+    return dut.host_peek_data.value.integer
+
+async def send_write(dut, addr, data):
+    await send(dut, mwr3(addr=addr, data=data))
+    for _ in range(30): await RisingEdge(dut.clk)
+
+async def setup_admin_queues(dut, asq=0x1000, acq=0x2000, asqs=15, acqs=15):
+    await send_write(dut, 0x0024, ((acqs & 0xFFF) << 16) | (asqs & 0xFFF))
+    await send_write(dut, 0x0028, asq & 0xFFFFFFFF)
+    await send_write(dut, 0x002C, (asq >> 32) & 0xFFFFFFFF)
+    await send_write(dut, 0x0030, acq & 0xFFFFFFFF)
+    await send_write(dut, 0x0034, (acq >> 32) & 0xFFFFFFFF)
+    for _ in range(10): await RisingEdge(dut.clk)
+
+async def poke_sqe(dut, dwbase, op, nsid=0, prp1=0, cdw10=0, cdw11=0, cdw12=0):
+    await poke(dut, dwbase + 0,  0x00010000 | op)
+    await poke(dut, dwbase + 1,  nsid)
+    await poke(dut, dwbase + 6,  prp1 & 0xFFFFFFFF)
+    await poke(dut, dwbase + 7,  (prp1 >> 32) & 0xFFFFFFFF)
+    await poke(dut, dwbase + 10, cdw10)
+    await poke(dut, dwbase + 11, cdw11)
+    await poke(dut, dwbase + 12, cdw12)
 
 # --- basic read/write ---
 
@@ -279,29 +315,46 @@ async def test_msix_table_outside_range_ignored(dut):
 # --- DMA path tests ---
 
 @cocotb.test()
-async def test_dma_nvme_init_triggers_dma(dut):
-    """Enable NVMe controller, ring doorbell, observe output activity."""
+async def test_dma_loopback_sqe_fetch(dut):
     await reset(dut)
+    await setup_admin_queues(dut)
     await send(dut, mwr3(addr=0x0014, data=0x00000001))
-    for _ in range(500): await RisingEdge(dut.clk)
-    dut._log.info("controller enabled, ringing doorbell")
+    for _ in range(50): await RisingEdge(dut.clk)
     await send(dut, mwr3(addr=0x1000, data=0x00000001))
-    total_dma = 0
-    total_cpl = 0
+    beats = 0
     for _ in range(20000):
         await RisingEdge(dut.clk)
         if dut.tlps_dma_out_tvalid.value == 1:
-            total_dma += 1
-        if dut.tlps_out_tvalid.value == 1:
-            total_cpl += 1
-    dut._log.info(f"after doorbell: dma_beats={total_dma} cpl_beats={total_cpl}")
+            beats += 1
+    dut._log.info(f"dma beats after doorbell (empty SQE): {beats}")
 
 @cocotb.test()
-async def test_dma_write_data_on_tlps_dma_out(dut):
-    """After NVMe admin Identify, check DMA output carries write data."""
+async def test_nvme_identify_full_dma(dut):
     await reset(dut)
+    await setup_admin_queues(dut, asq=0x1000, acq=0x2000)
+    await poke_sqe(dut, 0x400, op=0x06, prp1=0x5000, cdw10=0x00000001)
     await send(dut, mwr3(addr=0x0014, data=0x00000001))
-    for _ in range(100): await RisingEdge(dut.clk)
+    for _ in range(50): await RisingEdge(dut.clk)
     await send(dut, mwr3(addr=0x1000, data=0x00000001))
-    dma_beats = await recv_dma_all(dut, timeout=20000)
-    dut._log.info(f"DMA beats: {len(dma_beats)}")
+    for _ in range(60000): await RisingEdge(dut.clk)
+    nonzero = 0
+    for i in range(0, 1024, 64):
+        v = await peek(dut, 0x1400 + i)
+        if v != 0: nonzero += 1
+    cqe_dw3 = await peek(dut, 0x803)
+    dut._log.info(f"identify non-zero dwords @0x5000: {nonzero}, cqe dw3={hex(cqe_dw3)}")
+
+@cocotb.test()
+async def test_nvme_cc_en_gate_blocks_doorbell(dut):
+    await reset(dut)
+    await setup_admin_queues(dut, asq=0x1000, acq=0x2000)
+    await poke_sqe(dut, 0x400, op=0x06, prp1=0x5000, cdw10=0x00000001)
+    await send(dut, mwr3(addr=0x1000, data=0x00000001))
+    beats = 0
+    for _ in range(3000):
+        await RisingEdge(dut.clk)
+        if dut.tlps_dma_out_tvalid.value == 1:
+            beats += 1
+    dut._log.info(f"dma beats before CC.EN: {beats}")
+
+

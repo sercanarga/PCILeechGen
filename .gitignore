@@ -45,3 +45,5 @@ Thumbs.db
 tests/cocotb/out/
 tests/cocotb/out_*/
 tests/cocotb/sim_build/
+results.xml
+__pycache__/

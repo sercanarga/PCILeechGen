@@ -40,15 +40,21 @@ module tb_top;
     reg [31:0] host_mem [0:65535];
     integer i;
 
+    reg         host_poke_valid = 1'b0;
+    reg  [15:0] host_poke_addr = 16'h0;
+    reg  [31:0] host_poke_data = 32'h0;
+    reg  [15:0] host_peek_addr = 16'h0;
+    wire [31:0] host_peek_data = host_mem[host_peek_addr];
+
     IfAXIS128 tlps_in_if();
     IfAXIS128 tlps_out_if();
     IfAXIS128 tlps_dma_out_if();
 
-    assign tlps_in_if.tdata = tlps_in_tdata;
-    assign tlps_in_if.tkeepdw = tlps_in_tkeepdw;
-    assign tlps_in_if.tvalid = tlps_in_tvalid;
-    assign tlps_in_if.tlast = tlps_in_tlast;
-    assign tlps_in_if.tuser = tlps_in_tuser;
+    assign tlps_in_if.tdata   = cpld_in_tvalid ? cpld_in_tdata   : tlps_in_tdata;
+    assign tlps_in_if.tkeepdw = cpld_in_tvalid ? cpld_in_tkeepdw : tlps_in_tkeepdw;
+    assign tlps_in_if.tvalid  = cpld_in_tvalid ? 1'b1             : tlps_in_tvalid;
+    assign tlps_in_if.tlast   = cpld_in_tvalid ? cpld_in_tlast    : tlps_in_tlast;
+    assign tlps_in_if.tuser   = cpld_in_tvalid ? cpld_in_tuser    : tlps_in_tuser;
 
     assign tlps_out_tdata = tlps_out_if.tdata;
     assign tlps_out_tkeepdw = tlps_out_if.tkeepdw;
@@ -65,6 +71,76 @@ module tb_top;
 
     assign tlps_out_if.tready = 1'b1;
     assign tlps_dma_out_if.tready = 1'b1;
+
+    function [31:0] swap32(input [31:0] v);
+        swap32 = {v[7:0], v[15:8], v[23:16], v[31:24]};
+    endfunction
+
+    reg [127:0] cpld_in_tdata = 0;
+    reg [3:0]   cpld_in_tkeepdw = 0;
+    reg         cpld_in_tvalid = 0;
+    reg         cpld_in_tlast = 0;
+    reg [8:0]   cpld_in_tuser = 0;
+
+    localparam [1:0] LB_IDLE = 2'd0, LB_MWR_DATA = 2'd1;
+    reg [1:0]  lb_state = LB_IDLE;
+    reg [63:0] mwr_addr_q;
+
+    wire        dma_first = tlps_dma_out_if.tvalid && tlps_dma_out_if.tuser[0];
+    wire [2:0]  dma_fmt   = tlps_dma_out_if.tdata[31:29];
+
+    always @(posedge clk) begin
+        if (!rst && host_poke_valid)
+            host_mem[host_poke_addr] <= host_poke_data;
+    end
+
+    always @(posedge clk) begin
+        if (rst) begin
+            lb_state      <= LB_IDLE;
+            cpld_in_tvalid<= 1'b0;
+            cpld_in_tlast <= 1'b0;
+            cpld_in_tuser <= 9'h0;
+            cpld_in_tkeepdw <= 4'h0;
+            cpld_in_tdata  <= 128'h0;
+        end else begin
+            cpld_in_tvalid <= 1'b0;
+            cpld_in_tlast  <= 1'b0;
+            case (lb_state)
+                LB_IDLE: begin
+                    if (dma_first) begin
+                        if (dma_fmt == 3'b001) begin
+                            cpld_in_tdata[31:0]   <= (3'b010 << 29) | (5'b01010 << 24) | 10'd1;
+                            cpld_in_tdata[63:32]  <= (16'h0000 << 16) | (3'b000 << 13) | 12'd4;
+                            cpld_in_tdata[95:64]  <= {tlps_dma_out_if.tdata[63:48],
+                                                       tlps_dma_out_if.tdata[79:72],
+                                                       tlps_dma_out_if.tdata[102:96]};
+                            cpld_in_tdata[127:96] <= swap32(host_mem[tlps_dma_out_if.tdata[111:98]]);
+                            cpld_in_tuser   <= 9'h001;
+                            cpld_in_tlast   <= 1'b1;
+                            cpld_in_tkeepdw <= 4'hF;
+                            cpld_in_tvalid  <= 1'b1;
+                        end else if (dma_fmt == 3'b011) begin
+                            mwr_addr_q <= {tlps_dma_out_if.tdata[95:64],
+                                           tlps_dma_out_if.tdata[127:96] & 32'hFFFF_FFFC};
+                            lb_state <= LB_MWR_DATA;
+                        end
+                    end
+                end
+                LB_MWR_DATA: begin
+                    if (tlps_dma_out_if.tvalid) begin
+                        host_mem[mwr_addr_q[15:2]] <= swap32(tlps_dma_out_if.tdata[127:96]);
+                        lb_state <= LB_IDLE;
+                    end
+                end
+                default: lb_state <= LB_IDLE;
+            endcase
+        end
+    end
+
+    initial begin
+        for (i = 0; i < 65536; i = i + 1)
+            host_mem[i] = 32'h0;
+    end
 
     pcileech_tlps128_bar_controller i_bar(
         .rst(rst), .clk(clk), .bar_en(bar_en), .pcie_id(pcie_id),
