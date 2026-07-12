@@ -48,5 +48,8 @@ tests/cocotb/out_*/
 tests/cocotb/sim_build/
 results.xml
 __pycache__/
+*.pyc
+.pytest_cache/
+.coverage*
 config_space_init.hex
 docs/
