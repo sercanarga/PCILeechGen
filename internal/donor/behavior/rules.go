@@ -488,7 +488,7 @@ func (e *Engine) Advance(cycles uint32) error {
 	}
 	exactDeadline := false
 	remaining := e.pending[:0]
-	var due []pendingEvent
+	due := make([]pendingEvent, 0, len(e.pending))
 	for _, pending := range e.pending {
 		if pending.remaining > cycles {
 			pending.remaining -= cycles

@@ -203,7 +203,7 @@ func deriveMaskFromAddr(addr uint32) uint32 {
 		return 0xFFFFF000 // 4KB fallback for unaligned/zero
 	}
 	size := a & (^a + 1)
-	return uint32(^(size - 1))
+	return ^(size - 1)
 }
 
 func clampBARsToFPGA(cs *pci.ConfigSpace, om *overlay.Map, ctx *ScrubContext) {

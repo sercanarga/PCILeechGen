@@ -171,7 +171,3 @@ func captureLiveTrace(target *TraceTarget, bdf string, duration time.Duration) (
 	return result, nil
 }
 
-func parseMMIOTraceLine(line string) (AccessRecord, bool) {
-	rec, isMMIO, err := parseRawMMIOTraceLine(line)
-	return rec, isMMIO && err == nil
-}

@@ -162,19 +162,6 @@ func parseRawMMIOTraceLine(line string) (AccessRecord, bool, error) {
 	return rec, true, nil
 }
 
-func parseTextTraceLine(line string, barBase uint64) (AccessRecord, bool) {
-	rec, isMMIO, err := parseRawMMIOTraceLine(line)
-	if err != nil || !isMMIO || rec.Address < barBase {
-		return AccessRecord{}, false
-	}
-	offset := rec.Address - barBase
-	if offset > uint64(^uint32(0)) {
-		return AccessRecord{}, false
-	}
-	rec.Offset = uint32(offset)
-	return rec, true
-}
-
 func traceAddressValueFields(fields []string) (string, string, bool) {
 	if len(fields) >= 5 && hasHexPrefix(fields[3]) {
 		return fields[3], fields[4], true

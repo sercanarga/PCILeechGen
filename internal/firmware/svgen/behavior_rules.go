@@ -317,12 +317,3 @@ func scaleDelayCycles(delay uint32, sourceClockHz uint64) (uint32, error) {
 	return uint32(scaled), nil
 }
 
-func byteEnableMask(mask uint32) uint8 {
-	var enables uint8
-	for byteIndex := range 4 {
-		if mask&(0xff<<uint(byteIndex*8)) != 0 {
-			enables |= 1 << uint(byteIndex)
-		}
-	}
-	return enables
-}
