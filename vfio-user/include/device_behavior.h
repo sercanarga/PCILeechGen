@@ -8,8 +8,17 @@
 #include "device_model.h"
 
 
+struct behavior_host_ops {
+    void *opaque;
+    int (*dma_read)(void *opaque, uint64_t address, void *data, size_t length);
+    int (*dma_write)(void *opaque, uint64_t address, const void *data, size_t length);
+    int (*irq)(void *opaque, unsigned vector);
+};
+
+
 struct device_behavior {
     void *state;
+    int (*bind_host)(void *state, const struct behavior_host_ops *ops);
     int (*reset)(void *state);
     ssize_t (*read)(void *state, unsigned bir, uint64_t offset, void *buf, size_t len);
     ssize_t (*write)(void *state, unsigned bir, uint64_t offset, const void *buf, size_t len);

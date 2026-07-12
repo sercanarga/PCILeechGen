@@ -4,7 +4,9 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <unistd.h>
 
 #include <vfio-user/libvfio-user.h>
@@ -79,6 +81,62 @@ static void dma_unregister(vfu_ctx_t *context, vfu_dma_info_t *info)
 }
 
 
+static int dma_transfer(void *opaque, uint64_t address, void *data, size_t length, bool write)
+{
+    struct server_state *state = opaque;
+    uint8_t *cursor = data;
+    dma_sg_t *sg = malloc(dma_sg_size());
+
+    if (sg == NULL) {
+        return -1;
+    }
+
+    while (length > 0) {
+        size_t chunk = 4096 - (size_t)(address & 0xfff);
+        int protection = write ? PROT_WRITE : PROT_READ;
+
+        if (chunk > length) {
+            chunk = length;
+        }
+        if (vfu_addr_to_sgl(state->context, (vfu_dma_addr_t)address,
+                            chunk, sg, 1, protection) != 1) {
+            free(sg);
+            return -1;
+        }
+        if ((write ? vfu_sgl_write(state->context, sg, 1, cursor, 0)
+                   : vfu_sgl_read(state->context, sg, 1, cursor, 0)) < 0) {
+            free(sg);
+            return -1;
+        }
+        address += chunk;
+        cursor += chunk;
+        length -= chunk;
+    }
+    free(sg);
+    return 0;
+}
+
+
+static int host_dma_read(void *opaque, uint64_t address, void *data, size_t length)
+{
+    return dma_transfer(opaque, address, data, length, false);
+}
+
+
+static int host_dma_write(void *opaque, uint64_t address, const void *data, size_t length)
+{
+    return dma_transfer(opaque, address, (void *)data, length, true);
+}
+
+
+static int host_irq(void *opaque, unsigned vector)
+{
+    struct server_state *state = opaque;
+
+    return vfu_irq_trigger(state->context, vector);
+}
+
+
 static int setup_regions(struct server_state *state)
 {
     size_t index;
@@ -128,6 +186,16 @@ int vfio_device_run(const struct device_model *model,
         goto done;
     }
     memcpy(vfu_pci_get_config_space(state.context), model->config_space, model->config_space_size);
+    struct behavior_host_ops host = {
+        .opaque = &state,
+        .dma_read = host_dma_read,
+        .dma_write = host_dma_write,
+        .irq = host_irq,
+    };
+    if (behavior->bind_host == NULL || behavior->bind_host(behavior->state, &host) < 0) {
+        errno = EINVAL;
+        goto done;
+    }
     if (setup_regions(&state) < 0 ||
         vfu_setup_device_reset_cb(state.context, device_reset) < 0 ||
         vfu_setup_device_dma(state.context, LIBVFIO_USER_MAX_DMA_REGIONS,

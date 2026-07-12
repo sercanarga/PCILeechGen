@@ -49,6 +49,14 @@ static int static_reset(void *opaque)
 }
 
 
+static int static_bind_host(void *opaque, const struct behavior_host_ops *ops)
+{
+    (void)opaque;
+    (void)ops;
+    return 0;
+}
+
+
 static ssize_t static_access(struct static_state *state, unsigned bir, uint64_t offset,
                              void *buf, size_t len, int write)
 {
@@ -139,6 +147,7 @@ int behavior_static_create(const struct device_model *model,
     }
     *out = (struct device_behavior){
         .state = state,
+        .bind_host = static_bind_host,
         .reset = static_reset,
         .read = static_read,
         .write = static_write,
