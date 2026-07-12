@@ -531,9 +531,8 @@ async def test_msix_pba_pending_when_masked(dut):
     assert not seen, "MSI-X MWr leaked to tlps_dma_out for a masked vector"
 
 
-# --- additional NVMe admin command DMA tests ---
-
 async def _post_admin_cmd(dut, op, nsid=0, prp1=0, cdw10=0, cdw11=0, cdw12=0, wait=60000):
+    await reset(dut)
     await setup_admin_queues(dut)
     await poke_sqe(dut, 0x400, op=op, nsid=nsid, prp1=prp1, cdw10=cdw10, cdw11=cdw11, cdw12=cdw12)
     await send(dut, mwr3(addr=0x0014, data=0x00000001))
@@ -541,6 +540,27 @@ async def _post_admin_cmd(dut, op, nsid=0, prp1=0, cdw10=0, cdw11=0, cdw12=0, wa
     await send(dut, mwr3(addr=0x1000, data=0x00000001))
     for _ in range(wait): await RisingEdge(dut.clk)
     return await peek(dut, 0x803)
+
+@cocotb.test()
+async def test_nvme_get_features_invalid(dut):
+    cqe_dw3 = await _post_admin_cmd(dut, op=0x0A, cdw10=0x000000FF)
+    status = (cqe_dw3 >> 17) & 0x7FFF
+    dut._log.info(f"get features invalid: status={status:#x}")
+    assert cqe_dw3 != 0, "no CQE posted"
+    assert status == 0x0002, f"expected INVALID_FIELD, got {status:#x}"
+
+@cocotb.test()
+async def test_nvme_get_log_page_smart(dut):
+    cqe_dw3 = await _post_admin_cmd(dut, op=0x02, prp1=0x6000, cdw10=0x007F0002)
+    status = (cqe_dw3 >> 17) & 0x7FFF
+    spare = await peek(dut, 0x1800)
+    spare_thr = await peek(dut, 0x1801)
+    unsafe = await peek(dut, 0x1824)
+    dut._log.info(f"smart: status={status:#x} spare_dw0={spare:#x} thr={spare_thr:#x} unsafe={unsafe:#x}")
+    assert status == 0, f"smart log failed: {status:#x}"
+    assert (spare >> 24) & 0xFF == 0x64, f"spare byte wrong: {spare:#x}"
+    assert spare_thr == 0x0000000A, f"spare threshold wrong: {spare_thr:#x}"
+    assert unsafe == 0x00000003, f"unsafe shutdowns wrong: {unsafe:#x}"
 
 @cocotb.test()
 async def test_nvme_create_io_cq(dut):
@@ -562,3 +582,22 @@ async def test_nvme_aer_async(dut):
     cqe_dw3 = await peek(dut, 0x803)
     dut._log.info(f"aer: cqe_dw3={cqe_dw3:#x} (async, should be 0)")
     assert cqe_dw3 == 0, "AER posted a synchronous CQE"
+
+@cocotb.test()
+async def test_nvme_get_features_invalid_fid(dut):
+    cqe_dw3 = await _post_admin_cmd(dut, op=0x0A, cdw10=0x000000FF)
+    status = (cqe_dw3 >> 17) & 0x7FFF
+    dut._log.info(f"get features FID=0xFF: cqe_dw3={cqe_dw3:#x} status={status:#x}")
+    assert cqe_dw3 != 0, "no CQE posted for Get Features"
+    assert status == 0x0002, f"get features status != INVALID_FIELD: {status:#x}"
+
+@cocotb.test()
+async def test_nvme_get_log_page_smart(dut):
+    cqe_dw3 = await _post_admin_cmd(dut, op=0x02, prp1=0x6000, cdw10=0x007F0002)
+    status = (cqe_dw3 >> 17) & 0x7FFF
+    smart_dw0 = await peek(dut, 0x1800)
+    smart_dw1 = await peek(dut, 0x1801)
+    dut._log.info(f"smart: cqe_dw3={cqe_dw3:#x} status={status:#x} dw0={smart_dw0:#x} dw1={smart_dw1:#x}")
+    assert cqe_dw3 != 0, "no CQE posted for Get Log Page"
+    assert status == 0, f"smart status != SUCCESS: {status:#x}"
+    assert smart_dw0 != 0, "SMART data not written to host_mem[0x1800]"
