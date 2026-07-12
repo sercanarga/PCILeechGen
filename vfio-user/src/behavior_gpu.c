@@ -7,6 +7,7 @@
 
 struct gpu_state {
     struct device_behavior registers;
+    const struct device_model *model;
     uint64_t timer;
     uint32_t fence;
 };
@@ -41,6 +42,11 @@ static ssize_t gpu_read(void *opaque, unsigned bir, uint64_t offset,
     }
     if (bir == 0 && length == 4 && offset == 0x1004) {
         memcpy(data, &state->fence, sizeof(state->fence));
+        return 4;
+    }
+    if (bir == 0 && length == 4 && offset == 0x1800) {
+        uint32_t value = ((uint32_t)state->model->device_id << 16) | state->model->vendor_id;
+        memcpy(data, &value, sizeof(value));
         return 4;
     }
     return state->registers.read(state->registers.state, bir, offset, data, length);
@@ -80,6 +86,7 @@ int behavior_gpu_create(const struct device_model *model,
         free(state);
         return -1;
     }
+    state->model = model;
     *out = (struct device_behavior){
         .state = state, .bind_host = gpu_bind, .reset = gpu_reset,
         .read = gpu_read, .write = gpu_write, .destroy = gpu_destroy,

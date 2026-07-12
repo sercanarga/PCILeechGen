@@ -51,7 +51,7 @@ func gpuProfile() *DeviceProfile {
 			// NV_PMC_ENABLE - engine enable bitmask
 			{Offset: 0x200, Width: 4, Name: "PMC_ENABLE", Reset: 0xFFFFFFFF, RWMask: 0xFFFFFFFF},
 			// NV_PBUS_PCI_NV_0 - mirrors VID/DID inside BAR
-			{Offset: 0x1800, Width: 4, Name: "PBUS_PCI_NV_0", Reset: 0x00000000, RWMask: 0x00000000},
+			{Offset: 0x1800, Width: 4, Name: "PBUS_PCI_NV_0", Reset: 0x1B0610DE, RWMask: 0x00000000},
 			// NV_PBUS_PCI_NV_1 - mirrors config command/status
 			{Offset: 0x1804, Width: 4, Name: "PBUS_PCI_NV_1", Reset: 0x00100006, RWMask: 0x00000000},
 			// NV_PTIMER_TIME_0 - low 32 bits of GPU timer
