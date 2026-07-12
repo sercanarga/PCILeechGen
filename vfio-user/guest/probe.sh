@@ -31,6 +31,29 @@ driver=none
 if [ -L "$found/driver" ]; then
     driver="$(basename "$(readlink "$found/driver")")"
 fi
-bars="$(grep -vc '^0* 0* 0*$' "$found/resource" || true)"
-printf '{"event":"result","case":"%s","status":"pass","bdf":"%s","vendor":"%s","device":"%s","class":"%s","driver":"%s","bars":%s}\n' \
-    "$case_name" "$bdf" "$vendor" "$device" "$class" "$driver" "$bars"
+bars=0
+if [ -f "$found/resource" ]; then
+    bars="$(grep -vc '^0* 0* 0*$' "$found/resource")"
+fi
+status=pass
+detail=driver-bound
+case "$case_name" in
+    nvme|sata|xhci)
+        if [ "$driver" = none ]; then
+            status=fail
+            detail=required-driver-not-bound
+        fi
+        ;;
+    audio|ethernet|wifi|gpu|thunderbolt)
+        if [ "$driver" = none ]; then
+            status=skip
+            detail=optional-driver-not-bound
+        fi
+        ;;
+    generic|multibar)
+        detail=enumeration
+        ;;
+esac
+printf '{"event":"result","case":"%s","status":"%s","bdf":"%s","vendor":"%s","device":"%s","class":"%s","driver":"%s","bars":%s,"detail":"%s"}\n' \
+    "$case_name" "$status" "$bdf" "$vendor" "$device" "$class" "$driver" "$bars" "$detail"
+[ "$status" != fail ]

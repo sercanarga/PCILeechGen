@@ -19,7 +19,9 @@ case "$case_name" in
 esac
 
 if [ -n "$module" ]; then
-    /sbin/modprobe "$module" 2>/dev/null || true
+    if ! /sbin/modprobe "$module" 2>/dev/null; then
+        printf 'module-load-failed:%s\n' "$module" >&2
+    fi
 fi
 sleep 2
 /bin/vfio-probe
