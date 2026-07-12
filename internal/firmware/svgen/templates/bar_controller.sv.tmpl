@@ -11,31 +11,27 @@
 `default_nettype none
 
 module pcileech_tlps128_bar_controller(
-    input                   rst,
-    input                   clk,
-    input                   bar_en,
-    input [15:0]            pcie_id,
-    input [15:0]            cfg_command,
-    input [1:0]             cfg_power_state,
-    input                   cfg_flr_in_process,
-    input                   cfg_to_turnoff,
-    input                   cfg_link_up,
-    input                   cfg_msi_enable,
-    input                   cfg_msix_enable,
-    input                   cfg_msix_function_mask,
-    output                  flash_csn,
-    output                  flash_sdi_dq0,
-    input                   flash_sdo_dq1,
-    output                  flash_wpn_dq2,
-    output                  flash_hldn_dq3,
+    input  wire             rst,
+    input  wire             clk,
+    input  wire             bar_en,
+    input  wire [15:0]      pcie_id,
+    input  wire [15:0]      cfg_command,
+    input  wire [1:0]       cfg_power_state,
+    input  wire             cfg_flr_in_process,
+    input  wire             cfg_to_turnoff,
+    input  wire             cfg_link_up,
+    input  wire             cfg_msi_enable,
+    input  wire             cfg_msix_enable,
+    input  wire             cfg_msix_function_mask,
+    output wire             flash_csn,
+    output wire             flash_sdi_dq0,
+    input  wire             flash_sdo_dq1,
+    output wire             flash_wpn_dq2,
+    output wire             flash_hldn_dq3,
     IfAXIS128.sink_lite     tlps_in,
     IfAXIS128.source        tlps_out,
     IfAXIS128.source        tlps_dma_out,
-    // HDA MSI interrupt - aggregated request from all BARs.
-    // A single-cycle pulse that gets OR'd into cfg_interrupt by the
-    // cfg module (pcileech_pcie_cfg_a7). Unused for non-HDA devices -
-    // synthesis prunes it.
-    output                  intr_req
+    output wire             intr_req
 );
     wire cfg_mse = cfg_command[1];
     wire cfg_bme = cfg_command[2];
