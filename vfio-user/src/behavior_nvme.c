@@ -28,6 +28,7 @@ struct nvme_sqe {
     uint16_t cid;
     uint32_t nsid;
     uint64_t reserved;
+    uint64_t mptr;
     uint64_t prp1;
     uint64_t prp2;
     uint32_t cdw10;
@@ -111,6 +112,7 @@ static void identify_controller(const struct nvme_state *state, uint8_t data[409
     memcpy(data + 0x04, "PCILEECHGEN000000001", 20);
     memcpy(data + 0x18, "PCILeechGen NVMe Controller", 27);
     memcpy(data + 0x40, "1.0     ", 8);
+    memcpy(data + 0x300, "nqn.2014.08.org.nvmexpress:pcileechgen", 38);
     data[0x4d] = 3;
     put32(data, 0x50, 0x00010400);
     data[0x6f] = 1;
@@ -301,6 +303,14 @@ static ssize_t nvme_write(void *opaque, unsigned bir, uint64_t offset,
     uint32_t csts = 0;
 
     memcpy(&cc, buf, sizeof(cc));
+
+    if ((cc & 1) == 0) {
+        state->sq_head = 0;
+        state->cq_tail = 0;
+        state->cq_phase = 1;
+        state->pending_tail = 0;
+        state->admin_pending = false;
+    }
 
     if ((cc & 1) != 0) {
         csts |= 1;

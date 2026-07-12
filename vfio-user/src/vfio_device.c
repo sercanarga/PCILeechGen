@@ -69,27 +69,6 @@ static int device_reset(vfu_ctx_t *context, vfu_reset_type_t type)
 }
 
 
-static ssize_t config_access(vfu_ctx_t *context, char *buf, size_t count,
-                             loff_t offset, bool is_write)
-{
-    struct server_state *state = vfu_get_private(context);
-
-    if (offset < 0 || (uint64_t)offset > state->model->config_space_size ||
-        count > state->model->config_space_size - (size_t)offset) {
-        errno = EINVAL;
-        return -1;
-    }
-    uint8_t *config = (uint8_t *)vfu_pci_get_config_space(context);
-
-    if (is_write) {
-        memcpy(config + offset, buf, count);
-    } else {
-        memcpy(buf, config + offset, count);
-    }
-    return (ssize_t)count;
-}
-
-
 static void dma_register(vfu_ctx_t *context, vfu_dma_info_t *info)
 {
     (void)context;
@@ -202,7 +181,7 @@ static int register_standard_capabilities(vfu_ctx_t *context,
         uint8_t id = source[offset];
 
         if (id == PCI_CAP_ID_PM || id == PCI_CAP_ID_MSI ||
-            id == PCI_CAP_ID_EXP || id == PCI_CAP_ID_MSIX) {
+            id == PCI_CAP_ID_MSIX) {
             if (vfu_pci_add_capability(context, offset, 0,
                                        (void *)(source + offset)) < 0) {
                 return -1;
@@ -269,7 +248,7 @@ int vfio_device_run(const struct device_model *model,
         goto done;
     }
     if (vfu_setup_region(state.context, VFU_PCI_DEV_CFG_REGION_IDX,
-                         model->config_space_size, config_access,
+                         model->config_space_size, NULL,
                          VFU_REGION_FLAG_RW,
                          NULL, 0, -1, 0) < 0) {
         goto done;

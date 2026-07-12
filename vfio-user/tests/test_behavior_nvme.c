@@ -27,6 +27,7 @@ struct nvme_sqe {
     uint16_t cid;
     uint32_t nsid;
     uint64_t reserved;
+    uint64_t mptr;
     uint64_t prp1;
     uint64_t prp2;
     uint32_t cdw10;
