@@ -1,16 +1,19 @@
 CC ?= gcc
-CFLAGS = -Wall -O2 -g -I/usr/local/include
-LDFLAGS = -L/usr/local/lib -lvfio-user -ljson-c -lpthread
+.DEFAULT_GOAL := all
+CFLAGS = -D_GNU_SOURCE -std=c11 -Wall -Wextra -Werror -O2 -g -Iinclude -I/usr/local/include
+LDFLAGS = -L/usr/local/lib -lvfio-user $$(pkg-config --libs json-c openssl) -lpthread
 UNAME_S := $(shell uname -s)
 SANITIZE :=
 ifeq ($(UNAME_S),Linux)
 SANITIZE := -fsanitize=address,undefined
 endif
 
-TARGET = nvme_vfio_server
-SRC = nvme_vfio_server.c
+TARGET = build/vfio-device
+SRC = src/main.c src/vfio_device.c src/device_model.c src/behavior_static.c
 
-.PHONY: test test-matrix test-device-model test-behavior-static
+.PHONY: all image test test-matrix test-device-model test-behavior-static test-server
+
+all: $(TARGET)
 
 test: test-matrix test-device-model test-behavior-static
 
@@ -36,18 +39,21 @@ build/test_behavior_static: tests/test_behavior_static.c src/behavior_static.c i
 test-behavior-static: build/test_behavior_static
 	./build/test_behavior_static
 
+image:
+	docker build -t pcileech-vfio-user -f Dockerfile ..
+
+test-server: image
+	docker run --rm \
+		-e VFIO_DEVICE_BIN=/build/build/vfio-device \
+		-e VFIO_ARTIFACTS=/artifacts/generic \
+		pcileech-vfio-user python3 -m unittest tests/test_server_cli.py -v
+
 $(TARGET): $(SRC)
+	mkdir -p build
 	$(CC) $(CFLAGS) -o $(TARGET) $(SRC) $(LDFLAGS)
 
 clean:
-	rm -f $(TARGET)
+	rm -rf build
 
 run: $(TARGET)
-	./$(TARGET) /tmp/nvme.sock & sleep 1 && \
-	qemu-system-x86_64 \
-		-M q35 -m 256 -kernel /boot/vmlinuz \
-		-initrd /guest/initramfs.cpio.gz \
-		-append "console=ttyS0 quiet" \
-		-nographic -no-reboot \
-		-device vfio-user-pci,socket=/tmp/nvme.sock \
-		-serial mon:stdio
+	./$(TARGET) --artifacts ../tests/cocotb/out_generic --socket /tmp/pcileech-vfio.sock
