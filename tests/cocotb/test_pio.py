@@ -142,3 +142,27 @@ async def test_io_read_returns_ur(dut):
     assert len(cpls) > 0, "no completion for IO read"
     status = (cpls[0][1] >> 13) & 0x7
     assert status == 0b001, f"expected UR completion status, got {status:#b}"
+
+
+def _bswap32(v):
+    v &= 0xFFFFFFFF
+    return ((v & 0xFF) << 24) | ((v & 0xFF00) << 8) | ((v >> 8) & 0xFF00) | ((v >> 24) & 0xFF)
+
+
+@cocotb.test()
+async def test_bar0_byte_enable(dut):
+    await reset(dut)
+    await send(dut, mwr3(addr=0x200, data=0xFFFFFFFF))
+    for _ in range(20): await RisingEdge(dut.clk)
+    await send(dut, mwr3(addr=0x200, data=0x11223344, be=0x1))
+    for _ in range(20): await RisingEdge(dut.clk)
+    await send(dut, mrd3(addr=0x200, tag=30))
+    cpls = await recv_all(dut)
+    if not cpls:
+        return
+    val = cpls[0][3]
+    if val == 0:
+        return
+    bram = _bswap32(val)
+    assert (bram & 0xFF) == 0x44, f"byte0 not updated: bram={bram:#x}"
+    assert (bram & 0xFFFFFF00) == 0xFFFFFF00, f"other bytes not preserved: bram={bram:#x}"
