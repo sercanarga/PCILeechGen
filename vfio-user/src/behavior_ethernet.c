@@ -89,7 +89,10 @@ static ssize_t ethernet_write(void *opaque, unsigned bir, uint64_t offset,
         if (offset == 0x00c0) { state->icr &= ~value; return 4; }
         if (offset == 0x00d0) { state->ims = value; return 4; }
         *reg32(state, offset) = value;
-        if (offset == 0x3818 && state->host.dma_read != NULL && state->host.dma_write != NULL && state->tdlen >= 16) {
+        if (offset == 0x3818 && state->host.dma_read != NULL && state->host.dma_write != NULL &&
+            state->tdlen >= 16 && (state->tdlen % 16) == 0 &&
+            state->rdlen >= 16 && (state->rdlen % 16) == 0 &&
+            state->tdh < state->tdlen / 16 && state->rdt < state->rdlen / 16) {
             uint8_t tx[16]; uint64_t desc = state->tdbal + (uint64_t)state->tdh * 16;
             if (state->host.dma_read(state->host.opaque, desc, tx, sizeof(tx)) == 0) {
                 uint64_t buf; uint16_t len; memcpy(&buf, tx, 8); memcpy(&len, tx + 8, 2);
@@ -105,7 +108,7 @@ static ssize_t ethernet_write(void *opaque, unsigned bir, uint64_t offset,
                     free(payload);
                 }
                 if (state->host.dma_write(state->host.opaque, rx_desc, tx, sizeof(tx)) == 0) {
-                    state->rdt = (state->rdt + 1) % (state->rdlen / 16 ? state->rdlen / 16 : 1);
+                    state->rdt = (state->rdt + 1) % (state->rdlen / 16);
                     state->icr |= 1u << 7;
                     if (state->ims & (1u << 7) && state->host.irq) state->host.irq(state->host.opaque, 0);
                 }
