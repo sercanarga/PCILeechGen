@@ -16,7 +16,7 @@ RUN git clone --depth 1 https://github.com/nutanix/libvfio-user.git /tmp/libvfio
     && ninja -C /tmp/libvfio-user/build install \
     && rm -rf /tmp/libvfio-user
 
-RUN pip3 install --no-cache-dir "meson>=1.8,<1.9" \
+RUN pip3 install --no-cache-dir "meson>=1.8,<1.9" tomli \
     && curl -fsSL "https://download.qemu.org/qemu-${QEMU_VERSION}.tar.xz" \
        | tar -xJ -C /tmp \
     && case "$(dpkg --print-architecture)" in \

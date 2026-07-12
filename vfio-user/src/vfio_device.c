@@ -206,6 +206,10 @@ int vfio_device_run(const struct device_model *model,
         vfu_setup_device_nr_irqs(state.context, VFU_DEV_MSI_IRQ, model->msi_vectors) < 0) {
         goto done;
     }
+    if (model->config_space_size > 0x3d && model->config_space[0x3d] != 0 &&
+        vfu_setup_device_nr_irqs(state.context, VFU_DEV_INTX_IRQ, 1) < 0) {
+        goto done;
+    }
     if (model->msix_vectors > 0 &&
         vfu_setup_device_nr_irqs(state.context, VFU_DEV_MSIX_IRQ, model->msix_vectors) < 0) {
         goto done;
