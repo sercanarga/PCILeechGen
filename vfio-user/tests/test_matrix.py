@@ -80,6 +80,12 @@ class MatrixTests(unittest.TestCase):
         self.assertIn("--from-json", command)
         self.assertEqual(command[command.index("--board") + 1], "ac701_ft601")
 
+    def test_nvme_qemu_requires_kvm(self):
+        matrix = load_matrix()
+
+        self.assertTrue(matrix.qemu_requires_kvm(matrix.CASES["nvme"], Path("/missing/kvm")))
+        self.assertFalse(matrix.qemu_requires_kvm(matrix.CASES["generic"], Path("/missing/kvm")))
+
 
 if __name__ == "__main__":
     unittest.main()

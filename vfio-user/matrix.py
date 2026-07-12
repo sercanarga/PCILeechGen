@@ -141,6 +141,10 @@ def stop_server(process: subprocess.Popen, output) -> None:
     output.close()
 
 
+def qemu_requires_kvm(case: Case, kvm_path: Path = Path("/dev/kvm")) -> bool:
+    return case.name == "nvme" and not kvm_path.exists()
+
+
 def run_server_smoke(case: Case, artifacts: Path, work_dir: Path, timeout: int = 10) -> dict:
     process, output, _, record = start_server(case, artifacts, work_dir, timeout)
     stop_server(process, output)
@@ -149,6 +153,8 @@ def run_server_smoke(case: Case, artifacts: Path, work_dir: Path, timeout: int =
 
 def run_qemu_case(case: Case, artifacts: Path, work_dir: Path,
                   qemu: Path, kernel: Path, initrd: Path, timeout: int = 30) -> GuestResult:
+    if qemu_requires_kvm(case):
+        raise CaseFailure(f"{case.name}: /dev/kvm is required for QEMU MSI-X E2E")
     process, output, socket_path, _ = start_server(case, artifacts, work_dir)
     qemu_log = work_dir / "qemu.log"
     command = [
