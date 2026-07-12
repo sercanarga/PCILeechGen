@@ -99,7 +99,7 @@ module pcileech_nvme_dma_bridge(
     pcileech_dma_tag_service #(
         .TAG_FIRST      ( NVME_RD_TAG_FIRST ),
         .TAG_COUNT      ( 16                ),
-        .TIMEOUT_CYCLES ( 24'hFFFFFF        ),
+        .TIMEOUT_CYCLES ( 24'h4C4B40        ),
         .TIMEOUT_WIDTH  ( 24                )
     ) i_dma_tag_service(
         .clk                ( clk                    ),

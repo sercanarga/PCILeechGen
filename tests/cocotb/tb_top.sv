@@ -46,15 +46,18 @@ module tb_top;
     reg  [15:0] host_peek_addr = 16'h0;
     wire [31:0] host_peek_data = host_mem[host_peek_addr];
 
+    reg         loopback_en = 1'b1;
+
     IfAXIS128 tlps_in_if();
     IfAXIS128 tlps_out_if();
     IfAXIS128 tlps_dma_out_if();
 
-    assign tlps_in_if.tdata   = cpld_in_tvalid ? cpld_in_tdata   : tlps_in_tdata;
-    assign tlps_in_if.tkeepdw = cpld_in_tvalid ? cpld_in_tkeepdw : tlps_in_tkeepdw;
-    assign tlps_in_if.tvalid  = cpld_in_tvalid ? 1'b1             : tlps_in_tvalid;
-    assign tlps_in_if.tlast   = cpld_in_tvalid ? cpld_in_tlast    : tlps_in_tlast;
-    assign tlps_in_if.tuser   = cpld_in_tvalid ? cpld_in_tuser    : tlps_in_tuser;
+    wire        lb_cpld = cpld_in_tvalid && loopback_en;
+    assign tlps_in_if.tdata   = lb_cpld ? cpld_in_tdata   : tlps_in_tdata;
+    assign tlps_in_if.tkeepdw = lb_cpld ? cpld_in_tkeepdw : tlps_in_tkeepdw;
+    assign tlps_in_if.tvalid  = lb_cpld ? 1'b1             : tlps_in_tvalid;
+    assign tlps_in_if.tlast   = lb_cpld ? cpld_in_tlast    : tlps_in_tlast;
+    assign tlps_in_if.tuser   = lb_cpld ? cpld_in_tuser    : tlps_in_tuser;
 
     assign tlps_out_tdata = tlps_out_if.tdata;
     assign tlps_out_tkeepdw = tlps_out_if.tkeepdw;

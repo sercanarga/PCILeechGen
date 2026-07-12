@@ -80,6 +80,7 @@ async def reset(dut):
     cocotb.start_soon(Clock(dut.clk, 10, unit="ns").start())
     dut.rst.value = 1
     dut.tlps_in_tvalid.value = 0
+    dut.loopback_en.value = 1
     await Timer(200, "ns")
     for _ in range(10): await RisingEdge(dut.clk)
     dut.rst.value = 0
@@ -630,3 +631,22 @@ async def test_nvme_get_log_page_smart(dut):
     assert cqe_dw3 != 0, "no CQE posted for Get Log Page"
     assert status == 0, f"smart status != SUCCESS: {status:#x}"
     assert smart_dw0 != 0, "SMART data not written to host_mem[0x1800]"
+
+
+@cocotb.test()
+async def test_nvme_dma_completion_timeout(dut):
+    dut.loopback_en.value = 0
+    await reset(dut)
+    dut.loopback_en.value = 0
+    await setup_admin_queues(dut)
+    await poke_sqe(dut, 0x400, op=0x06, prp1=0x5000, cdw10=0x00000001)
+    await send(dut, mwr3(addr=0x0014, data=0x00000001))
+    for _ in range(50): await RisingEdge(dut.clk)
+    await send(dut, mwr3(addr=0x1000, data=0x00000001))
+    mrd_beats = 0
+    for _ in range(40000):
+        await RisingEdge(dut.clk)
+        if dut.tlps_dma_out_tvalid.value == 1 and ((dut.tlps_dma_out_tdata.value.integer >> 29) & 0x7) == 0b001:
+            mrd_beats += 1
+    dut._log.info(f"mrd beats without cpld (timeout path): {mrd_beats}")
+    assert mrd_beats > 0, "bridge did not issue MRd when CplD loopback disabled"
