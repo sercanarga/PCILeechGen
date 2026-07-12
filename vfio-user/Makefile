@@ -11,7 +11,7 @@ endif
 TARGET = build/vfio-device
 SRC = src/main.c src/vfio_device.c src/device_model.c src/behavior_static.c src/behavior_nvme.c src/behavior_ahci.c src/behavior_xhci.c
 
-.PHONY: all image test test-matrix test-device-model test-behavior-static test-behavior-nvme test-behavior-storage test-server
+.PHONY: all image test test-matrix test-device-model test-behavior-static test-behavior-nvme test-behavior-storage test-server matrix
 
 all: $(TARGET)
 
@@ -68,6 +68,9 @@ test-server: image
 		-e VFIO_DEVICE_BIN=/build/build/vfio-device \
 		-e VFIO_ARTIFACTS=/artifacts/generic \
 		pcileech-vfio-user python3 -m unittest tests/test_server_cli.py -v
+
+matrix: test
+	python3 matrix.py --all --work-dir build/matrix
 
 $(TARGET): $(SRC)
 	mkdir -p build

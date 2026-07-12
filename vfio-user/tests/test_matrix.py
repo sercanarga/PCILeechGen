@@ -51,6 +51,35 @@ class MatrixTests(unittest.TestCase):
                     timeout=5,
                 )
 
+    def test_parse_guest_results_requires_passing_terminal_record(self):
+        matrix = load_matrix()
+
+        result = matrix.parse_guest_results(
+            '{"event":"result","case":"generic","status":"pass","bdf":"0000:03:00.0","vendor":"1234","device":"5678","class":"000000","driver":"none"}\n',
+            matrix.CASES["generic"],
+        )
+
+        self.assertEqual(result.status, "pass")
+        self.assertEqual(result.bdf, "0000:03:00.0")
+
+    def test_parse_guest_results_rejects_wrong_case(self):
+        matrix = load_matrix()
+
+        with self.assertRaisesRegex(matrix.CaseFailure, "case mismatch"):
+            matrix.parse_guest_results(
+                '{"event":"result","case":"nvme","status":"pass"}\n',
+                matrix.CASES["generic"],
+            )
+
+    def test_build_command_always_skips_vivado(self):
+        matrix = load_matrix()
+
+        command = matrix.build_command(matrix.CASES["nvme"], Path("/tmp/work"))
+
+        self.assertIn("--skip-vivado", command)
+        self.assertIn("--from-json", command)
+        self.assertEqual(command[command.index("--board") + 1], "ac701_ft601")
+
 
 if __name__ == "__main__":
     unittest.main()
