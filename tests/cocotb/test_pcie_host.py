@@ -529,3 +529,36 @@ async def test_msix_pba_pending_when_masked(dut):
     assert cqe_dw3 != 0, "no CQE posted to ACQ - identify did not complete"
     assert pba == 0x1, f"PBA bit 0 not set for masked vector 0: {pba:#x}"
     assert not seen, "MSI-X MWr leaked to tlps_dma_out for a masked vector"
+
+
+# --- additional NVMe admin command DMA tests ---
+
+async def _post_admin_cmd(dut, op, nsid=0, prp1=0, cdw10=0, cdw11=0, cdw12=0, wait=60000):
+    await setup_admin_queues(dut)
+    await poke_sqe(dut, 0x400, op=op, nsid=nsid, prp1=prp1, cdw10=cdw10, cdw11=cdw11, cdw12=cdw12)
+    await send(dut, mwr3(addr=0x0014, data=0x00000001))
+    for _ in range(50): await RisingEdge(dut.clk)
+    await send(dut, mwr3(addr=0x1000, data=0x00000001))
+    for _ in range(wait): await RisingEdge(dut.clk)
+    return await peek(dut, 0x803)
+
+@cocotb.test()
+async def test_nvme_create_io_cq(dut):
+    cqe_dw3 = await _post_admin_cmd(dut, op=0x05, prp1=0x4000, cdw10=0x00010001, cdw11=0x00000001)
+    status = (cqe_dw3 >> 17) & 0x7FFF
+    dut._log.info(f"create io cq: status={status:#x}")
+    assert cqe_dw3 != 0, "no CQE posted"
+    assert status == 0, f"create io cq failed: {status:#x}"
+
+@cocotb.test()
+async def test_nvme_aer_async(dut):
+    await setup_admin_queues(dut)
+    await poke_sqe(dut, 0x400, op=0x0C)
+    await send(dut, mwr3(addr=0x0014, data=0x00000001))
+    for _ in range(50): await RisingEdge(dut.clk)
+    await poke(dut, 0x803, 0)
+    await send(dut, mwr3(addr=0x1000, data=0x00000001))
+    for _ in range(20000): await RisingEdge(dut.clk)
+    cqe_dw3 = await peek(dut, 0x803)
+    dut._log.info(f"aer: cqe_dw3={cqe_dw3:#x} (async, should be 0)")
+    assert cqe_dw3 == 0, "AER posted a synchronous CQE"
