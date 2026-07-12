@@ -25,7 +25,7 @@ func thunderboltProfile() *DeviceProfile {
 	return &DeviceProfile{
 		ClassName:         "Thunderbolt",
 		PreferredBAR:      0,
-		MinBARSize:        4096,
+		MinBARSize:        262144,
 		Uses64BitBAR:      true,
 		BARIsPrefetchable: false,
 
@@ -47,6 +47,14 @@ func thunderboltProfile() *DeviceProfile {
 		MaxPowerState: 3,
 
 		BARDefaults: []BARDefault{
+			{Offset: 0x37800, Width: 4, Name: "RING_NOTIFY", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
+			{Offset: 0x38200, Width: 4, Name: "RING_INTERRUPT", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
+			{Offset: 0x39640, Width: 4, Name: "HOP_COUNT", Reset: 0x00000001, RWMask: 0x000007FF},
+			{Offset: 0x39898, Width: 4, Name: "NHI_RESET", Reset: 0x00000000, RWMask: 0x00000001},
+			{Offset: 0x39900, Width: 4, Name: "INMAIL_DATA", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
+			{Offset: 0x39904, Width: 4, Name: "INMAIL_CMD", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
+			{Offset: 0x3990C, Width: 4, Name: "OUTMAIL_CMD", Reset: 0x00000100, RWMask: 0x00000000},
+			{Offset: 0x39944, Width: 4, Name: "FW_STATUS", Reset: 0x00000007, RWMask: 0x00000000},
 			// LC_MAILBOX_IN - host-to-controller mailbox
 			{Offset: 0x00, Width: 4, Name: "LC_MAILBOX_IN", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
 			// LC_MAILBOX_OUT - controller reply

@@ -87,9 +87,9 @@
   "bars": [
     {
       "index": 0,
-      "raw_value": 4294959104,
+    "raw_value": 4294950912,
       "address": 0,
-      "size": 8192,
+    "size": 16384,
       "type": "mem32",
       "prefetchable": false,
       "is_64bit": false

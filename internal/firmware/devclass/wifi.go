@@ -27,7 +27,7 @@ func wifiProfile() *DeviceProfile {
 	return &DeviceProfile{
 		ClassName:         "Wi-Fi",
 		PreferredBAR:      0,
-		MinBARSize:        4096,
+		MinBARSize:        16384,
 		Uses64BitBAR:      true,
 		BARIsPrefetchable: false,
 
@@ -51,10 +51,12 @@ func wifiProfile() *DeviceProfile {
 		BARDefaults: []BARDefault{
 			// CSR - control/status (HW revision, device ready etc.)
 			{Offset: 0x00, Width: 4, Name: "CSR", Reset: 0x00000000, RWMask: 0x00000000},
+			{Offset: 0x08, Width: 4, Name: "CSR_INT", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
+			{Offset: 0x0C, Width: 4, Name: "CSR_INT_MASK", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
 			// FH_RSCSR_CHNL0 - RX status
 			{Offset: 0x20, Width: 4, Name: "FH_RSCSR_CHNL0", Reset: 0x00000000, RWMask: 0x00000000},
 			// GP_CTL - firmware ready handshake
-			{Offset: 0x24, Width: 4, Name: "GP_CTL", Reset: 0x00000080, RWMask: 0xFFFFFFFF},
+			{Offset: 0x24, Width: 4, Name: "GP_CTL", Reset: 0x00000085, RWMask: 0xFFFFFFFF},
 			// UCODE_DRV_GP1 - uCode ready flag (set = f/w loaded)
 			{Offset: 0x54, Width: 4, Name: "UCODE_DRV_GP1", Reset: 0x00000001, RWMask: 0xFFFFFFFF},
 			// HW_REV - hardware revision
