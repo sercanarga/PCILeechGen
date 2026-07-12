@@ -1,0 +1,26 @@
+#!/bin/sh
+set -eu
+
+mount -t proc proc /proc
+mount -t sysfs sys /sys
+mount -t devtmpfs dev /dev
+
+case_name="$(tr ' ' '\n' </proc/cmdline | grep '^vfio_case=' | cut -d= -f2)"
+case "$case_name" in
+    nvme) module=nvme ;;
+    sata) module=ahci ;;
+    xhci) module=xhci_pci ;;
+    audio) module=snd_hda_intel ;;
+    ethernet) module=e1000e ;;
+    wifi) module=iwlwifi ;;
+    gpu) module=nouveau ;;
+    thunderbolt) module=thunderbolt ;;
+    *) module= ;;
+esac
+
+if [ -n "$module" ]; then
+    /sbin/modprobe "$module" 2>/dev/null || true
+fi
+sleep 2
+/bin/vfio-probe
+poweroff -f
