@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/uio.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -125,8 +126,21 @@ static int dma_transfer(void *opaque, uint64_t address, void *data, size_t lengt
             free(sg);
             return -1;
         }
-        if ((write ? vfu_sgl_write(state->context, sg, 1, cursor, 0)
-                   : vfu_sgl_read(state->context, sg, 1, cursor, 0)) < 0) {
+        struct iovec iov;
+        if (vfu_sgl_get(state->context, sg, &iov, 1, 0) == 0) {
+            if (iov.iov_len < chunk) {
+                vfu_sgl_put(state->context, sg, &iov, 1);
+                free(sg);
+                return -1;
+            }
+            if (write) {
+                memcpy(iov.iov_base, cursor, chunk);
+            } else {
+                memcpy(cursor, iov.iov_base, chunk);
+            }
+            vfu_sgl_put(state->context, sg, &iov, 1);
+        } else if ((write ? vfu_sgl_write(state->context, sg, 1, cursor, 0)
+                           : vfu_sgl_read(state->context, sg, 1, cursor, 0)) < 0) {
             free(sg);
             return -1;
         }
@@ -154,7 +168,6 @@ static int host_dma_write(void *opaque, uint64_t address, const void *data, size
 static int host_irq(void *opaque, unsigned vector)
 {
     struct server_state *state = opaque;
-
     return vfu_irq_trigger(state->context, vector);
 }
 

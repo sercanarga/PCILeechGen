@@ -158,10 +158,12 @@ static void completes_identify_controller(void **state)
     assert_int_equal(fixture->behavior.bind_host(fixture->behavior.state, &ops), 0);
     value = 3 | (3u << 16);
     assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x24, &value, 4), 4);
-    value = 0x1000;
-    assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x28, &value, 4), 4);
-    value = 0x2000;
-    assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x30, &value, 4), 4);
+    uint64_t queue_address = 0x1000;
+    assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x28,
+                                              &queue_address, sizeof(queue_address)), 8);
+    queue_address = 0x2000;
+    assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x30,
+                                              &queue_address, sizeof(queue_address)), 8);
     sqe->opcode = 0x06;
     sqe->cid = 7;
     sqe->prp1 = 0x3000;

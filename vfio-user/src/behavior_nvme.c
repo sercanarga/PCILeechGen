@@ -259,6 +259,18 @@ static ssize_t nvme_write(void *opaque, unsigned bir, uint64_t offset,
     struct nvme_state *state = opaque;
     ssize_t result = state->registers.write(state->registers.state, bir, offset, buf, len);
 
+    if (result >= 0 && bir == 0 && len == sizeof(uint64_t) &&
+        (offset == 0x28 || offset == 0x30)) {
+        uint64_t value;
+
+        memcpy(&value, buf, sizeof(value));
+        if (offset == 0x28) {
+            state->asq = value;
+        } else {
+            state->acq = value;
+        }
+        return result;
+    }
     if (result < 0 || bir != 0 || offset != 0x14 || len != sizeof(uint32_t)) {
         if (result < 0 || bir != 0 || len != sizeof(uint32_t)) {
             return result;
