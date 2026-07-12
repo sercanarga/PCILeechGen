@@ -5,7 +5,7 @@ FIXTURE ?= out
 TB_TOP ?= tb_top
 MODULE ?= test_pcie_host
 RTL := $(wildcard $(FIXTURE)/*.sv)
-SRC_NEEDED := pcileech_bar_impl_none.sv pcileech_bar_impl_zerowrite4k.sv pcileech_tlps128_bar_wrengine.sv
+SRC_NEEDED := pcileech_bar_impl_none.sv pcileech_bar_impl_zerowrite4k.sv pcileech_tlps128_bar_wrengine.sv pcileech_tlps128_cfgspace_shadow.sv
 RTL += $(foreach f,$(SRC_NEEDED),$(wildcard $(FIXTURE)/src/$(f)))
 STUBS := cocotb_stubs.sv
 
@@ -18,5 +18,7 @@ EXTRA_ARGS += -Wno-fatal -I$(FIXTURE) -I$(FIXTURE)/src --timing
 ifdef TIMEOUT_CYCLES
 $(shell perl -pi -e 's/\.TIMEOUT_CYCLES\s*\x28\s*24'"'"'h[0-9A-Fa-f]+\s*\x29/.TIMEOUT_CYCLES \x28 24'"'"'h$(TIMEOUT_CYCLES) \x29/' $(FIXTURE)/pcileech_nvme_dma_bridge.sv 2>/dev/null)
 endif
+
+$(shell mkdir -p $(SIM_BUILD) && cp $(FIXTURE)/config_space_init.hex $(SIM_BUILD)/ 2>/dev/null; cp $(FIXTURE)/config_space_init.hex . 2>/dev/null)
 
 include $(shell cocotb-config --makefiles)/Makefile.sim

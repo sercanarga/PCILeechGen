@@ -29,11 +29,17 @@ module tb_top;
     wire         tlps_out_tlast;
     wire [8:0]   tlps_out_tuser;
     wire         tlps_out_has_data;
+    wire [127:0] tlps_cfg_rsp_tdata;
+    wire [3:0]   tlps_cfg_rsp_tkeepdw;
+    wire         tlps_cfg_rsp_tvalid;
+    wire         tlps_cfg_rsp_tlast;
     wire         intr_req;
 
     IfAXIS128 tlps_in_if();
     IfAXIS128 tlps_out_if();
     IfAXIS128 tlps_dma_out_if();
+    IfAXIS128 tlps_cfg_rsp_if();
+    IfShadow2Fifo dshadow2fifo_if();
 
     assign tlps_in_if.tdata   = tlps_in_tdata;
     assign tlps_in_if.tkeepdw = tlps_in_tkeepdw;
@@ -48,8 +54,27 @@ module tb_top;
     assign tlps_out_tuser = tlps_out_if.tuser;
     assign tlps_out_has_data = tlps_out_if.has_data;
 
+    assign tlps_cfg_rsp_tdata = tlps_cfg_rsp_if.tdata;
+    assign tlps_cfg_rsp_tkeepdw = tlps_cfg_rsp_if.tkeepdw;
+    assign tlps_cfg_rsp_tvalid = tlps_cfg_rsp_if.tvalid;
+    assign tlps_cfg_rsp_tlast = tlps_cfg_rsp_if.tlast;
+
     assign tlps_out_if.tready = 1'b1;
     assign tlps_dma_out_if.tready = 1'b1;
+    assign tlps_cfg_rsp_if.tready = 1'b1;
+
+    assign dshadow2fifo_if.cfgtlp_en = 1'b1;
+    assign dshadow2fifo_if.cfgtlp_wren = 1'b1;
+    assign dshadow2fifo_if.cfgtlp_zero = 1'b0;
+    assign dshadow2fifo_if.cfgtlp_filter = 1'b0;
+    assign dshadow2fifo_if.alltlp_filter = 1'b0;
+    assign dshadow2fifo_if.bar_en = 1'b1;
+    assign dshadow2fifo_if.rx_rden = 1'b0;
+    assign dshadow2fifo_if.rx_wren = 1'b0;
+    assign dshadow2fifo_if.rx_be = 4'h0;
+    assign dshadow2fifo_if.rx_data = 32'h0;
+    assign dshadow2fifo_if.rx_addr = 10'h0;
+    assign dshadow2fifo_if.rx_addr_lo = 1'b0;
 
     pcileech_tlps128_bar_controller i_bar(
         .rst(rst), .clk(clk), .bar_en(bar_en), .pcie_id(pcie_id),
@@ -63,5 +88,13 @@ module tb_top;
         .tlps_out(tlps_out_if.source),
         .tlps_dma_out(tlps_dma_out_if.source),
         .intr_req(intr_req)
+    );
+
+    pcileech_tlps128_cfgspace_shadow i_cfgspace_shadow(
+        .rst(rst), .clk_pcie(clk), .clk_sys(clk),
+        .tlps_in(tlps_in_if.sink_lite),
+        .pcie_id(pcie_id),
+        .tlps_cfg_rsp(tlps_cfg_rsp_if.source),
+        .dshadow2fifo(dshadow2fifo_if.shadow)
     );
 endmodule

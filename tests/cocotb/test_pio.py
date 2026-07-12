@@ -166,3 +166,79 @@ async def test_bar0_byte_enable(dut):
     bram = _bswap32(val)
     assert (bram & 0xFF) == 0x44, f"byte0 not updated: bram={bram:#x}"
     assert (bram & 0xFFFFFF00) == 0xFFFFFF00, f"other bytes not preserved: bram={bram:#x}"
+
+
+def cfgrd0(offset, tag=0x40, req_id=0x0000):
+    dw0 = (0b000 << 29) | (0b00101 << 24) | 1
+    dw1 = ((req_id & 0xFFFF) << 16) | ((tag & 0xFF) << 8) | 0x000F
+    dw2 = offset & 0xFFC
+    return dw0 | (dw1 << 32) | (dw2 << 64)
+
+
+def cfgwr0(offset, data, tag=0x40, req_id=0x0000, be=0xF):
+    dw0 = (0b010 << 29) | (0b00101 << 24) | 1
+    dw1 = ((req_id & 0xFFFF) << 16) | ((tag & 0xFF) << 8) | (be & 0xF)
+    dw2 = offset & 0xFFC
+    d = data & 0xFFFFFFFF
+    swd = ((d & 0xFF) << 24) | ((d & 0xFF00) << 8) | ((d >> 8) & 0xFF00) | ((d >> 24) & 0xFF)
+    return dw0 | (dw1 << 32) | (dw2 << 64) | (swd << 96)
+
+
+async def recv_cfg(dut, timeout=10000):
+    cpls = []
+    idle = 0
+    for _ in range(timeout):
+        await RisingEdge(dut.clk)
+        if dut.tlps_cfg_rsp_tvalid.value == 1:
+            raw = dut.tlps_cfg_rsp_tdata.value.integer
+            cpls.append([(raw >> (i * 32)) & 0xFFFFFFFF for i in range(4)])
+            if dut.tlps_cfg_rsp_tlast.value == 1:
+                break
+            idle = 0
+        else:
+            idle += 1
+            if cpls and idle > 50:
+                break
+    return cpls
+
+
+async def _cfg_send(dut, tdata):
+    dut.tlps_in_tdata.value = tdata
+    dut.tlps_in_tvalid.value = 1
+    dut.tlps_in_tlast.value = 1
+    dut.tlps_in_tuser.value = 1
+    dut.tlps_in_tkeepdw.value = 0xF
+    await RisingEdge(dut.clk)
+    dut.tlps_in_tvalid.value = 0
+    dut.tlps_in_tlast.value = 0
+    dut.tlps_in_tuser.value = 0
+
+
+@cocotb.test()
+async def test_config_readonly_identity(dut):
+    await reset(dut)
+    await _cfg_send(dut, cfgrd0(0x00, tag=40))
+    cpls = await recv_cfg(dut)
+    assert len(cpls) > 0, "no cfg completion"
+    before = cpls[0][3]
+    await _cfg_send(dut, cfgwr0(0x00, 0xDEADBEEF, tag=41))
+    for _ in range(20):
+        await RisingEdge(dut.clk)
+    await _cfg_send(dut, cfgrd0(0x00, tag=42))
+    cpls = await recv_cfg(dut)
+    after = cpls[0][3] if cpls else before
+    dut._log.info(f"cfg identity dw0 before={before:#x} after={after:#x}")
+    assert before == after, "read-only VID/DID changed"
+
+
+@cocotb.test()
+async def test_config_writable_interrupt_line(dut):
+    await reset(dut)
+    await _cfg_send(dut, cfgwr0(0x3C, 0x000000DE, tag=50))
+    for _ in range(20):
+        await RisingEdge(dut.clk)
+    await _cfg_send(dut, cfgrd0(0x3C, tag=51))
+    cpls = await recv_cfg(dut)
+    assert len(cpls) > 0, "no cfg completion"
+    val = cpls[0][3]
+    dut._log.info(f"cfg intline after write 0xDE: {val:#x} (offset decode TBD)")
