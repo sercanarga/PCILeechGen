@@ -299,3 +299,63 @@ async def test_driver_pci_enumeration(dut):
     assert results["subsys"] != 0, "subsystem ID = 0 — Code-10 INF match failure"
     assert len(caps_found) >= 2, f"too few capabilities: {caps_found}"
     assert results["bar0_raw"] != 0, "BAR0 sizing = 0 — BAR0 not responding"
+
+
+@cocotb.test()
+async def test_error_injection_invalid_fmt(dut):
+    await reset(dut)
+    dw0 = (0b111 << 29) | (0b00000 << 24) | 1
+    dw1 = (1 << 8) | 0xF
+    dw2 = 0x200
+    await send(dut, dw0 | (dw1 << 32) | (dw2 << 64))
+    for _ in range(500): await RisingEdge(dut.clk)
+
+
+@cocotb.test()
+async def test_error_injection_oversized_length(dut):
+    await reset(dut)
+    await send(dut, mrd3(addr=0x200, tag=60, length=1024))
+    for _ in range(5000): await RisingEdge(dut.clk)
+
+
+@cocotb.test()
+async def test_error_injection_zero_length_mrd(dut):
+    await reset(dut)
+    dw0 = (0b000 << 29) | (0b00000 << 24) | 0
+    dw1 = (61 << 8) | 0xF
+    dw2 = 0x200
+    await send(dut, dw0 | (dw1 << 32) | (dw2 << 64))
+    for _ in range(500): await RisingEdge(dut.clk)
+
+
+@cocotb.test()
+async def test_pm_capability_read(dut):
+    await reset(dut)
+    await _cfg_send(dut, cfgrd0(0x34, tag=70))
+    c = await recv_cfg(dut)
+    cap_ptr = (c[0][3] if c else 0) & 0xFC
+    assert cap_ptr != 0, "no cap pointer"
+    while cap_ptr != 0:
+        await _cfg_send(dut, cfgrd0(cap_ptr, tag=71))
+        c = await recv_cfg(dut)
+        val = c[0][3] if c else 0
+        cap_id = val & 0xFF
+        next_ptr = (val >> 8) & 0xFC
+        if cap_id == 0x01:
+            pmcsr_off = cap_ptr + 4
+            await _cfg_send(dut, cfgrd0(pmcsr_off, tag=72))
+            c2 = await recv_cfg(dut)
+            assert c2 is not None and len(c2) > 0, "PMCSR no completion"
+            dut._log.info(f"PMCSR @ {pmcsr_off:#x} = {c2[0][3]:#x}")
+            break
+        cap_ptr = next_ptr
+
+
+@cocotb.test()
+async def test_ext_config_space_read(dut):
+    await reset(dut)
+    for off in [0x100, 0x104, 0x108]:
+        await _cfg_send(dut, cfgrd0(off, tag=80))
+        c = await recv_cfg(dut)
+        if c:
+            dut._log.info(f"ext cfg @ {off:#x} = {c[0][3]:#x}")

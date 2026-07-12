@@ -225,3 +225,67 @@ func TestBarSizeToTCL(t *testing.T) {
 		t.Errorf("0: got %s/%s, want Kilobytes/4 (minimum)", scale, size)
 	}
 }
+
+func TestGenerateProjectTCL_ValidatesCode10Parameters(t *testing.T) {
+	b := &board.Board{
+		Name:         "TestBoard",
+		FPGAPart:     "xc7a35tfgg484-2",
+		PCIeLanes:    1,
+		TopModule:    "test_top",
+		MaxLinkSpeed: 2,
+	}
+
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	cs.WriteU16(0x00, 0x144D)
+	cs.WriteU16(0x02, 0xA809)
+	cs.WriteU16(0x2C, 0x144D)
+	cs.WriteU16(0x2E, 0xA809)
+	cs.WriteU8(0x08, 0x01)
+	cs.WriteU8(0x09, 0x08)
+	cs.WriteU8(0x0A, 0x02)
+	cs.WriteU8(0x0B, 0x01)
+
+	ctx := &donor.DeviceContext{
+		Device: pci.PCIDevice{
+			VendorID:       0x144D,
+			DeviceID:       0xA809,
+			SubsysVendorID: 0x144D,
+			SubsysDeviceID: 0xA809,
+			ClassCode:      0x010802,
+		},
+		ConfigSpace: cs,
+		MSIXData: &donor.MSIXData{
+			TableSize:   5,
+			TableBIR:    0,
+			TableOffset: 0x2000,
+			PBABIR:      0,
+			PBAOffset:   0x3000,
+		},
+	}
+
+	tcl := GenerateProjectTCL(ctx, b, "/tmp/lib", false)
+
+	checks := []struct {
+		param string
+		want  string
+	}{
+		{"Max_Payload_Size", "128_bytes"},
+		{"Extended_Tag_Field", "false"},
+		{"Extended_Tag_Default", "false"},
+		{"AER_Enabled", "true"},
+		{"AER_Completion_Timeout", "true"},
+		{"MSI_Enabled", "false"},
+		{"MSIx_Enabled", "true"},
+		{"Vendor_Id", "144D"},
+		{"Device_ID", "A809"},
+		{"Subsystem_Vendor_ID", "144D"},
+		{"Subsystem_ID", "A809"},
+	}
+
+	for _, c := range checks {
+		if !strings.Contains(tcl, c.param) || !strings.Contains(tcl, c.want) {
+			t.Errorf("TCL missing %s = %s", c.param, c.want)
+		}
+	}
+}

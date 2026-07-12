@@ -788,3 +788,42 @@ async def test_driver_full_enumeration(dut):
     assert results.get("nvme_cap", 0) != 0, "NVMe CAP register = 0 — BAR0 not accessible"
     assert nonzero > 0, "Identify data not written — NVMe init failed"
     assert status == 0, f"CQE status={status:#x} — NVMe command failed"
+
+
+@cocotb.test()
+async def test_nvme_namespace_read(dut):
+    """Read sector 0 from namespace 1 via IO queue — disk BRAM -> DMA -> host_mem."""
+    await reset(dut)
+    await setup_admin_queues(dut)
+    await _create_io_queues(dut)
+    await poke_sqe(dut, 0xC00, op=0x02, nsid=0x00000001, prp1=0x6000,
+                   cdw10=0x00000000, cdw11=0x00000000, cdw12=0x00000000)
+    await send(dut, mwr3(addr=0x1008, data=0x00000001))
+    for _ in range(80000): await RisingEdge(dut.clk)
+    cqe = await peek(dut, 0x1003)
+    status = (cqe >> 17) & 0x7FFF
+    nonzero = 0
+    for dw in range(0x1800, 0x1900, 16):
+        if await peek(dut, dw) != 0: nonzero += 1
+    dut._log.info(f"ns read: status={status:#x} nonzero_dw={nonzero}")
+    assert cqe != 0, "no CQE for namespace read"
+    assert status == 0, f"namespace read failed: {status:#x}"
+
+
+@cocotb.test()
+async def test_nvme_namespace_write(dut):
+    """Write sector 0 to namespace 1 — host_mem -> DMA -> disk BRAM."""
+    await reset(dut)
+    await setup_admin_queues(dut)
+    await _create_io_queues(dut)
+    await poke(dut, 0x1800, 0xDEADBEEF)
+    await poke(dut, 0x1801, 0xCAFEBABE)
+    await poke_sqe(dut, 0xC00, op=0x01, nsid=0x00000001, prp1=0x6000,
+                   cdw10=0x00000000, cdw11=0x00000000, cdw12=0x00000000)
+    await send(dut, mwr3(addr=0x1008, data=0x00000001))
+    for _ in range(80000): await RisingEdge(dut.clk)
+    cqe = await peek(dut, 0x1003)
+    status = (cqe >> 17) & 0x7FFF
+    dut._log.info(f"ns write: status={status:#x}")
+    assert cqe != 0, "no CQE for namespace write"
+    assert status == 0, f"namespace write failed: {status:#x}"
