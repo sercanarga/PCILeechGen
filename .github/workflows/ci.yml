@@ -56,10 +56,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y verilator
-          # Echo the version: not pinned (apt provides whatever the runner ships),
-          # so record it to catch divergence across runs (5.032 vs 5.048 differ on
-          # interface-modport handling). Pin to a tag/build-from-source if stricter
-          # reproducibility is ever required.
           verilator --version
 
       - name: Setup Go
@@ -72,3 +68,21 @@ jobs:
 
       - name: Run HDL lint
         run: make hdl-lint
+
+  vfio-user:
+    name: VFIO-user behavior tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcmocka-dev libjson-c-dev libssl-dev
+
+      - name: Run VFIO-user tests
+        run: make -C vfio-user clean test
