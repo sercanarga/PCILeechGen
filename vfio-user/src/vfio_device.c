@@ -181,7 +181,7 @@ static int register_standard_capabilities(vfu_ctx_t *context,
         uint8_t id = source[offset];
 
         if (id == PCI_CAP_ID_PM || id == PCI_CAP_ID_MSI ||
-            id == PCI_CAP_ID_MSIX) {
+            id == PCI_CAP_ID_MSIX || id == PCI_CAP_ID_EXP) {
             if (vfu_pci_add_capability(context, offset, 0,
                                        (void *)(source + offset)) < 0) {
                 return -1;
