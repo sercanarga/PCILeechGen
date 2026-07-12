@@ -86,6 +86,23 @@ class MatrixTests(unittest.TestCase):
         self.assertTrue(matrix.qemu_requires_kvm(matrix.CASES["nvme"], Path("/missing/kvm")))
         self.assertFalse(matrix.qemu_requires_kvm(matrix.CASES["generic"], Path("/missing/kvm")))
 
+    def test_qemu_rebind_mode_is_explicit(self):
+        matrix = load_matrix()
+        with tempfile.TemporaryDirectory() as tmp:
+            artifacts = Path(tmp)
+            (artifacts / "device_model.json").write_text(
+                '{"functions":[{"vendor_id":4660,"device_id":22136}]}\n',
+                encoding="utf-8",
+            )
+            command = matrix.build_qemu_command(
+                matrix.CASES["sata"], Path("/tmp/work/device.sock"),
+                Path("/tmp/kernel"), Path("/tmp/initrd"), artifacts,
+                rebind=True,
+            )
+
+        append = command[command.index("-append") + 1]
+        self.assertIn("vfio_rebind=1", append)
+
 
 if __name__ == "__main__":
     unittest.main()

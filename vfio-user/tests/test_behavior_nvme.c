@@ -181,12 +181,110 @@ static void completes_identify_controller(void **state)
 }
 
 
+static void configures_admin_queues(struct fixture *fixture, struct fake_host *host,
+                                    struct nvme_sqe **sq, struct nvme_cqe **cq,
+                                    uint32_t queue_size)
+{
+    uint32_t aqa = (queue_size - 1) | ((queue_size - 1) << 16);
+    uint64_t address;
+
+    assert_int_equal(fixture->behavior.bind_host(fixture->behavior.state,
+                                                  &(struct behavior_host_ops){
+                                                      .opaque = host,
+                                                      .dma_read = fake_read,
+                                                      .dma_write = fake_write,
+                                                      .irq = fake_irq,
+                                                  }), 0);
+    assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x24,
+                                              &aqa, sizeof(aqa)), 4);
+    address = 0x1000;
+    assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x28,
+                                              &address, sizeof(address)), 8);
+    address = 0x2000;
+    assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x30,
+                                              &address, sizeof(address)), 8);
+    *sq = (struct nvme_sqe *)&host->memory[0x1000];
+    *cq = (struct nvme_cqe *)&host->memory[0x2000];
+}
+
+
+static void completes_identify_namespace_across_prp_pages(void **state)
+{
+    struct fixture *fixture = *state;
+    struct fake_host host = {0};
+    struct nvme_sqe *sqe;
+    struct nvme_cqe *cqe;
+    uint32_t tail = 1;
+    uint8_t expected[16] = {0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00,
+                            0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00};
+
+    configures_admin_queues(fixture, &host, &sqe, &cqe, 4);
+    sqe->opcode = 0x06;
+    sqe->cid = 9;
+    sqe->nsid = 1;
+    sqe->prp1 = 0x3ff0;
+    sqe->prp2 = 0x5000;
+    sqe->cdw10 = 0;
+    assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x1000,
+                                              &tail, sizeof(tail)), 4);
+    assert_int_equal(fixture->behavior.service(fixture->behavior.state), 0);
+    assert_memory_equal(&host.memory[0x3ff0], expected, sizeof(expected));
+    assert_int_equal(cqe->cid, 9);
+    assert_int_equal(cqe->status, 1);
+    assert_int_equal(host.irqs, 1);
+}
+
+
+static void wraps_admin_queue_phase(void **state)
+{
+    struct fixture *fixture = *state;
+    struct fake_host host = {0};
+    struct nvme_sqe *sqe;
+    struct nvme_cqe *cq;
+    uint32_t tail;
+
+    configures_admin_queues(fixture, &host, &sqe, &cq, 2);
+    sqe[0].opcode = 0x06;
+    sqe[0].cid = 1;
+    sqe[0].prp1 = 0x3000;
+    sqe[0].cdw10 = 1;
+    tail = 1;
+    assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x1000,
+                                              &tail, sizeof(tail)), 4);
+    assert_int_equal(fixture->behavior.service(fixture->behavior.state), 0);
+    assert_int_equal(cq[0].cid, 1);
+    assert_int_equal(cq[0].status, 1);
+
+    sqe[1].opcode = 0x06;
+    sqe[1].cid = 2;
+    sqe[1].prp1 = 0x3000;
+    sqe[1].cdw10 = 1;
+    tail = 0;
+    assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x1000,
+                                              &tail, sizeof(tail)), 4);
+    assert_int_equal(fixture->behavior.service(fixture->behavior.state), 0);
+    assert_int_equal(cq[1].cid, 2);
+    assert_int_equal(cq[1].status, 1);
+
+    sqe[0].cid = 3;
+    tail = 1;
+    assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x1000,
+                                              &tail, sizeof(tail)), 4);
+    assert_int_equal(fixture->behavior.service(fixture->behavior.state), 0);
+    assert_int_equal(cq[0].cid, 3);
+    assert_int_equal(cq[0].status, 0);
+    assert_int_equal(host.irqs, 3);
+}
+
+
 int main(void)
 {
     const struct CMUnitTest tests[] = {
         cmocka_unit_test_setup_teardown(exposes_generated_capability_registers, setup, teardown),
         cmocka_unit_test_setup_teardown(transitions_enable_and_shutdown_state, setup, teardown),
         cmocka_unit_test_setup_teardown(completes_identify_controller, setup, teardown),
+        cmocka_unit_test_setup_teardown(completes_identify_namespace_across_prp_pages, setup, teardown),
+        cmocka_unit_test_setup_teardown(wraps_admin_queue_phase, setup, teardown),
     };
 
     return cmocka_run_group_tests(tests, NULL, NULL);
