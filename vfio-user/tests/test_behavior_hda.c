@@ -1,3 +1,5 @@
+#include <setjmp.h>
+#include <stdarg.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,6 +13,8 @@ struct host_memory {
     uint8_t data[0x10000];
     unsigned irqs;
 };
+
+static struct device_model *fixture_model;
 
 static int dma_read(void *opaque, uint64_t address, void *data, size_t length)
 {
@@ -39,13 +43,13 @@ static int irq(void *opaque, unsigned vector)
 static int setup(void **state)
 {
     struct device_behavior *behavior = calloc(1, sizeof(*behavior));
-    struct device_model *model = calloc(1, sizeof(*model));
+    struct device_model *model = NULL;
     char err[128] = {0};
 
     assert_non_null(behavior);
-    assert_non_null(model);
     assert_int_equal(device_model_load("../tests/cocotb/out_audio", &model, err, sizeof(err)), 0);
     assert_int_equal(behavior_hda_create(model, behavior, err, sizeof(err)), 0);
+    fixture_model = model;
     *state = behavior;
     return 0;
 }
@@ -55,6 +59,8 @@ static int teardown(void **state)
     struct device_behavior *behavior = *state;
     behavior->destroy(behavior->state);
     free(behavior);
+    device_model_free(fixture_model);
+    fixture_model = NULL;
     return 0;
 }
 
