@@ -92,6 +92,16 @@ class MatrixTests(unittest.TestCase):
         self.assertIn("--from-json", command)
         self.assertEqual(command[command.index("--board") + 1], "ac701_ft601")
 
+    def test_contract_covers_generated_artifact_stages(self):
+        matrix = load_matrix()
+        for case in matrix.CASES.values():
+            artifacts = Path(__file__).resolve().parents[2] / "tests" / "cocotb" / f"out_{case.name}"
+            contract = matrix.build_contract(case, artifacts)
+            self.assertEqual(contract["case"], case.name)
+            self.assertTrue(contract["bars"])
+            self.assertTrue(contract["capabilities"])
+            self.assertEqual(contract["probe"][:3], ["enumerate", "bars", "reset"])
+
     def test_nvme_qemu_requires_kvm(self):
         matrix = load_matrix()
 

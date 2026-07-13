@@ -54,8 +54,14 @@ func ReadMSIXTable(barData []byte, info *MSIXInfo) []MSIXEntry {
 	if info == nil || barData == nil {
 		return nil
 	}
+	if uint64(info.TableOffset) >= uint64(len(barData)) {
+		return nil
+	}
 
 	tableStart := int(info.TableOffset)
+	if info.TableSize <= 0 || info.TableSize > (int(^uint(0)>>1)-tableStart)/16 {
+		return nil
+	}
 	tableEnd := tableStart + info.TableSize*16
 
 	if tableEnd > len(barData) {

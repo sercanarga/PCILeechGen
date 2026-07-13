@@ -22,6 +22,10 @@ class CaseFailure(RuntimeError):
     pass
 
 
+class CaseBlocked(RuntimeError):
+    pass
+
+
 @dataclass(frozen=True)
 class Case:
     name: str
@@ -103,6 +107,26 @@ def build_command(case: Case, output: Path) -> list[str]:
     ]
 
 
+def build_contract(case: Case, artifacts: Path) -> dict:
+    model = json.loads((artifacts / "device_model.json").read_text(encoding="utf-8"))
+    function = model["functions"][0]
+    return {
+        "case": case.name,
+        "identity": {
+            "vendor": f"{function['vendor_id']:04x}",
+            "device": f"{function['device_id']:04x}",
+            "class": f"{function['class_code']:06x}",
+        },
+        "bars": [
+            {"bir": bar["bir"], "size": bar["size"], "type": bar["type"]}
+            for bar in model.get("bars", [])
+        ],
+        "capabilities": [cap["id"] for cap in model.get("capabilities", [])],
+        "reset": {"vfio_callback": True, "bar_reset_image": True},
+        "probe": ["enumerate", "bars", "reset", case.mandatory_probe],
+    }
+
+
 def prepare_socket_path(path: Path) -> None:
     if not path.exists():
         return
@@ -178,9 +202,15 @@ def run_server_smoke(case: Case, artifacts: Path, work_dir: Path, timeout: int =
 
 def run_qemu_case(case: Case, artifacts: Path, work_dir: Path,
                   qemu: Path, kernel: Path, initrd: Path, timeout: int = 30,
-                  shared_memory: bool = False, rebind: bool = False) -> GuestResult:
+                  shared_memory: bool = False, rebind: bool = False,
+                  expected_version: str | None = None) -> GuestResult:
     if qemu_requires_kvm(case):
-        raise CaseFailure(f"{case.name}: /dev/kvm is required for QEMU MSI-X E2E")
+        raise CaseBlocked(f"{case.name}: /dev/kvm is required for QEMU MSI-X E2E")
+    if expected_version is not None:
+        version = subprocess.run([str(qemu), "--version"], capture_output=True,
+                                 text=True, check=False)
+        if version.returncode != 0 or expected_version not in version.stdout:
+            raise CaseBlocked(f"{case.name}: QEMU version mismatch; expected {expected_version!r}")
     process, output, socket_path, _ = start_server(case, artifacts, work_dir)
     qemu_log = work_dir / "qemu.log"
     command = build_qemu_command(case, socket_path, kernel, initrd, artifacts,
@@ -240,7 +270,7 @@ def device_for(artifacts: Path) -> str:
 def run_case(case: Case, work_root: Path, timeout: int = 120,
              qemu: Path | None = None, kernel: Path | None = None,
              initrd: Path | None = None, shared_memory: bool = False,
-             rebind: bool = False) -> dict:
+             rebind: bool = False, qemu_version: str | None = None) -> dict:
     case_dir = work_root / case.name
     artifacts = case_dir / "artifacts"
     case_dir.mkdir(parents=True, exist_ok=True)
@@ -253,10 +283,13 @@ def run_case(case: Case, work_root: Path, timeout: int = 120,
             if kernel is None or initrd is None:
                 raise CaseFailure("QEMU mode requires --kernel and --initrd")
             guest = run_qemu_case(case, artifacts, case_dir, qemu, kernel, initrd,
-                                  shared_memory=shared_memory, rebind=rebind)
+                                  shared_memory=shared_memory, rebind=rebind,
+                                  expected_version=qemu_version)
             if guest.status == "fail" or (case.mandatory_probe == "driver" and guest.status == "fail"):
                 raise CaseFailure(f"{case.name}: guest probe failed: {guest.detail}")
             result["guest"] = guest.__dict__
+    except CaseBlocked as exc:
+        result = {"case": case.name, "status": "blocked", "detail": str(exc)}
     except (CaseFailure, OSError, json.JSONDecodeError) as exc:
         result = {"case": case.name, "status": "fail", "detail": str(exc)}
     result_path = case_dir / "result.json"
@@ -271,6 +304,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     group.add_argument("--all", action="store_true")
     parser.add_argument("--work-dir", type=Path, default=ROOT / "vfio-user" / "build" / "matrix")
     parser.add_argument("--qemu", type=Path)
+    parser.add_argument("--qemu-version", help="required substring in qemu --version output")
     parser.add_argument("--kernel", type=Path)
     parser.add_argument("--initrd", type=Path)
     parser.add_argument("--shared-memory", action="store_true")
@@ -279,10 +313,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     selected = [CASES[args.case]] if args.case else list(CASES.values())
     results = [run_case(case, args.work_dir, qemu=args.qemu, kernel=args.kernel,
                         initrd=args.initrd, shared_memory=args.shared_memory,
-                        rebind=args.rebind)
+                        rebind=args.rebind, qemu_version=args.qemu_version)
                for case in selected]
     print(json.dumps(results, indent=2))
-    return 0 if all(result["status"] == "pass" for result in results) else 1
+    return 0 if all(result["status"] in {"pass", "blocked"} for result in results) else 1
 
 
 CASES = {

@@ -105,3 +105,10 @@ func TestReadMSIXTable_Truncated(t *testing.T) {
 		t.Errorf("got %d entries, want 3 (truncated)", len(entries))
 	}
 }
+
+func TestReadMSIXTable_OffsetOutsideBAR(t *testing.T) {
+	info := &MSIXInfo{TableSize: 1, TableOffset: 0x1000}
+	if got := ReadMSIXTable(make([]byte, 0x1000), info); got != nil {
+		t.Fatalf("offset outside BAR returned %d entries", len(got))
+	}
+}

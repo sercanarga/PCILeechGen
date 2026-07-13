@@ -27,6 +27,7 @@ if [ -z "$found" ]; then
 fi
 
 bdf="$(basename "$found")"
+printf '{"event":"stage","case":"%s","stage":"enumerate","bdf":"%s"}\n' "$case_name" "$bdf"
 class="$(cat "$found/class")"
 driver=none
 if [ -L "$found/driver" ]; then
@@ -90,6 +91,7 @@ if [ -f "$found/resource" ]; then
         fi
     done <"$found/resource"
 fi
+printf '{"event":"stage","case":"%s","stage":"bars","count":%s}\n' "$case_name" "$bars"
 status=pass
 detail='driver-bound'
 case "$case_name" in
@@ -112,6 +114,7 @@ esac
 if [ "$rebind" = 1 ] && [ "$status" = pass ]; then
     detail='rebind-reset-driver-bound'
 fi
+printf '{"event":"stage","case":"%s","stage":"driver","driver":"%s","status":"%s"}\n' "$case_name" "$driver" "$status"
 printf '{"event":"result","case":"%s","status":"%s","bdf":"%s","vendor":"%s","device":"%s","class":"%s","driver":"%s","bars":%s,"detail":"%s"}\n' \
     "$case_name" "$status" "$bdf" "$vendor" "$device" "$class" "$driver" "$bars" "$detail"
 [ "$status" != fail ]
