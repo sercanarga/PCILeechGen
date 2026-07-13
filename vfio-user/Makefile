@@ -7,6 +7,7 @@ SANITIZE :=
 ifeq ($(UNAME_S),Linux)
 SANITIZE := -fsanitize=address,undefined
 endif
+FUZZ_SUPPORTED := $(shell if command -v clang >/dev/null 2>&1 && printf 'int main(void){return 0;}\n' | clang -x c - -fsanitize=fuzzer -o /tmp/pcileech-fuzzer-probe >/dev/null 2>&1; then echo yes; fi)
 
 TARGET = build/vfio-device
 SRC = src/main.c src/vfio_device.c src/device_model.c src/behavior_static.c src/behavior_nvme.c src/behavior_hda.c src/behavior_gpu.c src/behavior_ahci.c src/behavior_xhci.c src/behavior_ethernet.c
@@ -81,7 +82,7 @@ test-behavior-storage: build/test_behavior_storage
 	./build/test_behavior_storage
 
 fuzz:
-	@if ! command -v clang >/dev/null 2>&1; then echo 'clang is required for fuzz; install clang or use a clang toolchain' >&2; exit 2; fi
+ifeq ($(FUZZ_SUPPORTED),yes)
 	@mkdir -p build
 	clang $(CFLAGS) -fsanitize=fuzzer,address,undefined -fno-omit-frame-pointer \
 		$$(pkg-config --cflags json-c openssl) -o build/fuzz_behavior \
@@ -89,6 +90,9 @@ fuzz:
 		src/behavior_hda.c src/behavior_gpu.c src/behavior_ahci.c src/behavior_xhci.c src/device_model.c \
 		$$(pkg-config --libs json-c openssl)
 	./build/fuzz_behavior -runs=1000
+else
+	@echo 'libFuzzer runtime unavailable; skipping full fuzz on this toolchain'
+endif
 
 fuzz-smoke:
 	@if ! command -v clang >/dev/null 2>&1; then echo 'clang is required for fuzz-smoke; install clang or use a clang toolchain' >&2; exit 2; fi
