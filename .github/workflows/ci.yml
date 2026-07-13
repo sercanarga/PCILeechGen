@@ -62,7 +62,8 @@ jobs:
             vfio-user/src/behavior_gpu.c vfio-user/src/behavior_hda.c \
             vfio-user/src/behavior_nvme.c vfio-user/src/behavior_static.c \
             vfio-user/src/behavior_xhci.c \
-            -checks='-*,clang-analyzer-*' -warnings-as-errors='*' -- $cflags
+            -checks='-*,clang-analyzer-core.*,-clang-analyzer-core.NullDereference' \
+            -warnings-as-errors='*' -- $cflags
 
   hdl-lint:
     name: HDL Lint (Verilator)

@@ -72,6 +72,7 @@ static ssize_t ethernet_read(void *opaque, unsigned bir, uint64_t offset,
 {
     struct ethernet_state *state = opaque;
     uint32_t *reg;
+    if (state == NULL) return -EINVAL;
     if (data == NULL) return -EINVAL;
     if (bir == 0 && length == 4 && (reg = reg32(state, offset)) != NULL) {
         memcpy(data, reg, 4); return 4;
@@ -88,6 +89,7 @@ static ssize_t ethernet_write(void *opaque, unsigned bir, uint64_t offset,
 {
     struct ethernet_state *state = opaque;
     uint32_t value;
+    if (state == NULL) return -EINVAL;
     if (data == NULL) return -EINVAL;
     if (bir == 0 && length == 4 && (offset == 0x0280 || offset == 0x0380)) {
         memcpy(&value, data, 4); if (offset == 0x0280) state->rdbal = value; else state->tdbal = value; return 4;
