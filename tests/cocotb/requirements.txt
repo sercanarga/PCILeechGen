@@ -1,0 +1,2 @@
+cocotb==2.0.1
+find_libpython==0.5.1

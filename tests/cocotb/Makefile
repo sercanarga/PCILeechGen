@@ -1,24 +1,41 @@
 SIM ?= verilator
 TOPLEVEL_LANG ?= verilog
 
-FIXTURE ?= out
+COCOTB_TEST_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
+FIXTURE ?= $(COCOTB_TEST_DIR)/out
+FIXTURE_DIR := $(abspath $(FIXTURE))
 TB_TOP ?= tb_top
-MODULE ?= test_pcie_host
-RTL := $(wildcard $(FIXTURE)/*.sv)
+COCOTB_TEST_MODULES ?= test_pcie_host
+SIM_BUILD ?= $(CURDIR)/sim_build
+COCOTB_RESULTS_FILE ?= $(CURDIR)/results.xml
+
+RTL := $(wildcard $(FIXTURE_DIR)/*.sv)
 SRC_NEEDED := pcileech_bar_impl_none.sv pcileech_bar_impl_zerowrite4k.sv pcileech_tlps128_bar_wrengine.sv pcileech_tlps128_cfgspace_shadow.sv
-RTL += $(foreach f,$(SRC_NEEDED),$(wildcard $(FIXTURE)/src/$(f)))
-STUBS := cocotb_stubs.sv
+RTL += $(foreach f,$(SRC_NEEDED),$(wildcard $(FIXTURE_DIR)/src/$(f)))
 
-VERILOG_SOURCES := $(RTL) $(STUBS) $(TB_TOP).sv
+VERILOG_SOURCES := $(RTL) $(COCOTB_TEST_DIR)/cocotb_stubs.sv $(COCOTB_TEST_DIR)/$(TB_TOP).sv
 TOPLEVEL := tb_top
-SIM_BUILD := sim_build
+EXTRA_ARGS += -Wno-fatal -I$(FIXTURE_DIR) -I$(FIXTURE_DIR)/src --timing
+override export PYTHONPATH := $(COCOTB_TEST_DIR)
 
-EXTRA_ARGS += -Wno-fatal -I$(FIXTURE) -I$(FIXTURE)/src --timing
-
-ifdef TIMEOUT_CYCLES
-$(shell perl -pi -e 's/\.TIMEOUT_CYCLES\s*\x28\s*24'"'"'h[0-9A-Fa-f]+\s*\x29/.TIMEOUT_CYCLES \x28 24'"'"'h$(TIMEOUT_CYCLES) \x29/' $(FIXTURE)/pcileech_nvme_dma_bridge.sv 2>/dev/null)
+ifndef COCOTB_MAKEFILES
+$(error COCOTB_MAKEFILES must point to the active virtualenv's cocotb makefiles)
 endif
 
-$(shell mkdir -p $(SIM_BUILD) && cp $(FIXTURE)/config_space_init.hex $(SIM_BUILD)/ 2>/dev/null; cp $(FIXTURE)/config_space_init.hex . 2>/dev/null)
+.DEFAULT_GOAL := sim
+.PHONY: prepare-config
 
-include $(shell cocotb-config --makefiles)/Makefile.sim
+prepare-config:
+	@mkdir -p "$(SIM_BUILD)"
+	@set -e; found=0; \
+	for file in "$(FIXTURE_DIR)"/*.hex; do \
+		[ -f "$$file" ] || continue; \
+		cp "$$file" "$(SIM_BUILD)/"; \
+		cp "$$file" "$(CURDIR)/"; \
+		found=1; \
+	done; \
+	[ "$$found" -eq 1 ] || { echo "fixture contains no hex initialization files" >&2; exit 1; }
+
+sim: prepare-config
+
+include $(COCOTB_MAKEFILES)/Makefile.sim
