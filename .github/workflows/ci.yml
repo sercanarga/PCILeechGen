@@ -94,7 +94,7 @@ jobs:
 
       - name: Upload HDL lint report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: hdl-lint-report
           path: hdl-lint-report.tsv
