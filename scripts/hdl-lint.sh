@@ -29,8 +29,27 @@ if [ "${#BOARDS[@]}" -eq 0 ]; then
   exit 1
 fi
 
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+TMP_ROOT=/tmp
+TMP="$(mktemp -d "$TMP_ROOT/pcileech-hdl-lint.XXXXXX")" || {
+  echo "ERROR: cannot create HDL lint temporary directory" >&2
+  exit 1
+}
+case "$TMP" in
+  "$TMP_ROOT"/pcileech-hdl-lint.*) ;;
+  *)
+    echo "ERROR: refusing unexpected HDL lint temporary directory: $TMP" >&2
+    exit 1
+    ;;
+esac
+[ -d "$TMP" ] && [ ! -L "$TMP" ] || {
+  echo "ERROR: HDL lint temporary directory is unsafe: $TMP" >&2
+  exit 1
+}
+cleanup_tmp() {
+  [ -d "$TMP" ] && [ ! -L "$TMP" ] || return 0
+  rm -rf -- "$TMP"
+}
+trap cleanup_tmp EXIT
 
 REPORT="${HDL_LINT_REPORT:-hdl-lint-report.tsv}"
 printf 'fixture\tboard\tstatus\tdetail\n' > "$REPORT"

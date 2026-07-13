@@ -8,8 +8,27 @@ SELECTOR="$REPO_ROOT/scripts/manifest_sv_files.py"
 command -v python3 >/dev/null 2>&1 || { echo "python3 missing"; exit 1; }
 [ -f "$SELECTOR" ] || { echo "manifest SV selector missing: $SELECTOR"; exit 1; }
 
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+TMP_ROOT=/tmp
+TMP="$(mktemp -d "$TMP_ROOT/pcileech-hdl-selection.XXXXXX")" || {
+  echo "cannot create HDL selection-test temporary directory" >&2
+  exit 1
+}
+case "$TMP" in
+  "$TMP_ROOT"/pcileech-hdl-selection.*) ;;
+  *)
+    echo "refusing unexpected HDL selection-test temporary directory: $TMP" >&2
+    exit 1
+    ;;
+esac
+[ -d "$TMP" ] && [ ! -L "$TMP" ] || {
+  echo "HDL selection-test temporary directory is unsafe: $TMP" >&2
+  exit 1
+}
+cleanup_tmp() {
+  [ -d "$TMP" ] && [ ! -L "$TMP" ] || return 0
+  rm -rf -- "$TMP"
+}
+trap cleanup_tmp EXIT
 OUT="$TMP/output"
 mkdir -p "$OUT/src"
 OUT="$(cd "$OUT" && pwd -P)"

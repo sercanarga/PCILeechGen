@@ -11,7 +11,27 @@ command -v python3 >/dev/null 2>&1 || { echo "python3 missing"; exit 1; }
 SELECTOR="$REPO_ROOT/scripts/manifest_sv_files.py"
 [ -f "$SELECTOR" ] || { echo "manifest SV selector missing: $SELECTOR"; exit 1; }
 
-TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+TMP_ROOT=/tmp
+TMP="$(mktemp -d "$TMP_ROOT/pcileech-hdl-negative.XXXXXX")" || {
+  echo "cannot create HDL negative-test temporary directory" >&2
+  exit 1
+}
+case "$TMP" in
+  "$TMP_ROOT"/pcileech-hdl-negative.*) ;;
+  *)
+    echo "refusing unexpected HDL negative-test temporary directory: $TMP" >&2
+    exit 1
+    ;;
+esac
+[ -d "$TMP" ] && [ ! -L "$TMP" ] || {
+  echo "HDL negative-test temporary directory is unsafe: $TMP" >&2
+  exit 1
+}
+cleanup_tmp() {
+  [ -d "$TMP" ] && [ ! -L "$TMP" ] || return 0
+  rm -rf -- "$TMP"
+}
+trap cleanup_tmp EXIT
 
 # undefined module
 cat > "$TMP/uses_undefined.sv" <<'EOF'
