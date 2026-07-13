@@ -279,6 +279,35 @@ static void completes_vendor_log_page(void **state)
     assert_int_equal(cq->status, 1);
 }
 
+static void rejects_invalid_admin_commands(void **state)
+{
+    struct fixture *fixture = *state;
+    struct fake_host host = {0};
+    struct nvme_sqe *sqe;
+    struct nvme_cqe *cq;
+    uint32_t tail = 1;
+
+    configures_admin_queues(fixture, &host, &sqe, &cq, 4);
+    sqe->opcode = 0x02;
+    sqe->cid = 15;
+    sqe->prp1 = 0x3000;
+    sqe->cdw10 = 0x7f | (1u << 16);
+    assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x1000,
+                                              &tail, sizeof(tail)), 4);
+    assert_int_equal(fixture->behavior.service(fixture->behavior.state), 0);
+    assert_int_equal(cq->status, 5);
+
+    sqe->opcode = 0x05;
+    sqe->cid = 16;
+    sqe->prp1 = 0x6000;
+    sqe->cdw10 = (3u << 16) | 1u;
+    tail = 2;
+    assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x1000,
+                                              &tail, sizeof(tail)), 4);
+    assert_int_equal(fixture->behavior.service(fixture->behavior.state), 0);
+    assert_int_equal(cq[1].status, 3);
+}
+
 
 static void wraps_admin_queue_phase(void **state)
 {
@@ -470,6 +499,7 @@ int main(void)
         cmocka_unit_test_setup_teardown(completes_identify_controller, setup, teardown),
         cmocka_unit_test_setup_teardown(completes_identify_namespace_across_prp_pages, setup, teardown),
         cmocka_unit_test_setup_teardown(completes_vendor_log_page, setup, teardown),
+        cmocka_unit_test_setup_teardown(rejects_invalid_admin_commands, setup, teardown),
         cmocka_unit_test_setup_teardown(wraps_admin_queue_phase, setup, teardown),
         cmocka_unit_test_setup_teardown(defers_submission_when_completion_queue_is_full, setup, teardown),
         cmocka_unit_test_setup_teardown(processes_io_write_read_and_flush, setup, teardown),

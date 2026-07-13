@@ -10,7 +10,10 @@ import (
 
 	"github.com/sercanarga/pcileechgen/internal/board"
 	"github.com/sercanarga/pcileechgen/internal/donor"
+	"github.com/sercanarga/pcileechgen/internal/firmware"
 	"github.com/sercanarga/pcileechgen/internal/firmware/devicemodel"
+	"github.com/sercanarga/pcileechgen/internal/firmware/nvme"
+	"github.com/sercanarga/pcileechgen/internal/firmware/svgen"
 	"github.com/sercanarga/pcileechgen/internal/pci"
 )
 
@@ -63,6 +66,43 @@ func TestOutputWriterDeviceModelArtifactAndManifest(t *testing.T) {
 		}
 	}
 	t.Fatal("build manifest does not include device_model.json")
+}
+
+func TestOutputWriterDeviceModelCarriesRawNVMeIdentify(t *testing.T) {
+	ctx := outputModelContext()
+	ctx.Device.VendorID = 0x1c5c
+	ctx.Device.DeviceID = 0x174a
+	ctx.Device.ClassCode = 0x010802
+	ctx.NVMeIdentity = &donor.NVMeIdentity{
+		RawControllerIdent: make([]byte, 4096),
+		RawNamespaceIdent:  make([]byte, 4096),
+	}
+	ctx.NVMeIdentity.RawControllerIdent[0x18] = 'D'
+	ctx.NVMeIdentity.RawNamespaceIdent[0x19] = 1
+	cfg := &svgen.SVGeneratorConfig{
+		NVMeIdentify: nvme.BuildIdentifyData(firmware.DeviceIDs{
+			VendorID: 0x1c5c, DeviceID: 0x174a,
+		}, nil, &nvme.ControllerIdentity{
+			RawControllerIdent: ctx.NVMeIdentity.RawControllerIdent,
+			RawNamespaceIdent:  ctx.NVMeIdentity.RawNamespaceIdent,
+		}),
+	}
+	out := t.TempDir()
+	if err := NewOutputWriter(out, "unused", 1, 1).writeDeviceModel(ctx, nil, cfg); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(out, "device_model.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	model, err := devicemodel.FromJSON(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if model.NVMeIdentify == nil || len(model.NVMeIdentify.Controller) != 4096 ||
+		model.NVMeIdentify.Controller[0x18] != 'D' {
+		t.Fatal("raw NVMe Identify was not carried into device_model.json")
+	}
 }
 
 func TestOutputWriterWriteAllWithRealisticDonor(t *testing.T) {

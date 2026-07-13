@@ -166,6 +166,19 @@ class MatrixTests(unittest.TestCase):
                     timeout=1,
                 )
 
+    def test_nvme_firmware_and_vfio_contracts_expose_same_core_features(self):
+        root = Path(__file__).resolve().parents[2]
+        c_source = (root / "vfio-user" / "src" / "behavior_nvme.c").read_text(encoding="utf-8")
+        sv_source = (root / "internal" / "firmware" / "svgen" / "templates" /
+                     "nvme_admin_responder.sv.tmpl").read_text(encoding="utf-8")
+        for token in ("0x02", "0x06", "0x80", "0xc0", "0x09"):
+            self.assertIn(token, c_source)
+        for token in ("8'h02", "8'h06", "8'h80", "8'hC0", "8'h09"):
+            self.assertIn(token, sv_source)
+        for token in ("LOG_PAGE_VENDOR", "PRP_LIST", "stat_dma_mrd_tlps",
+                      "stat_transport_errors"):
+            self.assertIn(token, sv_source)
+
 
 if __name__ == "__main__":
     unittest.main()

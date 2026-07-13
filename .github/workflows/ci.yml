@@ -125,7 +125,7 @@ jobs:
       - name: Install test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libcmocka-dev libjson-c-dev libssl-dev
+          sudo apt-get install -y clang libcmocka-dev libjson-c-dev libssl-dev
 
       - name: Setup Go
         uses: actions/setup-go@v6
@@ -144,3 +144,4 @@ jobs:
         run: |
           make -C vfio-user clean test
           make -C vfio-user clean test SANITIZE='-fsanitize=address,undefined -fno-omit-frame-pointer'
+          make -C vfio-user fuzz-smoke
