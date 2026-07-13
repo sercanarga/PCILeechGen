@@ -4,11 +4,14 @@ from __future__ import annotations
 import os
 import json
 import argparse
+import platform
+import re
 import select
 import signal
 import socket
 import stat
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
@@ -16,6 +19,31 @@ from typing import Sequence
 
 ROOT = Path(__file__).resolve().parents[1]
 GENERATOR = Path(os.environ.get("PCILEECHGEN_BIN", ROOT / "bin" / "pcileechgen"))
+REQUIRED_GUEST_STAGES = ("enumerate", "bars", "driver")
+ALLOWED_BLOCK_REASONS = frozenset(
+    {
+        "guest-optional-driver",
+        "kvm-unavailable",
+        "qemu-version-mismatch",
+    }
+)
+ALLOWED_GUEST_SKIPS = {
+    "audio": frozenset({"optional-driver-not-bound"}),
+    "gpu": frozenset({"optional-driver-not-bound"}),
+    "thunderbolt": frozenset({"optional-driver-not-bound"}),
+    "wifi": frozenset({"optional-driver-not-bound"}),
+}
+FATAL_GUEST_SIGNATURES = (
+    "bug:",
+    "general protection fault",
+    "kernel panic",
+    "oops:",
+    "unable to handle kernel",
+)
+PCI_BDF = re.compile(
+    r"^(?P<domain>[0-9a-fA-F]{4}):(?P<bus>[0-9a-fA-F]{2}):"
+    r"(?P<device>[0-9a-fA-F]{2})\.(?P<function>[0-7])$"
+)
 
 
 class CaseFailure(RuntimeError):
@@ -23,7 +51,11 @@ class CaseFailure(RuntimeError):
 
 
 class CaseBlocked(RuntimeError):
-    pass
+    def __init__(self, reason: str, detail: str):
+        if reason not in ALLOWED_BLOCK_REASONS:
+            raise ValueError(f"blocked reason is not allowlisted: {reason}")
+        super().__init__(detail)
+        self.reason = reason
 
 
 @dataclass(frozen=True)
@@ -44,12 +76,115 @@ class GuestResult:
     device: str
     class_code: str
     driver: str
+    bars: int
     detail: str
 
 
-def parse_guest_results(text: str, case: Case) -> GuestResult:
+def _normalize_hex(value: object, width: int, field: str) -> str:
+    if not isinstance(value, str):
+        raise CaseFailure(f"guest {field} is not a hexadecimal string")
+    normalized = value.removeprefix("0x").removeprefix("0X")
+    if len(normalized) != width or any(char not in "0123456789abcdefABCDEF" for char in normalized):
+        raise CaseFailure(f"guest {field} is not {width} hexadecimal digits")
+    return normalized.lower()
+
+
+def _validate_bdf(value: object) -> str:
+    if not isinstance(value, str):
+        raise CaseFailure("invalid guest BDF")
+    match = PCI_BDF.fullmatch(value)
+    if match is None or int(match.group("device"), 16) > 0x1F:
+        raise CaseFailure(f"invalid guest BDF: {value}")
+    return value.lower()
+
+
+def _fixture_contract(case: Case) -> dict:
+    try:
+        fixture = json.loads(case.fixture.read_text(encoding="utf-8"))
+        device = fixture["device"]
+        bars = fixture["bars"]
+        return {
+            "identity": {
+                "vendor": f"{device['vendor_id']:04x}",
+                "device": f"{device['device_id']:04x}",
+                "class": f"{device['class_code']:06x}",
+            },
+            "bars": [
+                {
+                    "bir": bar["index"],
+                    "size": bar["size"],
+                    "type": bar["type"],
+                    "prefetchable": bar["prefetchable"],
+                    "address_width": 64 if bar["is_64bit"] else 32,
+                }
+                for bar in bars
+            ],
+        }
+    except (KeyError, TypeError, ValueError, OSError, json.JSONDecodeError) as exc:
+        raise CaseFailure(f"{case.name}: invalid fixture contract: {exc}") from exc
+
+
+def _validated_expected_bars(contract: dict, case: Case) -> list[dict]:
+    try:
+        bars = contract["bars"]
+        if not isinstance(bars, list) or len(bars) > 6:
+            raise ValueError("BAR collection must contain at most six entries")
+        seen = set()
+        for bar in bars:
+            bir = bar["bir"]
+            if isinstance(bir, bool) or not isinstance(bir, int) or not 0 <= bir <= 5:
+                raise ValueError(f"invalid BAR index {bir!r}")
+            if bir in seen:
+                raise ValueError(f"duplicate BAR index {bir}")
+            seen.add(bir)
+            if isinstance(bar["size"], bool) or not isinstance(bar["size"], int) or bar["size"] <= 0:
+                raise ValueError(f"invalid BAR{bir} size")
+            if bar["type"] not in {"io", "mem32", "mem64"}:
+                raise ValueError(f"invalid BAR{bir} type")
+            if not isinstance(bar["prefetchable"], bool):
+                raise ValueError(f"invalid BAR{bir} prefetchability")
+            if bar["address_width"] not in {32, 64}:
+                raise ValueError(f"invalid BAR{bir} address width")
+        return bars
+    except (KeyError, TypeError, ValueError) as exc:
+        raise CaseFailure(f"{case.name}: invalid expected BAR contract: {exc}") from exc
+
+
+def _validate_guest_bar_evidence(value: object, expected: list[dict]) -> int:
+    if isinstance(value, bool):
+        raise CaseFailure("guest BAR evidence has invalid type")
+    if isinstance(value, int):
+        return value
+    if not isinstance(value, list):
+        raise CaseFailure("guest BAR evidence must be a count or indexed records")
+
+    expected_by_bir = {bar["bir"]: bar for bar in expected}
+    observed_birs = set()
+    for observed in value:
+        if not isinstance(observed, dict):
+            raise CaseFailure("guest BAR evidence contains a non-record")
+        try:
+            bir = observed["bir"]
+            expected_bar = expected_by_bir[bir]
+        except (KeyError, TypeError) as exc:
+            raise CaseFailure("guest BAR evidence contains an unexpected BIR") from exc
+        if bir in observed_birs:
+            raise CaseFailure(f"guest BAR evidence duplicates BAR{bir}")
+        observed_birs.add(bir)
+        for field in ("size", "type", "prefetchable", "address_width"):
+            if field not in observed:
+                raise CaseFailure(f"guest BAR{bir} evidence is missing {field}")
+            if observed[field] != expected_bar[field]:
+                raise CaseFailure(f"guest BAR{bir} {field} mismatch")
+    if observed_birs != set(expected_by_bir):
+        raise CaseFailure("guest BAR evidence does not cover every generated BIR")
+    return len(value)
+
+
+def parse_guest_results(text: str, case: Case, contract: dict | None = None) -> GuestResult:
     records = []
-    for line in text.splitlines():
+    raw_lines = text.splitlines()
+    for line_number, line in enumerate(raw_lines):
         line = line.strip()
         if not line or not line.startswith("{"):
             continue
@@ -57,28 +192,110 @@ def parse_guest_results(text: str, case: Case) -> GuestResult:
             record = json.loads(line)
         except json.JSONDecodeError as exc:
             raise CaseFailure(f"invalid guest result JSON: {exc}") from exc
-        if record.get("event") == "result":
-            records.append(record)
-    if len(records) != 1:
-        raise CaseFailure(f"expected one terminal guest result, got {len(records)}")
-    record = records[0]
+        if not isinstance(record, dict):
+            raise CaseFailure("guest record is not a JSON object")
+        if record.get("event") in {"stage", "result"}:
+            if record.get("case") != case.name:
+                raise CaseFailure(f"guest result case mismatch: {record.get('case')}")
+            records.append((line_number, record))
+
+    terminal = [(line_number, record) for line_number, record in records
+                if record.get("event") == "result"]
+    if len(terminal) != 1:
+        raise CaseFailure(f"expected one terminal guest result, got {len(terminal)}")
+    terminal_line, record = terminal[0]
     if record.get("case") != case.name:
         raise CaseFailure(f"guest result case mismatch: {record.get('case')}")
     if record.get("status") not in {"pass", "skip", "fail"}:
         raise CaseFailure("guest result has invalid status")
-    required = ("bdf", "vendor", "device", "class", "driver")
+    required = ("bdf", "vendor", "device", "class", "driver", "bars", "detail")
     missing = [key for key in required if key not in record]
     if missing:
         raise CaseFailure(f"guest result missing fields: {','.join(missing)}")
+
+    stage_records = {}
+    for stage in REQUIRED_GUEST_STAGES:
+        matches = [(line_number, item) for line_number, item in records
+                   if item.get("event") == "stage" and item.get("stage") == stage]
+        if len(matches) != 1:
+            raise CaseFailure(
+                f"missing or duplicate guest stage evidence for {stage}: {len(matches)}"
+            )
+        stage_records[stage] = matches[0]
+    stage_lines = [stage_records[stage][0] for stage in REQUIRED_GUEST_STAGES]
+    if stage_lines != sorted(stage_lines) or stage_lines[-1] >= terminal_line:
+        raise CaseFailure("guest stage evidence is out of order")
+
+    expected = contract if contract is not None else _fixture_contract(case)
+    try:
+        identity = expected["identity"]
+    except (KeyError, TypeError) as exc:
+        raise CaseFailure(f"{case.name}: invalid expected identity contract") from exc
+    observed_identity = {
+        "vendor": _normalize_hex(record["vendor"], 4, "vendor"),
+        "device": _normalize_hex(record["device"], 4, "device"),
+        "class": _normalize_hex(record["class"], 6, "class"),
+    }
+    for field, observed in observed_identity.items():
+        if observed != str(identity.get(field, "")).lower():
+            raise CaseFailure(
+                f"guest {field} mismatch: got {observed}, expected {identity.get(field)}"
+            )
+
+    bdf = _validate_bdf(record["bdf"])
+    enumerate_stage = stage_records["enumerate"][1]
+    if _validate_bdf(enumerate_stage.get("bdf")) != bdf:
+        raise CaseFailure("guest BDF does not match enumerate stage")
+
+    expected_bars = _validated_expected_bars(expected, case)
+    bar_count = _validate_guest_bar_evidence(record["bars"], expected_bars)
+    stage_count = stage_records["bars"][1].get("count")
+    if isinstance(stage_count, bool) or not isinstance(stage_count, int):
+        raise CaseFailure("guest BAR stage count is invalid")
+    if stage_count != bar_count:
+        raise CaseFailure("guest BAR terminal count does not match BAR stage")
+    if bar_count != len(expected_bars):
+        raise CaseFailure(
+            f"guest BAR count mismatch: got {bar_count}, expected {len(expected_bars)}"
+        )
+
+    driver = record["driver"]
+    if not isinstance(driver, str) or not driver:
+        raise CaseFailure("guest driver evidence is invalid")
+    driver_stage = stage_records["driver"][1]
+    if driver_stage.get("driver") != driver:
+        raise CaseFailure("guest driver does not match driver stage")
+    if driver_stage.get("status") != record["status"]:
+        raise CaseFailure("guest status does not match driver stage")
+
+    detail = record["detail"]
+    if not isinstance(detail, str) or not detail:
+        raise CaseFailure("guest result detail is missing")
+    if record["status"] == "skip" and detail not in ALLOWED_GUEST_SKIPS.get(case.name, ()):
+        raise CaseFailure(f"guest skip reason is not permitted for {case.name}: {detail}")
+    if record["status"] == "pass" and case.mandatory_probe not in {"enumeration", "bar-layout"}:
+        if driver == "none":
+            raise CaseFailure(f"{case.name}: passing guest result has no bound driver")
+
+    driver_line = stage_records["driver"][0]
+    for line_number in range(driver_line + 1, len(raw_lines)):
+        line = raw_lines[line_number].strip()
+        if line.startswith("{"):
+            continue
+        lowered = line.lower()
+        if any(signature in lowered for signature in FATAL_GUEST_SIGNATURES):
+            raise CaseFailure(f"fatal guest kernel message after driver bind: {line}")
+
     return GuestResult(
         case=case.name,
         status=record["status"],
-        bdf=record["bdf"],
-        vendor=record["vendor"],
-        device=record["device"],
-        class_code=record["class"],
-        driver=record["driver"],
-        detail=record.get("detail", ""),
+        bdf=bdf,
+        vendor=observed_identity["vendor"],
+        device=observed_identity["device"],
+        class_code=observed_identity["class"],
+        driver=driver,
+        bars=bar_count,
+        detail=detail,
     )
 
 
@@ -108,23 +325,41 @@ def build_command(case: Case, output: Path) -> list[str]:
 
 
 def build_contract(case: Case, artifacts: Path) -> dict:
-    model = json.loads((artifacts / "device_model.json").read_text(encoding="utf-8"))
-    function = model["functions"][0]
-    return {
-        "case": case.name,
-        "identity": {
-            "vendor": f"{function['vendor_id']:04x}",
-            "device": f"{function['device_id']:04x}",
-            "class": f"{function['class_code']:06x}",
-        },
-        "bars": [
-            {"bir": bar["bir"], "size": bar["size"], "type": bar["type"]}
-            for bar in model.get("bars", [])
-        ],
-        "capabilities": [cap["id"] for cap in model.get("capabilities", [])],
-        "reset": {"vfio_callback": True, "bar_reset_image": True},
-        "probe": ["enumerate", "bars", "reset", case.mandatory_probe],
-    }
+    try:
+        model = json.loads((artifacts / "device_model.json").read_text(encoding="utf-8"))
+        functions = model["functions"]
+        if not isinstance(functions, list) or len(functions) != 1:
+            raise ValueError("device model must contain exactly one function")
+        function = functions[0]
+        contract = {
+            "case": case.name,
+            "identity": {
+                "vendor": f"{function['vendor_id']:04x}",
+                "device": f"{function['device_id']:04x}",
+                "class": f"{function['class_code']:06x}",
+            },
+            "bars": [
+                {
+                    "bir": bar["bir"],
+                    "size": bar["size"],
+                    "type": bar["type"],
+                    "prefetchable": bar["prefetchable"],
+                    "address_width": bar["address_width"],
+                }
+                for bar in model["bars"]
+            ],
+            "capabilities": [cap["id"] for cap in model["capabilities"]],
+            "reset": {"vfio_callback": True, "bar_reset_image": True},
+            "probe": ["enumerate", "bars", "reset", case.mandatory_probe],
+        }
+        for field, width in (("vendor", 4), ("device", 4), ("class", 6)):
+            _normalize_hex(contract["identity"][field], width, field)
+        _validated_expected_bars(contract, case)
+        return contract
+    except CaseFailure:
+        raise
+    except (KeyError, TypeError, ValueError, OSError, json.JSONDecodeError) as exc:
+        raise CaseFailure(f"{case.name}: invalid generated device contract: {exc}") from exc
 
 
 def prepare_socket_path(path: Path) -> None:
@@ -190,8 +425,36 @@ def stop_server(process: subprocess.Popen, output) -> None:
     output.close()
 
 
-def qemu_requires_kvm(case: Case, kvm_path: Path = Path("/dev/kvm")) -> bool:
-    return case.name == "nvme" and not kvm_path.exists()
+def _normalized_architecture(value: str) -> str:
+    return {
+        "amd64": "x86_64",
+        "arm64": "aarch64",
+    }.get(value.lower(), value.lower())
+
+
+def _qemu_architecture(qemu: Path) -> str | None:
+    name = qemu.name.lower()
+    for architecture in ("x86_64", "aarch64"):
+        if name.endswith(architecture):
+            return architecture
+    return None
+
+
+def qemu_requires_kvm(case: Case, kvm_path: Path = Path("/dev/kvm"), *,
+                      qemu: Path | None = None, host_machine: str | None = None,
+                      host_system: str | None = None) -> bool:
+    if case.name != "nvme":
+        return False
+    system = platform.system() if host_system is None else host_system
+    if system != "Linux":
+        return False
+    host_arch = _normalized_architecture(
+        platform.machine() if host_machine is None else host_machine
+    )
+    guest_arch = _qemu_architecture(qemu) if qemu is not None else host_arch
+    if guest_arch is not None and guest_arch != host_arch:
+        return False
+    return not kvm_path.exists()
 
 
 def run_server_smoke(case: Case, artifacts: Path, work_dir: Path, timeout: int = 10) -> dict:
@@ -204,32 +467,62 @@ def run_qemu_case(case: Case, artifacts: Path, work_dir: Path,
                   qemu: Path, kernel: Path, initrd: Path, timeout: int = 30,
                   shared_memory: bool = False, rebind: bool = False,
                   expected_version: str | None = None) -> GuestResult:
-    if qemu_requires_kvm(case):
-        raise CaseBlocked(f"{case.name}: /dev/kvm is required for QEMU MSI-X E2E")
+    if qemu_requires_kvm(case, qemu=qemu):
+        raise CaseBlocked(
+            "kvm-unavailable",
+            f"{case.name}: /dev/kvm is required for native QEMU MSI-X E2E",
+        )
     if expected_version is not None:
         version = subprocess.run([str(qemu), "--version"], capture_output=True,
                                  text=True, check=False)
-        if version.returncode != 0 or expected_version not in version.stdout:
-            raise CaseBlocked(f"{case.name}: QEMU version mismatch; expected {expected_version!r}")
-    process, output, socket_path, _ = start_server(case, artifacts, work_dir)
-    qemu_log = work_dir / "qemu.log"
-    command = build_qemu_command(case, socket_path, kernel, initrd, artifacts,
-                                 qemu=qemu, shared_memory=shared_memory,
-                                 rebind=rebind)
+        if version.returncode != 0:
+            raise CaseFailure(
+                f"{case.name}: QEMU version probe exited {version.returncode}"
+            )
+        if expected_version not in version.stdout:
+            raise CaseBlocked(
+                "qemu-version-mismatch",
+                f"{case.name}: QEMU version mismatch; expected {expected_version!r}",
+            )
+    contract = build_contract(case, artifacts)
+    process, output, socket_path, readiness = start_server(case, artifacts, work_dir)
     try:
-        with qemu_log.open("w", encoding="utf-8") as log:
-            try:
+        validate_readiness(readiness, contract, case)
+        qemu_log = work_dir / "qemu.log"
+        command = build_qemu_command(case, socket_path, kernel, initrd, artifacts,
+                                     qemu=qemu, shared_memory=shared_memory,
+                                     rebind=rebind)
+        try:
+            with qemu_log.open("w", encoding="utf-8") as log:
                 result = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT,
                                         timeout=timeout, check=False)
-            except subprocess.TimeoutExpired as exc:
-                raise CaseFailure(f"{case.name}: QEMU timed out after {timeout}s") from exc
+        except subprocess.TimeoutExpired as exc:
+            _retain_guest_records(qemu_log, work_dir / "guest-results.jsonl")
+            raise CaseFailure(f"{case.name}: QEMU timed out after {timeout}s") from exc
         text = qemu_log.read_text(encoding="utf-8")
-        guest = parse_guest_results(text, case)
-        if result.returncode != 0 and guest.status != "pass":
+        _retain_guest_records(qemu_log, work_dir / "guest-results.jsonl")
+        if result.returncode != 0:
             raise CaseFailure(f"{case.name}: QEMU exited {result.returncode}")
+        guest = parse_guest_results(text, case, contract)
+        validate_guest_result(guest, case, rebind=rebind)
         return guest
     finally:
         stop_server(process, output)
+
+
+def validate_guest_result(guest: GuestResult, case: Case, *, rebind: bool = False) -> None:
+    if guest.status == "fail":
+        raise CaseFailure(f"{case.name}: guest probe failed: {guest.detail}")
+    if rebind:
+        if guest.status != "pass" or guest.driver == "none" or (
+            guest.detail != "rebind-reset-driver-bound"
+        ):
+            raise CaseFailure(f"{case.name}: guest result lacks reset/rebind evidence")
+    if guest.status == "skip":
+        raise CaseBlocked(
+            "guest-optional-driver",
+            f"{case.name}: optional guest dependency unavailable: {guest.detail}",
+        )
 
 
 def build_qemu_command(case: Case, socket_path: Path, kernel: Path,
@@ -267,6 +560,68 @@ def device_for(artifacts: Path) -> str:
     return f"{data['functions'][0]['device_id']:04x}"
 
 
+def _atomic_write(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+            output.write(text)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
+def _atomic_write_json(path: Path, value: object) -> None:
+    _atomic_write(path, json.dumps(value, indent=2, sort_keys=True) + "\n")
+
+
+def _retain_guest_records(qemu_log: Path, destination: Path) -> None:
+    if not qemu_log.is_file():
+        _atomic_write(destination, "")
+        return
+    records = []
+    for line in qemu_log.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("{"):
+            records.append(stripped)
+    _atomic_write(destination, "".join(record + "\n" for record in records))
+
+
+def validate_readiness(record: object, contract: dict, case: Case) -> None:
+    if not isinstance(record, dict) or record.get("event") != "ready":
+        raise CaseFailure(f"{case.name}: invalid VFIO readiness record")
+    try:
+        observed = {
+            "vendor": _normalize_hex(record["vendor_id"], 4, "readiness vendor"),
+            "device": _normalize_hex(record["device_id"], 4, "readiness device"),
+            "class": _normalize_hex(record["class_code"], 6, "readiness class"),
+        }
+        expected = contract["identity"]
+        for field, value in observed.items():
+            if value != expected[field]:
+                raise CaseFailure(
+                    f"{case.name}: VFIO readiness {field} mismatch: "
+                    f"got {value}, expected {expected[field]}"
+                )
+        bar_count = record["bar_count"]
+        if isinstance(bar_count, bool) or not isinstance(bar_count, int):
+            raise CaseFailure(f"{case.name}: VFIO readiness BAR count is invalid")
+        if bar_count != len(_validated_expected_bars(contract, case)):
+            raise CaseFailure(f"{case.name}: VFIO readiness BAR count mismatch")
+    except KeyError as exc:
+        raise CaseFailure(
+            f"{case.name}: VFIO readiness record is missing {exc.args[0]}"
+        ) from exc
+
+
 def run_case(case: Case, work_root: Path, timeout: int = 120,
              qemu: Path | None = None, kernel: Path | None = None,
              initrd: Path | None = None, shared_memory: bool = False,
@@ -276,25 +631,71 @@ def run_case(case: Case, work_root: Path, timeout: int = 120,
     case_dir.mkdir(parents=True, exist_ok=True)
     generation_log = case_dir / "generation.log"
     try:
+        if qemu is None:
+            raise CaseFailure(f"{case.name}: QEMU guest evidence is required")
+        if kernel is None or initrd is None:
+            raise CaseFailure("QEMU mode requires --kernel and --initrd")
         run_command(build_command(case, artifacts), generation_log, timeout)
+        contract = build_contract(case, artifacts)
         readiness = run_server_smoke(case, artifacts, case_dir)
+        validate_readiness(readiness, contract, case)
         result = {"case": case.name, "status": "pass", "readiness": readiness}
-        if qemu is not None:
-            if kernel is None or initrd is None:
-                raise CaseFailure("QEMU mode requires --kernel and --initrd")
-            guest = run_qemu_case(case, artifacts, case_dir, qemu, kernel, initrd,
-                                  shared_memory=shared_memory, rebind=rebind,
-                                  expected_version=qemu_version)
-            if guest.status == "fail" or (case.mandatory_probe == "driver" and guest.status == "fail"):
-                raise CaseFailure(f"{case.name}: guest probe failed: {guest.detail}")
-            result["guest"] = guest.__dict__
+        guest = run_qemu_case(case, artifacts, case_dir, qemu, kernel, initrd,
+                              shared_memory=shared_memory, rebind=rebind,
+                              expected_version=qemu_version)
+        result["guest"] = guest.__dict__
     except CaseBlocked as exc:
-        result = {"case": case.name, "status": "blocked", "detail": str(exc)}
+        result = {
+            "case": case.name,
+            "status": "blocked",
+            "reason": exc.reason,
+            "detail": str(exc),
+        }
     except (CaseFailure, OSError, json.JSONDecodeError) as exc:
         result = {"case": case.name, "status": "fail", "detail": str(exc)}
     result_path = case_dir / "result.json"
-    result_path.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    _atomic_write_json(result_path, result)
     return result
+
+
+def summarize_results(results: list[dict]) -> dict:
+    counts = {"pass": 0, "blocked": 0, "fail": 0}
+    seen = set()
+    authoritative_results = []
+    for result in results:
+        case_name = result.get("case")
+        status = result.get("status")
+        if not isinstance(case_name, str) or not case_name or case_name in seen:
+            status = "fail"
+            result = {
+                "case": case_name if isinstance(case_name, str) else "<invalid>",
+                "status": "fail",
+                "detail": "matrix produced a missing or duplicate case result",
+            }
+        elif status not in counts:
+            status = "fail"
+            result = {
+                "case": case_name,
+                "status": "fail",
+                "detail": "matrix produced an invalid terminal status",
+            }
+        elif status == "blocked" and result.get("reason") not in ALLOWED_BLOCK_REASONS:
+            status = "fail"
+            result = {
+                "case": case_name,
+                "status": "fail",
+                "detail": "matrix produced a non-allowlisted blocked result",
+            }
+        seen.add(result["case"])
+        counts[status] += 1
+        authoritative_results.append(result)
+    exit_code = 1 if counts["fail"] else 0
+    return {
+        "status": "fail" if exit_code else "pass",
+        "exit_code": exit_code,
+        "counts": counts,
+        "results": authoritative_results,
+    }
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -315,8 +716,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                         initrd=args.initrd, shared_memory=args.shared_memory,
                         rebind=args.rebind, qemu_version=args.qemu_version)
                for case in selected]
-    print(json.dumps(results, indent=2))
-    return 0 if all(result["status"] in {"pass", "blocked"} for result in results) else 1
+    summary = summarize_results(results)
+    _atomic_write_json(args.work_dir / "summary.json", summary)
+    print(json.dumps(summary, indent=2, sort_keys=True))
+    return summary["exit_code"]
 
 
 CASES = {

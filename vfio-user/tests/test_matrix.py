@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import socket
 import sys
 import tempfile
@@ -15,6 +16,22 @@ def load_matrix():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def generic_guest_log(kernel_line=""):
+    lines = [
+        '{"event":"stage","case":"generic","stage":"enumerate","bdf":"0000:03:00.0"}',
+        '{"event":"stage","case":"generic","stage":"bars","count":1}',
+        '{"event":"stage","case":"generic","stage":"driver","driver":"none","status":"pass"}',
+    ]
+    if kernel_line:
+        lines.append(kernel_line)
+    lines.append(
+        '{"event":"result","case":"generic","status":"pass",'
+        '"bdf":"0000:03:00.0","vendor":"1234","device":"5678",'
+        '"class":"000000","driver":"none","bars":1,"detail":"enumeration"}'
+    )
+    return "\n".join(lines) + "\n"
 
 
 class MatrixTests(unittest.TestCase):
@@ -56,7 +73,7 @@ class MatrixTests(unittest.TestCase):
         matrix = load_matrix()
 
         result = matrix.parse_guest_results(
-            '{"event":"result","case":"generic","status":"pass","bdf":"0000:03:00.0","vendor":"1234","device":"5678","class":"000000","driver":"none"}\n',
+            generic_guest_log(),
             matrix.CASES["generic"],
         )
 
@@ -75,10 +92,7 @@ class MatrixTests(unittest.TestCase):
     def test_parse_guest_results_ignores_kernel_log_lines(self):
         matrix = load_matrix()
         result = matrix.parse_guest_results(
-            "[    1.2] kernel message\n"
-            '{"event":"result","case":"generic","status":"pass",'
-            '"bdf":"0000:03:00.0","vendor":"1234","device":"5678",'
-            '"class":"000000","driver":"none"}\n',
+            generic_guest_log("[    1.2] ordinary kernel message"),
             matrix.CASES["generic"],
         )
         self.assertEqual(result.status, "pass")
@@ -94,19 +108,64 @@ class MatrixTests(unittest.TestCase):
 
     def test_contract_covers_generated_artifact_stages(self):
         matrix = load_matrix()
-        for case in matrix.CASES.values():
-            artifacts = Path(__file__).resolve().parents[2] / "tests" / "cocotb" / f"out_{case.name}"
-            contract = matrix.build_contract(case, artifacts)
-            self.assertEqual(contract["case"], case.name)
-            self.assertTrue(contract["bars"])
-            self.assertTrue(contract["capabilities"])
-            self.assertEqual(contract["probe"][:3], ["enumerate", "bars", "reset"])
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for case in matrix.CASES.values():
+                fixture = json.loads(case.fixture.read_text(encoding="utf-8"))
+                device = fixture["device"]
+                artifacts = root / case.name
+                artifacts.mkdir()
+                model = {
+                    "functions": [
+                        {
+                            "vendor_id": device["vendor_id"],
+                            "device_id": device["device_id"],
+                            "class_code": device["class_code"],
+                        }
+                    ],
+                    "bars": [
+                        {
+                            "bir": bar["index"],
+                            "size": bar["size"],
+                            "type": bar["type"],
+                            "prefetchable": bar["prefetchable"],
+                            "address_width": 64 if bar["is_64bit"] else 32,
+                        }
+                        for bar in fixture["bars"]
+                    ],
+                    "capabilities": fixture["capabilities"],
+                }
+                (artifacts / "device_model.json").write_text(
+                    json.dumps(model), encoding="utf-8"
+                )
+
+                contract = matrix.build_contract(case, artifacts)
+                self.assertEqual(contract["case"], case.name)
+                self.assertTrue(contract["bars"])
+                self.assertTrue(contract["capabilities"])
+                self.assertEqual(contract["probe"][:3], ["enumerate", "bars", "reset"])
 
     def test_nvme_qemu_requires_kvm(self):
         matrix = load_matrix()
 
-        self.assertTrue(matrix.qemu_requires_kvm(matrix.CASES["nvme"], Path("/missing/kvm")))
-        self.assertFalse(matrix.qemu_requires_kvm(matrix.CASES["generic"], Path("/missing/kvm")))
+        self.assertTrue(
+            matrix.qemu_requires_kvm(
+                matrix.CASES["nvme"],
+                Path("/missing/kvm"),
+                qemu=Path("qemu-system-x86_64"),
+                host_machine="x86_64",
+                host_system="Linux",
+            )
+        )
+        self.assertFalse(
+            matrix.qemu_requires_kvm(
+                matrix.CASES["generic"],
+                Path("/missing/kvm"),
+                qemu=Path("qemu-system-x86_64"),
+                host_machine="x86_64",
+                host_system="Linux",
+            )
+        )
 
     def test_qemu_rebind_mode_is_explicit(self):
         matrix = load_matrix()
