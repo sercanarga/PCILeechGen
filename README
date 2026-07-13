@@ -139,14 +139,6 @@ FEATURES
   Diagnostics
     - VFIO diagnostics, BAR vs BRAM compatibility checks
     - post-build validation, build manifest, config-space diff report
-    - pcileechgen diagnose for Windows Code-10 style BAR/MSI-X/NVMe checks
-    - Vivado failure summaries with OOM/license/timing/IP-cache hints
-
-  Demo donor profiles
-    - NICv2, RTL8125, RealtekRTL8125, IntelI210, IntelI219, IntelI225 Ethernet fixtures
-    - DiskTest and NVMEv2 NVMe fixtures
-    - generated with: pcileechgen fixtures --demo-profiles
-    - optional VFIO matrix coverage with: vfio-user/matrix.py --all --include-demo
 
 
 SUPPORTED BOARDS

@@ -14,8 +14,9 @@ from pathlib import Path
 from typing import Sequence
 
 
-ROOT = Path(__file__).resolve().parents[1]
-GENERATOR = Path(os.environ.get("PCILEECHGEN_BIN", ROOT / "bin" / "pcileechgen"))
+VFIO_ROOT = Path(__file__).resolve().parent
+REPO_ROOT = VFIO_ROOT.parent if (VFIO_ROOT.parent / "testdata").is_dir() else VFIO_ROOT
+GENERATOR = Path(os.environ.get("PCILEECHGEN_BIN", REPO_ROOT / "bin" / "pcileechgen"))
 
 
 class CaseFailure(RuntimeError):
@@ -95,7 +96,7 @@ def _case(name: str, behavior: str, mandatory_probe: str, board: str = "PCIeSqui
     fixture_name = fixture or name
     return Case(
         name=name,
-        fixture=ROOT / "testdata" / "donors" / f"{fixture_name}.json",
+        fixture=REPO_ROOT / "testdata" / "donors" / f"{fixture_name}.json",
         board=board,
         behavior=behavior,
         mandatory_probe=mandatory_probe,
@@ -181,7 +182,7 @@ def prepare_socket_path(path: Path) -> None:
 
 
 def start_server(case: Case, artifacts: Path, work_dir: Path, timeout: int = 10):
-    binary = ROOT / "vfio-user" / "build" / "vfio-device"
+    binary = VFIO_ROOT / "build" / "vfio-device"
     if not binary.is_file():
         raise CaseFailure(f"VFIO server binary is missing: {binary}")
     socket_path = work_dir / "device.sock"
@@ -191,7 +192,7 @@ def start_server(case: Case, artifacts: Path, work_dir: Path, timeout: int = 10)
     with log_path.open("w", encoding="utf-8") as log:
         process = subprocess.Popen(
             [str(binary), "--artifacts", str(artifacts), "--socket", str(socket_path)],
-            cwd=ROOT / "vfio-user",
+            cwd=VFIO_ROOT,
             stdout=subprocess.PIPE,
             stderr=log,
             text=True,
@@ -413,7 +414,7 @@ def run_command(argv: Sequence[str], log_path: Path, timeout: int) -> None:
     with log_path.open("wb") as log:
         process = subprocess.Popen(
             list(argv),
-            cwd=ROOT,
+            cwd=REPO_ROOT,
             stdout=log,
             stderr=subprocess.STDOUT,
             start_new_session=True,

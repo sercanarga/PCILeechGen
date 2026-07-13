@@ -32,6 +32,7 @@ RUN pip3 install --no-cache-dir "meson>=1.8,<1.9" tomli \
 
 COPY vfio-user /build
 RUN make -C /build all
+RUN python3 /build/tools/create_smoke_artifact.py --output /artifacts/generic
 
 COPY vfio-user/guest /guest-source
 RUN set -eu; \

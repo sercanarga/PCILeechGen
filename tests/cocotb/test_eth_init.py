@@ -77,14 +77,13 @@ async def test_eth_full_driver_init(dut):
 async def test_eth_dma_fake_rx_and_tx_loopback(dut):
     await reset(dut)
 
-    # Two-entry rings at byte addresses 0x1000 and 0x2000.
     await host_poke(dut, 0x1000 // 4, 0x00005000)
     await host_poke(dut, 0x1000 // 4 + 4, 0x00005010)
     await host_poke(dut, 0x2000 // 4, 0x00006000)
     await host_poke(dut, 0x2000 // 4 + 2, 4)
     await host_poke(dut, 0x6000 // 4, 0x474E4950)  # "PING" in host byte order
     await write_bar(dut, RDBAL_DMA, 0x1000)
-    await write_bar(dut, RDLEN_DMA, 32)
+    await write_bar(dut, RDLEN_DMA, 48)
     await write_bar(dut, TDBAL_DMA, 0x2000)
     await write_bar(dut, TDLEN_DMA, 32)
     await write_bar(dut, IMS_DMA, 1 << 7)
