@@ -114,11 +114,13 @@ func (b *Builder) Build(ctx *donor.DeviceContext) error {
 	for _, f := range append(bitFiles, binFiles...) {
 		dst := filepath.Join(b.opts.OutputDir, filepath.Base(f))
 		if err := util.CopyFile(f, dst); err != nil {
-			slog.Warn("failed to copy output file", "file", f, "error", err)
+			return fmt.Errorf("copy synthesized output %q: %w", f, err)
 		}
 	}
 
-	refreshBuildManifest(fwout.WriteBuildManifest, b.opts.OutputDir, ctx, b.board)
+	if err := refreshBuildManifest(fwout.WriteBuildManifest, b.opts.OutputDir, ctx, b.board); err != nil {
+		return fmt.Errorf("refresh post-synthesis build manifest: %w", err)
+	}
 	if _, err := fwout.VerifyManifest(filepath.Join(b.opts.OutputDir, "build_manifest.json"), b.opts.OutputDir); err != nil {
 		return fmt.Errorf("post-synthesis manifest verification failed: %w", err)
 	}
@@ -136,8 +138,6 @@ func refreshBuildManifest(
 	outputDir string,
 	ctx *donor.DeviceContext,
 	b *board.Board,
-) {
-	if err := writeManifest(outputDir, ctx, b); err != nil {
-		slog.Warn("failed to refresh post-synthesis build manifest; bitstream remains available", "error", err)
-	}
+) error {
+	return writeManifest(outputDir, ctx, b)
 }

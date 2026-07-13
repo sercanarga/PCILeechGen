@@ -32,6 +32,20 @@ class ServerCliTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("device model", result.stderr)
 
+    def test_existing_socket_path_is_not_removed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            socket_path = Path(tmp) / "occupied.sock"
+            socket_path.write_text("do-not-remove", encoding="utf-8")
+            result = subprocess.run(
+                [self.binary, "--artifacts", self.artifacts, "--socket", socket_path],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(socket_path.read_text(encoding="utf-8"), "do-not-remove")
+
     def test_readiness_and_sigterm_cleanup(self):
         with tempfile.TemporaryDirectory() as tmp:
             socket_path = Path(tmp) / "device.sock"

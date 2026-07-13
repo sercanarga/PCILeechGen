@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <sys/mman.h>
 #include <sys/uio.h>
 #include <time.h>
@@ -232,6 +233,21 @@ static int setup_regions(struct server_state *state)
 }
 
 
+static int require_unused_socket_path(const char *socket_path)
+{
+    struct stat metadata;
+
+    if (lstat(socket_path, &metadata) == 0) {
+        errno = EADDRINUSE;
+        return -1;
+    }
+    if (errno != ENOENT) {
+        return -1;
+    }
+    return 0;
+}
+
+
 int vfio_device_run(const struct device_model *model,
                     struct device_behavior *behavior,
                     const char *socket_path,
@@ -247,7 +263,12 @@ int vfio_device_run(const struct device_model *model,
         errno = EINVAL;
         return -1;
     }
-    unlink(socket_path);
+    /* A caller controls this path. Never remove an existing filesystem entry
+     * to make room for a server socket; matrix.py supplies a fresh private
+     * lease and interactive callers get EADDRINUSE instead. */
+    if (require_unused_socket_path(socket_path) < 0) {
+        return -1;
+    }
     state.context = vfu_create_ctx(VFU_TRANS_SOCK, socket_path,
                                    LIBVFIO_USER_FLAG_ATTACH_NB, &state, VFU_DEV_TYPE_PCI);
     if (state.context == NULL ||
@@ -336,6 +357,5 @@ done:
     if (state.context != NULL) {
         vfu_destroy_ctx(state.context);
     }
-    unlink(socket_path);
     return result;
 }

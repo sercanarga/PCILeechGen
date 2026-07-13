@@ -55,6 +55,13 @@ class FixtureContractTests(unittest.TestCase):
         self.assertIn("must name an isolated generated fixture", source)
         self.assertNotIn("tests/cocotb/out", source)
 
+    def test_vfio_server_never_unlinks_a_caller_controlled_socket_path(self) -> None:
+        source = (VFIO_ROOT / "src" / "vfio_device.c").read_text(encoding="utf-8")
+        self.assertIn("require_unused_socket_path", source)
+        self.assertIn("lstat(socket_path", source)
+        self.assertIn("EADDRINUSE", source)
+        self.assertNotIn("unlink(socket_path)", source)
+
 
 if __name__ == "__main__":
     unittest.main()

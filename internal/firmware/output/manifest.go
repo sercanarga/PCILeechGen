@@ -190,9 +190,12 @@ func fileHash(filePath string) (string, error) {
 		return "", err
 	}
 	defer f.Close()
+	return fileHashReader(f)
+}
 
+func fileHashReader(r io.Reader) (string, error) {
 	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
+	if _, err := io.Copy(h, r); err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("%x", h.Sum(nil)), nil
@@ -259,10 +262,11 @@ func VerifyManifest(manifestPath, outputDir string) (*ManifestVerification, erro
 	if err != nil {
 		return nil, fmt.Errorf("resolve output directory: %w", err)
 	}
-	resolvedRoot, err := filepath.EvalSymlinks(root)
+	rootFS, err := os.OpenRoot(root)
 	if err != nil {
-		return nil, fmt.Errorf("resolve output directory symlinks: %w", err)
+		return nil, fmt.Errorf("open output directory: %w", err)
 	}
+	defer rootFS.Close()
 	seen := make(map[string]struct{}, len(m.Files))
 	v := &ManifestVerification{}
 
@@ -281,37 +285,53 @@ func VerifyManifest(manifestPath, outputDir string) (*ManifestVerification, erro
 			return nil, fmt.Errorf("manifest entry %d (%q): invalid SHA-256", i, entry.Name)
 		}
 
-		filePath := filepath.Join(root, filepath.FromSlash(entry.Name))
-		info, err := os.Lstat(filePath)
+		relativeName := filepath.FromSlash(entry.Name)
+		info, err := lstatManifestArtifact(rootFS, relativeName)
 		if os.IsNotExist(err) {
 			v.Missing = append(v.Missing, entry.Name)
 			continue
 		}
 		if err != nil {
-			v.Failed = append(v.Failed, fmt.Sprintf("%s: stat error: %v", entry.Name, err))
+			v.Failed = append(v.Failed, fmt.Sprintf("%s: unsafe artifact path: %v", entry.Name, err))
 			continue
 		}
 		if !info.Mode().IsRegular() {
 			v.Failed = append(v.Failed, fmt.Sprintf("%s: not a regular file", entry.Name))
 			continue
 		}
-		resolvedFile, err := filepath.EvalSymlinks(filePath)
+		file, err := rootFS.Open(relativeName)
+		if os.IsNotExist(err) {
+			v.Missing = append(v.Missing, entry.Name)
+			continue
+		}
 		if err != nil {
-			v.Failed = append(v.Failed, fmt.Sprintf("%s: resolve path: %v", entry.Name, err))
+			v.Failed = append(v.Failed, fmt.Sprintf("%s: open error: %v", entry.Name, err))
 			continue
 		}
-		rel, err := filepath.Rel(resolvedRoot, resolvedFile)
-		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			v.Failed = append(v.Failed, fmt.Sprintf("%s: resolved path escapes output directory", entry.Name))
+		openedInfo, statErr := file.Stat()
+		if statErr != nil {
+			file.Close()
+			v.Failed = append(v.Failed, fmt.Sprintf("%s: stat error: %v", entry.Name, statErr))
 			continue
 		}
-		if info.Size() != entry.Size {
-			v.Failed = append(v.Failed, fmt.Sprintf("%s: size mismatch (got %d, expected %d)", entry.Name, info.Size(), entry.Size))
+		if !openedInfo.Mode().IsRegular() {
+			file.Close()
+			v.Failed = append(v.Failed, fmt.Sprintf("%s: not a regular file", entry.Name))
 			continue
 		}
-		hash, err := fileHash(filePath)
-		if err != nil {
-			v.Failed = append(v.Failed, fmt.Sprintf("%s: hash error: %v", entry.Name, err))
+		if openedInfo.Size() != entry.Size {
+			file.Close()
+			v.Failed = append(v.Failed, fmt.Sprintf("%s: size mismatch (got %d, expected %d)", entry.Name, openedInfo.Size(), entry.Size))
+			continue
+		}
+		hash, hashErr := fileHashReader(file)
+		closeErr := file.Close()
+		if hashErr != nil {
+			v.Failed = append(v.Failed, fmt.Sprintf("%s: hash error: %v", entry.Name, hashErr))
+			continue
+		}
+		if closeErr != nil {
+			v.Failed = append(v.Failed, fmt.Sprintf("%s: close error: %v", entry.Name, closeErr))
 			continue
 		}
 		if hash != strings.ToLower(entry.SHA256) {
@@ -321,4 +341,29 @@ func VerifyManifest(manifestPath, outputDir string) (*ManifestVerification, erro
 		v.Passed = append(v.Passed, entry.Name)
 	}
 	return v, nil
+}
+
+// lstatManifestArtifact rejects every symlink component before opening the
+// artifact. The caller then opens the same relative path through os.Root,
+// which keeps any concurrent path replacement contained beneath the already
+// opened output directory rather than resolving it from the process cwd.
+func lstatManifestArtifact(root *os.Root, name string) (os.FileInfo, error) {
+	var current string
+	for _, component := range strings.Split(name, string(filepath.Separator)) {
+		if component == "" || component == "." {
+			return nil, fmt.Errorf("invalid artifact component %q", component)
+		}
+		current = filepath.Join(current, component)
+		info, err := root.Lstat(current)
+		if err != nil {
+			return nil, err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil, fmt.Errorf("symlink component %q", current)
+		}
+		if current != name && !info.IsDir() {
+			return nil, fmt.Errorf("non-directory component %q", current)
+		}
+	}
+	return root.Lstat(name)
 }

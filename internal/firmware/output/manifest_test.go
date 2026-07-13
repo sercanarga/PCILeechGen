@@ -435,8 +435,8 @@ func TestVerifyManifest_RejectsDuplicateAndSymlinkEntries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if verification.OK() || len(verification.Failed) != 1 || !strings.Contains(verification.Failed[0], "escapes") {
-		t.Fatalf("intermediate symlink verification = %+v, want escape failure", verification)
+	if verification.OK() || len(verification.Failed) != 1 || !strings.Contains(verification.Failed[0], "symlink") {
+		t.Fatalf("intermediate symlink verification = %+v, want symlink failure", verification)
 	}
 }
 

@@ -1,10 +1,7 @@
 package vivado
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -149,15 +146,8 @@ exit 0
 	}
 }
 
-func TestRefreshBuildManifest_WarnsAndContinuesOnFailure(t *testing.T) {
-	var logs bytes.Buffer
-	previousLogger := slog.Default()
-	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
-	t.Cleanup(func() {
-		slog.SetDefault(previousLogger)
-	})
-
-	refreshBuildManifest(
+func TestRefreshBuildManifest_ReturnsFailure(t *testing.T) {
+	err := refreshBuildManifest(
 		func(string, *donor.DeviceContext, *board.Board) error {
 			return errors.New("manifest storage unavailable")
 		},
@@ -165,18 +155,7 @@ func TestRefreshBuildManifest_WarnsAndContinuesOnFailure(t *testing.T) {
 		&donor.DeviceContext{},
 		&board.Board{Name: "TestBoard"},
 	)
-
-	var record struct {
-		Level string `json:"level"`
-		Error string `json:"error"`
-	}
-	if err := json.Unmarshal(bytes.TrimSpace(logs.Bytes()), &record); err != nil {
-		t.Fatalf("decode manifest refresh log: %v; log = %q", err, logs.String())
-	}
-	if record.Level != "WARN" {
-		t.Fatalf("manifest refresh failure level = %q, want WARN", record.Level)
-	}
-	if record.Error != "manifest storage unavailable" {
-		t.Fatalf("manifest refresh warning error = %q, want injected failure", record.Error)
+	if err == nil || !strings.Contains(err.Error(), "manifest storage unavailable") {
+		t.Fatalf("refreshBuildManifest error = %v, want storage failure", err)
 	}
 }

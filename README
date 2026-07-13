@@ -86,6 +86,11 @@ COMMANDS
     --from-json <f>    offline build from saved device_context.json
     --output <dir>     output directory (default: pcileech_datastore)
 
+  Output directories are ownership-protected. Point --output at a new path;
+  later builds may reuse it only when it contains PCILeechGen's generated
+  ownership marker. This prevents generated artifacts from overwriting an
+  arbitrary existing directory.
+
   Offline MMIO trace import:
     pcileechgen mmio-trace --trace-file mmiotrace.txt --bar-base 0xf7800000 \
       --bar-index 2 --bar-size 4096 --class-code 0x010802 --json

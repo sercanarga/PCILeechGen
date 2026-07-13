@@ -36,6 +36,40 @@ func TestCopyFileSamePath(t *testing.T) {
 	}
 }
 
+func TestCopyFileRejectsSymlinkDestination(t *testing.T) {
+	tmpDir := t.TempDir()
+	src := filepath.Join(tmpDir, "source.txt")
+	outside := filepath.Join(tmpDir, "outside.txt")
+	dst := filepath.Join(tmpDir, "dest.txt")
+	if err := os.WriteFile(src, []byte("replacement"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(outside, []byte("keep"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, dst); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	if err := CopyFile(src, dst); err == nil {
+		t.Fatal("CopyFile accepted a symlink destination")
+	}
+	got, err := os.ReadFile(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "keep" {
+		t.Fatalf("outside file = %q, want unchanged content", got)
+	}
+	info, err := os.Lstat(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("destination symlink was unexpectedly replaced")
+	}
+}
+
 func TestCopyDir(t *testing.T) {
 	srcDir := filepath.Join(t.TempDir(), "src")
 	dstDir := filepath.Join(t.TempDir(), "dst")
