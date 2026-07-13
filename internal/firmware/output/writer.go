@@ -36,6 +36,9 @@ type OutputWriter struct {
 	Force     bool
 }
 
+const outputOwnershipMarker = ".pcileechgen-output-v1"
+const outputOwnershipContent = "owned by PCILeechGen generated output\n"
+
 func NewOutputWriter(outputDir, libDir string, jobs, timeout int) *OutputWriter {
 	if jobs <= 0 {
 		jobs = 4
@@ -53,8 +56,8 @@ func NewOutputWriter(outputDir, libDir string, jobs, timeout int) *OutputWriter 
 
 // WriteAll is the main entry point - generates everything.
 func (ow *OutputWriter) WriteAll(ctx *donor.DeviceContext, b *board.Board) error {
-	if err := os.MkdirAll(ow.OutputDir, 0755); err != nil {
-		return fmt.Errorf("failed to create output directory: %w", err)
+	if err := ow.prepareOutputDir(); err != nil {
+		return fmt.Errorf("prepare output directory: %w", err)
 	}
 
 	ids := firmware.ExtractDeviceIDs(ctx.ConfigSpace, ctx.ExtCapabilities)
@@ -121,6 +124,107 @@ func (ow *OutputWriter) WriteAll(ctx *donor.DeviceContext, b *board.Board) error
 
 	if err := writeBuildManifest(ow.OutputDir, ctx, b, false); err != nil {
 		return fmt.Errorf("failed to write build manifest: %w", err)
+	}
+	return nil
+}
+
+// prepareOutputDir creates a new owned output directory or reopens one that
+// carries this generator's marker. Requiring ownership before a rerun avoids
+// writing generated files into an arbitrary existing directory.
+func (ow *OutputWriter) prepareOutputDir() error {
+	if ow.OutputDir == "" {
+		return fmt.Errorf("output directory is empty")
+	}
+	target, err := filepath.Abs(ow.OutputDir)
+	if err != nil {
+		return fmt.Errorf("resolve output directory: %w", err)
+	}
+	target = filepath.Clean(target)
+	if target == filepath.Dir(target) {
+		return fmt.Errorf("refusing filesystem root as output directory")
+	}
+	if err := validateExistingOutputAncestor(target); err != nil {
+		return err
+	}
+
+	info, err := os.Lstat(target)
+	if os.IsNotExist(err) {
+		if err := os.MkdirAll(target, 0755); err != nil {
+			return fmt.Errorf("create output directory: %w", err)
+		}
+		if err := validateRealDirectory(target, "output directory"); err != nil {
+			return err
+		}
+		marker := filepath.Join(target, outputOwnershipMarker)
+		if _, markerErr := os.Lstat(marker); !os.IsNotExist(markerErr) {
+			if markerErr != nil {
+				return fmt.Errorf("inspect output ownership marker: %w", markerErr)
+			}
+			return fmt.Errorf("output ownership marker unexpectedly exists: %s", marker)
+		}
+		if err := os.WriteFile(marker, []byte(outputOwnershipContent), 0644); err != nil {
+			return fmt.Errorf("write output ownership marker: %w", err)
+		}
+	} else if err != nil {
+		return fmt.Errorf("inspect output directory: %w", err)
+	} else {
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return fmt.Errorf("output directory must be a real directory: %s", target)
+		}
+		if err := validateRealDirectory(target, "output directory"); err != nil {
+			return err
+		}
+		marker := filepath.Join(target, outputOwnershipMarker)
+		markerInfo, markerErr := os.Lstat(marker)
+		if markerErr != nil {
+			if os.IsNotExist(markerErr) {
+				return fmt.Errorf("refusing unowned existing output directory: %s", target)
+			}
+			return fmt.Errorf("inspect output ownership marker: %w", markerErr)
+		}
+		if markerInfo.Mode()&os.ModeSymlink != 0 || !markerInfo.Mode().IsRegular() {
+			return fmt.Errorf("output ownership marker is not a regular file: %s", marker)
+		}
+		contents, readErr := os.ReadFile(marker)
+		if readErr != nil {
+			return fmt.Errorf("read output ownership marker: %w", readErr)
+		}
+		if string(contents) != outputOwnershipContent {
+			return fmt.Errorf("output ownership marker has unexpected content: %s", marker)
+		}
+	}
+
+	ow.OutputDir = target
+	return nil
+}
+
+func validateExistingOutputAncestor(target string) error {
+	for current := target; ; current = filepath.Dir(current) {
+		info, err := os.Lstat(current)
+		if os.IsNotExist(err) {
+			parent := filepath.Dir(current)
+			if parent == current {
+				return fmt.Errorf("no existing ancestor for output directory %s", target)
+			}
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("inspect output ancestor %s: %w", current, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return fmt.Errorf("output ancestor must be a real directory: %s", current)
+		}
+		return nil
+	}
+}
+
+func validateRealDirectory(path, label string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("inspect %s: %w", label, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return fmt.Errorf("%s must be a real directory: %s", label, path)
 	}
 	return nil
 }
@@ -319,13 +423,18 @@ func (ow *OutputWriter) patchSVSources(b *board.Board, ids firmware.DeviceIDs) e
 	srcDir := b.SrcPath(ow.LibDir)
 	dstDir := filepath.Join(ow.OutputDir, "src")
 
-	if _, err := os.Stat(srcDir); os.IsNotExist(err) {
+	srcInfo, err := os.Lstat(srcDir)
+	if os.IsNotExist(err) {
 		slog.Warn("board source dir not found", "path", srcDir)
 		slog.Info("run: git submodule update --init --recursive")
 		return fmt.Errorf("board sources not found at %s (is the pcileech-fpga submodule initialized?)", srcDir)
+	} else if err != nil {
+		return fmt.Errorf("inspect board source dir %s: %w", srcDir, err)
+	} else if srcInfo.Mode()&os.ModeSymlink != 0 || !srcInfo.IsDir() {
+		return fmt.Errorf("board source dir must be a real directory: %s", srcDir)
 	}
 
-	if err := os.RemoveAll(dstDir); err != nil {
+	if err := clearGeneratedSourceTree(dstDir); err != nil {
 		return fmt.Errorf("failed to clear stale src dir %s: %w", dstDir, err)
 	}
 
@@ -356,7 +465,7 @@ func (ow *OutputWriter) patchSVSources(b *board.Board, ids firmware.DeviceIDs) e
 		srcFile := filepath.Join(srcDir, "pcileech_tlps128_bar_controller.sv")
 		dstFile := filepath.Join(dstDir, "pcileech_tlps128_bar_controller.sv")
 		if data, err := os.ReadFile(srcFile); err == nil {
-			if writeErr := os.WriteFile(dstFile, data, 0644); writeErr != nil {
+			if writeErr := writeRegularFile(dstFile, data); writeErr != nil {
 				return fmt.Errorf("failed to copy stock BAR controller: %w", writeErr)
 			}
 		}
@@ -375,6 +484,31 @@ func (ow *OutputWriter) patchSVSources(b *board.Board, ids firmware.DeviceIDs) e
 	return nil
 }
 
+func clearGeneratedSourceTree(dstDir string) error {
+	info, err := os.Lstat(dstDir)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return fmt.Errorf("generated source directory must be a real directory")
+	}
+	if err := filepath.WalkDir(dstDir, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("generated source tree contains a symlink: %s", path)
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	return os.RemoveAll(dstDir)
+}
+
 // copyDirExcluding copies a directory recursively but skips files whose
 // names are in the exclude map. Used to prevent board source files from
 // being imported alongside generated versions with the same module names.
@@ -389,6 +523,9 @@ func copyDirExcluding(src, dst string, exclude map[string]bool) error {
 	for _, e := range entries {
 		srcPath := filepath.Join(src, e.Name())
 		dstPath := filepath.Join(dst, e.Name())
+		if e.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("refusing to copy symlinked board source: %s", srcPath)
+		}
 		if e.IsDir() {
 			if err := copyDirExcluding(srcPath, dstPath, exclude); err != nil {
 				return err
@@ -398,7 +535,7 @@ func copyDirExcluding(src, dst string, exclude map[string]bool) error {
 			if err != nil {
 				return err
 			}
-			if err := os.WriteFile(dstPath, data, 0644); err != nil {
+			if err := writeRegularFile(dstPath, data); err != nil {
 				return err
 			}
 		}
@@ -436,7 +573,7 @@ func extractSubModules(srcPath string, dstDir string, subModules []string) error
 		}
 
 		dstFile := filepath.Join(dstDir, modName+".sv")
-		if err := os.WriteFile(dstFile, []byte(modBody), 0644); err != nil {
+		if err := writeRegularFile(dstFile, []byte(modBody)); err != nil {
 			slog.Warn("failed to write sub-module file", "module", modName, "error", err)
 		}
 	}
@@ -444,7 +581,28 @@ func extractSubModules(srcPath string, dstDir string, subModules []string) error
 }
 
 func (ow *OutputWriter) writeFile(name, content string) error {
-	return os.WriteFile(filepath.Join(ow.OutputDir, name), []byte(content), 0644)
+	if name == "" || filepath.Base(name) != name {
+		return fmt.Errorf("output filename must be a simple basename: %q", name)
+	}
+	if err := validateRealDirectory(ow.OutputDir, "output directory"); err != nil {
+		return err
+	}
+	return writeRegularFile(filepath.Join(ow.OutputDir, name), []byte(content))
+}
+
+func writeRegularFile(path string, content []byte) error {
+	info, err := os.Lstat(path)
+	if err == nil {
+		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+			return fmt.Errorf("output file must be absent or a regular file: %s", path)
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("inspect output file %s: %w", path, err)
+	}
+	if err := os.WriteFile(path, content, 0644); err != nil {
+		return err
+	}
+	return nil
 }
 
 // ListOutputFiles is used by the CLI to show what gets generated.

@@ -135,7 +135,7 @@ endmodule`,
 		}
 	}
 
-	outDir := t.TempDir()
+	outDir := filepath.Join(t.TempDir(), "generated-output")
 	writer := NewOutputWriter(outDir, libDir, 1, 1)
 	writer.StockBar = true
 	b := &board.Board{

@@ -9,11 +9,22 @@
 
 #include "device_behavior.h"
 #include "device_model.h"
+#include "fixture_path.h"
 
 struct ethernet_host {
     uint8_t memory[0x10000];
     unsigned irqs;
 };
+
+static int load_fixture_model(const char *name, struct device_model **model,
+                              char *err, size_t err_len)
+{
+    char path[PATH_MAX];
+
+    if (vfio_test_fixture_path(path, name) < 0)
+        return -1;
+    return device_model_load(path, model, err, err_len);
+}
 
 static int ethernet_dma_read(void *opaque, uint64_t address, void *data, size_t length)
 {
@@ -57,7 +68,7 @@ static void ahci_reset_self_clears(void **state)
     uint32_t ghc;
 
     (void)state;
-    assert_int_equal(device_model_load("../tests/cocotb/out_sata", &model, err, sizeof(err)), 0);
+    assert_int_equal(load_fixture_model("sata", &model, err, sizeof(err)), 0);
     assert_int_equal(behavior_ahci_create(model, &behavior, err, sizeof(err)), 0);
     uint32_t value = 0;
     assert_int_equal(behavior.read(behavior.state, 5, 0x0c, &value, 4), 4);
@@ -79,7 +90,7 @@ static void xhci_reset_and_run_state(void **state)
     uint32_t command;
 
     (void)state;
-    assert_int_equal(device_model_load("../tests/cocotb/out_xhci", &model, err, sizeof(err)), 0);
+    assert_int_equal(load_fixture_model("xhci", &model, err, sizeof(err)), 0);
     assert_int_equal(behavior_xhci_create(model, &behavior, err, sizeof(err)), 0);
     assert_int_equal(read32(&behavior, 0x00), 0x01100020);
     command = 2;
@@ -105,8 +116,7 @@ static void ethernet_link_status_and_reset(void **state)
     uint32_t command = 0x10000000;
 
     (void)state;
-    assert_int_equal(device_model_load("../tests/cocotb/out_ethernet", &model,
-                                      err, sizeof(err)), 0);
+    assert_int_equal(load_fixture_model("ethernet", &model, err, sizeof(err)), 0);
     assert_int_equal(behavior_ethernet_create(model, &behavior, err, sizeof(err)), 0);
     assert_int_equal(behavior.read(behavior.state, 0, 0x6c, &value, 4), 4);
     assert_int_equal(value, 0x3010);
@@ -141,7 +151,7 @@ static void ethernet_descriptor_loopback(void **state)
     uint16_t packet_len = 4;
 
     (void)state;
-    assert_int_equal(device_model_load("../tests/cocotb/out_ethernet", &model, err, sizeof(err)), 0);
+    assert_int_equal(load_fixture_model("ethernet", &model, err, sizeof(err)), 0);
     assert_int_equal(behavior_ethernet_create(model, &behavior, err, sizeof(err)), 0);
     assert_int_equal(behavior.bind_host(behavior.state, &ops), 0);
     base = 0x1000;

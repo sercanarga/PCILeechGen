@@ -9,6 +9,18 @@
 #include <cmocka.h>
 
 #include "device_model.h"
+#include "fixture_path.h"
+
+
+static int load_fixture_model(const char *name, struct device_model **model,
+                              char *err, size_t err_len)
+{
+    char path[PATH_MAX];
+
+    if (vfio_test_fixture_path(path, name) < 0)
+        return -1;
+    return device_model_load(path, model, err, err_len);
+}
 
 
 static void loads_generated_nvme_model(void **state)
@@ -17,7 +29,7 @@ static void loads_generated_nvme_model(void **state)
     char err[256] = {0};
 
     (void)state;
-    assert_int_equal(device_model_load("../tests/cocotb/out_nvme", &model, err, sizeof(err)), 0);
+    assert_int_equal(load_fixture_model("nvme", &model, err, sizeof(err)), 0);
     assert_non_null(model);
     assert_int_equal(model->vendor_id, 0x144d);
     assert_int_equal(model->device_id, 0xa809);
@@ -72,11 +84,9 @@ static void loads_every_generated_model(void **state)
     (void)state;
     for (index = 0; index < sizeof(names) / sizeof(names[0]); ++index) {
         struct device_model *model = NULL;
-        char path[128];
         char err[256] = {0};
 
-        assert_true(snprintf(path, sizeof(path), "../tests/cocotb/out_%s", names[index]) > 0);
-        assert_int_equal(device_model_load(path, &model, err, sizeof(err)), 0);
+        assert_int_equal(load_fixture_model(names[index], &model, err, sizeof(err)), 0);
         assert_non_null(model);
         device_model_free(model);
     }

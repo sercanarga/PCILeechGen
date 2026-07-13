@@ -8,6 +8,17 @@
 
 #include "device_behavior.h"
 #include "device_model.h"
+#include "fixture_path.h"
+
+static int load_fixture_model(const char *name, struct device_model **model,
+                              char *err, size_t err_len)
+{
+    char path[PATH_MAX];
+
+    if (vfio_test_fixture_path(path, name) < 0)
+        return -1;
+    return device_model_load(path, model, err, err_len);
+}
 
 static void probes_mmio_timer_and_fence(void **state)
 {
@@ -18,7 +29,7 @@ static void probes_mmio_timer_and_fence(void **state)
     uint32_t fence = 0x12345678;
 
     (void)state;
-    assert_int_equal(device_model_load("../tests/cocotb/out_gpu", &model, err, sizeof(err)), 0);
+    assert_int_equal(load_fixture_model("gpu", &model, err, sizeof(err)), 0);
     assert_int_equal(behavior_gpu_create(model, &behavior, err, sizeof(err)), 0);
     assert_int_equal(behavior.read(behavior.state, 0, 0x200, &value, 4), 4);
     assert_int_equal(value, 0xffffffff);

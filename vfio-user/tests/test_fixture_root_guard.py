@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail closed before the fuzz gate lets the generator replace fixture files."""
+"""Fail closed before unit fixtures let the generator rewrite source trees."""
 
 from __future__ import annotations
 
@@ -9,13 +9,28 @@ import stat
 from pathlib import Path
 
 
-class FixturePathError(ValueError):
-    """The generated fixture directory is not a safe project-local directory."""
-
-
-FIXTURE_NAMES = frozenset({"ethernet", "nvme"})
+FIXTURE_NAMES = frozenset(
+    {
+        "audio",
+        "ethernet",
+        "generic",
+        "gpu",
+        "multibar",
+        "nvme",
+        "sata",
+        "thunderbolt",
+        "wifi",
+        "xhci",
+    }
+)
+SENTINEL = ".pcileech-vfio-test-fixtures-v1"
+SENTINEL_CONTENT = "owned by PCILeechGen VFIO-user tests\n"
 GENERATED_OUTPUT_MARKER = ".pcileechgen-output-v1"
 GENERATED_OUTPUT_CONTENT = "owned by PCILeechGen generated output\n"
+
+
+class FixturePathError(ValueError):
+    """The fixture output tree is not an owned, safe project-local tree."""
 
 
 def _lstat(path: Path) -> os.stat_result | None:
@@ -46,6 +61,52 @@ def _reject_symlinks_below(directory: Path) -> None:
                 raise FixturePathError(f"fixture tree contains a symlink: {path}")
 
 
+def _expected_fixture_root(project_root: Path, fixture_root: Path) -> tuple[Path, Path]:
+    raw_project = project_root.absolute()
+    if raw_project.is_symlink():
+        raise FixturePathError(f"project root must not be a symlink: {raw_project}")
+    if not raw_project.is_dir():
+        raise FixturePathError(f"project root is missing: {raw_project}")
+    project = raw_project.resolve(strict=True)
+    raw_build = raw_project / "build"
+    raw_root = raw_build / "test-fixtures"
+    requested = fixture_root.absolute()
+
+    if requested != raw_root:
+        raise FixturePathError(
+            "fixture root must be vfio-user/build/test-fixtures"
+        )
+    for path, label in ((raw_build, "fixture build directory"), (raw_root, "fixture root")):
+        metadata = _lstat(path)
+        if metadata is not None and stat.S_ISLNK(metadata.st_mode):
+            raise FixturePathError(f"{label} must not be a symlink: {path}")
+    return project, project / "build" / "test-fixtures"
+
+
+def _validate_owned_root(root: Path) -> None:
+    _require_real_directory(root, "fixture root", required=True)
+    sentinel = root / SENTINEL
+    metadata = _lstat(sentinel)
+    if metadata is None or stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+        raise FixturePathError(f"fixture root is not owned by this test target: {root}")
+    if sentinel.read_text(encoding="utf-8") != SENTINEL_CONTENT:
+        raise FixturePathError(f"fixture root has an unexpected ownership marker: {root}")
+
+    entries = list(root.iterdir())
+    unexpected = sorted(
+        entry.name for entry in entries if entry.name not in FIXTURE_NAMES | {SENTINEL}
+    )
+    if unexpected:
+        raise FixturePathError(
+            "fixture root contains unexpected entries: " + ", ".join(unexpected)
+        )
+    for entry in entries:
+        if entry.name == SENTINEL:
+            continue
+        _require_real_directory(entry, f"fixture {entry.name}", required=True)
+        _reject_symlinks_below(entry)
+
+
 def _adopt_generated_output(candidate: Path) -> None:
     manifest = candidate / "build_manifest.json"
     manifest_metadata = _lstat(manifest)
@@ -72,55 +133,33 @@ def validate_fixture_root(
     project_root: Path,
     fixture_root: Path,
     *,
+    prepare: bool = False,
     fixture_name: str | None = None,
     adopt_generated_output: bool = False,
 ) -> Path:
-    """Return the canonical safe fixture root or raise ``FixturePathError``.
+    """Validate the fixed output root, optionally creating its ownership marker.
 
-    The generator rewrites its output's ``src`` directory, so accepting a
-    caller-controlled output path or a symlink would let a normal fuzz target
-    mutate files outside this checkout.  Keep the output location fixed below
-    ``vfio-user/build`` and refuse symlinks before anything creates it.
+    The generator's writer replaces ``<output>/src``.  This guard permits only
+    a named fixture below ``vfio-user/build/test-fixtures`` and rejects every
+    symlink in an existing fixture tree before the generator is invoked.
     """
 
-    raw_project = project_root.absolute()
-    if raw_project.is_symlink() or not raw_project.is_dir():
-        raise FixturePathError(f"project root must be a real directory: {raw_project}")
-    project = raw_project.resolve(strict=True)
-    raw_build = raw_project / "build"
-    raw_expected = raw_build / "fuzz-fixtures"
+    project, root = _expected_fixture_root(project_root, fixture_root)
     build = project / "build"
-    expected = build / "fuzz-fixtures"
-
-    for path in (raw_build, raw_expected):
-        metadata = _lstat(path)
-        if metadata is not None and stat.S_ISLNK(metadata.st_mode):
-            raise FixturePathError(f"fixture path must not traverse a symlink: {path}")
-    canonical = fixture_root.resolve(strict=False)
-    if canonical != expected.resolve(strict=False):
-        raise FixturePathError("fixture root must be vfio-user/build/fuzz-fixtures")
-    try:
-        canonical.relative_to(build.resolve(strict=False))
-    except ValueError as exc:
-        raise FixturePathError("fixture root escapes vfio-user/build") from exc
-    if canonical == build.resolve(strict=False):
-        raise FixturePathError("fixture root must be a child of vfio-user/build")
-    if canonical.exists():
-        _require_real_directory(canonical, "fixture root", required=True)
-        entries = list(canonical.iterdir())
-        unexpected = sorted(entry.name for entry in entries if entry.name not in FIXTURE_NAMES)
-        if unexpected:
-            raise FixturePathError(
-                "fixture root contains unexpected entries: " + ", ".join(unexpected)
-            )
-        for entry in entries:
-            _require_real_directory(entry, f"fixture {entry.name}", required=True)
-            _reject_symlinks_below(entry)
+    if prepare:
+        _require_real_directory(build, "fixture build directory", required=False)
+        if not build.exists():
+            build.mkdir()
+        _require_real_directory(build, "fixture build directory", required=True)
+        if not root.exists():
+            root.mkdir()
+            (root / SENTINEL).write_text(SENTINEL_CONTENT, encoding="utf-8")
+    _validate_owned_root(root)
 
     if fixture_name is not None:
         if fixture_name not in FIXTURE_NAMES:
             raise FixturePathError(f"unknown fixture name: {fixture_name}")
-        candidate = canonical / fixture_name
+        candidate = root / fixture_name
         if candidate.exists():
             _require_real_directory(candidate, f"fixture {fixture_name}", required=True)
             _reject_symlinks_below(candidate)
@@ -128,13 +167,14 @@ def validate_fixture_root(
                 _adopt_generated_output(candidate)
         elif adopt_generated_output:
             raise FixturePathError(f"fixture does not exist to adopt: {fixture_name}")
-    return canonical
+    return root
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project-root", required=True, type=Path)
     parser.add_argument("--fixture-root", required=True, type=Path)
+    parser.add_argument("--prepare", action="store_true")
     parser.add_argument("--fixture-name", choices=sorted(FIXTURE_NAMES))
     parser.add_argument("--adopt-generated-output", action="store_true")
     args = parser.parse_args()
@@ -142,6 +182,7 @@ def main() -> int:
         validate_fixture_root(
             args.project_root,
             args.fixture_root,
+            prepare=args.prepare,
             fixture_name=args.fixture_name,
             adopt_generated_output=args.adopt_generated_output,
         )

@@ -9,6 +9,7 @@
 
 #include "device_behavior.h"
 #include "device_model.h"
+#include "fixture_path.h"
 
 struct host_memory {
     uint8_t data[0x10000];
@@ -16,6 +17,16 @@ struct host_memory {
 };
 
 static struct device_model *fixture_model;
+
+static int load_fixture_model(const char *name, struct device_model **model,
+                              char *err, size_t err_len)
+{
+    char path[PATH_MAX];
+
+    if (vfio_test_fixture_path(path, name) < 0)
+        return -1;
+    return device_model_load(path, model, err, err_len);
+}
 
 static int dma_read(void *opaque, uint64_t address, void *data, size_t length)
 {
@@ -48,7 +59,7 @@ static int setup(void **state)
     char err[128] = {0};
 
     assert_non_null(behavior);
-    assert_int_equal(device_model_load("../tests/cocotb/out_audio", &model, err, sizeof(err)), 0);
+    assert_int_equal(load_fixture_model("audio", &model, err, sizeof(err)), 0);
     assert_int_equal(behavior_hda_create(model, behavior, err, sizeof(err)), 0);
     fixture_model = model;
     *state = behavior;

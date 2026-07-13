@@ -12,9 +12,14 @@ class ServerCliTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.binary = Path(os.environ.get("VFIO_DEVICE_BIN", "build/vfio-device")).resolve()
-        cls.artifacts = Path(os.environ.get("VFIO_ARTIFACTS", "../tests/cocotb/out_generic")).resolve()
         if not cls.binary.is_file():
             raise unittest.SkipTest(f"server binary is missing: {cls.binary}")
+        artifacts = os.environ.get("VFIO_ARTIFACTS")
+        if not artifacts:
+            raise RuntimeError("VFIO_ARTIFACTS must name an isolated generated fixture")
+        cls.artifacts = Path(artifacts).resolve()
+        if not cls.artifacts.is_dir():
+            raise RuntimeError(f"server fixture is missing: {cls.artifacts}")
 
     def test_missing_artifacts_fail(self):
         result = subprocess.run(

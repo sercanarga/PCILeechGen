@@ -16,28 +16,51 @@ FUZZ_LOG := $(CURDIR)/build/fuzz-ci.log
 FUZZ_LSAN_SUPPRESSIONS := $(CURDIR)/tests/lsan_json_c.supp
 ROOT_DIR := $(abspath ..)
 FUZZ_GENERATOR := $(ROOT_DIR)/bin/pcileechgen
+override VFIO_TEST_FIXTURE_ROOT := $(abspath $(CURDIR)/build/test-fixtures)
+VFIO_TEST_FIXTURE_NAMES := audio ethernet generic gpu multibar nvme sata thunderbolt wifi xhci
+VFIO_TEST_FIXTURE_GUARD := $(CURDIR)/tests/test_fixture_root_guard.py
+VFIO_TEST_GENERATOR := $(ROOT_DIR)/bin/pcileechgen
 
 TARGET = build/vfio-device
 SRC = src/main.c src/vfio_device.c src/device_model.c src/behavior_static.c src/behavior_nvme.c src/behavior_hda.c src/behavior_gpu.c src/behavior_ahci.c src/behavior_xhci.c src/behavior_ethernet.c
 
-.PHONY: all image test test-matrix test-device-model test-behavior-static test-behavior-nvme test-behavior-hda test-behavior-gpu test-behavior-storage test-server matrix fuzz fuzz-ci fuzz-fixtures fuzz-fixture-root-check fuzz-contract fuzz-smoke test-valgrind test-msan
+.PHONY: all image test test-matrix test-device-model test-behavior-static test-behavior-nvme test-behavior-hda test-behavior-gpu test-behavior-storage test-server matrix test-fixtures test-fixture-root-check fuzz fuzz-ci fuzz-fixtures fuzz-fixture-root-check fuzz-contract fuzz-smoke test-valgrind test-msan
 
 all: $(TARGET)
 
-test: test-matrix test-device-model test-behavior-static test-behavior-nvme test-behavior-hda test-behavior-gpu test-behavior-storage
+test: test-fixtures test-matrix test-device-model test-behavior-static test-behavior-nvme test-behavior-hda test-behavior-gpu test-behavior-storage
 
 test-matrix:
-	python3 -m unittest tests/test_matrix.py -v
+	python3 -m unittest tests/test_matrix.py tests/test_matrix_authority.py \
+		tests/test_test_fixture_root_guard.py tests/test_fixture_contract.py -v
 
-build/test_device_model: tests/test_device_model.c src/device_model.c include/device_model.h
+test-fixture-root-check:
+	@python3 "$(VFIO_TEST_FIXTURE_GUARD)" --project-root "$(CURDIR)" --fixture-root "$(VFIO_TEST_FIXTURE_ROOT)" --prepare
+
+test-fixtures: test-fixture-root-check
+	@$(MAKE) -C "$(ROOT_DIR)" build
+	@for name in $(VFIO_TEST_FIXTURE_NAMES); do \
+		board=PCIeSquirrel; \
+		if [ "$$name" = nvme ]; then board=ac701_ft601; fi; \
+		python3 "$(VFIO_TEST_FIXTURE_GUARD)" --project-root "$(CURDIR)" --fixture-root "$(VFIO_TEST_FIXTURE_ROOT)" --fixture-name "$$name"; \
+		if [ -d "$(VFIO_TEST_FIXTURE_ROOT)/$$name" ]; then \
+			"$(VFIO_TEST_GENERATOR)" verify-manifest --manifest "$(VFIO_TEST_FIXTURE_ROOT)/$$name/build_manifest.json" --output-dir "$(VFIO_TEST_FIXTURE_ROOT)/$$name"; \
+			python3 "$(VFIO_TEST_FIXTURE_GUARD)" --project-root "$(CURDIR)" --fixture-root "$(VFIO_TEST_FIXTURE_ROOT)" --fixture-name "$$name" --adopt-generated-output; \
+		fi; \
+		printf '%s\n' "generating isolated $$name test fixture"; \
+		"$(VFIO_TEST_GENERATOR)" build --from-json "$(ROOT_DIR)/testdata/donors/$$name.json" --board "$$board" --skip-vivado --force --lib-dir "$(ROOT_DIR)/lib/pcileech-fpga" --output "$(VFIO_TEST_FIXTURE_ROOT)/$$name"; \
+		"$(VFIO_TEST_GENERATOR)" verify-manifest --manifest "$(VFIO_TEST_FIXTURE_ROOT)/$$name/build_manifest.json" --output-dir "$(VFIO_TEST_FIXTURE_ROOT)/$$name"; \
+	done
+
+build/test_device_model: tests/test_device_model.c tests/fixture_path.h src/device_model.c include/device_model.h
 	mkdir -p build
 	$(CC) $(CFLAGS) $(SANITIZE) \
 		$$(pkg-config --cflags json-c openssl cmocka) \
 		-o $@ tests/test_device_model.c src/device_model.c \
 		$$(pkg-config --libs json-c openssl cmocka)
 
-test-device-model: build/test_device_model
-	./build/test_device_model
+test-device-model: test-fixtures build/test_device_model
+	VFIO_TEST_FIXTURE_ROOT="$(VFIO_TEST_FIXTURE_ROOT)" ./build/test_device_model
 
 build/test_behavior_static: tests/test_behavior_static.c src/behavior_static.c src/behavior_nvme.c src/behavior_hda.c src/behavior_gpu.c src/behavior_ahci.c src/behavior_xhci.c src/behavior_ethernet.c include/device_behavior.h include/device_model.h
 	mkdir -p build
@@ -48,37 +71,37 @@ build/test_behavior_static: tests/test_behavior_static.c src/behavior_static.c s
 test-behavior-static: build/test_behavior_static
 	./build/test_behavior_static
 
-build/test_behavior_nvme: tests/test_behavior_nvme.c src/behavior_nvme.c src/behavior_static.c src/behavior_hda.c src/behavior_gpu.c src/behavior_ahci.c src/behavior_xhci.c src/behavior_ethernet.c src/device_model.c include/device_behavior.h include/device_model.h
+build/test_behavior_nvme: tests/test_behavior_nvme.c tests/fixture_path.h src/behavior_nvme.c src/behavior_static.c src/behavior_hda.c src/behavior_gpu.c src/behavior_ahci.c src/behavior_xhci.c src/behavior_ethernet.c src/device_model.c include/device_behavior.h include/device_model.h
 	mkdir -p build
 	$(CC) $(CFLAGS) $(SANITIZE) \
 		$$(pkg-config --cflags cmocka json-c openssl) -o $@ \
 		tests/test_behavior_nvme.c src/behavior_nvme.c src/behavior_static.c src/behavior_hda.c src/behavior_gpu.c src/behavior_ahci.c src/behavior_xhci.c src/behavior_ethernet.c src/device_model.c \
 		$$(pkg-config --libs cmocka json-c openssl)
 
-test-behavior-nvme: build/test_behavior_nvme
-	./build/test_behavior_nvme
+test-behavior-nvme: test-fixtures build/test_behavior_nvme
+	VFIO_TEST_FIXTURE_ROOT="$(VFIO_TEST_FIXTURE_ROOT)" ./build/test_behavior_nvme
 
-build/test_behavior_hda: tests/test_behavior_hda.c src/behavior_hda.c src/behavior_ethernet.c src/behavior_static.c src/behavior_nvme.c src/behavior_gpu.c src/behavior_ahci.c src/behavior_xhci.c src/device_model.c include/device_behavior.h include/device_model.h
+build/test_behavior_hda: tests/test_behavior_hda.c tests/fixture_path.h src/behavior_hda.c src/behavior_ethernet.c src/behavior_static.c src/behavior_nvme.c src/behavior_gpu.c src/behavior_ahci.c src/behavior_xhci.c src/device_model.c include/device_behavior.h include/device_model.h
 	mkdir -p build
 	$(CC) $(CFLAGS) $(SANITIZE) \
 		$$(pkg-config --cflags cmocka json-c openssl) -o $@ \
 		tests/test_behavior_hda.c src/behavior_hda.c src/behavior_ethernet.c src/behavior_static.c src/behavior_nvme.c src/behavior_gpu.c src/behavior_ahci.c src/behavior_xhci.c src/device_model.c \
 		$$(pkg-config --libs cmocka json-c openssl)
 
-test-behavior-hda: build/test_behavior_hda
-	./build/test_behavior_hda
+test-behavior-hda: test-fixtures build/test_behavior_hda
+	VFIO_TEST_FIXTURE_ROOT="$(VFIO_TEST_FIXTURE_ROOT)" ./build/test_behavior_hda
 
-build/test_behavior_gpu: tests/test_behavior_gpu.c src/behavior_gpu.c src/behavior_ethernet.c src/behavior_static.c src/behavior_nvme.c src/behavior_hda.c src/behavior_ahci.c src/behavior_xhci.c src/device_model.c include/device_behavior.h include/device_model.h
+build/test_behavior_gpu: tests/test_behavior_gpu.c tests/fixture_path.h src/behavior_gpu.c src/behavior_ethernet.c src/behavior_static.c src/behavior_nvme.c src/behavior_hda.c src/behavior_ahci.c src/behavior_xhci.c src/device_model.c include/device_behavior.h include/device_model.h
 	mkdir -p build
 	$(CC) $(CFLAGS) $(SANITIZE) \
 		$$(pkg-config --cflags cmocka json-c openssl) -o $@ \
 		tests/test_behavior_gpu.c src/behavior_gpu.c src/behavior_ethernet.c src/behavior_static.c src/behavior_nvme.c src/behavior_hda.c src/behavior_ahci.c src/behavior_xhci.c src/device_model.c \
 		$$(pkg-config --libs cmocka json-c openssl)
 
-test-behavior-gpu: build/test_behavior_gpu
-	./build/test_behavior_gpu
+test-behavior-gpu: test-fixtures build/test_behavior_gpu
+	VFIO_TEST_FIXTURE_ROOT="$(VFIO_TEST_FIXTURE_ROOT)" ./build/test_behavior_gpu
 
-build/test_behavior_storage: tests/test_behavior_storage.c src/behavior_ahci.c src/behavior_xhci.c src/behavior_static.c src/behavior_nvme.c src/behavior_hda.c src/behavior_gpu.c src/behavior_ethernet.c src/device_model.c include/device_behavior.h include/device_model.h
+build/test_behavior_storage: tests/test_behavior_storage.c tests/fixture_path.h src/behavior_ahci.c src/behavior_xhci.c src/behavior_static.c src/behavior_nvme.c src/behavior_hda.c src/behavior_gpu.c src/behavior_ethernet.c src/device_model.c include/device_behavior.h include/device_model.h
 	mkdir -p build
 	$(CC) $(CFLAGS) $(SANITIZE) \
 		$$(pkg-config --cflags cmocka json-c openssl) -o $@ \
@@ -86,8 +109,8 @@ build/test_behavior_storage: tests/test_behavior_storage.c src/behavior_ahci.c s
 		src/behavior_static.c src/behavior_nvme.c src/behavior_hda.c src/behavior_gpu.c src/behavior_ethernet.c src/device_model.c \
 		$$(pkg-config --libs cmocka json-c openssl)
 
-test-behavior-storage: build/test_behavior_storage
-	./build/test_behavior_storage
+test-behavior-storage: test-fixtures build/test_behavior_storage
+	VFIO_TEST_FIXTURE_ROOT="$(VFIO_TEST_FIXTURE_ROOT)" ./build/test_behavior_storage
 
 fuzz-contract:
 	python3 -m unittest tests/test_make_contract.py tests/test_fuzz_fixture_guard.py -v
@@ -99,9 +122,19 @@ fuzz-fixtures: fuzz-fixture-root-check
 	@mkdir -p "$(FUZZ_FIXTURE_ROOT)"
 	@$(MAKE) -C "$(ROOT_DIR)" build
 	@printf '%s\n' 'generating isolated NVMe fuzz fixture'
+	@python3 tests/fuzz_fixture_guard.py --project-root "$(CURDIR)" --fixture-root "$(FUZZ_FIXTURE_ROOT)" --fixture-name nvme
+	@if [ -d "$(FUZZ_FIXTURE_ROOT)/nvme" ]; then \
+		"$(FUZZ_GENERATOR)" verify-manifest --manifest "$(FUZZ_FIXTURE_ROOT)/nvme/build_manifest.json" --output-dir "$(FUZZ_FIXTURE_ROOT)/nvme" && \
+		python3 tests/fuzz_fixture_guard.py --project-root "$(CURDIR)" --fixture-root "$(FUZZ_FIXTURE_ROOT)" --fixture-name nvme --adopt-generated-output; \
+	fi
 	"$(FUZZ_GENERATOR)" build --from-json "$(ROOT_DIR)/testdata/donors/nvme.json" --board ac701_ft601 --skip-vivado --force --lib-dir "$(ROOT_DIR)/lib/pcileech-fpga" --output "$(FUZZ_FIXTURE_ROOT)/nvme"
 	"$(FUZZ_GENERATOR)" verify-manifest --manifest "$(FUZZ_FIXTURE_ROOT)/nvme/build_manifest.json" --output-dir "$(FUZZ_FIXTURE_ROOT)/nvme"
 	@printf '%s\n' 'generating isolated Ethernet fuzz fixture'
+	@python3 tests/fuzz_fixture_guard.py --project-root "$(CURDIR)" --fixture-root "$(FUZZ_FIXTURE_ROOT)" --fixture-name ethernet
+	@if [ -d "$(FUZZ_FIXTURE_ROOT)/ethernet" ]; then \
+		"$(FUZZ_GENERATOR)" verify-manifest --manifest "$(FUZZ_FIXTURE_ROOT)/ethernet/build_manifest.json" --output-dir "$(FUZZ_FIXTURE_ROOT)/ethernet" && \
+		python3 tests/fuzz_fixture_guard.py --project-root "$(CURDIR)" --fixture-root "$(FUZZ_FIXTURE_ROOT)" --fixture-name ethernet --adopt-generated-output; \
+	fi
 	"$(FUZZ_GENERATOR)" build --from-json "$(ROOT_DIR)/testdata/donors/ethernet.json" --board PCIeSquirrel --skip-vivado --force --lib-dir "$(ROOT_DIR)/lib/pcileech-fpga" --output "$(FUZZ_FIXTURE_ROOT)/ethernet"
 	"$(FUZZ_GENERATOR)" verify-manifest --manifest "$(FUZZ_FIXTURE_ROOT)/ethernet/build_manifest.json" --output-dir "$(FUZZ_FIXTURE_ROOT)/ethernet"
 
@@ -157,8 +190,9 @@ test-msan:
 image:
 	docker build -t pcileech-vfio-user -f Dockerfile ..
 
-test-server: image
+test-server: test-fixtures image
 	docker run --rm \
+		-v "$(VFIO_TEST_FIXTURE_ROOT)/generic:/artifacts/generic:ro" \
 		-e VFIO_DEVICE_BIN=/build/build/vfio-device \
 		-e VFIO_ARTIFACTS=/artifacts/generic \
 		pcileech-vfio-user python3 -m unittest tests/test_server_cli.py -v
@@ -171,7 +205,7 @@ $(TARGET): $(SRC)
 	$(CC) $(CFLAGS) -o $(TARGET) $(SRC) $(LDFLAGS)
 
 clean:
-	rm -rf build
+	python3 "$(ROOT_DIR)/tools/cleanup_generated.py" --repo-root "$(ROOT_DIR)" --vfio-build
 
-run: $(TARGET)
-	./$(TARGET) --artifacts ../tests/cocotb/out_generic --socket /tmp/pcileech-vfio.sock
+run: test-fixtures $(TARGET)
+	./$(TARGET) --artifacts "$(VFIO_TEST_FIXTURE_ROOT)/generic" --socket /tmp/pcileech-vfio.sock

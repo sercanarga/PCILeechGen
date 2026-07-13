@@ -50,6 +50,101 @@ func TestWriteFile(t *testing.T) {
 	}
 }
 
+func TestPrepareOutputDirCreatesOwnedOutput(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "generated-output")
+	ow := NewOutputWriter(target, "lib/pcileech-fpga", 4, 3600)
+
+	if err := ow.prepareOutputDir(); err != nil {
+		t.Fatalf("prepareOutputDir failed: %v", err)
+	}
+	marker, err := os.ReadFile(filepath.Join(ow.OutputDir, outputOwnershipMarker))
+	if err != nil {
+		t.Fatalf("read ownership marker: %v", err)
+	}
+	if string(marker) != outputOwnershipContent {
+		t.Fatalf("ownership marker = %q, want %q", marker, outputOwnershipContent)
+	}
+
+	if err := ow.prepareOutputDir(); err != nil {
+		t.Fatalf("prepareOutputDir should reopen its owned output: %v", err)
+	}
+}
+
+func TestPrepareOutputDirRejectsUnownedExistingDirectory(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "existing-output")
+	if err := os.Mkdir(target, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	err := NewOutputWriter(target, "lib/pcileech-fpga", 4, 3600).prepareOutputDir()
+	if err == nil || !strings.Contains(err.Error(), "unowned") {
+		t.Fatalf("prepareOutputDir error = %v, want unowned-output rejection", err)
+	}
+}
+
+func TestPrepareOutputDirRejectsSymlink(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(root, "outside")
+	if err := os.Mkdir(outside, 0755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(root, "output")
+	if err := os.Symlink(outside, target); err != nil {
+		t.Skipf("symlink support unavailable: %v", err)
+	}
+
+	err := NewOutputWriter(target, "lib/pcileech-fpga", 4, 3600).prepareOutputDir()
+	if err == nil || !strings.Contains(err.Error(), "real directory") {
+		t.Fatalf("prepareOutputDir error = %v, want symlink rejection", err)
+	}
+}
+
+func TestWriteFileRejectsSymlink(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(root, "outside.txt")
+	if err := os.WriteFile(outside, []byte("preserve"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(root, "output")
+	if err := os.Mkdir(output, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(output, "test.txt")); err != nil {
+		t.Skipf("symlink support unavailable: %v", err)
+	}
+
+	err := NewOutputWriter(output, "lib/pcileech-fpga", 4, 3600).writeFile("test.txt", "replace")
+	if err == nil || !strings.Contains(err.Error(), "regular file") {
+		t.Fatalf("writeFile error = %v, want symlink rejection", err)
+	}
+	contents, readErr := os.ReadFile(outside)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(contents) != "preserve" {
+		t.Fatalf("outside file was modified: %q", contents)
+	}
+}
+
+func TestClearGeneratedSourceTreeRejectsSymlink(t *testing.T) {
+	root := t.TempDir()
+	dst := filepath.Join(root, "src")
+	if err := os.Mkdir(dst, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(root, filepath.Join(dst, "escape")); err != nil {
+		t.Skipf("symlink support unavailable: %v", err)
+	}
+
+	err := clearGeneratedSourceTree(dst)
+	if err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("clearGeneratedSourceTree error = %v, want symlink rejection", err)
+	}
+	if _, statErr := os.Lstat(filepath.Join(dst, "escape")); statErr != nil {
+		t.Fatalf("unsafe source tree was modified: %v", statErr)
+	}
+}
+
 func TestListOutputFiles(t *testing.T) {
 	files := ListOutputFiles()
 	if len(files) == 0 {

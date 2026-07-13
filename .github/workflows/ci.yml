@@ -66,6 +66,9 @@ jobs:
       - name: Go race summary
         run: go test -race ./internal/firmware/nvme ./internal/firmware/svgen
 
+      - name: Test generated-artifact cleanup guard
+        run: python3 -m unittest tools/tests/test_cleanup_generated.py -v
+
       - name: ShellCheck
         run: |
           sudo apt-get update
@@ -161,11 +164,6 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Generate VFIO-user fixtures
-        run: |
-          go build -trimpath -o bin/pcileechgen ./cmd/pcileechgen
-          tests/cocotb/generate_all.sh
-
       - name: Run VFIO-user tests
         env:
           ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
@@ -176,3 +174,32 @@ jobs:
           make -C vfio-user fuzz-smoke
           make -C vfio-user fuzz
           make -C vfio-user test-valgrind
+
+  cocotb:
+    name: Cocotb RTL matrix
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Setup Python 3.13
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Install Verilator
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y verilator
+          verilator --version
+
+      - name: Run hermetic Cocotb matrix
+        run: make cocotb-test COCOTB_PYTHON=python3.13
