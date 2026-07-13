@@ -1,10 +1,14 @@
-.PHONY: build test lint clean install fixtures hdl-lint early-access
+.PHONY: build test lint clean install fixtures hdl-lint early-access cocotb-bootstrap cocotb-test cocotb-clean
 
 BINARY_NAME=pcileechgen
 BUILD_DIR=bin
 GO=go
 GOFLAGS=-trimpath
 LDFLAGS=-s -w
+
+COCOTB_PYTHON ?= python3.13
+COCOTB_VENV := bin/cocotb-venv
+COCOTB_OUTPUT_ROOT := tests/cocotb/out_matrix
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS += -X github.com/sercanarga/pcileechgen/internal/version.Version=$(VERSION)
@@ -41,6 +45,22 @@ fixtures: build
 hdl-lint: build
 	@command -v verilator >/dev/null 2>&1 || { echo "verilator not installed; see Makefile"; exit 1; }
 	./scripts/hdl-lint.sh
+
+cocotb-bootstrap:
+	@command -v "$(COCOTB_PYTHON)" >/dev/null 2>&1 || { echo "$(COCOTB_PYTHON) is required (Python <= 3.13)" >&2; exit 1; }
+	$(COCOTB_PYTHON) tests/cocotb/run_matrix.py --check-python --check-venv "$(COCOTB_VENV)"
+	@test -x "$(COCOTB_VENV)/bin/python" || $(COCOTB_PYTHON) -m venv "$(COCOTB_VENV)"
+	"$(COCOTB_VENV)/bin/python" tests/cocotb/run_matrix.py --check-python
+	"$(COCOTB_VENV)/bin/python" -m pip install --requirement tests/cocotb/requirements.txt
+
+cocotb-test: build cocotb-bootstrap
+	"$(COCOTB_VENV)/bin/python" tests/cocotb/test_runner.py
+	"$(COCOTB_VENV)/bin/python" tests/cocotb/run_matrix.py \
+		--generator "$(BUILD_DIR)/$(BINARY_NAME)" \
+		--output-root "$(COCOTB_OUTPUT_ROOT)"
+
+cocotb-clean:
+	$(COCOTB_PYTHON) tests/cocotb/run_matrix.py --clean --output-root "$(COCOTB_OUTPUT_ROOT)"
 
 # Install binary to GOPATH/bin
 install:
