@@ -252,6 +252,8 @@ static void namespace_reset(struct nvme_state *state)
 
 static void identify_controller(const struct nvme_state *state, uint8_t data[4096])
 {
+    char model[40];
+
     if (state->model->has_nvme_identify) {
         memcpy(data, state->model->nvme_controller_ident, 4096);
         put16(data, 0x00, state->model->vendor_id);
@@ -263,8 +265,11 @@ static void identify_controller(const struct nvme_state *state, uint8_t data[409
     memset(data, 0, 4096);
     put16(data, 0x00, state->model->vendor_id);
     put16(data, 0x02, state->model->subsystem_vendor_id);
-    memcpy(data + 0x04, "PCILEECHGEN000000001", 20);
-    memcpy(data + 0x18, "PCILeechGen NVMe Controller", 27);
+    memcpy(data + 0x04, "NVME0000000000000000", 20);
+    memset(model, ' ', sizeof(model));
+    snprintf(model, sizeof(model), "PCILeechGen NVMe %04X:%04X",
+             state->model->vendor_id, state->model->device_id);
+    memcpy(data + 0x18, model, sizeof(model));
     memcpy(data + 0x40, "1.0     ", 8);
     memcpy(data + 0x300, "nqn.2014.08.org.nvmexpress:pcileechgen", 38);
     data[0x4d] = 3;

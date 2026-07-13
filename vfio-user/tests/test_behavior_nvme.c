@@ -194,6 +194,7 @@ static void completes_identify_controller(void **state)
     assert_int_equal(fixture->behavior.service(fixture->behavior.state), 0);
 
     assert_memory_equal(&host.memory[0x3000], "\x4d\x14", 2);
+    assert_memory_equal(&host.memory[0x3018], "PCILeechGen NVMe 144D:A809", 25);
     assert_int_equal(cqe->cid, 7);
     assert_int_equal(cqe->status, 1);
     assert_int_equal(host.irqs, 1);
@@ -445,6 +446,18 @@ static void processes_io_write_read_and_flush(void **state)
                                               &doorbell, sizeof(doorbell)), 4);
     assert_int_equal(fixture->behavior.service(fixture->behavior.state), 0);
     assert_int_equal(io_cq[2].status, 1);
+
+    io_sq[3].opcode = 0x02;
+    io_sq[3].cid = 14;
+    io_sq[3].nsid = 1;
+    io_sq[3].prp1 = 0xa000;
+    io_sq[3].cdw10 = 100000;
+    doorbell = 0;
+    assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x1008,
+                                              &doorbell, sizeof(doorbell)), 4);
+    assert_int_equal(fixture->behavior.service(fixture->behavior.state), 0);
+    assert_memory_equal(&host.memory[0xa000], (uint8_t[512]){0}, 512);
+    assert_int_equal(io_cq[3].status, 1);
 }
 
 
