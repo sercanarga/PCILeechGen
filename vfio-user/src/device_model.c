@@ -367,6 +367,35 @@ static int parse_interrupts(json_object *root, struct device_model *model,
     return 0;
 }
 
+static int parse_nvme_identify(json_object *root, struct device_model *model,
+                               char *err, size_t err_len)
+{
+    json_object *identify = NULL;
+    json_object *controller = NULL;
+    json_object *namespace = NULL;
+
+    if (!json_object_object_get_ex(root, "nvme_identify", &identify)) {
+        return 0;
+    }
+    if (!json_object_is_type(identify, json_type_object) ||
+        !json_object_object_get_ex(identify, "controller", &controller) ||
+        !json_object_object_get_ex(identify, "namespace", &namespace) ||
+        !json_object_is_type(controller, json_type_string) ||
+        !json_object_is_type(namespace, json_type_string)) {
+        return fail(err, err_len, "invalid nvme_identify object");
+    }
+    if (decode_config_image(json_object_get_string(controller),
+                            model->nvme_controller_ident, 4096, 4096,
+                            err, err_len) < 0 ||
+        decode_config_image(json_object_get_string(namespace),
+                            model->nvme_namespace_ident, 4096, 4096,
+                            err, err_len) < 0) {
+        return fail(err, err_len, "NVMe Identify blobs must be exactly 4096 bytes");
+    }
+    model->has_nvme_identify = true;
+    return 0;
+}
+
 
 static const struct device_bar *find_bar(const struct device_model *model, unsigned bir)
 {
@@ -521,6 +550,7 @@ int device_model_load(const char *artifact_dir, struct device_model **out,
         parse_config(root, model, err, err_len) < 0 ||
         parse_bars(root, model, err, err_len) < 0 ||
         parse_interrupts(root, model, err, err_len) < 0 ||
+        parse_nvme_identify(root, model, err, err_len) < 0 ||
         device_model_validate(model, err, err_len) < 0) {
         goto done;
     }

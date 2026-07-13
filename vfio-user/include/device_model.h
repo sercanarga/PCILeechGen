@@ -41,6 +41,9 @@ struct device_model {
     uint64_t msix_table_offset;
     unsigned msix_pba_bir;
     uint64_t msix_pba_offset;
+    bool has_nvme_identify;
+    uint8_t nvme_controller_ident[4096];
+    uint8_t nvme_namespace_ident[4096];
 };
 
 int device_model_load(const char *artifact_dir, struct device_model **out,

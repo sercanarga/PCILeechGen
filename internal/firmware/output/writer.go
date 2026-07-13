@@ -187,6 +187,15 @@ func (ow *OutputWriter) writeDeviceModel(ctx *donor.DeviceContext, scrubbedCS *p
 	}
 	if cfg != nil {
 		applyGeneratedBARModels(model, cfg.BARModels)
+		if cfg.NVMeIdentify != nil && ctx.Device.ClassCode == 0x010802 &&
+			ctx.NVMeIdentity != nil &&
+			len(ctx.NVMeIdentity.RawControllerIdent) == 4096 &&
+			len(ctx.NVMeIdentity.RawNamespaceIdent) == 4096 {
+			model.NVMeIdentify = &devicemodel.NVMeIdentify{
+				Controller: append([]byte(nil), cfg.NVMeIdentify.Controller[:]...),
+				Namespace:  append([]byte(nil), cfg.NVMeIdentify.Namespace[:]...),
+			}
+		}
 	}
 	data, err := model.ToJSON()
 	if err != nil {

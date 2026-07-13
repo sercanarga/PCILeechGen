@@ -252,6 +252,14 @@ static void namespace_reset(struct nvme_state *state)
 
 static void identify_controller(const struct nvme_state *state, uint8_t data[4096])
 {
+    if (state->model->has_nvme_identify) {
+        memcpy(data, state->model->nvme_controller_ident, 4096);
+        put16(data, 0x00, state->model->vendor_id);
+        put16(data, 0x02, state->model->subsystem_vendor_id);
+        data[0x4d] = 3;
+        put32(data, 0x50, 0x00010400);
+        return;
+    }
     memset(data, 0, 4096);
     put16(data, 0x00, state->model->vendor_id);
     put16(data, 0x02, state->model->subsystem_vendor_id);
@@ -270,8 +278,12 @@ static void identify_controller(const struct nvme_state *state, uint8_t data[409
 }
 
 
-static void identify_namespace(uint8_t data[4096])
+static void identify_namespace(const struct nvme_state *state, uint8_t data[4096])
 {
+    if (state->model->has_nvme_identify) {
+        memcpy(data, state->model->nvme_namespace_ident, 4096);
+        return;
+    }
     memset(data, 0, 4096);
     put64(data, 0x00, 0x100000);
     put64(data, 0x08, 0x100000);
@@ -498,7 +510,7 @@ static int process_admin(struct nvme_state *state, uint16_t tail)
             if (cns == 1) {
                 identify_controller(state, data);
             } else if (cns == 0 && sqe.nsid == 1) {
-                identify_namespace(data);
+                identify_namespace(state, data);
             } else if (cns == 2) {
                 memset(data, 0, sizeof(data));
                 put32(data, 0, 1);

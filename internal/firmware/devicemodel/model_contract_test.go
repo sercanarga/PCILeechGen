@@ -149,6 +149,27 @@ func TestJSONRoundTripPreservesModel(t *testing.T) {
 	}
 }
 
+func TestJSONRoundTripPreservesRawNVMeIdentify(t *testing.T) {
+	model := validTestModel()
+	model.NVMeIdentify = &NVMeIdentify{
+		Controller: make([]byte, 4096),
+		Namespace:  make([]byte, 4096),
+	}
+	model.NVMeIdentify.Controller[0x18] = 'D'
+	model.NVMeIdentify.Namespace[0x19] = 1
+	data, err := model.ToJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := FromJSON(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.NVMeIdentify, model.NVMeIdentify) {
+		t.Fatalf("raw NVMe Identify changed across JSON round trip")
+	}
+}
+
 func TestFromJSONRejectsUnsupportedSchemaAndUnknownFields(t *testing.T) {
 	data, err := validTestModel().ToJSON()
 	if err != nil {

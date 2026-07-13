@@ -63,10 +63,18 @@ type Model struct {
 	Registers           []Register            `json:"registers"`
 	Interrupts          []InterruptDescriptor `json:"interrupts"`
 	MSIX                *MSIXDescriptor       `json:"msix,omitempty"`
+	NVMeIdentify        *NVMeIdentify         `json:"nvme_identify,omitempty"`
 	Transformations     []Transformation      `json:"transformations"`
 	UnsupportedFeatures []UnsupportedFeature  `json:"unsupported_features"`
 	Confidence          Confidence            `json:"confidence"`
 	Provenance          Provenance            `json:"provenance"`
+}
+
+// NVMeIdentify carries raw donor Identify Controller/Namespace responses.
+// Both blobs are exactly one NVMe data unit (4096 bytes) when present.
+type NVMeIdentify struct {
+	Controller []byte `json:"controller,omitempty"`
+	Namespace  []byte `json:"namespace,omitempty"`
 }
 
 type DeviceModel = Model
