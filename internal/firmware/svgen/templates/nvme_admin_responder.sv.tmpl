@@ -23,6 +23,7 @@ module pcileech_nvme_admin_responder #(
     input tri1          dma_enabled,
 
     input               cc_en,
+    input tri0 [1:0]    cc_shn,
     input               cc_enable_wr,
     input               cc_disable_wr,
 
@@ -77,6 +78,10 @@ module pcileech_nvme_admin_responder #(
 
     output reg [12:0]   id_rom_addr,
     input [31:0]        id_rom_data,
+
+    output wire         controller_fatal,
+    output reg          shutdown_complete,
+    output wire         dma_cancel,
 
     output [7:0]        dbg_state,
     output [15:0]       dbg_active_qid,
@@ -603,9 +608,22 @@ module pcileech_nvme_admin_responder #(
     endfunction
 
     reg         cc_en_prev;
-    wire        cc_start_event = (cc_en && !cc_en_prev) || (cc_enable_wr && !cc_en_prev);
-    wire        cc_stop_event  = (!cc_en && cc_en_prev) || (cc_disable_wr && cc_en_prev);
+    reg [1:0]   cc_shn_prev;
+    // CC is the single source of truth. The write strobes arrive ahead of the
+    // registered CC edge and must not reset queues or count a stop twice.
+    wire        cc_start_event = cc_en && !cc_en_prev;
+    wire        cc_stop_event  = !cc_en && cc_en_prev;
     wire        cc_reset_event = cc_start_event || cc_stop_event;
+    wire        _unused_cc_write_strobes = cc_enable_wr ^ cc_disable_wr;
+    wire        normal_shutdown_requested = (cc_shn == 2'b01);
+    wire        normal_shutdown_start = normal_shutdown_requested &&
+                                        (cc_shn_prev != 2'b01);
+    wire        abrupt_shutdown_requested = cc_shn[1];
+    wire        abrupt_shutdown_start = abrupt_shutdown_requested && !cc_shn_prev[1];
+    reg         shutdown_flush_issued;
+    reg         normal_shutdown_complete_epoch;
+    reg         controller_fatal_latched;
+    assign dma_cancel = abrupt_shutdown_requested;
     reg         aer_registered;
     reg [15:0]  aer_cid;
     reg         aer_event_pending;
@@ -684,6 +702,15 @@ module pcileech_nvme_admin_responder #(
     wire [31:0] dbg_io_cmd_info =
         (state == S_DECODE_CMD) ? cmd_slba[31:0] :
                                   dbg_io_progress;
+    // A command fetch must deliver exactly one 16-DWORD SQE. The legacy DMA
+    // interface has no typed error output, so a short terminal read is the
+    // fatal transport indication available to this responder.
+    wire controller_fatal_event =
+        ((state == S_FETCH_SQE) && dma_rd_done &&
+         (!dma_rd_valid || (sqe_dw_idx != 4'd15))) ||
+        ((state == S_SHUTDOWN) && normal_shutdown_requested &&
+         disk_req_done && disk_error);
+    assign controller_fatal = controller_fatal_latched || controller_fatal_event;
     assign dbg_cmd_info = ((state == S_TIMING_PREP) ||
                            (state == S_TIMING_EVAL) ||
                            (state == S_TIMING_DELAY)) ? dbg_timing_info :
@@ -766,6 +793,11 @@ module pcileech_nvme_admin_responder #(
             id_rom_offset      <= 13'h0;
             id_rom_addr        <= 13'h0;
             cc_en_prev         <= 1'b0;
+            cc_shn_prev        <= 2'b00;
+            shutdown_complete  <= 1'b0;
+            shutdown_flush_issued <= 1'b0;
+            normal_shutdown_complete_epoch <= 1'b0;
+            controller_fatal_latched <= 1'b0;
             aer_registered     <= 1'b0;
             aer_cid            <= 16'h0000;
             aer_event_pending  <= 1'b0;
@@ -860,15 +892,25 @@ module pcileech_nvme_admin_responder #(
             end
 
             cc_en_prev <= cc_en;
+            cc_shn_prev <= cc_shn;
+            if (controller_fatal_event)
+                controller_fatal_latched <= 1'b1;
+            if (normal_shutdown_start)
+                normal_shutdown_complete_epoch <= 1'b0;
+            if (cc_shn == 2'b00) begin
+                shutdown_complete <= 1'b0;
+                shutdown_flush_issued <= 1'b0;
+            end
 
-            if (cc_en && doorbell_wr) begin
+            if (cc_en && !controller_fatal && doorbell_wr) begin
                 if (doorbell_qid == 16'h0000) begin
                     if (doorbell_is_cq) begin
                         if (doorbell_val <= acq_last)
                             cq_head_db <= doorbell_val;
                         else if (acq_power2_entries)
                             cq_head_db <= doorbell_val & acq_last;
-                    end else begin
+                    end else if (cc_shn == 2'b00) begin
+                        normal_shutdown_complete_epoch <= 1'b0;
                         if (doorbell_val <= asq_last)
                             sq_tail <= doorbell_val;
                         else if (asq_power2_entries)
@@ -880,7 +922,8 @@ module pcileech_nvme_admin_responder #(
                             io_cq_head_db <= doorbell_val;
                         else if (io_cq_power2_entries)
                             io_cq_head_db <= doorbell_val & io_cq_last;
-                    end else begin
+                    end else if (cc_shn == 2'b00) begin
+                        normal_shutdown_complete_epoch <= 1'b0;
                         if (doorbell_val <= io_sq_last)
                             io_sq_tail <= doorbell_val;
                         else if (io_sq_power2_entries)
@@ -891,6 +934,10 @@ module pcileech_nvme_admin_responder #(
 
             if (cc_reset_event) begin
                 stat_queue_resets <= stat_queue_resets + 1'b1;
+                shutdown_complete <= 1'b0;
+                shutdown_flush_issued <= 1'b0;
+                normal_shutdown_complete_epoch <= 1'b0;
+                controller_fatal_latched <= 1'b0;
                 if (cc_stop_event)
                     stat_shutdowns <= stat_shutdowns + 1'b1;
                 state              <= S_IDLE;
@@ -986,8 +1033,33 @@ module pcileech_nvme_admin_responder #(
                 feat_write_cache   <= 32'h00000001;
                 feat_irq_coalescing <= 32'h00000000;
                 feat_async_event_cfg <= 32'h00000000;
-                if (cc_stop_event)
+                if (cc_stop_event && !normal_shutdown_complete_epoch)
                     stat_unsafe_shutdowns <= stat_unsafe_shutdowns + 1'b1;
+            end else if (controller_fatal_latched || controller_fatal_event) begin
+                // Once CFS is raised, quiesce all command-side state until the
+                // CC disable/reset edge clears both the responder and CSTS.
+                state <= S_IDLE;
+                return_state <= S_IDLE;
+                timing_cmd_active <= 1'b0;
+                timing_done_for_cmd <= 1'b0;
+                disk_req_write <= 1'b0;
+                disk_req_flush <= 1'b0;
+                prp_cached_valid <= 1'b0;
+            end else if (abrupt_shutdown_start) begin
+                // Cancel outstanding host reads and discard reversible command
+                // state. Already accepted backend work reaches its own terminal
+                // indication before SHST advances.
+                shutdown_complete <= 1'b0;
+                shutdown_flush_issued <= 1'b0;
+                disk_req_write <= 1'b0;
+                disk_req_flush <= 1'b0;
+                timing_cmd_active <= 1'b0;
+                timing_done_for_cmd <= 1'b0;
+                prp_cached_valid <= 1'b0;
+                aer_registered <= 1'b0;
+                aer_event_pending <= 1'b0;
+                state <= S_SHUTDOWN;
+                return_state <= S_IDLE;
             end else if (!dma_enabled) begin
                 state <= S_IDLE;
                 return_state <= S_IDLE;
@@ -998,7 +1070,22 @@ module pcileech_nvme_admin_responder #(
             end else begin
                 case (state)
                     S_IDLE: begin
-                        if (aer_registered && aer_event_pending) begin
+                        if (normal_shutdown_requested) begin
+                            // Active work reaches IDLE only after its CQE and
+                            // interrupt path have drained. Complete a real
+                            // backend flush before acknowledging normal SHN.
+                            disk_req_valid <= 1'b1;
+                            disk_req_write <= 1'b0;
+                            disk_req_flush <= 1'b1;
+                            disk_req_lba <= 64'h0000000000000000;
+                            disk_req_word <= 7'h00;
+                            shutdown_flush_issued <= 1'b1;
+                            state <= S_SHUTDOWN;
+                        end else if (abrupt_shutdown_requested) begin
+                            disk_req_write <= 1'b0;
+                            disk_req_flush <= 1'b0;
+                            state <= S_SHUTDOWN;
+                        end else if (aer_registered && aer_event_pending) begin
                             cqe[0] <= aer_event_info;
                             cqe[1] <= 32'h00000000;
                             cqe[2] <= {16'h0000, sq_head};
@@ -1877,23 +1964,32 @@ module pcileech_nvme_admin_responder #(
                     end
 
                     S_SHUTDOWN: begin
-                        sq_tail       <= 16'h0;
-                        sq_head       <= 16'h0;
-                        cq_tail       <= 16'h0;
-                        cq_head_db    <= 16'h0;
-                        cq_phase      <= 1'b1;
-                        io_sq_created <= 1'b0;
-                        io_cq_created <= 1'b0;
-                        io_sq_tail    <= 16'h0;
-                        io_sq_head    <= 16'h0;
-                        io_cq_tail    <= 16'h0;
-                        io_cq_head_db <= 16'h0;
-                        io_cq_phase   <= 1'b1;
-                        aer_registered    <= 1'b0;
-                        aer_cid           <= 16'h0000;
-                        aer_event_pending <= 1'b0;
-                        aer_event_info    <= 32'h00000000;
-                        state         <= S_IDLE;
+                        if (cc_shn == 2'b00) begin
+                            shutdown_complete <= 1'b0;
+                            shutdown_flush_issued <= 1'b0;
+                            disk_req_write <= 1'b0;
+                            disk_req_flush <= 1'b0;
+                            state <= S_IDLE;
+                        end else if (abrupt_shutdown_requested) begin
+                            disk_req_write <= 1'b0;
+                            disk_req_flush <= 1'b0;
+                            if (!disk_busy)
+                                shutdown_complete <= 1'b1;
+                        end else if (!shutdown_flush_issued) begin
+                            disk_req_valid <= 1'b1;
+                            disk_req_write <= 1'b0;
+                            disk_req_flush <= 1'b1;
+                            disk_req_lba <= 64'h0000000000000000;
+                            disk_req_word <= 7'h00;
+                            shutdown_flush_issued <= 1'b1;
+                        end else if (disk_req_done) begin
+                            if (!disk_error) begin
+                                shutdown_complete <= 1'b1;
+                                normal_shutdown_complete_epoch <= 1'b1;
+                                disk_req_write <= 1'b0;
+                                disk_req_flush <= 1'b0;
+                            end
+                        end
                     end
 
                     default: state <= S_IDLE;

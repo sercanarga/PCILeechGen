@@ -10,6 +10,7 @@ module pcileech_nvme_dma_bridge(
     input               rst,
     input               clk,
     input               dma_enabled,
+    input tri0          dma_cancel,
 
     input [15:0]        pcie_id,
 
@@ -69,6 +70,7 @@ module pcileech_nvme_dma_bridge(
     reg        rd_pending;
     reg [63:0] rd_pending_addr;
     reg [9:0]  rd_pending_len;
+    reg        rd_cancel_notify_pending;
 
     localparam [7:0] NVME_RD_TAG_FIRST = 8'h10;
     // Reorder Xilinx pcie_id {func,dev,bus} -> PCIe Requester ID {bus,dev,func}.
@@ -110,7 +112,7 @@ module pcileech_nvme_dma_bridge(
         .completion_valid   ( cpld_tag_match         ),
         .completion_tag     ( tlp_rx_tdata[79:72]    ),
         .completion_error   ( cpld_error             ),
-        .cancel_all         ( !dma_enabled           ),
+        .cancel_all         ( !dma_enabled || dma_cancel ),
         .outcome_valid      ( tag_outcome_valid      ),
         .outcome_ready      ( 1'b1                   ),
         .outcome_tag        ( tag_outcome_tag        ),
@@ -214,15 +216,22 @@ module pcileech_nvme_dma_bridge(
             rd_pending      <= 1'b0;
             rd_pending_addr <= 64'h0;
             rd_pending_len  <= 10'h0;
+            rd_cancel_notify_pending <= 1'b0;
             tag_alloc_valid <= 1'b0;
         end else begin
             dma_wr_done  <= 1'b0;
             dma_rd_valid <= 1'b0;
             dma_rd_done  <= 1'b0;
             tag_alloc_valid <= 1'b0;
+            if (rd_cancel_notify_pending) begin
+                dma_rd_done <= 1'b1;
+                rd_cancel_notify_pending <= 1'b0;
+            end
 
             if (!dma_enabled) begin
                 wr_pending <= 1'b0;
+                rd_pending <= 1'b0;
+            end else if (dma_cancel) begin
                 rd_pending <= 1'b0;
             end
             if (dma_enabled && (bstate != B_IDLE)) begin
@@ -232,7 +241,8 @@ module pcileech_nvme_dma_bridge(
                     wr_pending_data <= dma_wr_data;
                     wr_pending_be   <= dma_wr_be;
                 end
-                if (dma_rd_req && (dma_rd_len != 10'd0) && !rd_pending) begin
+                if (!dma_cancel && dma_rd_req &&
+                    (dma_rd_len != 10'd0) && !rd_pending) begin
                     rd_pending      <= 1'b1;
                     rd_pending_addr <= dma_rd_addr;
                     rd_pending_len  <= dma_rd_len;
@@ -254,7 +264,7 @@ module pcileech_nvme_dma_bridge(
                         wr_data_hold <= dma_wr_data;
                         load_mwr1(dma_wr_addr, dma_wr_data, dma_wr_be);
                         bstate <= B_WR_SEND;
-                    end else if (dma_enabled && rd_pending && tag_alloc_ready) begin
+                    end else if (dma_enabled && !dma_cancel && rd_pending && tag_alloc_ready) begin
                         rd_base_addr  <= rd_pending_addr;
                         rd_remaining  <= rd_pending_len;
                         rd_index      <= 10'd0;
@@ -263,7 +273,8 @@ module pcileech_nvme_dma_bridge(
                         load_mrd1(rd_pending_addr, tag_alloc_tag);
                         rd_pending <= 1'b0;
                         bstate <= B_RD_SEND;
-                    end else if (dma_enabled && dma_rd_req && (dma_rd_len != 10'd0) && tag_alloc_ready) begin
+                    end else if (dma_enabled && !dma_cancel && dma_rd_req &&
+                                 (dma_rd_len != 10'd0) && tag_alloc_ready) begin
                         rd_base_addr  <= dma_rd_addr;
                         rd_remaining  <= dma_rd_len;
                         rd_index      <= 10'd0;
@@ -271,6 +282,8 @@ module pcileech_nvme_dma_bridge(
                         tag_alloc_valid <= 1'b1;
                         load_mrd1(dma_rd_addr, tag_alloc_tag);
                         bstate <= B_RD_SEND;
+                    end else if (dma_enabled && dma_cancel && dma_rd_req) begin
+                        rd_cancel_notify_pending <= 1'b1;
                     end else if (dma_enabled && dma_rd_req) begin
                         dma_rd_done <= 1'b1;
                     end
@@ -305,14 +318,24 @@ module pcileech_nvme_dma_bridge(
                 end
 
                 B_RD_SEND: begin
-                    if (tlp_tx_tvalid && tlp_tx_tready) begin
+                    if (!dma_enabled || dma_cancel) begin
+                        tlp_tx_tvalid <= 1'b0;
+                        rd_remaining <= 10'd0;
+                        rd_cancel_notify_pending <= 1'b1;
+                        bstate <= B_IDLE;
+                    end else if (tlp_tx_tvalid && tlp_tx_tready) begin
                         tlp_tx_tvalid <= 1'b0;
                         bstate <= B_RD_WAIT;
                     end
                 end
 
                 B_RD_WAIT: begin
-                    if (cpld_match) begin
+                    if (!dma_enabled || dma_cancel) begin
+                        rd_payload <= 32'h0;
+                        rd_remaining <= 10'd0;
+                        rd_cancel_notify_pending <= 1'b1;
+                        bstate <= B_IDLE;
+                    end else if (cpld_match) begin
                         rd_payload <= swap32(tlp_rx_tdata[127:96]);
                         bstate <= B_RD_EMIT;
                     end else if (cpld_error) begin
@@ -331,20 +354,25 @@ module pcileech_nvme_dma_bridge(
                 end
 
                 B_RD_EMIT: begin
-                    dma_rd_data  <= rd_payload;
-                    dma_rd_valid <= 1'b1;
-
-                    if ((rd_remaining <= 10'd1) || !dma_enabled) begin
-                        dma_rd_done  <= 1'b1;
+                    if (!dma_enabled || dma_cancel) begin
                         rd_remaining <= 10'd0;
+                        rd_cancel_notify_pending <= 1'b1;
                         bstate <= B_IDLE;
                     end else begin
-                        rd_remaining  <= rd_remaining - 10'd1;
-                        rd_index      <= rd_next_index;
-                        rd_active_tag <= tag_alloc_tag;
-                        tag_alloc_valid <= 1'b1;
-                        load_mrd1(rd_next_addr, tag_alloc_tag);
-                        bstate <= B_RD_SEND;
+                        dma_rd_data  <= rd_payload;
+                        dma_rd_valid <= 1'b1;
+                        if (rd_remaining <= 10'd1) begin
+                            dma_rd_done  <= 1'b1;
+                            rd_remaining <= 10'd0;
+                            bstate <= B_IDLE;
+                        end else begin
+                            rd_remaining  <= rd_remaining - 10'd1;
+                            rd_index      <= rd_next_index;
+                            rd_active_tag <= tag_alloc_tag;
+                            tag_alloc_valid <= 1'b1;
+                            load_mrd1(rd_next_addr, tag_alloc_tag);
+                            bstate <= B_RD_SEND;
+                        end
                     end
                 end
 

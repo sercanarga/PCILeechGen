@@ -526,6 +526,9 @@ module pcileech_tlps128_bar_controller(
     wire        msix_addr_hit;
 {{ end }}
 {{ if and (eq .DeviceClass "nvme") .NVMeIdentify }}
+    wire        nvme_shutdown_complete;
+    wire        nvme_dma_cancel;
+    wire        nvme_controller_fatal;
     wire        nvme_irq_event_valid;
     wire [15:0] nvme_irq_event_vector;
     wire        nvme_irq_delivery_valid;
@@ -594,6 +597,7 @@ module pcileech_tlps128_bar_controller(
     wire [31:0] nvme_reg_acq_lo;
     wire [31:0] nvme_reg_acq_hi;
     wire [31:0] nvme_reg_csts;
+    wire [1:0]  nvme_reg_cc_shn;
 {{ end }}
 
 {{ if .BARModel }}
@@ -632,7 +636,10 @@ module pcileech_tlps128_bar_controller(
         .nvme_asq_hi    ( nvme_reg_asq_hi               ),
         .nvme_acq_lo    ( nvme_reg_acq_lo               ),
         .nvme_acq_hi    ( nvme_reg_acq_hi               ),
-        .nvme_csts      ( nvme_reg_csts                 )
+        .nvme_csts      ( nvme_reg_csts                 ),
+        .nvme_cc_shn    ( nvme_reg_cc_shn               ),
+        .nvme_shutdown_complete ( nvme_shutdown_complete ),
+        .controller_fatal ( nvme_controller_fatal       )
 {{ end }}{{ if and (eq .DeviceClass "audio") .HasClassEndpoint }}        ,
         // HDA RIRB DMA bridge ports
         .dma_req_valid   ( hda_dma_req_valid             ),
@@ -996,6 +1003,7 @@ module pcileech_tlps128_bar_controller(
         .clk                ( clk                           ),
         .dma_enabled        ( dma_enabled                   ),
         .cc_en              ( nvme_reg_cc[0]                ),
+        .cc_shn             ( nvme_reg_cc_shn               ),
         .cc_enable_wr       ( nvme_cc_enable_wr             ),
         .cc_disable_wr      ( nvme_cc_disable_wr            ),
         .asq_lo             ( nvme_reg_asq_lo               ),
@@ -1014,6 +1022,7 @@ module pcileech_tlps128_bar_controller(
         .irq_delivery_done  ( nvme_irq_delivery_done        ),
         .pba_set_valid      ( nvme_irq_event_valid          ),
         .pba_set_vector     ( nvme_irq_event_vector         ),
+        .controller_fatal   ( nvme_controller_fatal         ),
         .dma_rd_req         ( nvme_dma_rd_req               ),
         .dma_rd_addr        ( nvme_dma_rd_addr              ),
         .dma_rd_len         ( nvme_dma_rd_len               ),
@@ -1037,6 +1046,8 @@ module pcileech_tlps128_bar_controller(
         .disk_req_hit       ( nvme_disk_req_hit             ),
         .disk_busy          ( nvme_disk_busy                ),
         .disk_error         ( nvme_disk_error               ),
+        .shutdown_complete  ( nvme_shutdown_complete        ),
+        .dma_cancel         ( nvme_dma_cancel               ),
         .id_rom_addr        ( nvme_id_rom_addr              ),
         .id_rom_data        ( nvme_id_rom_data              ),
         .dbg_state          ( nvme_resp_dbg_state           ),
@@ -1075,6 +1086,7 @@ module pcileech_tlps128_bar_controller(
         .rst                ( device_reset                  ),
         .clk                ( clk                           ),
         .dma_enabled        ( dma_enabled                   ),
+        .dma_cancel         ( nvme_dma_cancel               ),
         .pcie_id            ( pcie_id                       ),
         .dma_wr_req         ( nvme_dma_wr_req               ),
         .dma_wr_addr        ( nvme_dma_wr_addr              ),

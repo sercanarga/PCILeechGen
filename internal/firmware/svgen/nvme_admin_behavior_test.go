@@ -12,6 +12,7 @@ always #5 clk = ~clk;
 reg rst = 1;
 reg dma_enabled = 0;
 reg cc_en = 0;
+reg [1:0] cc_shn = 0;
 reg cc_enable_wr = 0;
 reg cc_disable_wr = 0;
 reg [31:0] asq_lo = 0;
@@ -76,6 +77,9 @@ wire [15:0] dbg_active_qid;
 wire [7:0] dbg_opcode;
 wire [31:0] dbg_admin_queues;
 wire [31:0] dbg_cmd_info;
+wire controller_fatal;
+wire shutdown_complete;
+wire dma_cancel;
 
 assign dma_wr_done = dma_wr_valid;
 
@@ -86,6 +90,7 @@ reg [63:0] rd_addr_q;
 reg [9:0]  rd_len_q;
 reg [9:0]  rd_beat_q;
 reg        rd_busy;
+reg        force_short_read = 0;
 always @(posedge clk) begin
     if (rst) begin
         rd_busy <= 1'b0;
@@ -102,6 +107,9 @@ always @(posedge clk) begin
                 rd_beat_q <= 10'h0;
                 rd_busy   <= 1'b1;
             end
+        end else if (force_short_read) begin
+            dma_rd_done <= 1'b1;
+            rd_busy <= 1'b0;
         end else begin
             dma_rd_valid <= 1'b1;
             dma_rd_data  <= host_mem[rd_addr_q[15:2] + {4'h0, rd_beat_q}];
@@ -117,6 +125,9 @@ end
 
 integer cqe_count = 0;
 integer cqe_snapshot = 0;
+integer disk_flush_count = 0;
+integer flush_snapshot = 0;
+integer wait_cycles = 0;
 reg [31:0] last_cqe_status = 32'h0;
 always @(posedge clk) begin
     if (!rst && dma_wr_valid && dma_wr_addr[3:2] == 2'b11 &&
@@ -124,6 +135,11 @@ always @(posedge clk) begin
         last_cqe_status <= dma_wr_data;
         cqe_count <= cqe_count + 1;
     end
+end
+
+always @(posedge clk) begin
+    if (!rst && disk_req_valid && disk_req_flush)
+        disk_flush_count <= disk_flush_count + 1;
 end
 
 always @(posedge clk) begin
@@ -136,6 +152,7 @@ pcileech_nvme_admin_responder responder (
     .clk(clk),
     .dma_enabled(dma_enabled),
     .cc_en(cc_en),
+    .cc_shn(cc_shn),
     .cc_enable_wr(cc_enable_wr),
     .cc_disable_wr(cc_disable_wr),
     .asq_lo(asq_lo),
@@ -180,6 +197,9 @@ pcileech_nvme_admin_responder responder (
     .pba_set_vector(pba_set_vector),
     .id_rom_addr(id_rom_addr),
     .id_rom_data(id_rom_data),
+    .controller_fatal(controller_fatal),
+    .shutdown_complete(shutdown_complete),
+    .dma_cancel(dma_cancel),
     .dbg_state(dbg_state),
     .dbg_active_qid(dbg_active_qid),
     .dbg_opcode(dbg_opcode),
@@ -338,6 +358,183 @@ initial begin
     repeat (8) @(posedge clk);
     #1;
     if (dbg_state !== 8'd0) $fatal(3, "responder did not return to idle");
+
+    // A normal shutdown requested during an active admin command must drain
+    // that command and its CQE, then wait for a real backend flush terminal.
+    poke_sqe(16'h460, 8'h0A, 32'h0,
+             32'h0, 32'h0, 32'h0, 32'h0,
+             32'h000000FF, 32'h0, 32'h0);
+    cqe_snapshot = cqe_count;
+    flush_snapshot = disk_flush_count;
+    ring_sq(16'd0, 16'd7);
+    wait_cycles = 0;
+    while (dbg_state == 8'd0 && wait_cycles < 100) begin
+        @(posedge clk);
+        wait_cycles = wait_cycles + 1;
+    end
+    if (dbg_state == 8'd0) $fatal(30, "normal shutdown test never started command");
+    @(negedge clk);
+    cc_shn = 2'b01;
+    #1;
+    if (shutdown_complete) $fatal(31, "normal shutdown completed before command drain");
+    ring_sq(16'd0, 16'd8);
+    #1;
+    if (responder.sq_tail !== 16'd7)
+        $fatal(46, "normal shutdown accepted a new SQ submission");
+    wait_cycles = 0;
+    while (cqe_count == cqe_snapshot && wait_cycles < 20000) begin
+        @(posedge clk);
+        wait_cycles = wait_cycles + 1;
+    end
+    if (cqe_count != (cqe_snapshot + 1)) $fatal(32, "normal shutdown dropped active CQE");
+    wait_cycles = 0;
+    while (!shutdown_complete && wait_cycles < 2000) begin
+        @(posedge clk);
+        wait_cycles = wait_cycles + 1;
+    end
+    if (!shutdown_complete) $fatal(33, "normal shutdown never completed");
+    if (disk_flush_count <= flush_snapshot) $fatal(34, "normal shutdown skipped backend flush");
+    if (dbg_state !== 8'd20) $fatal(35, "normal shutdown did not hold terminal state");
+    if (dma_cancel) $fatal(36, "normal shutdown asserted DMA cancel");
+
+    // SHN=0 clears the terminal indication but preserves the completed-normal
+    // epoch so the following disable is not counted as unsafe.
+    @(negedge clk);
+    cc_shn = 2'b00;
+    repeat (4) @(posedge clk);
+    #1;
+    if (shutdown_complete) $fatal(37, "shutdown completion stuck after SHN=0");
+    if (dbg_state !== 8'd0) $fatal(38, "responder did not leave shutdown after SHN=0");
+    @(negedge clk);
+    cc_en = 1'b0;
+    cc_disable_wr = 1'b1;
+    @(negedge clk);
+    cc_disable_wr = 1'b0;
+    repeat (4) @(posedge clk);
+    if (responder.stat_unsafe_shutdowns !== 32'h00000003)
+        $fatal(39, "completed normal shutdown counted unsafe");
+
+    // A completed normal epoch only covers work submitted before that
+    // shutdown. Fresh work invalidates it, so a second incomplete normal
+    // shutdown followed by disable must be counted unsafe.
+    @(negedge clk);
+    cc_en = 1'b1;
+    cc_enable_wr = 1'b1;
+    @(negedge clk);
+    cc_enable_wr = 1'b0;
+    repeat (4) @(posedge clk);
+    @(negedge clk);
+    cc_shn = 2'b01;
+    wait_cycles = 0;
+    while (!shutdown_complete && wait_cycles < 2000) begin
+        @(posedge clk);
+        wait_cycles = wait_cycles + 1;
+    end
+    if (!shutdown_complete) $fatal(52, "idle normal shutdown never completed");
+    @(negedge clk);
+    cc_shn = 2'b00;
+    repeat (4) @(posedge clk);
+    poke_sqe(16'h400, 8'h0A, 32'h0,
+             32'h0, 32'h0, 32'h0, 32'h0,
+             32'h000000FF, 32'h0, 32'h0);
+    ring_sq(16'd0, 16'd1);
+    wait_cycles = 0;
+    while (dbg_state !== 8'd1 && wait_cycles < 100) begin
+        @(posedge clk);
+        wait_cycles = wait_cycles + 1;
+    end
+    if (dbg_state !== 8'd1) $fatal(53, "new epoch never reached SQE fetch");
+    @(negedge clk);
+    cc_shn = 2'b01;
+    @(negedge clk);
+    cc_en = 1'b0;
+    cc_disable_wr = 1'b1;
+    @(negedge clk);
+    cc_disable_wr = 1'b0;
+    repeat (4) @(posedge clk);
+    if (responder.stat_unsafe_shutdowns !== 32'h00000004)
+        $fatal(54, "fresh work reused an old completed shutdown epoch");
+
+    // Re-enable, start a host read, and request abrupt shutdown. The responder
+    // must assert the real DMA cancel wire, discard the command, and complete
+    // without a backend flush. Disabling afterwards is unsafe by definition.
+    @(negedge clk);
+    cc_shn = 2'b00;
+    cc_en = 1'b1;
+    cc_enable_wr = 1'b1;
+    @(negedge clk);
+    cc_enable_wr = 1'b0;
+    repeat (4) @(posedge clk);
+    poke_sqe(16'h400, 8'h0A, 32'h0,
+             32'h0, 32'h0, 32'h0, 32'h0,
+             32'h000000FF, 32'h0, 32'h0);
+    cqe_snapshot = cqe_count;
+    flush_snapshot = disk_flush_count;
+    ring_sq(16'd0, 16'd1);
+    wait_cycles = 0;
+    while (dbg_state !== 8'd1 && wait_cycles < 100) begin
+        @(posedge clk);
+        wait_cycles = wait_cycles + 1;
+    end
+    if (dbg_state !== 8'd1) $fatal(40, "abrupt shutdown test never reached SQE fetch");
+    @(negedge clk);
+    cc_shn = 2'b10;
+    #1;
+    if (!dma_cancel) $fatal(41, "abrupt shutdown did not assert DMA cancel");
+    wait_cycles = 0;
+    while (!shutdown_complete && wait_cycles < 100) begin
+        @(posedge clk);
+        wait_cycles = wait_cycles + 1;
+    end
+    if (!shutdown_complete) $fatal(42, "abrupt shutdown never completed");
+    repeat (100) @(posedge clk);
+    if (cqe_count != cqe_snapshot) $fatal(43, "abrupt shutdown posted canceled CQE");
+    if (disk_flush_count != flush_snapshot) $fatal(44, "abrupt shutdown flushed backend");
+    @(negedge clk);
+    cc_en = 1'b0;
+    cc_disable_wr = 1'b1;
+    @(negedge clk);
+    cc_disable_wr = 1'b0;
+    repeat (4) @(posedge clk);
+    if (responder.stat_unsafe_shutdowns !== 32'h00000005)
+        $fatal(45, "abrupt shutdown was not counted unsafe");
+
+    // A short SQE fetch raises a sticky fatal indication and quiesces the
+    // responder: no later CQE or submission doorbell is accepted before CC
+    // disable clears the fault epoch.
+    @(negedge clk);
+    cc_shn = 2'b00;
+    cc_en = 1'b1;
+    cc_enable_wr = 1'b1;
+    @(negedge clk);
+    cc_enable_wr = 1'b0;
+    repeat (4) @(posedge clk);
+    poke_sqe(16'h400, 8'h0A, 32'h0,
+             32'h0, 32'h0, 32'h0, 32'h0,
+             32'h000000FF, 32'h0, 32'h0);
+    cqe_snapshot = cqe_count;
+    force_short_read = 1'b1;
+    ring_sq(16'd0, 16'd1);
+    wait_cycles = 0;
+    while (!controller_fatal && wait_cycles < 100) begin
+        @(posedge clk);
+        wait_cycles = wait_cycles + 1;
+    end
+    if (!controller_fatal) $fatal(47, "short SQE fetch did not raise controller fatal");
+    force_short_read = 1'b0;
+    repeat (20) @(posedge clk);
+    if (cqe_count != cqe_snapshot) $fatal(48, "fatal responder emitted a late CQE");
+    if (dbg_state !== 8'd0) $fatal(49, "fatal responder did not quiesce in IDLE");
+    ring_sq(16'd0, 16'd2);
+    #1;
+    if (responder.sq_tail !== 16'd1) $fatal(50, "fatal responder accepted new SQ tail");
+    @(negedge clk);
+    cc_en = 1'b0;
+    cc_disable_wr = 1'b1;
+    @(negedge clk);
+    cc_disable_wr = 1'b0;
+    repeat (4) @(posedge clk);
+    if (controller_fatal) $fatal(51, "CC disable did not clear responder fatal latch");
 
     $display("NVME_ADMIN_BEHAVIOR_PASS");
     $finish;

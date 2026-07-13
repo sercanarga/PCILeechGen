@@ -49,7 +49,10 @@ module {{ .BARImplementationModuleName }} #(
     output wire [31:0]  nvme_asq_hi,
     output wire [31:0]  nvme_acq_lo,
     output wire [31:0]  nvme_acq_hi,
-    output wire [31:0]  nvme_csts
+    output wire [31:0]  nvme_csts,
+    output wire [1:0]   nvme_cc_shn,
+    input tri0          nvme_shutdown_complete,
+    input tri0          controller_fatal
 {{ end }});
 
     wire wr_in_range = (wr_addr < BAR_SIZE);
@@ -137,39 +140,53 @@ module {{ .BARImplementationModuleName }} #(
     reg        cc_en_prev;
     reg [3:0]  csts_transition_cnt;
     reg        csts_rdy_pending;
+    wire       cc_en_rising  = reg_0x00000014[0] && !cc_en_prev;
+    wire       cc_en_falling = !reg_0x00000014[0] && cc_en_prev;
 
     always @(posedge clk) begin
         if (rst) begin
             cc_en_prev          <= 1'b0;
             csts_transition_cnt <= 4'h0;
             csts_rdy_pending    <= 1'b0;
-            reg_0x0000001C      <= 32'h00000000;  // CSTS: RDY=0, SHST=0
+            reg_0x0000001C      <= 32'h00000000;  // CSTS: RDY=0, CFS=0, SHST=0
         end else begin
             cc_en_prev <= reg_0x00000014[0]; // CC.EN
 
             // CC.EN rising edge -> start RDY transition (2-8 cycle delay)
-            if (reg_0x00000014[0] && !cc_en_prev) begin
+            if (cc_en_rising) begin
                 csts_rdy_pending    <= 1'b1;
                 csts_transition_cnt <= 4'h0;
                 reg_0x0000001C[0]   <= 1'b0;  // CSTS.RDY = 0 while enabling
-                reg_0x0000001C[3:2] <= 2'b00; // CSTS.SHST = no shutdown
             end
             // CC.EN falling edge -> controller disabled; SHST is only for CC.SHN shutdown
-            else if (!reg_0x00000014[0] && cc_en_prev) begin
-                reg_0x0000001C[0]    <= 1'b0;        // CSTS.RDY = 0
-                reg_0x0000001C[3:2]  <= 2'b00;       // CSTS.SHST = no shutdown
-                csts_rdy_pending     <= 1'b0;
-            end
-
-            // Pending RDY transition: count up then set RDY
-            if (csts_rdy_pending) begin
+            else if (cc_en_falling) begin
+                reg_0x0000001C[0]   <= 1'b0;  // CSTS.RDY = 0
+                csts_rdy_pending    <= 1'b0;
+                csts_transition_cnt <= 4'h0;
+            end else if (csts_rdy_pending) begin
+                // Pending RDY transition: count up then set RDY.
                 csts_transition_cnt <= csts_transition_cnt + 1'b1;
                 if (csts_transition_cnt >= 4'h4) begin
-                    reg_0x0000001C[0]   <= 1'b1;  // CSTS.RDY = 1
-                    reg_0x0000001C[3:2] <= 2'b00;  // CSTS.SHST = no shutdown
-                    csts_rdy_pending    <= 1'b0;
+                    reg_0x0000001C[0] <= 1'b1;  // CSTS.RDY = 1
+                    csts_rdy_pending  <= 1'b0;
                 end
             end
+
+            // SHST follows the live CC.SHN request and the responder's real
+            // drain/flush/abort terminal acknowledgement.
+            if (reg_0x00000014[15:14] == 2'b00)
+                reg_0x0000001C[3:2] <= 2'b00;
+            else if (nvme_shutdown_complete)
+                reg_0x0000001C[3:2] <= 2'b10;
+            else
+                reg_0x0000001C[3:2] <= 2'b01;
+
+            // A disable edge owns same-cycle priority over a fatal pulse.
+            // Otherwise CFS is sticky until reset or the next CC.EN falling edge.
+            if (cc_en_falling)
+                reg_0x0000001C[1] <= 1'b0;
+            else if (controller_fatal)
+                reg_0x0000001C[1] <= 1'b1;
         end
     end
 {{ end }}
@@ -182,6 +199,7 @@ module {{ .BARImplementationModuleName }} #(
     assign nvme_acq_lo = reg_0x00000030;
     assign nvme_acq_hi = reg_0x00000034;
     assign nvme_csts   = reg_0x0000001C;
+    assign nvme_cc_shn = reg_0x00000014[15:14];
 {{ end }}
 {{ if eq .DeviceClass "xhci" }}
     // xHCI HCRST auto-clear + R/S-HCH tracking.

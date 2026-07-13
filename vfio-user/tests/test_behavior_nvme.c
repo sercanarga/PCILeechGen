@@ -2,6 +2,7 @@
 #include <stddef.h>
 #include <setjmp.h>
 #include <errno.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,6 +11,7 @@
 
 #include "device_behavior.h"
 #include "device_model.h"
+#include "fixture_path.h"
 
 
 struct fixture {
@@ -20,6 +22,9 @@ struct fixture {
 struct fake_host {
     uint8_t memory[0x10000];
     unsigned irqs;
+    bool fail_reads;
+    bool fail_writes;
+    bool fail_irqs;
 };
 
 struct nvme_sqe {
@@ -53,6 +58,9 @@ static int fake_read(void *opaque, uint64_t address, void *data, size_t length)
 {
     struct fake_host *host = opaque;
 
+    if (host->fail_reads) {
+        return -1;
+    }
     if (address > sizeof(host->memory) || length > sizeof(host->memory) - address) {
         return -1;
     }
@@ -65,6 +73,9 @@ static int fake_write(void *opaque, uint64_t address, const void *data, size_t l
 {
     struct fake_host *host = opaque;
 
+    if (host->fail_writes) {
+        return -1;
+    }
     if (address > sizeof(host->memory) || length > sizeof(host->memory) - address) {
         return -1;
     }
@@ -78,6 +89,9 @@ static int fake_irq(void *opaque, unsigned vector)
     struct fake_host *host = opaque;
 
     assert_int_equal(vector, 0);
+    if (host->fail_irqs) {
+        return -1;
+    }
     host->irqs++;
     return 0;
 }
@@ -87,9 +101,11 @@ static int setup(void **state)
 {
     struct fixture *fixture = calloc(1, sizeof(*fixture));
     char err[256] = {0};
+    char fixture_path[PATH_MAX];
 
     assert_non_null(fixture);
-    assert_int_equal(device_model_load("../tests/cocotb/out_nvme", &fixture->model, err, sizeof(err)), 0);
+    assert_int_equal(vfio_test_fixture_path(fixture_path, "nvme"), 0);
+    assert_int_equal(device_model_load(fixture_path, &fixture->model, err, sizeof(err)), 0);
     assert_int_equal(behavior_nvme_create(fixture->model, &fixture->behavior, err, sizeof(err)), 0);
     *state = fixture;
     return 0;
@@ -140,7 +156,13 @@ static void transitions_enable_and_shutdown_state(void **state)
 
     cc = 1 | (1u << 14);
     assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x14, &cc, sizeof(cc)), 4);
+    assert_int_equal((read32(fixture, 0x1c) >> 2) & 3, 1);
+    assert_int_equal(fixture->behavior.service(fixture->behavior.state), 0);
     assert_int_equal((read32(fixture, 0x1c) >> 2) & 3, 2);
+
+    cc = 1;
+    assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x14, &cc, sizeof(cc)), 4);
+    assert_int_equal((read32(fixture, 0x1c) >> 2) & 3, 0);
 
     assert_int_equal(fixture->behavior.reset(fixture->behavior.state), 0);
     assert_int_equal(read32(fixture, 0x1c) & 0x0d, 0);
@@ -184,6 +206,9 @@ static void completes_identify_controller(void **state)
     queue_address = 0x2000;
     assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x30,
                                               &queue_address, sizeof(queue_address)), 8);
+    value = 1;
+    assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x14,
+                                              &value, sizeof(value)), 4);
     sqe->opcode = 0x06;
     sqe->cid = 7;
     sqe->prp1 = 0x3000;
@@ -206,6 +231,7 @@ static void configures_admin_queues(struct fixture *fixture, struct fake_host *h
                                     uint32_t queue_size)
 {
     uint32_t aqa = (queue_size - 1) | ((queue_size - 1) << 16);
+    uint32_t cc = 1;
     uint64_t address;
 
     assert_int_equal(fixture->behavior.bind_host(fixture->behavior.state,
@@ -223,6 +249,8 @@ static void configures_admin_queues(struct fixture *fixture, struct fake_host *h
     address = 0x2000;
     assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x30,
                                               &address, sizeof(address)), 8);
+    assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x14,
+                                              &cc, sizeof(cc)), 4);
     *sq = (struct nvme_sqe *)&host->memory[0x1000];
     *cq = (struct nvme_cqe *)&host->memory[0x2000];
 }
@@ -490,6 +518,235 @@ static void processes_io_write_read_and_flush(void **state)
 }
 
 
+static void normal_shutdown_drains_pending_command(void **state)
+{
+    struct fixture *fixture = *state;
+    struct fake_host host = {0};
+    struct nvme_sqe *sqe;
+    struct nvme_cqe *cqe;
+    uint32_t tail = 1;
+    uint32_t blocked_tail = 2;
+    uint32_t cc;
+
+    configures_admin_queues(fixture, &host, &sqe, &cqe, 4);
+    sqe->opcode = 0x06;
+    sqe->cid = 0x42;
+    sqe->prp1 = 0x3000;
+    sqe->cdw10 = 1;
+    assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x1000,
+                                              &tail, sizeof(tail)), 4);
+
+    cc = 1 | (1u << 14);
+    assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x14,
+                                              &cc, sizeof(cc)), 4);
+    assert_int_equal((read32(fixture, 0x1c) >> 2) & 3, 1);
+    assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x1000,
+                                              &blocked_tail, sizeof(blocked_tail)), -EBUSY);
+    assert_int_equal(fixture->behavior.service(fixture->behavior.state), 0);
+
+    assert_int_equal(cqe->cid, 0x42);
+    assert_int_equal(cqe->status, 1);
+    assert_int_equal(host.irqs, 1);
+    assert_int_equal((read32(fixture, 0x1c) >> 2) & 3, 2);
+}
+
+
+static void abrupt_shutdown_cancels_pending_command(void **state)
+{
+    struct fixture *fixture = *state;
+    struct fake_host host = {0};
+    struct nvme_sqe *sqe;
+    struct nvme_cqe *cqe;
+    uint32_t tail = 1;
+    uint32_t cc;
+
+    configures_admin_queues(fixture, &host, &sqe, &cqe, 4);
+    sqe->opcode = 0x06;
+    sqe->cid = 0x43;
+    sqe->prp1 = 0x3000;
+    sqe->cdw10 = 1;
+    assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x1000,
+                                              &tail, sizeof(tail)), 4);
+
+    cc = 1 | (2u << 14);
+    assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x14,
+                                              &cc, sizeof(cc)), 4);
+    assert_int_equal((read32(fixture, 0x1c) >> 2) & 3, 2);
+    assert_int_equal(fixture->behavior.service(fixture->behavior.state), 0);
+    assert_int_equal(cqe->cid, 0);
+    assert_int_equal(host.irqs, 0);
+    assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x1000,
+                                              &tail, sizeof(tail)), -EBUSY);
+}
+
+
+static void controller_fatal_is_sticky_until_disable(void **state)
+{
+    struct fixture *fixture = *state;
+    struct fake_host host = {0};
+    struct nvme_sqe *sqe;
+    struct nvme_cqe *cqe;
+    uint32_t tail = 2;
+    uint32_t cc = 1;
+
+    configures_admin_queues(fixture, &host, &sqe, &cqe, 4);
+    sqe[0].opcode = 0x06;
+    sqe[0].cid = 0x44;
+    sqe[0].prp1 = 0x3000;
+    sqe[0].cdw10 = 1;
+    sqe[1].opcode = 0x06;
+    sqe[1].cid = 0x45;
+    sqe[1].prp1 = 0x4000;
+    sqe[1].cdw10 = 1;
+    assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x1000,
+                                              &tail, sizeof(tail)), 4);
+    host.fail_reads = true;
+    assert_int_equal(fixture->behavior.service(fixture->behavior.state), -EIO);
+    assert_int_equal(read32(fixture, 0x1c) & 2, 2);
+
+    host.fail_reads = false;
+    assert_int_equal(fixture->behavior.service(fixture->behavior.state), -EIO);
+    assert_int_equal(cqe[0].cid, 0);
+    assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x1000,
+                                              &tail, sizeof(tail)), -EIO);
+    assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x14,
+                                              &cc, sizeof(cc)), 4);
+    assert_int_equal(read32(fixture, 0x1c) & 2, 2);
+    cc = 0;
+    assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x14,
+                                              &cc, sizeof(cc)), 4);
+    assert_int_equal(read32(fixture, 0x1c) & 2, 0);
+}
+
+
+static void io_irq_failure_retires_cqe_once(void **state)
+{
+    struct fixture *fixture = *state;
+    struct fake_host host = {0};
+    struct nvme_sqe *admin_sq;
+    struct nvme_cqe *admin_cq;
+    struct nvme_sqe *io_sq;
+    struct nvme_cqe *io_cq;
+    uint32_t tail = 2;
+    uint32_t doorbell = 1;
+
+    configures_admin_queues(fixture, &host, &admin_sq, &admin_cq, 4);
+    admin_sq[0].opcode = 0x01;
+    admin_sq[0].cid = 1;
+    admin_sq[0].prp1 = 0x6000;
+    admin_sq[0].cdw10 = (3u << 16) | 1u;
+    admin_sq[1].opcode = 0x05;
+    admin_sq[1].cid = 2;
+    admin_sq[1].prp1 = 0x7000;
+    admin_sq[1].cdw10 = (3u << 16) | 1u;
+    assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x1000,
+                                              &tail, sizeof(tail)), 4);
+    assert_int_equal(fixture->behavior.service(fixture->behavior.state), 0);
+
+    io_sq = (struct nvme_sqe *)&host.memory[0x7000];
+    io_cq = (struct nvme_cqe *)&host.memory[0x6000];
+    io_sq[0].opcode = 0x00;
+    io_sq[0].cid = 0x52;
+    io_sq[0].nsid = 1;
+    host.fail_irqs = true;
+    assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x1008,
+                                              &doorbell, sizeof(doorbell)), 4);
+    assert_int_equal(fixture->behavior.service(fixture->behavior.state), -EIO);
+    assert_int_equal(io_cq[0].cid, 0x52);
+    assert_int_equal(io_cq[0].status, 1);
+    assert_int_equal(read32(fixture, 0x1c) & 2, 2);
+
+    host.fail_irqs = false;
+    assert_int_equal(fixture->behavior.service(fixture->behavior.state), -EIO);
+    assert_int_equal(io_cq[1].cid, 0);
+    assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x1008,
+                                              &doorbell, sizeof(doorbell)), -EIO);
+}
+
+
+static uint32_t fetch_unsafe_shutdowns(struct fixture *fixture, struct fake_host *host)
+{
+    struct nvme_sqe *sqe;
+    struct nvme_cqe *cqe;
+    uint32_t tail = 1;
+    uint32_t unsafe_shutdowns;
+
+    memset(host, 0, sizeof(*host));
+    assert_int_equal(fixture->behavior.reset(fixture->behavior.state), 0);
+    configures_admin_queues(fixture, host, &sqe, &cqe, 4);
+    sqe->opcode = 0x02;
+    sqe->cid = 0x45;
+    sqe->prp1 = 0x3000;
+    sqe->cdw10 = 0x02 | (127u << 16);
+    assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x1000,
+                                              &tail, sizeof(tail)), 4);
+    assert_int_equal(fixture->behavior.service(fixture->behavior.state), 0);
+    assert_int_equal(cqe->status, 1);
+    memcpy(&unsafe_shutdowns, &host->memory[0x3000 + 144], sizeof(unsafe_shutdowns));
+    return unsafe_shutdowns;
+}
+
+
+static void counts_only_incomplete_normal_shutdown_as_unsafe(void **state)
+{
+    struct fixture *fixture = *state;
+    struct fake_host host = {0};
+    struct nvme_sqe *sqe;
+    uint32_t tail = 2;
+    uint32_t cc;
+
+    assert_int_equal(fetch_unsafe_shutdowns(fixture, &host), 0);
+    cc = 0;
+    assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x14,
+                                              &cc, sizeof(cc)), 4);
+    assert_int_equal(fetch_unsafe_shutdowns(fixture, &host), 1);
+
+    cc = 1 | (1u << 14);
+    assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x14,
+                                              &cc, sizeof(cc)), 4);
+    assert_int_equal(fixture->behavior.service(fixture->behavior.state), 0);
+    cc = 1;
+    assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x14,
+                                              &cc, sizeof(cc)), 4);
+    cc = 0;
+    assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x14,
+                                              &cc, sizeof(cc)), 4);
+    assert_int_equal(fetch_unsafe_shutdowns(fixture, &host), 1);
+
+    // A completed epoch may be followed by SHN=0, but accepting fresh work
+    // invalidates it. A second normal shutdown that never drains is unsafe.
+    cc = 1 | (1u << 14);
+    assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x14,
+                                              &cc, sizeof(cc)), 4);
+    assert_int_equal(fixture->behavior.service(fixture->behavior.state), 0);
+    cc = 1;
+    assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x14,
+                                              &cc, sizeof(cc)), 4);
+    sqe = (struct nvme_sqe *)&host.memory[0x1000];
+    sqe[1].opcode = 0x06;
+    sqe[1].cid = 0x46;
+    sqe[1].prp1 = 0x4000;
+    sqe[1].cdw10 = 1;
+    assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x1000,
+                                              &tail, sizeof(tail)), 4);
+    cc = 1 | (1u << 14);
+    assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x14,
+                                              &cc, sizeof(cc)), 4);
+    cc = 1u << 14;
+    assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x14,
+                                              &cc, sizeof(cc)), 4);
+    assert_int_equal(fetch_unsafe_shutdowns(fixture, &host), 2);
+
+    cc = 1 | (2u << 14);
+    assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x14,
+                                              &cc, sizeof(cc)), 4);
+    cc = 2u << 14;
+    assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x14,
+                                              &cc, sizeof(cc)), 4);
+    assert_int_equal(fetch_unsafe_shutdowns(fixture, &host), 3);
+}
+
+
 int main(void)
 {
     const struct CMUnitTest tests[] = {
@@ -503,6 +760,11 @@ int main(void)
         cmocka_unit_test_setup_teardown(wraps_admin_queue_phase, setup, teardown),
         cmocka_unit_test_setup_teardown(defers_submission_when_completion_queue_is_full, setup, teardown),
         cmocka_unit_test_setup_teardown(processes_io_write_read_and_flush, setup, teardown),
+        cmocka_unit_test_setup_teardown(normal_shutdown_drains_pending_command, setup, teardown),
+        cmocka_unit_test_setup_teardown(abrupt_shutdown_cancels_pending_command, setup, teardown),
+        cmocka_unit_test_setup_teardown(controller_fatal_is_sticky_until_disable, setup, teardown),
+        cmocka_unit_test_setup_teardown(io_irq_failure_retires_cqe_once, setup, teardown),
+        cmocka_unit_test_setup_teardown(counts_only_incomplete_normal_shutdown_as_unsafe, setup, teardown),
     };
 
     return cmocka_run_group_tests(tests, NULL, NULL);

@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sercanarga/pcileechgen/internal/firmware/barmodel"
 	"github.com/sercanarga/pcileechgen/internal/firmware/nvme"
 )
 
@@ -83,6 +84,161 @@ func TestGenerateBarControllerSV_WiresNVMeDoorbellsAndDisk(t *testing.T) {
 
 	if !strings.Contains(result, "`define NVME_DISK_WORDS 8192") {
 		t.Fatal("NVMe bar controller should emit `define NVME_DISK_WORDS from cfg.NVMeDiskWords")
+	}
+}
+
+func nvmeShutdownRTL(t *testing.T) (bar, responder, controller, bridge string) {
+	t.Helper()
+	cfg := testConfig()
+	cfg.NVMeIdentify = &nvme.IdentifyData{}
+	cfg.BARModel = &barmodel.BARModel{
+		BIR:  0,
+		Size: 0x4000,
+		Registers: []barmodel.BARRegister{
+			{Offset: 0x14, Width: 4, Name: "CC", RWMask: 0x00FFFFF1},
+			{Offset: 0x1C, Width: 4, Name: "CSTS", IsFSMDriven: true},
+			{Offset: 0x24, Width: 4, Name: "AQA", RWMask: 0x0FFF0FFF},
+			{Offset: 0x28, Width: 4, Name: "ASQ_LO", RWMask: 0xFFFFF000},
+			{Offset: 0x2C, Width: 4, Name: "ASQ_HI", RWMask: 0xFFFFFFFF},
+			{Offset: 0x30, Width: 4, Name: "ACQ_LO", RWMask: 0xFFFFF000},
+			{Offset: 0x34, Width: 4, Name: "ACQ_HI", RWMask: 0xFFFFFFFF},
+		},
+	}
+
+	var err error
+	bar, err = GenerateBarImplDeviceSV(cfg)
+	if err != nil {
+		t.Fatalf("GenerateBarImplDeviceSV failed: %v", err)
+	}
+	responder, err = GenerateNVMeResponderSV(cfg)
+	if err != nil {
+		t.Fatalf("GenerateNVMeResponderSV failed: %v", err)
+	}
+	controller, err = GenerateBarControllerSV(cfg)
+	if err != nil {
+		t.Fatalf("GenerateBarControllerSV failed: %v", err)
+	}
+	bridge, err = GenerateNVMeDMABridgeSV(cfg)
+	if err != nil {
+		t.Fatalf("GenerateNVMeDMABridgeSV failed: %v", err)
+	}
+	return bar, responder, controller, bridge
+}
+
+func TestNVMeNormalShutdownTransitionsProcessingToComplete(t *testing.T) {
+	bar, responder, _, _ := nvmeShutdownRTL(t)
+	for _, want := range []string{
+		"if (reg_0x00000014[15:14] == 2'b00)",
+		"else if (nvme_shutdown_complete)",
+		"reg_0x0000001C[3:2] <= 2'b10",
+	} {
+		if !strings.Contains(bar, want) {
+			t.Fatalf("CSTS shutdown transition missing %q", want)
+		}
+	}
+	for _, want := range []string{
+		"normal_shutdown_requested",
+		"disk_req_flush <= 1'b1",
+		"else if (disk_req_done)",
+		"shutdown_complete <= 1'b1",
+	} {
+		if !strings.Contains(responder, want) {
+			t.Fatalf("normal shutdown terminal path missing %q", want)
+		}
+	}
+}
+
+func TestNVMeNormalShutdownDrainsCurrentCommand(t *testing.T) {
+	_, responder, _, _ := nvmeShutdownRTL(t)
+	idle := strings.Index(responder, "S_IDLE: begin")
+	if idle < 0 {
+		t.Fatal("generated responder has no S_IDLE state")
+	}
+	shutdown := strings.Index(responder[idle:], "if (normal_shutdown_requested)")
+	adminFetch := strings.Index(responder[idle:], "else if ((sq_tail != sq_head)")
+	if shutdown < 0 || adminFetch < 0 || shutdown >= adminFetch {
+		t.Fatalf("normal shutdown must take priority only after active work returns to IDLE (idle=%d shutdown=%d fetch=%d)", idle, shutdown, adminFetch)
+	}
+	if !strings.Contains(responder, "Active work reaches IDLE only after its CQE") {
+		t.Fatal("generated responder does not document the drain boundary")
+	}
+}
+
+func TestNVMeAbruptShutdownCancelsDMA(t *testing.T) {
+	_, responder, controller, bridge := nvmeShutdownRTL(t)
+	for source, wants := range map[string][]string{
+		"responder": {
+			"assign dma_cancel = abrupt_shutdown_requested",
+			"else if (abrupt_shutdown_start)",
+		},
+		"controller": {
+			".dma_cancel         ( nvme_dma_cancel",
+			".shutdown_complete  ( nvme_shutdown_complete",
+		},
+		"bridge": {
+			".cancel_all         ( !dma_enabled || dma_cancel )",
+			"if (!dma_enabled || dma_cancel)",
+		},
+	} {
+		text := map[string]string{"responder": responder, "controller": controller, "bridge": bridge}[source]
+		for _, want := range wants {
+			if !strings.Contains(text, want) {
+				t.Fatalf("%s abrupt-cancel wiring missing %q", source, want)
+			}
+		}
+	}
+}
+
+func TestNVMeSHSTClearsWhenSHNReturnsToZero(t *testing.T) {
+	bar, responder, _, _ := nvmeShutdownRTL(t)
+	if !strings.Contains(bar, "reg_0x0000001C[3:2] <= 2'b00") {
+		t.Fatal("CSTS.SHST does not clear for CC.SHN=0")
+	}
+	for _, want := range []string{
+		"if (cc_shn == 2'b00)",
+		"shutdown_complete <= 1'b0",
+		"shutdown_flush_issued <= 1'b0",
+	} {
+		if !strings.Contains(responder, want) {
+			t.Fatalf("responder SHN clear path missing %q", want)
+		}
+	}
+}
+
+func TestNVMeDisableWithoutShutdownCountsUnsafeShutdown(t *testing.T) {
+	_, responder, _, _ := nvmeShutdownRTL(t)
+	if !strings.Contains(responder, "if (cc_stop_event && !normal_shutdown_complete_epoch)") {
+		t.Fatal("disable must count unsafe shutdown only before completed normal shutdown")
+	}
+	if !strings.Contains(responder, "normal_shutdown_complete_epoch <= 1'b1") {
+		t.Fatal("normal shutdown terminal path does not record its completed epoch")
+	}
+}
+
+func TestNVMeControllerFatalIsStickyUntilDisable(t *testing.T) {
+	bar, responder, controller, _ := nvmeShutdownRTL(t)
+	for _, want := range []string{
+		"if (cc_en_falling)",
+		"reg_0x0000001C[1] <= 1'b0",
+		"else if (controller_fatal)",
+		"reg_0x0000001C[1] <= 1'b1",
+	} {
+		if !strings.Contains(bar, want) {
+			t.Fatalf("sticky CFS implementation missing %q", want)
+		}
+	}
+	for _, want := range []string{
+		"wire controller_fatal_event =",
+		"assign controller_fatal = controller_fatal_latched || controller_fatal_event",
+		"else if (controller_fatal_latched || controller_fatal_event)",
+		"if (cc_en && !controller_fatal && doorbell_wr)",
+	} {
+		if !strings.Contains(responder, want) {
+			t.Fatalf("fatal responder quiesce path missing %q", want)
+		}
+	}
+	if !strings.Contains(controller, ".controller_fatal ( nvme_controller_fatal") {
+		t.Fatal("fatal transport signal is not wired from responder to CSTS owner")
 	}
 }
 

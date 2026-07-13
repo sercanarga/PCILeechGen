@@ -13,12 +13,22 @@
 #define NVME_LBA_BYTES 512u
 #define NVME_MAX_PRP_ENTRIES 64u
 #define NVME_CACHE_PAGES 1024u
+#define NVME_CC_ENABLE 0x00000001u
+#define NVME_CC_SHN_SHIFT 14u
+#define NVME_CC_SHN_MASK 0x0000c000u
+#define NVME_SHN_NONE 0u
+#define NVME_SHN_NORMAL 1u
+#define NVME_SHN_ABRUPT 2u
+#define NVME_CSTS_RDY 0x00000001u
+#define NVME_CSTS_CFS 0x00000002u
+#define NVME_CSTS_SHST_SHIFT 2u
 
 
 struct nvme_state {
     struct device_behavior registers;
     const struct device_model *model;
     struct behavior_host_ops host;
+    uint32_t cc;
     uint32_t aqa;
     uint64_t asq;
     uint64_t acq;
@@ -45,6 +55,12 @@ struct nvme_state {
     unsigned io_vector;
     bool msix_masked;
     bool msix_pending;
+    uint8_t shutdown_type;
+    bool shutdown_complete;
+    bool shutdown_counted;
+    bool normal_shutdown_complete_epoch;
+    bool controller_fatal;
+    bool namespace_dirty;
     struct {
         bool valid;
         uint64_t tag;
@@ -129,6 +145,40 @@ static int set_csts(struct nvme_state *state, uint32_t value)
 }
 
 
+static unsigned cc_shutdown_type(uint32_t cc)
+{
+    return (cc & NVME_CC_SHN_MASK) >> NVME_CC_SHN_SHIFT;
+}
+
+
+static int sync_csts(struct nvme_state *state)
+{
+    uint32_t value = 0;
+    unsigned shutdown_type = cc_shutdown_type(state->cc);
+
+    if ((state->cc & NVME_CC_ENABLE) != 0) {
+        value |= NVME_CSTS_RDY;
+    }
+    if (state->controller_fatal) {
+        value |= NVME_CSTS_CFS;
+    }
+    if (shutdown_type != NVME_SHN_NONE) {
+        value |= (state->shutdown_complete ? 2u : 1u) << NVME_CSTS_SHST_SHIFT;
+    }
+    if (set_csts(state, value) < 0) {
+        return -EIO;
+    }
+    return 0;
+}
+
+
+static int latch_controller_fatal(struct nvme_state *state)
+{
+    state->controller_fatal = true;
+    return sync_csts(state);
+}
+
+
 static int nvme_bind_host(void *opaque, const struct behavior_host_ops *ops)
 {
     struct nvme_state *state = opaque;
@@ -206,6 +256,7 @@ static void namespace_read(struct nvme_state *state, uint64_t offset,
 static void namespace_write(struct nvme_state *state, uint64_t offset,
                             const uint8_t *data, size_t length)
 {
+    state->namespace_dirty = true;
     while (length > 0) {
         uint64_t page = offset / NVME_PAGE_SIZE;
         size_t page_offset = (size_t)(offset % NVME_PAGE_SIZE);
@@ -224,6 +275,7 @@ static void namespace_write(struct nvme_state *state, uint64_t offset,
 
 static void namespace_zero(struct nvme_state *state, uint64_t offset, size_t length)
 {
+    state->namespace_dirty = true;
     while (length > 0) {
         uint64_t page = offset / NVME_PAGE_SIZE;
         size_t page_offset = (size_t)(offset % NVME_PAGE_SIZE);
@@ -247,6 +299,15 @@ static void namespace_reset(struct nvme_state *state)
     for (unsigned index = 0; index < NVME_CACHE_PAGES; ++index) {
         state->namespace_cache[index].valid = false;
     }
+    state->namespace_dirty = false;
+}
+
+
+static void namespace_flush(struct nvme_state *state)
+{
+    /* The namespace backend is memory resident; clearing dirty is its real
+     * durability boundary and mirrors the generated BRAM flush handshake. */
+    state->namespace_dirty = false;
 }
 
 
@@ -662,10 +723,11 @@ static int process_admin(struct nvme_state *state, uint16_t tail)
 }
 
 static int post_io_cqe(struct nvme_state *state, const struct nvme_sqe *sqe,
-                       uint16_t status)
+                       uint16_t status, bool *posted)
 {
     struct nvme_cqe cqe = {0};
 
+    *posted = false;
     if (!state->io_cq_created || state->io_cq_size < 2 ||
         (state->io_cq_tail == state->io_cq_head &&
          state->io_cq_phase != state->io_cq_head_phase)) {
@@ -685,11 +747,16 @@ static int post_io_cqe(struct nvme_state *state, const struct nvme_sqe *sqe,
     if (state->io_cq_tail == 0) {
         state->io_cq_phase ^= 1;
     }
+    *posted = true;
     if (state->msix_masked) {
         state->msix_pending = true;
         return 0;
     }
-    return state->host.irq(state->host.opaque, state->io_vector);
+    if (state->host.irq(state->host.opaque, state->io_vector) < 0) {
+        state->transport_errors++;
+        return -EIO;
+    }
+    return 0;
 }
 
 static int process_io(struct nvme_state *state, uint16_t tail)
@@ -714,6 +781,7 @@ static int process_io(struct nvme_state *state, uint16_t tail)
                 status = 2;
             } else {
                 state->flush_cmds++;
+                namespace_flush(state);
             }
         } else if (sqe.opcode == 0x01 || sqe.opcode == 0x02 || sqe.opcode == 0x08) {
             uint64_t lba = (uint64_t)sqe.cdw10 | ((uint64_t)sqe.cdw11 << 32);
@@ -792,22 +860,62 @@ static int process_io(struct nvme_state *state, uint16_t tail)
         } else {
             status = 1;
         }
-        if (post_io_cqe(state, &sqe, status) < 0) {
+        bool cqe_posted;
+        int post_result = post_io_cqe(state, &sqe, status, &cqe_posted);
+
+        if (post_result == -EAGAIN) {
             state->io_pending = true;
             return 0;
         }
-        state->io_sq_head = (uint16_t)((state->io_sq_head + 1) % state->io_sq_size);
+        if (cqe_posted) {
+            state->io_sq_head = (uint16_t)((state->io_sq_head + 1) % state->io_sq_size);
+        }
+        if (post_result < 0) {
+            return post_result;
+        }
     }
     return 0;
+}
+
+
+static void reset_queue_runtime(struct nvme_state *state)
+{
+    state->sq_head = 0;
+    state->cq_tail = 0;
+    state->cq_head = 0;
+    state->cq_phase = 1;
+    state->cq_head_phase = 1;
+    state->pending_tail = 0;
+    state->admin_pending = false;
+    state->io_pending_tail = 0;
+    state->io_pending = false;
+    state->io_sq = 0;
+    state->io_cq = 0;
+    state->io_sq_head = 0;
+    state->io_cq_tail = 0;
+    state->io_cq_head = 0;
+    state->io_cq_phase = 1;
+    state->io_cq_head_phase = 1;
+    state->io_sq_size = 0;
+    state->io_cq_size = 0;
+    state->io_sq_created = false;
+    state->io_cq_created = false;
+    state->io_vector = 0;
+    state->msix_pending = false;
 }
 
 
 static int nvme_service(void *opaque)
 {
     struct nvme_state *state = opaque;
-
     int result = 0;
 
+    if (state->controller_fatal) {
+        return -EIO;
+    }
+    if (state->shutdown_type == NVME_SHN_ABRUPT) {
+        return 0;
+    }
     if (state->admin_pending) {
         state->admin_pending = false;
         result = process_admin(state, state->pending_tail);
@@ -815,6 +923,26 @@ static int nvme_service(void *opaque)
     if (result == 0 && state->io_pending) {
         state->io_pending = false;
         result = process_io(state, state->io_pending_tail);
+    }
+    if (result == -EIO) {
+        (void)latch_controller_fatal(state);
+        return result;
+    }
+    if (result != 0) {
+        return result;
+    }
+    if (state->shutdown_type == NVME_SHN_NORMAL &&
+        (state->cc & NVME_CC_ENABLE) != 0 &&
+        !state->admin_pending && !state->io_pending &&
+        !state->controller_fatal && !state->shutdown_complete) {
+        namespace_flush(state);
+        state->shutdown_complete = true;
+        state->normal_shutdown_complete_epoch = true;
+        if (!state->shutdown_counted) {
+            state->shutdowns++;
+            state->shutdown_counted = true;
+        }
+        return sync_csts(state);
     }
     return result;
 }
@@ -828,33 +956,20 @@ static int nvme_reset(void *opaque)
     if (result < 0) {
         return result;
     }
+    state->cc = 0;
     state->aqa = 0;
     state->asq = 0;
     state->acq = 0;
-    state->sq_head = 0;
-    state->cq_tail = 0;
-    state->cq_head = 0;
-    state->cq_phase = 1;
-    state->cq_head_phase = 1;
-    state->pending_tail = 0;
-    state->io_pending_tail = 0;
-    state->admin_pending = false;
-    state->io_pending = false;
-    state->io_sq = 0;
-    state->io_cq = 0;
-    state->io_sq_head = 0;
-    state->io_cq_tail = 0;
-    state->io_cq_head = 0;
-    state->io_cq_phase = 1;
-    state->io_cq_head_phase = 1;
-    state->io_sq_created = false;
-    state->io_cq_created = false;
-    state->io_vector = 0;
+    reset_queue_runtime(state);
     state->msix_masked = false;
-    state->msix_pending = false;
+    state->shutdown_type = NVME_SHN_NONE;
+    state->shutdown_complete = false;
+    state->shutdown_counted = false;
+    state->normal_shutdown_complete_epoch = false;
+    state->controller_fatal = false;
     namespace_reset(state);
     state->queue_resets++;
-    return set_csts(state, 0);
+    return sync_csts(state);
 }
 
 
@@ -864,6 +979,60 @@ static ssize_t nvme_read(void *opaque, unsigned bir, uint64_t offset,
     struct nvme_state *state = opaque;
 
     return state->registers.read(state->registers.state, bir, offset, buf, len);
+}
+
+
+static int handle_cc_write(struct nvme_state *state, uint32_t cc)
+{
+    uint32_t old_cc = state->cc;
+    unsigned old_shutdown = cc_shutdown_type(old_cc);
+    unsigned new_shutdown = cc_shutdown_type(cc);
+    bool old_enabled = (old_cc & NVME_CC_ENABLE) != 0;
+    bool new_enabled = (cc & NVME_CC_ENABLE) != 0;
+
+    state->cc = cc;
+    if (old_enabled != new_enabled) {
+        state->queue_resets++;
+        reset_queue_runtime(state);
+        state->shutdown_type = NVME_SHN_NONE;
+        state->shutdown_complete = false;
+        state->shutdown_counted = false;
+        if (!new_enabled) {
+            if (!state->normal_shutdown_complete_epoch) {
+                state->unsafe_shutdowns++;
+            }
+            state->controller_fatal = false;
+        }
+        state->normal_shutdown_complete_epoch = false;
+    }
+
+    if (new_enabled) {
+        if (new_shutdown == NVME_SHN_NONE) {
+            state->shutdown_type = NVME_SHN_NONE;
+            state->shutdown_complete = false;
+            state->shutdown_counted = false;
+        } else if ((new_shutdown & NVME_SHN_ABRUPT) != 0) {
+            if ((old_shutdown & NVME_SHN_ABRUPT) == 0 ||
+                state->shutdown_type != NVME_SHN_ABRUPT) {
+                state->admin_pending = false;
+                state->io_pending = false;
+                state->shutdown_type = NVME_SHN_ABRUPT;
+                state->shutdown_complete = true;
+                if (!state->shutdown_counted) {
+                    state->shutdowns++;
+                    state->shutdown_counted = true;
+                }
+            }
+        } else if (new_shutdown == NVME_SHN_NORMAL &&
+                   (old_shutdown != NVME_SHN_NORMAL ||
+                    state->shutdown_type != NVME_SHN_NORMAL)) {
+            state->shutdown_type = NVME_SHN_NORMAL;
+            state->shutdown_complete = false;
+            state->shutdown_counted = false;
+            state->normal_shutdown_complete_epoch = false;
+        }
+    }
+    return sync_csts(state);
 }
 
 
@@ -886,6 +1055,8 @@ static ssize_t nvme_write(void *opaque, unsigned bir, uint64_t offset,
         if (!state->msix_masked && state->msix_pending) {
             state->msix_pending = false;
             if (state->host.irq(state->host.opaque, state->io_vector) < 0) {
+                state->transport_errors++;
+                (void)latch_controller_fatal(state);
                 return -EIO;
             }
         }
@@ -928,15 +1099,31 @@ static ssize_t nvme_write(void *opaque, unsigned bir, uint64_t offset,
             break;
         }
         case 0x1000:
+            if (state->controller_fatal) {
+                return -EIO;
+            }
+            if ((state->cc & NVME_CC_ENABLE) == 0 ||
+                state->shutdown_type != NVME_SHN_NONE) {
+                return -EBUSY;
+            }
             state->pending_tail = (uint16_t)value;
             state->admin_pending = true;
+            state->normal_shutdown_complete_epoch = false;
             return result;
         case 0x1008:
+            if (state->controller_fatal) {
+                return -EIO;
+            }
+            if ((state->cc & NVME_CC_ENABLE) == 0 ||
+                state->shutdown_type != NVME_SHN_NONE) {
+                return -EBUSY;
+            }
             if (!state->io_sq_created || value >= state->io_sq_size) {
                 return -EINVAL;
             }
             state->io_pending_tail = (uint16_t)value;
             state->io_pending = true;
+            state->normal_shutdown_complete_epoch = false;
             return result;
         case 0x100c:
             if (state->io_cq_size == 0 || value >= state->io_cq_size) {
@@ -952,31 +1139,9 @@ static ssize_t nvme_write(void *opaque, unsigned bir, uint64_t offset,
         return result;
     }
     uint32_t cc;
-    uint32_t csts = 0;
 
     memcpy(&cc, buf, sizeof(cc));
-
-    if ((cc & 1) == 0) {
-        state->queue_resets++;
-        if (((cc >> 14) & 3) != 0) {
-            state->shutdowns++;
-        }
-        state->sq_head = 0;
-        state->cq_tail = 0;
-        state->cq_head = 0;
-        state->cq_phase = 1;
-        state->cq_head_phase = 1;
-        state->pending_tail = 0;
-        state->admin_pending = false;
-    }
-
-    if ((cc & 1) != 0) {
-        csts |= 1;
-    }
-    if (((cc >> 14) & 3) != 0) {
-        csts |= 2u << 2;
-    }
-    if (set_csts(state, csts) < 0) {
+    if (handle_cc_write(state, cc) < 0) {
         return -EIO;
     }
     return result;
