@@ -1,117 +1,62 @@
-# PCILeechGen known issues and validation boundaries
+problem: "device data collection failed" / BAR reads all 0xFF
+cause: donor is in D3 sleep, IOMMU is off, or the donor is not bound to vfio-pci.
+fix: enable IOMMU in GRUB (intel_iommu=on / amd_iommu=on iommu=pt), update-grub
+     + reboot, wake the device to D0, bind it to vfio-pci, turn Secure Boot off.
 
-This file describes current limitations and environment-dependent failures. It
-is not a substitute for the generated fixture manifest or the E2E test report.
+problem: "VFIO_GROUP_SET_CONTAINER: invalid argument"
+cause: the donor shares its IOMMU group with devices still on native drivers.
+fix: move the whole group to vfio-pci, or isolate the donor (ACS).
 
-## Verified in the current test matrix
+problem: PC crashes / hard reboot during build
+cause: a memory conflict - usually the OS/boot drive got bound to VFIO, or a
+       shared group. Look for MCE / "probe failed -22" in journalctl.
+fix: never bind the drive you boot from; use a separate donor; isolate the group.
 
-- NVMe, SATA/AHCI, HDAudio, and xHCI pass the local vfio-user behavior tests.
-- NVMe, SATA, and xHCI have passed the Linux guest probe and reset/rebind E2E
-  flow on the KVM host used during development.
-- HDL lint currently reports 104 passing cells, 66 explicit skips, and 0
-  failures. This is a structural check only.
+problem: "card in sleep mode"
+cause: runtime PM or the host driver keeps the donor in D3.
+fix: disable runtime PM, keep the donor in D0, bind it to vfio-pci.
 
-## Open or partial device coverage
+problem: Live / USB-boot Ubuntu
+cause: live-USB + VFIO is unreliable.
+fix: do a real install to disk.
 
-### xHCI runtime protocol is partial
+problem: Vivado "exit status 1" / "Invalid XML token"
+cause: a corrupted Vivado install (device parts / XML), not the tool.
+fix: reinstall Vivado cleanly; --skip-vivado proves the artifacts are fine.
 
-Enumeration and reset are covered, but host USB I/O, transfer rings, and
-doorbell behavior are incomplete. A real USBXHCI driver can still report Code
-10. Do not treat the local xHCI behavior test as full USB compatibility.
+problem: Vivado license lost under sudo
+cause: sudo strips PATH / XILINXD_LICENSE_FILE.
+fix: pass them back: sudo env PATH="$PATH" XILINXD_LICENSE_FILE="$..." \
+     ./bin/pcileechgen build ...  (latest build also recovers them itself)
 
-### Ethernet guest E2E is not currently conclusive
+problem: donor BAR > board BRAM -> [FAIL]
+cause: the donor BAR is bigger than the board can emulate.
+fix: pick a smaller-BAR donor or a bigger board
 
-The Ethernet MMIO, PHY/MDIC, reset, and descriptor-ring safety paths have local
-tests. The remote guest attempt has also been blocked before driver probing by
-VFIO artifact/socket loading, so no remote e1000e pass is claimed yet.
+problem: Windows Code 10 "cannot start"  (most common report)
+cause: the clone loads but doesn't behave like the real device BAR0 reads FF,
+       MSI-X/interrupt setup fails, or device-type emulation is incomplete.
+       Often hidden: stale Windows device history.
+fix: try a network / audio / wifi donor first (NVMe and xHCI hit Code 10 until
+     done); run tools/cleanup_device_history.ps1 (Admin) then reboot; Core
+     Isolation off; correct BIOS.
 
-### Wi-Fi requires a real firmware-backed protocol model
+problem: stale device metadata / wrong driver after reflash
+cause: Windows caches PCI device info in the registry.
+fix: run the bundled cleanup_device_history utility, reboot, reconnect.
 
-The Intel 8265 fixture contains the required CSR register windows, but no
-synthetic firmware payload or complete iwlwifi DMA/mailbox state machine is
-provided. The optional Wi-Fi probe may therefore skip or remain unbound.
+problem: yellow triangle / device not recognized after flash
+cause: a partial flash image, or the device needs repo enhancements.
+fix: rewrite the firmware with a working flasher; get a steady green light first.
 
-### Thunderbolt requires NHI firmware/trace data
+problem: lone-dma-test shows BAD DTB / can't find ntoskrnl
+cause: usually BIOS / Windows DMA settings, not the firmware.
+fix: recheck BIOS + Windows settings; compare to a known-good firmware.
 
-The fixture exposes the required NHI register space, but a functional
-Thunderbolt controller needs mailbox, ring, interrupt, and firmware state that
-cannot be inferred reliably from static BAR data alone.
+Note (not a bug): NVMe full disk emulation is still in progress.
+The admin queue and init work, but BRAM cache + IO queues are not done yet, so
+NVMe donors commonly hit Code 10 / stornvme Event 11 until then.
 
-### GPU requires a real VBIOS/expansion ROM
-
-The bounded GPU MMIO model reaches nouveau device identification, but nouveau
-stops when no usable PCI expansion ROM/VBIOS is present. Do not add a fabricated
-VBIOS; provide a legally usable donor ROM and record its size and SHA-256 in the
-acquisition manifest.
-
-## Environment-dependent failures
-
-### BAR reads are all `0xFF`
-
-Likely causes are D3 power state, disabled IOMMU, or a donor that is not bound
-to `vfio-pci`. Enable IOMMU (`intel_iommu=on` or `amd_iommu=on iommu=pt`), bring
-the device to D0, and bind it to `vfio-pci` before collection.
-
-### `VFIO_GROUP_SET_CONTAINER: invalid argument`
-
-Another device in the same IOMMU group is still using a native driver. Bind
-the complete group to `vfio-pci` or isolate the device with ACS.
-
-### Host reset or hard reboot during collection
-
-The boot or storage device may have been assigned to VFIO, or the IOMMU group
-may be shared incorrectly. Never bind the boot device; inspect MCE and
-`probe failed -22` messages in the kernel log.
-
-### Vivado exits with status 1 or reports invalid XML
-
-This indicates a broken Vivado installation or device-part database. Use
-`--skip-vivado` to distinguish artifact generation from Vivado build failure;
-repair the Vivado installation and license environment separately.
-
-## Windows Code 10 checklist
-
-When Windows reports “This device cannot start (Code 10)”, check these in
-order:
-
-1. Confirm BAR sizes, BAR type, and MSI/MSI-X table/PBA placement in the
-   generated model and acquisition manifest.
-2. Confirm BAR reset values and the device-specific register protocol.
-3. Confirm reset/FLR behavior and interrupt masking/pending state.
-4. Remove stale device history with the bundled cleanup utility, then reboot.
-5. Verify BIOS DMA/security settings and that the image was flashed completely.
-
-The generated HDL lint result alone does not prove Windows driver
-compatibility, Vivado timing, board pinout, or firmware protocol correctness.
-
-## Windows Code 28: driver not installed
-
-Code 28 is normally a driver-selection or package problem, not a BAR runtime
-failure. Check the device's complete PCI hardware IDs against the driver's INF
-Models section, including `VEN`, `DEV`, `SUBSYS`, `REV`, and class-specific IDs.
-Also verify that the INF's referenced SYS/CAT/Include files exist, the target
-Windows architecture is covered, and the package is staged in the Driver Store.
-
-For an offline fixture check, run:
-
-```text
-python3 tools/check_inf_compat.py \
-  --model tests/cocotb/out_nvme/device_model.json \
-  --inf path/to/vendor-driver.inf
-```
-
-The checker returns `pass` for a matching hardware/compatible ID, `fail` for
-an installed INF with no match, and `blocked` when the model or INF is absent.
-Do not interpret a `blocked` result as firmware validation.
-
-## Fixture and manifest requirements
-
-Every donor fixture must have a generated `device_model.json` and manifest with
-matching size and SHA-256 values. Missing register traces, firmware, or VBIOS
-payloads are explicit blockers; never replace them with synthetic binary data.
-
-For a machine-readable HDL result report, run:
-
-```text
-HDL_LINT_REPORT=hdl-lint-report.tsv make hdl-lint
-```
+Note (not a bug): xHCI (USB) emulation is partial.
+Clones enumerate, but host read/write + doorbell gaps remain, so USBXHCI often
+hits Code 10 (e.g. VIA VL805). Targeted this cycle.
