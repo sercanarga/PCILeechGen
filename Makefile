@@ -101,7 +101,7 @@ early-access:
 		   '**/__pycache__' '**/__pycache__/' '**/__pycache__/**' \
 		   '*.pyc' '*.pyo' '*.dSYM' '*.dSYM/**' '*.o' '*.so' \
 		   '*.zip' '.DS_Store' '*/.DS_Store' '.idea/*' '.vscode/*' \
-		   'coverage.out' 'coverage.html' '*.swp' '*.swo' '*~' \
+		   'coverage.out' 'coverage.html' 'hdl-lint-report.tsv' '*.swp' '*.swo' '*~' \
 		> /dev/null
 	@unzip -t "$(EARLYACCESS_ZIP)" >/dev/null
 	@for file in $(EARLYACCESS_REQUIRED); do \
