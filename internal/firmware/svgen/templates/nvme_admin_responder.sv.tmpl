@@ -374,6 +374,16 @@ module pcileech_nvme_admin_responder #(
     reg [31:0] stat_media_errors;
     reg [31:0] stat_error_log_entries;
     reg [31:0] stat_unsafe_shutdowns;
+    reg [63:0] stat_dma_mrd_tlps;
+    reg [63:0] stat_dma_mwr_tlps;
+    reg [63:0] stat_prp_list_fetches;
+    reg [63:0] stat_queue_resets;
+    reg [63:0] stat_shutdowns;
+    reg [63:0] stat_timeout_errors;
+    reg [63:0] stat_cpl_errors;
+    reg [31:0] stat_invalid_cmds;
+    reg [63:0] stat_transport_errors;
+    reg [63:0] stat_aer_events;
     reg [31:0] power_cycle_count;
     reg [31:0] power_on_hours;
     reg [11:0] hour_second_count;
@@ -561,7 +571,25 @@ module pcileech_nvme_admin_responder #(
                         8'd33: log_page_word = stat_media_errors;
                         8'd44: log_page_word = power_cycle_count;
                         8'd45: log_page_word = {31'h0, feat_write_cache[0]};
-                        8'd46: log_page_word = {16'h{{ hex04 .DeviceIDs.DeviceID }}, 16'h{{ hex04 .DeviceIDs.VendorID }}};
+                        8'd46: log_page_word = stat_dma_mrd_tlps[31:0];
+                        8'd47: log_page_word = stat_dma_mrd_tlps[63:32];
+                        8'd48: log_page_word = stat_dma_mwr_tlps[31:0];
+                        8'd49: log_page_word = stat_dma_mwr_tlps[63:32];
+                        8'd50: log_page_word = stat_prp_list_fetches[31:0];
+                        8'd51: log_page_word = stat_prp_list_fetches[63:32];
+                        8'd52: log_page_word = stat_queue_resets[31:0];
+                        8'd53: log_page_word = stat_queue_resets[63:32];
+                        8'd54: log_page_word = stat_shutdowns[31:0];
+                        8'd55: log_page_word = stat_shutdowns[63:32];
+                        8'd56: log_page_word = stat_timeout_errors[31:0];
+                        8'd57: log_page_word = stat_timeout_errors[63:32];
+                        8'd58: log_page_word = stat_cpl_errors[31:0];
+                        8'd59: log_page_word = stat_cpl_errors[63:32];
+                        8'd60: log_page_word = stat_invalid_cmds;
+                        8'd61: log_page_word = stat_transport_errors[31:0];
+                        8'd62: log_page_word = stat_transport_errors[63:32];
+                        8'd63: log_page_word = stat_aer_events[31:0];
+                        8'd64: log_page_word = stat_aer_events[63:32];
                         default: log_page_word = 32'h00000000;
                     endcase
                 end
@@ -776,6 +804,16 @@ module pcileech_nvme_admin_responder #(
             stat_media_errors       <= 32'h{{ hex08 .NVMeSMART.MediaErrors }};
             stat_error_log_entries  <= 32'h{{ hex08 .NVMeSMART.ErrorLogEntries }};
             stat_unsafe_shutdowns   <= 32'h{{ hex08 .NVMeSMART.UnsafeShutdowns }};
+            stat_dma_mrd_tlps       <= 64'h0;
+            stat_dma_mwr_tlps       <= 64'h0;
+            stat_prp_list_fetches   <= 64'h0;
+            stat_queue_resets       <= 64'h0;
+            stat_shutdowns          <= 64'h0;
+            stat_timeout_errors     <= 64'h0;
+            stat_cpl_errors         <= 64'h0;
+            stat_invalid_cmds       <= 32'h0;
+            stat_transport_errors   <= 64'h0;
+            stat_aer_events         <= 64'h0;
             power_cycle_count       <= 32'h{{ hex08 .NVMeSMART.PowerCycles }};
             power_on_hours          <= 32'h{{ hex08 .NVMeSMART.PowerOnHours }};
             hour_second_count       <= 12'h0;
@@ -784,6 +822,10 @@ module pcileech_nvme_admin_responder #(
             warning_temp_time       <= 32'h0;
             critical_temp_time      <= 32'h0;
         end else begin
+            if (dma_rd_req)
+                stat_dma_mrd_tlps <= stat_dma_mrd_tlps + 1'b1;
+            if (dma_wr_req)
+                stat_dma_mwr_tlps <= stat_dma_mwr_tlps + 1'b1;
             dma_rd_req     <= 1'b0;
             dma_wr_req     <= 1'b0;
             dma_wr_valid   <= 1'b0;
@@ -844,6 +886,9 @@ module pcileech_nvme_admin_responder #(
             end
 
             if (cc_reset_event) begin
+                stat_queue_resets <= stat_queue_resets + 1'b1;
+                if (cc_stop_event)
+                    stat_shutdowns <= stat_shutdowns + 1'b1;
                 state              <= S_IDLE;
                 return_state       <= S_IDLE;
                 active_qid         <= 16'h0000;
@@ -959,6 +1004,7 @@ module pcileech_nvme_admin_responder #(
                         end else if (aer_registered && !aer_event_pending && (smart_warning_byte != 8'h00)) begin
                             aer_event_pending <= 1'b1;
                             aer_event_info <= 32'h00000002;
+                            stat_aer_events <= stat_aer_events + 1'b1;
                         end else if (irq_delivery_valid && irq_delivery_ready) begin
                             dma_wr_req   <= 1'b1;
                             dma_wr_valid <= 1'b1;
@@ -1597,6 +1643,8 @@ module pcileech_nvme_admin_responder #(
                     end
 
                     S_PRP_LIST_RD_LO: begin
+                        if (dma_rd_req)
+                            stat_prp_list_fetches <= stat_prp_list_fetches + 1'b1;
                         if (dma_rd_valid)
                             prp_entry_lo <= dma_rd_data;
                         if (dma_rd_done) begin

@@ -59,6 +59,16 @@ struct nvme_state {
     uint32_t feat_write_cache;
     uint32_t feat_irq_coalescing;
     uint32_t feat_async_event_cfg;
+    uint64_t dma_mrd_tlps;
+    uint64_t dma_mwr_tlps;
+    uint64_t prp_list_fetches;
+    uint64_t queue_resets;
+    uint64_t shutdowns;
+    uint64_t timeout_errors;
+    uint64_t cpl_errors;
+    uint32_t invalid_cmds;
+    uint64_t transport_errors;
+    uint64_t aer_events;
 };
 
 struct nvme_sqe {
@@ -202,11 +212,15 @@ static int dma_prp(struct nvme_state *state, const struct nvme_sqe *sqe,
             chunk = remaining;
         }
         if (device_to_host) {
+            state->dma_mwr_tlps++;
             if (state->host.dma_write(state->host.opaque, address, data, chunk) < 0) {
                 return -EIO;
             }
-        } else if (state->host.dma_read(state->host.opaque, address, data, chunk) < 0) {
-            return -EIO;
+        } else {
+            state->dma_mrd_tlps++;
+            if (state->host.dma_read(state->host.opaque, address, data, chunk) < 0) {
+                return -EIO;
+            }
         }
         data += chunk;
         remaining -= chunk;
@@ -222,6 +236,7 @@ static int dma_prp(struct nvme_state *state, const struct nvme_sqe *sqe,
                     return -EINVAL;
                 }
                 list_address = sqe->prp2;
+                state->prp_list_fetches++;
                 if (state->host.dma_read(state->host.opaque, list_address,
                                          &address, sizeof(address)) < 0) {
                     return -EIO;
@@ -240,6 +255,7 @@ static int dma_prp(struct nvme_state *state, const struct nvme_sqe *sqe,
                                      &address, sizeof(address)) < 0) {
                 return -EIO;
             }
+            state->prp_list_fetches++;
             if (address == 0 || (address & (NVME_PAGE_SIZE - 1)) != 0) {
                 return -EINVAL;
             }
@@ -298,9 +314,25 @@ static void fill_log_page(const struct nvme_state *state, uint8_t page,
         put64(data, 32, state->data_units_read);
         put64(data, 40, state->data_units_written);
         put32(data, 176, state->power_cycles);
-        put32(data, 180, 0);
-        put32(data, 184, ((uint32_t)state->model->device_id << 16) |
-                         state->model->vendor_id);
+        put32(data, 184, state->dma_mrd_tlps);
+        put32(data, 188, state->dma_mrd_tlps >> 32);
+        put32(data, 192, state->dma_mwr_tlps);
+        put32(data, 196, state->dma_mwr_tlps >> 32);
+        put32(data, 200, state->prp_list_fetches);
+        put32(data, 204, state->prp_list_fetches >> 32);
+        put32(data, 208, state->queue_resets);
+        put32(data, 212, state->queue_resets >> 32);
+        put32(data, 216, state->shutdowns);
+        put32(data, 220, state->shutdowns >> 32);
+        put32(data, 224, state->timeout_errors);
+        put32(data, 228, state->timeout_errors >> 32);
+        put32(data, 232, state->cpl_errors);
+        put32(data, 236, state->cpl_errors >> 32);
+        put32(data, 240, state->invalid_cmds);
+        put32(data, 244, state->transport_errors);
+        put32(data, 248, state->transport_errors >> 32);
+        put32(data, 252, state->aer_events);
+        put32(data, 256, state->aer_events >> 32);
         break;
     default:
         break;
@@ -458,6 +490,9 @@ static int process_admin(struct nvme_state *state, uint16_t tail)
         }
         if (status != 0) {
             state->error_log_entries++;
+            if (status == 1 || status == 2) {
+                state->invalid_cmds++;
+            }
         }
         state->sq_head = (uint16_t)((state->sq_head + 1) % sq_size);
         cqe.result = result;
@@ -665,6 +700,7 @@ static int nvme_reset(void *opaque)
     if (state->namespace_data != NULL) {
         memset(state->namespace_data, 0, NVME_NAMESPACE_LBAS * NVME_LBA_BYTES);
     }
+    state->queue_resets++;
     return set_csts(state, 0);
 }
 
@@ -765,6 +801,10 @@ static ssize_t nvme_write(void *opaque, unsigned bir, uint64_t offset,
     memcpy(&cc, buf, sizeof(cc));
 
     if ((cc & 1) == 0) {
+        state->queue_resets++;
+        if (((cc >> 14) & 3) != 0) {
+            state->shutdowns++;
+        }
         state->sq_head = 0;
         state->cq_tail = 0;
         state->cq_head = 0;
