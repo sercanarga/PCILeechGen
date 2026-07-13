@@ -9,9 +9,10 @@
 
 #define NVME_PAGE_SIZE 4096u
 #define NVME_MDTS_BYTES (32u * 1024u)
-#define NVME_NAMESPACE_LBAS 2048u
+#define NVME_NAMESPACE_LBAS (1u << 20)
 #define NVME_LBA_BYTES 512u
 #define NVME_MAX_PRP_ENTRIES 64u
+#define NVME_CACHE_PAGES 1024u
 
 
 struct nvme_state {
@@ -44,7 +45,11 @@ struct nvme_state {
     unsigned io_vector;
     bool msix_masked;
     bool msix_pending;
-    uint8_t *namespace_data;
+    struct {
+        bool valid;
+        uint64_t tag;
+        uint8_t data[NVME_PAGE_SIZE];
+    } namespace_cache[NVME_CACHE_PAGES];
     uint64_t read_commands;
     uint64_t write_commands;
     uint64_t data_units_read;
@@ -150,6 +155,94 @@ static void put64(uint8_t *data, size_t offset, uint64_t value)
 {
     put32(data, offset, (uint32_t)value);
     put32(data, offset + 4, (uint32_t)(value >> 32));
+}
+
+static unsigned namespace_slot(uint64_t page)
+{
+    return (unsigned)((page * 11400714819323198485ull) % NVME_CACHE_PAGES);
+}
+
+static uint8_t *namespace_page(struct nvme_state *state, uint64_t page, bool allocate)
+{
+    unsigned slot = namespace_slot(page);
+    if (!state->namespace_cache[slot].valid || state->namespace_cache[slot].tag != page) {
+        if (!allocate) {
+            return NULL;
+        }
+        state->namespace_cache[slot].valid = true;
+        state->namespace_cache[slot].tag = page;
+        memset(state->namespace_cache[slot].data, 0, NVME_PAGE_SIZE);
+    }
+    return state->namespace_cache[slot].data;
+}
+
+static void namespace_read(struct nvme_state *state, uint64_t offset,
+                           uint8_t *data, size_t length)
+{
+    while (length > 0) {
+        uint64_t page = offset / NVME_PAGE_SIZE;
+        size_t page_offset = (size_t)(offset % NVME_PAGE_SIZE);
+        size_t chunk = NVME_PAGE_SIZE - page_offset;
+        uint8_t *source = namespace_page(state, page, false);
+
+        if (chunk > length) {
+            chunk = length;
+        }
+        if (source == NULL) {
+            memset(data, 0, chunk);
+        } else {
+            memcpy(data, source + page_offset, chunk);
+        }
+        offset += chunk;
+        data += chunk;
+        length -= chunk;
+    }
+}
+
+static void namespace_write(struct nvme_state *state, uint64_t offset,
+                            const uint8_t *data, size_t length)
+{
+    while (length > 0) {
+        uint64_t page = offset / NVME_PAGE_SIZE;
+        size_t page_offset = (size_t)(offset % NVME_PAGE_SIZE);
+        size_t chunk = NVME_PAGE_SIZE - page_offset;
+        uint8_t *target = namespace_page(state, page, true);
+
+        if (chunk > length) {
+            chunk = length;
+        }
+        memcpy(target + page_offset, data, chunk);
+        offset += chunk;
+        data += chunk;
+        length -= chunk;
+    }
+}
+
+static void namespace_zero(struct nvme_state *state, uint64_t offset, size_t length)
+{
+    while (length > 0) {
+        uint64_t page = offset / NVME_PAGE_SIZE;
+        size_t page_offset = (size_t)(offset % NVME_PAGE_SIZE);
+        size_t chunk = NVME_PAGE_SIZE - page_offset;
+        uint8_t *target;
+
+        if (chunk > length) {
+            chunk = length;
+        }
+        target = namespace_page(state, page, false);
+        if (target != NULL) {
+            memset(target + page_offset, 0, chunk);
+        }
+        offset += chunk;
+        length -= chunk;
+    }
+}
+
+static void namespace_reset(struct nvme_state *state)
+{
+    for (unsigned index = 0; index < NVME_CACHE_PAGES; ++index) {
+        state->namespace_cache[index].valid = false;
+    }
 }
 
 
@@ -417,6 +510,12 @@ static int process_admin(struct nvme_state *state, uint16_t tail)
                 sqe.prp1 == 0 || (sqe.prp1 & (NVME_PAGE_SIZE - 1)) != 0) {
                 status = 1;
             } else if (sqe.opcode == 0x01) {
+                if ((sqe.cdw11 >> 16) >= state->model->msix_vectors &&
+                    state->model->msix_vectors != 0) {
+                    status = 0x08;
+                } else if (state->io_cq_created) {
+                    status = 0x18;
+                } else {
                 state->io_cq = sqe.prp1;
                 state->io_cq_size = qsize;
                 state->io_cq_head = 0;
@@ -425,8 +524,11 @@ static int process_admin(struct nvme_state *state, uint16_t tail)
                 state->io_cq_head_phase = 1;
                 state->io_vector = (unsigned)(sqe.cdw11 >> 16);
                 state->io_cq_created = true;
+                }
             } else if (!state->io_cq_created) {
                 status = 1;
+            } else if (state->io_sq_created || qsize != state->io_cq_size) {
+                status = 0x18;
             } else {
                 state->io_sq = sqe.prp1;
                 state->io_sq_size = qsize;
@@ -434,7 +536,7 @@ static int process_admin(struct nvme_state *state, uint16_t tail)
                 state->io_sq_created = true;
             }
         } else if (sqe.opcode == 0x00) {
-            if (sqe.cdw10 != 1) {
+            if (sqe.cdw10 != 1 || !state->io_sq_created) {
                 status = 1;
             } else {
                 state->io_sq_created = false;
@@ -443,8 +545,12 @@ static int process_admin(struct nvme_state *state, uint16_t tail)
             if (sqe.cdw10 != 1 && sqe.opcode == 0x04) {
                 status = 1;
             } else if (sqe.opcode == 0x04) {
-                state->io_cq_created = false;
-                state->io_sq_created = false;
+                if (state->io_sq_created) {
+                    status = 0x19;
+                } else {
+                    state->io_cq_created = false;
+                    state->io_sq_created = false;
+                }
             } else if (state->admin_pending) {
                 status = 2;
             }
@@ -482,7 +588,7 @@ static int process_admin(struct nvme_state *state, uint16_t tail)
             if (sqe.nsid != 1 || sqe.cdw10 != 0) {
                 status = 0x20a;
             } else {
-                memset(state->namespace_data, 0, NVME_NAMESPACE_LBAS * NVME_LBA_BYTES);
+                namespace_reset(state);
             }
         } else if (sqe.opcode == 0x00 || sqe.opcode == 0x01 ||
                    sqe.opcode == 0x02 || sqe.opcode == 0x08 || sqe.opcode == 0x09) {
@@ -562,7 +668,8 @@ static int process_io(struct nvme_state *state, uint16_t tail)
         if (sqe.nsid != 1) {
             status = 0xb;
         } else if (sqe.opcode == 0x00) {
-            if (sqe.cdw10 || sqe.cdw11 || sqe.cdw12 || sqe.cdw13 || sqe.cdw14 || sqe.cdw15) {
+            if (sqe.prp1 || sqe.prp2 || sqe.cdw10 || sqe.cdw11 || sqe.cdw12 ||
+                sqe.cdw13 || sqe.cdw14 || sqe.cdw15) {
                 status = 2;
             }
         } else if (sqe.opcode == 0x01 || sqe.opcode == 0x02 || sqe.opcode == 0x08) {
@@ -575,6 +682,9 @@ static int process_io(struct nvme_state *state, uint16_t tail)
                 lba + (length / NVME_LBA_BYTES) > NVME_NAMESPACE_LBAS ||
                 byte_offset > NVME_NAMESPACE_LBAS * NVME_LBA_BYTES - length) {
                 status = 0x80;
+            } else if (sqe.opcode == 0x08 &&
+                       (sqe.prp1 || sqe.prp2 || sqe.cdw13 || sqe.cdw14 || sqe.cdw15)) {
+                status = 2;
             } else if (sqe.opcode != 0x08 && validate_transfer(&sqe, length) < 0) {
                 status = 0x13;
             } else {
@@ -586,12 +696,12 @@ static int process_io(struct nvme_state *state, uint16_t tail)
                     if (read_prps(state, &sqe, buffer, length) < 0) {
                         status = 0x04;
                     } else {
-                        memcpy(state->namespace_data + byte_offset, buffer, length);
+                        namespace_write(state, byte_offset, buffer, length);
                         state->write_commands++;
                         state->data_units_written += (length + 511) / 512;
                     }
                 } else if (sqe.opcode == 0x02) {
-                    memcpy(buffer, state->namespace_data + byte_offset, length);
+                    namespace_read(state, byte_offset, buffer, length);
                     if (write_prps(state, &sqe, buffer, length) < 0) {
                         status = 0x04;
                     } else {
@@ -599,7 +709,7 @@ static int process_io(struct nvme_state *state, uint16_t tail)
                         state->data_units_read += (length + 511) / 512;
                     }
                 } else {
-                    memset(state->namespace_data + byte_offset, 0, length);
+                    namespace_zero(state, byte_offset, length);
                 }
                 free(buffer);
             }
@@ -628,8 +738,8 @@ static int process_io(struct nvme_state *state, uint16_t tail)
                         ((uint32_t)ranges[index * 16 + 10] << 16) |
                         ((uint32_t)ranges[index * 16 + 11] << 24);
                     if (lba < NVME_NAMESPACE_LBAS && nlb <= NVME_NAMESPACE_LBAS - lba) {
-                        memset(state->namespace_data + lba * NVME_LBA_BYTES, 0,
-                               (size_t)nlb * NVME_LBA_BYTES);
+                        namespace_zero(state, lba * NVME_LBA_BYTES,
+                                       (size_t)nlb * NVME_LBA_BYTES);
                     }
                 }
             }
@@ -697,9 +807,7 @@ static int nvme_reset(void *opaque)
     state->io_vector = 0;
     state->msix_masked = false;
     state->msix_pending = false;
-    if (state->namespace_data != NULL) {
-        memset(state->namespace_data, 0, NVME_NAMESPACE_LBAS * NVME_LBA_BYTES);
-    }
+    namespace_reset(state);
     state->queue_resets++;
     return set_csts(state, 0);
 }
@@ -779,6 +887,9 @@ static ssize_t nvme_write(void *opaque, unsigned bir, uint64_t offset,
             state->admin_pending = true;
             return result;
         case 0x1008:
+            if (!state->io_sq_created || value >= state->io_sq_size) {
+                return -EINVAL;
+            }
             state->io_pending_tail = (uint16_t)value;
             state->io_pending = true;
             return result;
@@ -835,7 +946,6 @@ static void nvme_destroy(void *opaque)
         return;
     }
     state->registers.destroy(state->registers.state);
-    free(state->namespace_data);
     free(state);
 }
 
@@ -853,13 +963,7 @@ int behavior_nvme_create(const struct device_model *model,
         return fail(err, err_len, "allocate NVMe behavior");
     }
     state->model = model;
-    state->namespace_data = calloc(NVME_NAMESPACE_LBAS, NVME_LBA_BYTES);
-    if (state->namespace_data == NULL) {
-        free(state);
-        return fail(err, err_len, "allocate NVMe namespace");
-    }
     if (behavior_static_create(model, &state->registers, err, err_len) < 0) {
-        free(state->namespace_data);
         free(state);
         return -1;
     }
