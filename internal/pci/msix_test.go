@@ -55,6 +55,19 @@ func TestParseMSIXCap_Absent(t *testing.T) {
 	}
 }
 
+func TestParseMSIXCap_RejectsReservedBIR(t *testing.T) {
+	cs := NewConfigSpace()
+	cs.Size = ConfigSpaceLegacySize
+	cs.WriteU16(0x06, 0x0010)
+	cs.WriteU8(0x34, 0x40)
+	cs.WriteU8(0x40, CapIDMSIX)
+	cs.WriteU32(0x44, 0x00000106)
+	cs.WriteU32(0x48, 0x00000200)
+	if ParseMSIXCap(cs) != nil {
+		t.Fatal("reserved MSI-X table BIR should be rejected")
+	}
+}
+
 func TestReadMSIXTable(t *testing.T) {
 	info := &MSIXInfo{
 		TableSize:   2,

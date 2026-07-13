@@ -34,15 +34,20 @@ func ParseMSIXCap(cs *ConfigSpace) *MSIXInfo {
 		msgCtl := cs.ReadU16(cap.Offset + 2)
 		tableOffsetReg := cs.ReadU32(cap.Offset + 4)
 		pbaOffsetReg := cs.ReadU32(cap.Offset + 8)
+		tableBIR := int(tableOffsetReg & 0x07)
+		pbaBIR := int(pbaOffsetReg & 0x07)
+		if tableBIR > 5 || pbaBIR > 5 {
+			return nil
+		}
 
 		return &MSIXInfo{
 			CapOffset:   cap.Offset,
 			TableSize:   int(msgCtl&0x07FF) + 1,
 			Enabled:     msgCtl&0x8000 != 0,
 			FuncMask:    msgCtl&0x4000 != 0,
-			TableBIR:    int(tableOffsetReg & 0x07),
+			TableBIR:    tableBIR,
 			TableOffset: tableOffsetReg & 0xFFFFFFF8,
-			PBABIR:      int(pbaOffsetReg & 0x07),
+			PBABIR:      pbaBIR,
 			PBAOffset:   pbaOffsetReg & 0xFFFFFFF8,
 		}
 	}
