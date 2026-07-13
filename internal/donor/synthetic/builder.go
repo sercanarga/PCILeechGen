@@ -2,6 +2,7 @@
 package synthetic
 
 import (
+	"sort"
 	"time"
 
 	"github.com/sercanarga/pcileechgen/internal/donor"
@@ -30,12 +31,58 @@ var profiles = map[string]classProfile{
 	devclass.ClassGeneric:     {0x1234, 0x5678, 0x000000, 0x00, 0x1000},
 }
 
-// Build returns a representative DeviceContext for class, or nil if unknown.
+var demoProfiles = map[string]classProfile{
+	"NICv2":          {0x8086, 0x15f3, 0x020000, 0x00, 0x20000},
+	"RTL8125":        {0x10ec, 0x8125, 0x020000, 0x00, 0x20000},
+	"RealtekRTL8125": {0x10ec, 0x8125, 0x020000, 0x00, 0x20000},
+	"IntelI210":      {0x8086, 0x1533, 0x020000, 0x00, 0x20000},
+	"IntelI219":      {0x8086, 0x15b8, 0x020000, 0x00, 0x20000},
+	"IntelI225":      {0x8086, 0x15f3, 0x020000, 0x00, 0x20000},
+	"DiskTest":       {0x15b7, 0x5017, 0x010802, 0x00, 0x4000},
+	"NVMEv2":         {0x144d, 0xa80a, 0x010802, 0x00, 0x4000},
+}
+
 func Build(class string) *donor.DeviceContext {
 	p, ok := profiles[class]
 	if !ok {
 		return nil
 	}
+	return buildContext(p, "ci-synthetic")
+}
+
+func DemoProfileNames() []string {
+	names := make([]string, 0, len(demoProfiles))
+	for name := range demoProfiles {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func BuildDemoProfile(name string) *donor.DeviceContext {
+	p, ok := demoProfiles[name]
+	if !ok {
+		return nil
+	}
+	ctx := buildContext(p, "ci-demo-"+name)
+	switch name {
+	case "DiskTest":
+		ctx.NVMeIdentity = &donor.NVMeIdentity{
+			Serial: "DT202607130001",
+			Model:  "DiskTest NVMe 1TB",
+			FWRev:  "D1.00",
+		}
+	case "NVMEv2":
+		ctx.NVMeIdentity = &donor.NVMeIdentity{
+			Serial: "NV2-20260713-01",
+			Model:  "PCILeechGen NVMEv2 2TB",
+			FWRev:  "V2.00",
+		}
+	}
+	return ctx
+}
+
+func buildContext(p classProfile, hostname string) *donor.DeviceContext {
 	cs := buildConfigSpace(p)
 	// Capabilities are populated by parsing the config space, mirroring how
 	// donor.FromJSON / collector populate real donor contexts (the field is a
@@ -43,11 +90,12 @@ func Build(class string) *donor.DeviceContext {
 	return &donor.DeviceContext{
 		CollectedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 		ToolVersion: version.Version,
-		Hostname:    "ci-synthetic",
+		Hostname:    hostname,
 		Device: pci.PCIDevice{
 			BDF:        pci.BDF{Bus: 0x03, Device: 0x00, Function: 0x0},
 			VendorID:   p.vendorID,
 			DeviceID:   p.deviceID,
+			RevisionID: 0x01,
 			ClassCode:  p.classCode,
 			HeaderType: p.headerType,
 		},

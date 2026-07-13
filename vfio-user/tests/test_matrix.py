@@ -41,6 +41,25 @@ class MatrixTests(unittest.TestCase):
             all(case.board == "PCIeSquirrel" for name, case in matrix.CASES.items() if name != "nvme")
         )
 
+    def test_demo_cases_are_available_but_not_default(self):
+        matrix = load_matrix()
+
+        self.assertNotIn("rtl8125", matrix.CASES)
+        self.assertIn("rtl8125", matrix.DEMO_CASES)
+        self.assertIn("nvmev2", matrix.DEMO_CASES)
+        self.assertIn("realtekrtl8125", matrix.all_cases_by_name())
+        self.assertEqual(matrix.DEMO_CASES["nvmev2"].fixture.name, "NVMEv2.json")
+
+    def test_contract_validator_rejects_wrong_class(self):
+        matrix = load_matrix()
+
+        contract = {
+            "identity": {"class": "010802"},
+            "bars": [{"bir": 0, "size": 16384, "type": "mem32"}],
+        }
+        with self.assertRaisesRegex(matrix.CaseFailure, "class mismatch"):
+            matrix.validate_contract(matrix.DEMO_CASES["rtl8125"], contract)
+
     def test_run_command_rejects_nonzero_exit(self):
         matrix = load_matrix()
 
@@ -96,6 +115,8 @@ class MatrixTests(unittest.TestCase):
         matrix = load_matrix()
         for case in matrix.CASES.values():
             artifacts = Path(__file__).resolve().parents[2] / "tests" / "cocotb" / f"out_{case.name}"
+            if not (artifacts / "device_model.json").exists():
+                self.skipTest("generated cocotb artifacts are not present")
             contract = matrix.build_contract(case, artifacts)
             self.assertEqual(contract["case"], case.name)
             self.assertTrue(contract["bars"])
@@ -126,6 +147,8 @@ class MatrixTests(unittest.TestCase):
         self.assertIn("vfio_rebind=1", append)
 
     def test_prepare_socket_path_removes_stale_socket(self):
+        if not hasattr(socket, "AF_UNIX"):
+            self.skipTest("AF_UNIX sockets are not available on this platform")
         matrix = load_matrix()
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "device.sock"
@@ -144,6 +167,8 @@ class MatrixTests(unittest.TestCase):
                 matrix.prepare_socket_path(path)
 
     def test_prepare_socket_path_rejects_active_socket(self):
+        if not hasattr(socket, "AF_UNIX"):
+            self.skipTest("AF_UNIX sockets are not available on this platform")
         matrix = load_matrix()
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "device.sock"

@@ -47,6 +47,14 @@ class GuestResult:
     detail: str
 
 
+EXPECTED_CLASS_BY_PROBE = {
+    "ahci-port": "010601",
+    "host-controller": "0c0330",
+    "identify": "010802",
+    "network-interface": "020000",
+}
+
+
 def parse_guest_results(text: str, case: Case) -> GuestResult:
     records = []
     for line in text.splitlines():
@@ -82,10 +90,12 @@ def parse_guest_results(text: str, case: Case) -> GuestResult:
     )
 
 
-def _case(name: str, behavior: str, mandatory_probe: str, board: str = "PCIeSquirrel") -> Case:
+def _case(name: str, behavior: str, mandatory_probe: str, board: str = "PCIeSquirrel",
+          fixture: str | None = None) -> Case:
+    fixture_name = fixture or name
     return Case(
         name=name,
-        fixture=ROOT / "testdata" / "donors" / f"{name}.json",
+        fixture=ROOT / "testdata" / "donors" / f"{fixture_name}.json",
         board=board,
         behavior=behavior,
         mandatory_probe=mandatory_probe,
@@ -125,6 +135,31 @@ def build_contract(case: Case, artifacts: Path) -> dict:
         "reset": {"vfio_callback": True, "bar_reset_image": True},
         "probe": ["enumerate", "bars", "reset", case.mandatory_probe],
     }
+
+
+def validate_contract(case: Case, contract: dict) -> None:
+    identity = contract.get("identity", {})
+    bars = contract.get("bars", [])
+    expected_class = EXPECTED_CLASS_BY_PROBE.get(case.mandatory_probe)
+    if expected_class is not None and identity.get("class") != expected_class:
+        raise CaseFailure(
+            f"{case.name}: class mismatch for {case.mandatory_probe}: "
+            f"got {identity.get('class')}, want {expected_class}"
+        )
+    if not bars:
+        raise CaseFailure(f"{case.name}: generated model has no BARs")
+    memory_bars = [bar for bar in bars if str(bar.get("type", "")).lower().startswith("mem")]
+    if not memory_bars:
+        raise CaseFailure(f"{case.name}: generated model has no memory BAR")
+    for bar in memory_bars:
+        if int(bar.get("size", 0)) <= 0:
+            raise CaseFailure(f"{case.name}: BAR{bar.get('bir')} has invalid size")
+    if case.mandatory_probe == "identify":
+        if not any(int(bar["size"]) >= 4096 for bar in memory_bars):
+            raise CaseFailure(f"{case.name}: NVMe BAR contract is too small")
+    if case.mandatory_probe == "network-interface":
+        if not any(int(bar["size"]) >= 65536 for bar in memory_bars):
+            raise CaseFailure(f"{case.name}: Ethernet BAR contract is too small")
 
 
 def prepare_socket_path(path: Path) -> None:
@@ -277,8 +312,11 @@ def run_case(case: Case, work_root: Path, timeout: int = 120,
     generation_log = case_dir / "generation.log"
     try:
         run_command(build_command(case, artifacts), generation_log, timeout)
+        contract = build_contract(case, artifacts)
+        validate_contract(case, contract)
         readiness = run_server_smoke(case, artifacts, case_dir)
-        result = {"case": case.name, "status": "pass", "readiness": readiness}
+        result = {"case": case.name, "status": "pass", "readiness": readiness,
+                  "contract": contract}
         if qemu is not None:
             if kernel is None or initrd is None:
                 raise CaseFailure("QEMU mode requires --kernel and --initrd")
@@ -300,7 +338,7 @@ def run_case(case: Case, work_root: Path, timeout: int = 120,
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--case", choices=sorted(CASES))
+    group.add_argument("--case", choices=sorted(all_cases_by_name()))
     group.add_argument("--all", action="store_true")
     parser.add_argument("--work-dir", type=Path, default=ROOT / "vfio-user" / "build" / "matrix")
     parser.add_argument("--qemu", type=Path)
@@ -309,8 +347,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--initrd", type=Path)
     parser.add_argument("--shared-memory", action="store_true")
     parser.add_argument("--rebind", action="store_true")
+    parser.add_argument("--include-demo", action="store_true")
     args = parser.parse_args(argv)
-    selected = [CASES[args.case]] if args.case else list(CASES.values())
+    all_cases = all_cases_by_name()
+    selected = [all_cases[args.case]] if args.case else list(CASES.values())
+    if args.all and args.include_demo:
+        selected += list(DEMO_CASES.values())
     results = [run_case(case, args.work_dir, qemu=args.qemu, kernel=args.kernel,
                         initrd=args.initrd, shared_memory=args.shared_memory,
                         rebind=args.rebind, qemu_version=args.qemu_version)
@@ -333,6 +375,34 @@ CASES = {
 }
 
 
+DEMO_CASES = {
+    "disktest": _case("disktest", "nvme", "identify", board="ac701_ft601", fixture="DiskTest"),
+    "inteli210": _case("inteli210", "profiled", "network-interface", fixture="IntelI210"),
+    "inteli219": _case("inteli219", "profiled", "network-interface", fixture="IntelI219"),
+    "inteli225": _case("inteli225", "profiled", "network-interface", fixture="IntelI225"),
+    "nicv2": _case("nicv2", "profiled", "network-interface", fixture="NICv2"),
+    "nvmev2": _case("nvmev2", "nvme", "identify", board="ac701_ft601", fixture="NVMEv2"),
+    "realtekrtl8125": _case("realtekrtl8125", "profiled", "network-interface", fixture="RealtekRTL8125"),
+    "rtl8125": _case("rtl8125", "profiled", "network-interface", fixture="RTL8125"),
+}
+
+
+def all_cases_by_name() -> dict[str, Case]:
+    return {**CASES, **DEMO_CASES}
+
+
+def terminate_process_group(process: subprocess.Popen, sig: int) -> None:
+    if process.poll() is not None:
+        return
+    if hasattr(os, "killpg"):
+        os.killpg(process.pid, sig)
+        return
+    if sig == getattr(signal, "SIGKILL", object()):
+        process.kill()
+    else:
+        process.terminate()
+
+
 def run_command(argv: Sequence[str], log_path: Path, timeout: int) -> None:
     if not argv:
         raise ValueError("command must not be empty")
@@ -351,11 +421,11 @@ def run_command(argv: Sequence[str], log_path: Path, timeout: int) -> None:
         try:
             status = process.wait(timeout=timeout)
         except subprocess.TimeoutExpired as exc:
-            os.killpg(process.pid, signal.SIGTERM)
+            terminate_process_group(process, signal.SIGTERM)
             try:
                 process.wait(timeout=5)
             except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGKILL)
+                terminate_process_group(process, getattr(signal, "SIGKILL", signal.SIGTERM))
                 process.wait()
             raise CaseFailure(f"command timed out after {timeout}s: {argv[0]}") from exc
 

@@ -11,6 +11,8 @@ import (
 	"github.com/sercanarga/pcileechgen/internal/donor"
 	"github.com/sercanarga/pcileechgen/internal/firmware"
 	"github.com/sercanarga/pcileechgen/internal/firmware/codegen"
+	"github.com/sercanarga/pcileechgen/internal/firmware/devclass"
+	"github.com/sercanarga/pcileechgen/internal/firmware/nvme"
 	"github.com/sercanarga/pcileechgen/internal/firmware/output"
 	"github.com/sercanarga/pcileechgen/internal/firmware/scrub"
 	"github.com/sercanarga/pcileechgen/internal/pci"
@@ -90,6 +92,8 @@ Example:
 		v.validateOutputFiles()
 		v.validateSVIDs()
 		v.validateFormats()
+		v.validateBARAndMSIX()
+		v.validateWindowsCode10Guards()
 
 		// Print results
 		for _, p := range v.result.Passed {
@@ -108,6 +112,126 @@ Example:
 		}
 		return nil
 	},
+}
+
+func (v *validator) validateBARAndMSIX() {
+	if len(v.ctx.BARs) == 0 {
+		v.result.Failed = append(v.result.Failed, "No BARs present in donor context")
+		return
+	}
+	strategy := devclass.StrategyForClassAndVendor(v.ctx.Device.ClassCode, v.ctx.Device.VendorID)
+	profile := strategy.Profile()
+	for _, bar := range v.ctx.BARs {
+		if bar.Size == 0 {
+			v.result.Failed = append(v.result.Failed, fmt.Sprintf("BAR%d has zero size", bar.Index))
+			continue
+		}
+		v.result.Passed = append(v.result.Passed,
+			fmt.Sprintf("BAR%d size/type valid: %d bytes %s", bar.Index, bar.Size, bar.Type))
+		if profile != nil && bar.Index == profile.PreferredBAR && int(bar.Size) < profile.MinBARSize {
+			v.result.Failed = append(v.result.Failed,
+				fmt.Sprintf("BAR%d below %s minimum: %d < %d", bar.Index, profile.ClassName, bar.Size, profile.MinBARSize))
+		}
+	}
+	if v.ctx.MSIXData == nil {
+		if strategy.DeviceClass() == devclass.ClassNVMe || strategy.DeviceClass() == devclass.ClassEthernet {
+			v.result.Warnings = append(v.result.Warnings, "MSI-X data missing for class that normally uses MSI-X")
+		}
+		return
+	}
+	if v.ctx.MSIXData.TableSize <= 0 {
+		v.result.Failed = append(v.result.Failed, "MSI-X table has no vectors")
+	} else {
+		v.result.Passed = append(v.result.Passed, fmt.Sprintf("MSI-X table has %d vectors", v.ctx.MSIXData.TableSize))
+	}
+	if !validatorBARContains(v.ctx, v.ctx.MSIXData.TableBIR, v.ctx.MSIXData.TableOffset) {
+		v.result.Failed = append(v.result.Failed,
+			fmt.Sprintf("MSI-X table offset 0x%x outside BAR%d", v.ctx.MSIXData.TableOffset, v.ctx.MSIXData.TableBIR))
+	}
+	if !validatorBARContains(v.ctx, v.ctx.MSIXData.PBABIR, v.ctx.MSIXData.PBAOffset) {
+		v.result.Failed = append(v.result.Failed,
+			fmt.Sprintf("MSI-X PBA offset 0x%x outside BAR%d", v.ctx.MSIXData.PBAOffset, v.ctx.MSIXData.PBABIR))
+	}
+}
+
+func (v *validator) validateWindowsCode10Guards() {
+	if v.ctx.ConfigSpace == nil {
+		return
+	}
+	strategy := devclass.StrategyForClassAndVendor(v.ctx.Device.ClassCode, v.ctx.Device.VendorID)
+	profile := strategy.Profile()
+	switch strategy.DeviceClass() {
+	case devclass.ClassNVMe:
+		if v.ctx.Device.ClassCode != devclass.ClassCodeNVMe {
+			v.result.Failed = append(v.result.Failed,
+				fmt.Sprintf("NVMe class code mismatch: got 0x%06X want 0x010802", v.ctx.Device.ClassCode))
+		} else {
+			v.result.Passed = append(v.result.Passed, "NVMe class code guard passed")
+		}
+		if v.ctx.NVMeIdentity == nil {
+			v.result.Warnings = append(v.result.Warnings, "NVMe identity missing; generated Identify strings will use defaults")
+		} else if strings.TrimSpace(v.ctx.NVMeIdentity.Model) == "" || strings.TrimSpace(v.ctx.NVMeIdentity.Serial) == "" {
+			v.result.Warnings = append(v.result.Warnings, "NVMe identity has empty model or serial")
+		} else {
+			v.result.Passed = append(v.result.Passed, "NVMe model/serial metadata present")
+		}
+		ids := firmware.ExtractDeviceIDs(v.ctx.ConfigSpace, v.ctx.ExtCapabilities)
+		identify := nvme.BuildIdentifyData(ids, v.primaryBARData(profile), nvmeIdentityFromContext(v.ctx))
+		if issues := nvme.ValidateNamespace(identify.Namespace[:]); len(issues) > 0 {
+			v.result.Failed = append(v.result.Failed, issues...)
+		} else {
+			info := nvme.NamespaceInfoFromIdentify(identify)
+			v.result.Passed = append(v.result.Passed,
+				fmt.Sprintf("NVMe namespace valid: NSZE=%d NCAP=%d NUSE=%d LBADS=%d",
+					info.NSZE, info.NCAP, info.NUSE, info.LBADataSizePower))
+		}
+	case devclass.ClassEthernet:
+		if v.ctx.Device.BaseClass() != 0x02 || v.ctx.Device.SubClass() != 0x00 {
+			v.result.Failed = append(v.result.Failed, "Ethernet class code should be base 0x02 subclass 0x00")
+		} else {
+			v.result.Passed = append(v.result.Passed, "Ethernet class code guard passed")
+		}
+	}
+}
+
+func (v *validator) primaryBARData(profile *devclass.DeviceProfile) []byte {
+	if v.ctx == nil || len(v.ctx.BARContents) == 0 {
+		return nil
+	}
+	if profile != nil {
+		if data := v.ctx.BARContents[profile.PreferredBAR]; len(data) > 0 {
+			return data
+		}
+	}
+	for _, data := range v.ctx.BARContents {
+		if len(data) > 0 {
+			return data
+		}
+	}
+	return nil
+}
+
+func nvmeIdentityFromContext(ctx *donor.DeviceContext) *nvme.ControllerIdentity {
+	if ctx == nil || ctx.NVMeIdentity == nil {
+		return nil
+	}
+	return &nvme.ControllerIdentity{
+		Serial: ctx.NVMeIdentity.Serial,
+		Model:  ctx.NVMeIdentity.Model,
+		FWRev:  ctx.NVMeIdentity.FWRev,
+
+		RawControllerIdent: ctx.NVMeIdentity.RawControllerIdent,
+		RawNamespaceIdent:  ctx.NVMeIdentity.RawNamespaceIdent,
+	}
+}
+
+func validatorBARContains(ctx *donor.DeviceContext, index int, offset uint32) bool {
+	for _, bar := range ctx.BARs {
+		if bar.Index == index {
+			return uint64(offset) < bar.Size
+		}
+	}
+	return false
 }
 
 // validateCOEFiles checks config space and writemask COE against expected output.

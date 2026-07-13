@@ -68,6 +68,7 @@ package device_config;
     // Feature flags
     localparam HAS_NVME_FSM     = {{ if eq .DeviceClass "nvme" }}1{{ else }}0{{ end }};
     localparam HAS_NVME_RESP    = {{ if and (eq .DeviceClass "nvme") .NVMeIdentify }}1{{ else }}0{{ end }};
+    localparam HAS_ETHERNET_DMA = {{ if and (eq .DeviceClass "ethernet") .BARModel }}1{{ else }}0{{ end }};
     localparam HAS_XHCI_FSM     = {{ if eq .DeviceClass "xhci" }}1{{ else }}0{{ end }};
     localparam HAS_AUDIO_FSM    = {{ if eq .DeviceClass "audio" }}1{{ else }}0{{ end }};
     localparam HAS_MSIX_INT     = {{ if .HasMSIX }}1{{ else }}0{{ end }};

@@ -472,6 +472,8 @@ func ListOutputFiles() []string {
 		"pcileech_msix_table.sv",
 		"pcileech_nvme_admin_responder.sv",
 		"pcileech_nvme_dma_bridge.sv",
+		"pcileech_ethernet_dma_bridge.sv",
+		"pcileech_ethernet_dma_engine.sv",
 		"pcileech_bram_disk.sv",
 		"tlp_latency_emulator.sv",
 		"device_config.sv",
@@ -897,6 +899,24 @@ func (ow *OutputWriter) writeConditionalArtifacts(cfg *svgen.SVGeneratorConfig, 
 		}
 	}
 
+	if cfg.DeviceClass == devclass.ClassEthernet && cfg.BARModel != nil {
+		engineSV, err := svgen.GenerateEthernetDMAEngineSV(cfg)
+		if err != nil {
+			return fmt.Errorf("generating pcileech_ethernet_dma_engine.sv: %w", err)
+		}
+		if writeErr := ow.writeFile("pcileech_ethernet_dma_engine.sv", engineSV); writeErr != nil {
+			return writeErr
+		}
+
+		bridgeSV, err := svgen.GenerateEthernetDMABridgeSV(cfg)
+		if err != nil {
+			return fmt.Errorf("generating pcileech_ethernet_dma_bridge.sv: %w", err)
+		}
+		if writeErr := ow.writeFile("pcileech_ethernet_dma_bridge.sv", bridgeSV); writeErr != nil {
+			return writeErr
+		}
+	}
+
 	return nil
 }
 
@@ -916,6 +936,8 @@ func (ow *OutputWriter) logSVSummary(cfg *svgen.SVGeneratorConfig) {
 		if cfg.MSIConfig != nil {
 			features = append(features, "MSI Interrupt Gen")
 		}
+	case devclass.ClassEthernet:
+		features = append(features, "Ethernet descriptor DMA", "Ethernet packet engine")
 	}
 	if cfg.MSIXConfig != nil {
 		features = append(features, fmt.Sprintf("MSI-X %d vectors", cfg.MSIXConfig.NumVectors))

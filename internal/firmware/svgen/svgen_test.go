@@ -230,6 +230,20 @@ func ethernetConfig() *SVGeneratorConfig {
 			Registers: []barmodel.BARRegister{
 				{Offset: 0x00, Width: 4, Name: "MAC0_3", RWMask: 0xFFFFFFFF, Reset: 0xBEADDE02},
 				{Offset: 0x6C, Width: 4, Name: "PHYSTATUS", RWMask: 0x00000000, Reset: 0x00003010},
+				{Offset: 0x14, Width: 4, Name: "EERD", RWMask: 0x00000001, IsFSMDriven: true},
+				{Offset: 0x20, Width: 4, Name: "MDIC", RWMask: 0xFFFFFFFF, Reset: 0x08000000, IsFSMDriven: true},
+				{Offset: 0xC0, Width: 4, Name: "ICR", W1CMask: 0xFFFFFFFF, IsRW1C: true, IsFSMDriven: true},
+				{Offset: 0xD0, Width: 4, Name: "IMS", RWMask: 0xFFFFFFFF},
+				{Offset: 0x280, Width: 4, Name: "RDBAL", RWMask: 0xFFFFFFFF},
+				{Offset: 0x284, Width: 4, Name: "RDBAH", RWMask: 0xFFFFFFFF},
+				{Offset: 0x288, Width: 4, Name: "RDLEN", RWMask: 0x0000FFF0},
+				{Offset: 0x2810, Width: 4, Name: "RDH", RWMask: 0x0000FFFF, IsFSMDriven: true},
+				{Offset: 0x2818, Width: 4, Name: "RDT", RWMask: 0x0000FFFF},
+				{Offset: 0x380, Width: 4, Name: "TDBAL", RWMask: 0xFFFFFFFF},
+				{Offset: 0x384, Width: 4, Name: "TDBAH", RWMask: 0xFFFFFFFF},
+				{Offset: 0x388, Width: 4, Name: "TDLEN", RWMask: 0x0000FFF0},
+				{Offset: 0x3810, Width: 4, Name: "TDH", RWMask: 0x0000FFFF, IsFSMDriven: true},
+				{Offset: 0x3818, Width: 4, Name: "TDT", RWMask: 0x0000FFFF},
 			},
 		},
 	}
@@ -276,6 +290,23 @@ func TestGenerateBarImplDeviceSV_Ethernet(t *testing.T) {
 	// Ethernet should NOT have NVMe FSM
 	if strings.Contains(result, "cc_en_prev") {
 		t.Error("Ethernet should NOT contain NVMe FSM")
+	}
+}
+
+func TestGenerateBarControllerSV_EthernetDMA(t *testing.T) {
+	result, err := GenerateBarControllerSV(ethernetConfig())
+	if err != nil {
+		t.Fatalf("Ethernet bar_controller generation failed: %v", err)
+	}
+	for _, want := range []string{
+		"pcileech_ethernet_dma_engine",
+		"pcileech_ethernet_dma_bridge",
+		"i_fifo_ethernet_dma",
+		"eth_rdt_write",
+	} {
+		if !strings.Contains(result, want) {
+			t.Errorf("Ethernet bar_controller missing %q", want)
+		}
 	}
 }
 

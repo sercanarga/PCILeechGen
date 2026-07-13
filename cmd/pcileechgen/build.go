@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/sercanarga/pcileechgen/internal/board"
 	"github.com/sercanarga/pcileechgen/internal/donor"
@@ -95,7 +96,10 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		Force:      buildOpts.force,
 	})
 
-	return builder.Build(ctx)
+	if err := builder.Build(ctx); err != nil {
+		return fmt.Errorf("%s: %w", buildFailureMessage(err), err)
+	}
+	return nil
 }
 
 // loadDonorContext loads device context from JSON or live device.
@@ -158,6 +162,37 @@ func printBuildSummary(ctx *donor.DeviceContext, b *board.Board) {
 		"bars", len(ctx.BARs),
 		"bars_with_content", len(ctx.BARContents),
 	)
+}
+
+func buildFailureMessage(err error) string {
+	if err == nil {
+		return "firmware build failed"
+	}
+	text := strings.ToLower(err.Error())
+	var cause string
+	switch {
+	case strings.Contains(text, "out of memory"), strings.Contains(text, "oom"),
+		strings.Contains(text, "signal: killed"), strings.Contains(text, "signal: terminated"):
+		cause = "Vivado was likely stopped by RAM/OOM pressure; lower --jobs or use a larger build host"
+	case strings.Contains(text, "license"):
+		cause = "Vivado license check failed"
+	case strings.Contains(text, "part0_pins.xml"):
+		cause = "Vivado/IP cache is incomplete or corrupted; regenerate IP/output from a clean directory"
+	case strings.Contains(text, "timing"):
+		cause = "Vivado timing failed"
+	case strings.Contains(text, "donor largest bar exceeds board bram"):
+		cause = "selected board has too little BRAM for this donor BAR layout"
+	case strings.Contains(text, "exit status 1"):
+		cause = "subprocess returned exit status 1; check build_summary.txt and Vivado *_summary.txt in the output directory"
+	default:
+		cause = "see build_summary.txt and any Vivado *_summary.txt in the output directory"
+	}
+	hint := "run diagnose for a structured check"
+	if buildOpts.fromJSON != "" {
+		hint = fmt.Sprintf("run: pcileechgen diagnose --json %s --output-dir %s --board %s",
+			buildOpts.fromJSON, buildOpts.output, buildOpts.board)
+	}
+	return fmt.Sprintf("firmware build failed (%s; %s)", cause, hint)
 }
 
 func init() {

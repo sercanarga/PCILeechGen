@@ -15,6 +15,9 @@ func (s *ethernetStrategy) ScrubBAR(data []byte) {
 	if len(data) >= 0x08 {
 		util.WriteLE32(data, 0x04, 0x000000EF) // MAC4-5
 	}
+	if len(data) >= 0x0C {
+		util.WriteLE32(data, 0x08, 0x80080783)
+	}
 	data[0x37] = 0x0C // RxEn | TxEn
 	if len(data) >= 0x40 {
 		util.WriteLE32(data, 0x3C, 0x00000000) // IntrMask off
@@ -44,6 +47,13 @@ func (s *ethernetStrategy) ScrubBAR(data []byte) {
 	if len(data) >= 0x100 {
 		util.WriteLE32(data, 0xFC, 0x00000000) // RxMissed
 	}
+	if len(data) >= 0x4014 {
+		util.WriteLE32(data, 0x4000, 0x00000000)
+		util.WriteLE32(data, 0x4004, 0x00000000)
+		util.WriteLE32(data, 0x4008, 0x00000000)
+		util.WriteLE32(data, 0x400C, 0x00000000)
+		util.WriteLE32(data, 0x4010, 0x00000000)
+	}
 }
 
 func (s *ethernetStrategy) PostInitRegisters(regs map[uint32]*uint32) {
@@ -52,6 +62,9 @@ func (s *ethernetStrategy) PostInitRegisters(regs map[uint32]*uint32) {
 	}
 	if v, ok := regs[0x6C]; ok {
 		*v |= 0x00003010
+	}
+	if v, ok := regs[0x08]; ok {
+		*v |= 0x80080783
 	}
 }
 
@@ -83,6 +96,7 @@ func ethernetProfile() *DeviceProfile {
 		BARDefaults: []BARDefault{
 			{Offset: 0x00, Width: 4, Name: "MAC0_3", Reset: 0xBEADDE02, RWMask: 0xFFFFFFFF},
 			{Offset: 0x04, Width: 4, Name: "MAC4_5", Reset: 0x000000EF, RWMask: 0xFFFFFFFF},
+			{Offset: 0x08, Width: 4, Name: "STATUS", Reset: 0x80080783, RWMask: 0x00000000},
 			{Offset: 0x34, Width: 4, Name: "CHIPCMD_DW", Reset: 0x0C000000, RWMask: 0xFF000000},
 			{Offset: 0x3C, Width: 4, Name: "INTRMASK", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
 			{Offset: 0x40, Width: 4, Name: "TXCONFIG", Reset: 0x2F000000, RWMask: 0x00FF0000},
@@ -94,6 +108,25 @@ func ethernetProfile() *DeviceProfile {
 			{Offset: 0xDC, Width: 4, Name: "PHYAR", Reset: 0x80000000, RWMask: 0xFFFFFFFF},
 			{Offset: 0xE0, Width: 4, Name: "ERIAR", Reset: 0x80000000, RWMask: 0xFFFFFFFF},
 			{Offset: 0xFC, Width: 4, Name: "RXMISSED", Reset: 0x00000000, RWMask: 0x00000000},
+			{Offset: 0x14, Width: 4, Name: "EERD", Reset: 0x00000000, RWMask: 0x00000001, IsFSMDriven: true},
+			{Offset: 0x20, Width: 4, Name: "MDIC", Reset: 0x08000000, RWMask: 0xFFFFFFFF, IsFSMDriven: true},
+			{Offset: 0xC0, Width: 4, Name: "ICR", Reset: 0x00000000, RWMask: 0xFFFFFFFF, W1CMask: 0xFFFFFFFF, IsRW1C: true},
+			{Offset: 0xD0, Width: 4, Name: "IMS", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
+			{Offset: 0x280, Width: 4, Name: "RDBAL", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
+			{Offset: 0x284, Width: 4, Name: "RDBAH", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
+			{Offset: 0x288, Width: 4, Name: "RDLEN", Reset: 0x00000000, RWMask: 0x0000FFF0},
+			{Offset: 0x2810, Width: 4, Name: "RDH", Reset: 0x00000000, RWMask: 0x0000FFFF, IsFSMDriven: true},
+			{Offset: 0x2818, Width: 4, Name: "RDT", Reset: 0x00000000, RWMask: 0x0000FFFF},
+			{Offset: 0x380, Width: 4, Name: "TDBAL", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
+			{Offset: 0x384, Width: 4, Name: "TDBAH", Reset: 0x00000000, RWMask: 0xFFFFFFFF},
+			{Offset: 0x388, Width: 4, Name: "TDLEN", Reset: 0x00000000, RWMask: 0x0000FFF0},
+			{Offset: 0x3810, Width: 4, Name: "TDH", Reset: 0x00000000, RWMask: 0x0000FFFF, IsFSMDriven: true},
+			{Offset: 0x3818, Width: 4, Name: "TDT", Reset: 0x00000000, RWMask: 0x0000FFFF},
+			{Offset: 0x4000, Width: 4, Name: "RXPKT_LO", Reset: 0x00000000, RWMask: 0x00000000, IsFSMDriven: true},
+			{Offset: 0x4004, Width: 4, Name: "RXPKT_HI", Reset: 0x00000000, RWMask: 0x00000000, IsFSMDriven: true},
+			{Offset: 0x4008, Width: 4, Name: "TXPKT_LO", Reset: 0x00000000, RWMask: 0x00000000, IsFSMDriven: true},
+			{Offset: 0x400C, Width: 4, Name: "TXPKT_HI", Reset: 0x00000000, RWMask: 0x00000000, IsFSMDriven: true},
+			{Offset: 0x4010, Width: 4, Name: "RXERR", Reset: 0x00000000, RWMask: 0x00000000, IsFSMDriven: true},
 		},
 
 		Notes: "Realtek RTL8125 2.5GbE profile. BAR2 is the primary 64KB MMIO region. " +

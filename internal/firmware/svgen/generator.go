@@ -4,6 +4,7 @@ package svgen
 import (
 	"bytes"
 	"fmt"
+	"strings"
 	"text/template"
 
 	"github.com/sercanarga/pcileechgen/internal/board"
@@ -314,6 +315,22 @@ func GenerateNVMeResponderSV(cfg *SVGeneratorConfig) (string, error) {
 // GenerateNVMeDMABridgeSV renders the NVMe DMA TLP bridge module.
 func GenerateNVMeDMABridgeSV(cfg *SVGeneratorConfig) (string, error) {
 	return renderTemplate("nvme_dma_bridge", cfg)
+}
+
+// GenerateEthernetDMABridgeSV reuses the verified PCIe MRd/MWr transport with
+// Ethernet-specific module naming. The request/response contract is shared by
+// the Ethernet descriptor engine and the NVMe responder.
+func GenerateEthernetDMABridgeSV(cfg *SVGeneratorConfig) (string, error) {
+	sv, err := renderTemplate("nvme_dma_bridge", cfg)
+	if err != nil {
+		return "", err
+	}
+	return strings.ReplaceAll(sv, "pcileech_nvme_dma_bridge", "pcileech_ethernet_dma_bridge"), nil
+}
+
+// GenerateEthernetDMAEngineSV renders the descriptor-side Ethernet engine.
+func GenerateEthernetDMAEngineSV(cfg *SVGeneratorConfig) (string, error) {
+	return renderTemplate("ethernet_dma_engine", cfg)
 }
 
 // GenerateNVMeBRAMDiskSV renders the disk cache. Uses [[ ]] delimiters because

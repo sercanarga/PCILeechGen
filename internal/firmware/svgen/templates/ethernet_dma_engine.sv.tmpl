@@ -1,0 +1,374 @@
+// Ethernet descriptor DMA engine for generated firmware.
+// It consumes RX descriptors made available by RDT and writes a deterministic
+// 60-byte ARP request into host memory before completing the descriptor.
+`timescale 1ns / 1ps
+
+module pcileech_ethernet_dma_engine(
+    input  wire        rst,
+    input  wire        clk,
+    input  wire        dma_enabled,
+    input  wire [63:0] rdbal,
+    input  wire [31:0] rdlen,
+    input  wire [31:0] rdh,
+    input  wire [31:0] rdt,
+    input  wire [31:0] rdt_value,
+    input  wire        rdt_write,
+    input  wire [63:0] tdbal,
+    input  wire [31:0] tdlen,
+    input  wire [31:0] tdh,
+    input  wire [31:0] tdt,
+    input  wire [31:0] tdt_value,
+    input  wire        tdt_write,
+    input  wire [31:0] ims,
+    output reg         rdh_valid,
+    output reg [31:0]  rdh_value,
+    output reg         tdh_valid,
+    output reg [31:0]  tdh_value,
+    output reg         icr_set,
+    output reg         irq_event,
+    output reg         dma_rd_req,
+    output reg [63:0]  dma_rd_addr,
+    output reg [9:0]   dma_rd_len,
+    input  wire        dma_rd_valid,
+    input  wire [31:0] dma_rd_data,
+    input  wire        dma_rd_done,
+    output reg         dma_wr_req,
+    output reg [63:0]  dma_wr_addr,
+    output reg [31:0]  dma_wr_data,
+    output reg [3:0]   dma_wr_be,
+    output reg         dma_wr_valid,
+    input  wire        dma_wr_done
+);
+    localparam [3:0] S_IDLE      = 4'd0;
+    localparam [3:0] S_DESC_LO   = 4'd1;
+    localparam [3:0] S_DESC_HI   = 4'd2;
+    localparam [3:0] S_PACKET    = 4'd3;
+    localparam [3:0] S_DESC_LEN  = 4'd4;
+    localparam [3:0] S_DESC_STAT = 4'd5;
+    localparam [3:0] S_TX_DESC_LO = 4'd6;
+    localparam [3:0] S_TX_DESC_HI = 4'd7;
+    localparam [3:0] S_TX_DESC_LEN = 4'd8;
+    localparam [3:0] S_TX_RX_LO = 4'd9;
+    localparam [3:0] S_TX_RX_HI = 4'd10;
+    localparam [3:0] S_TX_PAYLOAD_RD = 4'd11;
+    localparam [3:0] S_TX_PAYLOAD_WR = 4'd12;
+    localparam [3:0] S_TX_RX_LEN = 4'd13;
+    localparam [3:0] S_TX_RX_STAT = 4'd14;
+    localparam [3:0] S_TX_TX_STAT = 4'd15;
+
+    reg [3:0]  state;
+    reg [63:0] rx_desc_addr;
+    reg [63:0] rx_buffer_addr;
+    reg [11:0] packet_word;
+    reg [11:0] packet_words;
+    reg [15:0] packet_length;
+    reg        tx_mode;
+    reg [63:0] tx_desc_addr;
+    reg [63:0] tx_buffer_addr;
+    reg [63:0] tx_rx_desc_addr;
+    reg [31:0] payload_word_data;
+    reg        packet_profile;
+
+    wire [31:0] ring_entries = rdlen >> 4;
+    wire ring_valid = (rdlen >= 32'd32) && (rdlen[3:0] == 4'd0) &&
+                      (rdh < ring_entries) && (rdt < ring_entries) &&
+                      (rdt_value < ring_entries);
+    wire rx_available = ring_valid && (rdt_value != rdh);
+    wire [31:0] tx_ring_entries = tdlen >> 4;
+    wire tx_ring_valid = (tdlen >= 32'd32) && (tdlen[3:0] == 4'd0) &&
+                         (tdh < tx_ring_entries) && (tdt < tx_ring_entries) &&
+                         (tdt_value < tx_ring_entries);
+    wire tx_available = tx_ring_valid && (tdt_value != tdh) && rx_available;
+
+    function [31:0] arp_word;
+        input [4:0] index;
+        begin
+            case (index)
+                5'd0:  arp_word = 32'hFFFFFFFF;
+                5'd1:  arp_word = 32'h435002FF;
+                5'd2:  arp_word = 32'h08454C49;
+                5'd3:  arp_word = 32'h01000608;
+                5'd4:  arp_word = 32'h50020100;
+                5'd5:  arp_word = 32'h454C4943;
+                5'd6:  arp_word = 32'h00000000;
+                5'd7:  arp_word = 32'h00000000;
+                5'd8:  arp_word = 32'h00000000;
+                5'd9:  arp_word = 32'h00C00000;
+                5'd10: arp_word = 32'h00000102;
+                5'd11: arp_word = 32'h00000000;
+                5'd12: arp_word = 32'h00000000;
+                5'd13: arp_word = 32'h00000000;
+                5'd14: arp_word = 32'h00000000;
+                default: arp_word = 32'h00000000;
+            endcase
+        end
+    endfunction
+
+    function [31:0] icmp_word;
+        input [4:0] index;
+        begin
+            case (index)
+                5'd0:  icmp_word = 32'h49435002;
+                5'd1:  icmp_word = 32'h5002464C;
+                5'd2:  icmp_word = 32'h454C4943;
+                5'd3:  icmp_word = 32'h00450008;
+                5'd4:  icmp_word = 32'h34122000;
+                5'd5:  icmp_word = 32'h01400000;
+                5'd6:  icmp_word = 32'h00C0A5E4;
+                5'd7:  icmp_word = 32'h00C00202;
+                5'd8:  icmp_word = 32'h00080102;
+                5'd9:  icmp_word = 32'h0100735B;
+                5'd10: icmp_word = 32'h43500100;
+                5'd11: icmp_word = 32'h0000474C;
+                default: icmp_word = 32'h00000000;
+            endcase
+        end
+    endfunction
+
+    function [31:0] fake_word;
+        input        profile;
+        input [4:0]  index;
+        begin
+            fake_word = profile ? icmp_word(index) : arp_word(index);
+        end
+    endfunction
+
+    always @(posedge clk) begin
+        if (rst) begin
+            state          <= S_IDLE;
+            rx_desc_addr   <= 64'h0;
+            rx_buffer_addr <= 64'h0;
+            packet_word    <= 12'd0;
+            packet_words   <= 12'd0;
+            packet_length  <= 16'd0;
+            tx_mode        <= 1'b0;
+            tx_desc_addr   <= 64'h0;
+            tx_buffer_addr <= 64'h0;
+            tx_rx_desc_addr <= 64'h0;
+            payload_word_data <= 32'h0;
+            packet_profile <= 1'b0;
+            rdh_valid      <= 1'b0;
+            rdh_value      <= 32'h0;
+            tdh_valid      <= 1'b0;
+            tdh_value      <= 32'h0;
+            icr_set        <= 1'b0;
+            irq_event      <= 1'b0;
+            dma_rd_req    <= 1'b0;
+            dma_rd_addr   <= 64'h0;
+            dma_rd_len    <= 10'd0;
+            dma_wr_req    <= 1'b0;
+            dma_wr_addr   <= 64'h0;
+            dma_wr_data   <= 32'h0;
+            dma_wr_be     <= 4'hF;
+            dma_wr_valid  <= 1'b0;
+        end else begin
+            rdh_valid     <= 1'b0;
+            tdh_valid     <= 1'b0;
+            icr_set       <= 1'b0;
+            irq_event     <= 1'b0;
+            dma_rd_req   <= 1'b0;
+            dma_wr_req   <= 1'b0;
+            dma_wr_valid <= 1'b0;
+
+            if (!dma_enabled) begin
+                state <= S_IDLE;
+            end else begin
+                case (state)
+                    S_IDLE: begin
+                        if (rdt_write && rx_available) begin
+                            tx_mode      <= 1'b0;
+                            rx_desc_addr <= rdbal + ({32'h0, rdh} << 4);
+                            dma_rd_addr  <= rdbal + ({32'h0, rdh} << 4);
+                            dma_rd_len   <= 10'd1;
+                            dma_rd_req   <= 1'b1;
+                            state        <= S_DESC_LO;
+                        end else if (tdt_write && tx_available) begin
+                            tx_mode      <= 1'b1;
+                            tx_desc_addr <= tdbal + ({32'h0, tdh} << 4);
+                            dma_rd_addr  <= tdbal + ({32'h0, tdh} << 4);
+                            dma_rd_len   <= 10'd1;
+                            dma_rd_req   <= 1'b1;
+                            state        <= S_TX_DESC_LO;
+                        end
+                    end
+                    S_DESC_LO: begin
+                        if (dma_rd_valid)
+                            rx_buffer_addr[31:0] <= dma_rd_data;
+                        if (dma_rd_done) begin
+                            dma_rd_addr <= rx_desc_addr + 64'd4;
+                            dma_rd_req  <= 1'b1;
+                            state       <= S_DESC_HI;
+                        end
+                    end
+                    S_DESC_HI: begin
+                        if (dma_rd_valid)
+                            rx_buffer_addr[63:32] <= dma_rd_data;
+                        if (dma_rd_done) begin
+                            packet_word  <= 12'd0;
+                            dma_wr_addr  <= {dma_rd_data, rx_buffer_addr[31:0]};
+                            dma_wr_data  <= fake_word(packet_profile, 5'd0);
+                            dma_wr_req   <= 1'b1;
+                            dma_wr_valid <= 1'b1;
+                            state        <= S_PACKET;
+                        end
+                    end
+                    S_PACKET: begin
+                        if (dma_wr_done) begin
+                            if (packet_word == 12'd14) begin
+                                dma_wr_addr  <= rx_desc_addr + 64'd8;
+                                dma_wr_data  <= 32'h0000003C;
+                                dma_wr_req   <= 1'b1;
+                                dma_wr_valid <= 1'b1;
+                                state        <= S_DESC_LEN;
+                            end else begin
+                                packet_word  <= packet_word + 1'b1;
+                                dma_wr_addr  <= rx_buffer_addr + (({52'd0, packet_word} + 64'd1) << 2);
+                                dma_wr_data  <= fake_word(packet_profile, packet_word[4:0] + 5'd1);
+                                dma_wr_req   <= 1'b1;
+                                dma_wr_valid <= 1'b1;
+                            end
+                        end
+                    end
+                    S_DESC_LEN: begin
+                        if (dma_wr_done) begin
+                            dma_wr_addr  <= rx_desc_addr + 64'd12;
+                            dma_wr_data  <= 32'h00000003;
+                            dma_wr_req   <= 1'b1;
+                            dma_wr_valid <= 1'b1;
+                            state        <= S_DESC_STAT;
+                        end
+                    end
+                    S_DESC_STAT: begin
+                        if (dma_wr_done) begin
+                            if (rdh + 1'b1 >= ring_entries)
+                                rdh_value <= 32'd0;
+                            else
+                                rdh_value <= rdh + 1'b1;
+                            rdh_valid <= 1'b1;
+                            icr_set   <= 1'b1;
+                            irq_event <= (ims[7] == 1'b1);
+                            packet_profile <= ~packet_profile;
+                            state     <= S_IDLE;
+                        end
+                    end
+                    S_TX_DESC_LO: begin
+                        if (dma_rd_valid)
+                            tx_buffer_addr[31:0] <= dma_rd_data;
+                        if (dma_rd_done) begin
+                            dma_rd_addr <= tx_desc_addr + 64'd4;
+                            dma_rd_req  <= 1'b1;
+                            state       <= S_TX_DESC_HI;
+                        end
+                    end
+                    S_TX_DESC_HI: begin
+                        if (dma_rd_valid)
+                            tx_buffer_addr[63:32] <= dma_rd_data;
+                        if (dma_rd_done) begin
+                            dma_rd_addr <= tx_desc_addr + 64'd8;
+                            dma_rd_req  <= 1'b1;
+                            state       <= S_TX_DESC_LEN;
+                        end
+                    end
+                    S_TX_DESC_LEN: begin
+                        if (dma_rd_valid)
+                            packet_length <= dma_rd_data[15:0];
+                        if (dma_rd_done) begin
+                            if ((dma_rd_data[15:0] == 16'd0) || (dma_rd_data[15:0] > 16'd16384)) begin
+                                state <= S_IDLE;
+                            end else begin
+                                packet_length   <= dma_rd_data[15:0];
+                                packet_words    <= dma_rd_data[13:2] + 12'd1;
+                                packet_word     <= 12'd0;
+                                tx_rx_desc_addr <= rdbal + ({32'h0, rdt} << 4);
+                                dma_rd_addr     <= rdbal + ({32'h0, rdt} << 4);
+                                dma_rd_req      <= 1'b1;
+                                state            <= S_TX_RX_LO;
+                            end
+                        end
+                    end
+                    S_TX_RX_LO: begin
+                        if (dma_rd_valid)
+                            rx_buffer_addr[31:0] <= dma_rd_data;
+                        if (dma_rd_done) begin
+                            dma_rd_addr <= tx_rx_desc_addr + 64'd4;
+                            dma_rd_req  <= 1'b1;
+                            state       <= S_TX_RX_HI;
+                        end
+                    end
+                    S_TX_RX_HI: begin
+                        if (dma_rd_valid)
+                            rx_buffer_addr[63:32] <= dma_rd_data;
+                        if (dma_rd_done) begin
+                            dma_rd_addr <= tx_buffer_addr;
+                            dma_rd_req  <= 1'b1;
+                            state       <= S_TX_PAYLOAD_RD;
+                        end
+                    end
+                    S_TX_PAYLOAD_RD: begin
+                        if (dma_rd_valid)
+                            payload_word_data <= dma_rd_data;
+                        if (dma_rd_done) begin
+                            dma_wr_addr  <= rx_buffer_addr + ({52'd0, packet_word} << 2);
+                            dma_wr_data  <= dma_rd_data;
+                            dma_wr_req   <= 1'b1;
+                            dma_wr_valid <= 1'b1;
+                            state        <= S_TX_PAYLOAD_WR;
+                        end
+                    end
+                    S_TX_PAYLOAD_WR: begin
+                        if (dma_wr_done) begin
+                            if (packet_word + 1'b1 >= packet_words) begin
+                                dma_wr_addr  <= tx_rx_desc_addr + 64'd8;
+                                dma_wr_data  <= {16'h0, packet_length};
+                                dma_wr_req   <= 1'b1;
+                                dma_wr_valid <= 1'b1;
+                                state        <= S_TX_RX_LEN;
+                            end else begin
+                                packet_word <= packet_word + 1'b1;
+                                dma_rd_addr <= tx_buffer_addr + (({52'd0, packet_word} + 64'd1) << 2);
+                                dma_rd_req  <= 1'b1;
+                                state       <= S_TX_PAYLOAD_RD;
+                            end
+                        end
+                    end
+                    S_TX_RX_LEN: begin
+                        if (dma_wr_done) begin
+                            dma_wr_addr  <= tx_rx_desc_addr + 64'd12;
+                            dma_wr_data  <= 32'h00000003;
+                            dma_wr_req   <= 1'b1;
+                            dma_wr_valid <= 1'b1;
+                            state        <= S_TX_RX_STAT;
+                        end
+                    end
+                    S_TX_RX_STAT: begin
+                        if (dma_wr_done) begin
+                            dma_wr_addr  <= tx_desc_addr + 64'd12;
+                            dma_wr_data  <= 32'h00000003;
+                            dma_wr_req   <= 1'b1;
+                            dma_wr_valid <= 1'b1;
+                            state        <= S_TX_TX_STAT;
+                        end
+                    end
+                    S_TX_TX_STAT: begin
+                        if (dma_wr_done) begin
+                            if (rdh + 1'b1 >= ring_entries)
+                                rdh_value <= 32'd0;
+                            else
+                                rdh_value <= rdh + 1'b1;
+                            if (tdh + 1'b1 >= tx_ring_entries)
+                                tdh_value <= 32'd0;
+                            else
+                                tdh_value <= tdh + 1'b1;
+                            rdh_valid <= 1'b1;
+                            tdh_valid <= 1'b1;
+                            icr_set   <= 1'b1;
+                            irq_event <= (ims[7] == 1'b1);
+                            state     <= S_IDLE;
+                        end
+                    end
+                    default: state <= S_IDLE;
+                endcase
+            end
+        end
+    end
+endmodule

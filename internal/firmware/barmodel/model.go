@@ -169,7 +169,7 @@ func BuildBARModel(barData []byte, classCode uint32, profile *donor.BARProfile) 
 		} else {
 			model := SynthesizeBARModel(profile, classCode)
 			if model != nil {
-				return model
+				return mergeSpecRegisters(model, specBARModelForClass(classCode, barData))
 			}
 		}
 	}
@@ -463,11 +463,36 @@ func populateResetValues(regs []BARRegister, barData []byte) {
 	}
 }
 
+func mergeSpecRegisters(model *BARModel, spec *BARModel) *BARModel {
+	if model == nil || spec == nil || len(spec.Registers) == 0 {
+		return model
+	}
+	seen := make(map[uint32]bool, len(model.Registers))
+	for _, reg := range model.Registers {
+		seen[reg.Offset] = true
+	}
+	for _, reg := range spec.Registers {
+		if !seen[reg.Offset] {
+			model.Registers = append(model.Registers, reg)
+			seen[reg.Offset] = true
+		}
+	}
+	sort.Slice(model.Registers, func(i, j int) bool {
+		return model.Registers[i].Offset < model.Registers[j].Offset
+	})
+	if model.Size == 0 {
+		model.Size = spec.Size
+	}
+	validateModel(model)
+	return model
+}
+
 // RTL8125 register map (r8169 driver offsets).
 func buildEthernetBARModel(barData []byte) *BARModel {
 	regs := []BARRegister{
 		{Offset: 0x00, Width: 4, Name: "MAC0_3", RWMask: 0xFFFFFFFF},
 		{Offset: 0x04, Width: 4, Name: "MAC4_5", RWMask: 0xFFFFFFFF},
+		{Offset: 0x08, Width: 4, Name: "STATUS", RWMask: 0x00000000},
 		{Offset: 0x34, Width: 4, Name: "CHIPCMD_DW", RWMask: 0xFF000000}, // byte 0x37 = ChipCmd (RxEn|TxEn writable)
 		{Offset: 0x3C, Width: 4, Name: "INTRMASK", RWMask: 0xFFFFFFFF},
 		{Offset: 0x40, Width: 4, Name: "TXCONFIG", RWMask: 0x00FF0000},
@@ -479,6 +504,25 @@ func buildEthernetBARModel(barData []byte) *BARModel {
 		{Offset: 0xDC, Width: 4, Name: "PHYAR", RWMask: 0xFFFFFFFF, IsFSMDriven: true}, // bit31 = ready
 		{Offset: 0xE0, Width: 4, Name: "ERIAR", RWMask: 0xFFFFFFFF, IsFSMDriven: true}, // bit31 = done
 		{Offset: 0xFC, Width: 4, Name: "RXMISSED", RWMask: 0x00000000},                 // RO
+		{Offset: 0x14, Width: 4, Name: "EERD", RWMask: 0x00000001, IsFSMDriven: true},
+		{Offset: 0x20, Width: 4, Name: "MDIC", Reset: 0x08000000, RWMask: 0xFFFFFFFF, IsFSMDriven: true},
+		{Offset: 0xC0, Width: 4, Name: "ICR", RWMask: 0x00000000, W1CMask: 0xFFFFFFFF, IsRW1C: true, IsFSMDriven: true},
+		{Offset: 0xD0, Width: 4, Name: "IMS", RWMask: 0xFFFFFFFF},
+		{Offset: 0x280, Width: 4, Name: "RDBAL", RWMask: 0xFFFFFFFF},
+		{Offset: 0x284, Width: 4, Name: "RDBAH", RWMask: 0xFFFFFFFF},
+		{Offset: 0x288, Width: 4, Name: "RDLEN", RWMask: 0x0000FFF0},
+		{Offset: 0x2810, Width: 4, Name: "RDH", RWMask: 0x0000FFFF, IsFSMDriven: true},
+		{Offset: 0x2818, Width: 4, Name: "RDT", RWMask: 0x0000FFFF},
+		{Offset: 0x380, Width: 4, Name: "TDBAL", RWMask: 0xFFFFFFFF},
+		{Offset: 0x384, Width: 4, Name: "TDBAH", RWMask: 0xFFFFFFFF},
+		{Offset: 0x388, Width: 4, Name: "TDLEN", RWMask: 0x0000FFF0},
+		{Offset: 0x3810, Width: 4, Name: "TDH", RWMask: 0x0000FFFF, IsFSMDriven: true},
+		{Offset: 0x3818, Width: 4, Name: "TDT", RWMask: 0x0000FFFF},
+		{Offset: 0x4000, Width: 4, Name: "RXPKT_LO", RWMask: 0x00000000, IsFSMDriven: true},
+		{Offset: 0x4004, Width: 4, Name: "RXPKT_HI", RWMask: 0x00000000, IsFSMDriven: true},
+		{Offset: 0x4008, Width: 4, Name: "TXPKT_LO", RWMask: 0x00000000, IsFSMDriven: true},
+		{Offset: 0x400C, Width: 4, Name: "TXPKT_HI", RWMask: 0x00000000, IsFSMDriven: true},
+		{Offset: 0x4010, Width: 4, Name: "RXERR", RWMask: 0x00000000, IsFSMDriven: true},
 	}
 
 	populateResetValues(regs, barData)
@@ -493,6 +537,8 @@ func buildEthernetBARModel(barData []byte) *BARModel {
 			if regs[i].Reset == 0 {
 				regs[i].Reset = 0x000000EF
 			}
+		case 0x08:
+			regs[i].Reset = 0x80080783
 		case 0x34:
 			regs[i].Reset |= 0x0C000000 // RxEn | TxEn
 		case 0x40:

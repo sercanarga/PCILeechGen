@@ -3,7 +3,9 @@ package vivado
 import (
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/sercanarga/pcileechgen/internal/board"
@@ -73,6 +75,9 @@ func (b *Builder) Build(ctx *donor.DeviceContext) error {
 	}
 
 	if b.opts.SkipVivado {
+		if err := writeBuildSummary(b.opts.OutputDir, ctx, b.board, nil, nil); err != nil {
+			slog.Warn("write build summary", "error", err)
+		}
 		slog.Info("Vivado synthesis skipped")
 		return nil
 	}
@@ -127,8 +132,41 @@ func (b *Builder) Build(ctx *donor.DeviceContext) error {
 		slog.Warn("chown output files", "error", err)
 	}
 
+	if err := writeBuildSummary(b.opts.OutputDir, ctx, b.board, bitFiles, binFiles); err != nil {
+		slog.Warn("write build summary", "error", err)
+	}
 	slog.Info("build completed successfully")
 	return nil
+}
+
+func writeBuildSummary(outputDir string, ctx *donor.DeviceContext, b *board.Board, bitFiles, binFiles []string) error {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "PCILeechGen build summary\n")
+	fmt.Fprintf(&sb, "board=%s fpga=%s lanes=x%d\n", b.Name, b.FPGAPart, b.PCIeLanes)
+	fmt.Fprintf(&sb, "device=%04x:%04x class=0x%06x revision=0x%02x\n",
+		ctx.Device.VendorID, ctx.Device.DeviceID, ctx.Device.ClassCode, ctx.Device.RevisionID)
+	fmt.Fprintf(&sb, "bars=%d capabilities=%d ext_capabilities=%d\n",
+		len(ctx.BARs), len(ctx.Capabilities), len(ctx.ExtCapabilities))
+	if ctx.MSIXData != nil {
+		fmt.Fprintf(&sb, "msix_vectors=%d table_bir=%d table_offset=0x%x pba_bir=%d pba_offset=0x%x\n",
+			ctx.MSIXData.TableSize, ctx.MSIXData.TableBIR, ctx.MSIXData.TableOffset,
+			ctx.MSIXData.PBABIR, ctx.MSIXData.PBAOffset)
+	}
+	writeFileList(&sb, "bitstreams", bitFiles)
+	writeFileList(&sb, "binaries", binFiles)
+	return os.WriteFile(filepath.Join(outputDir, "build_summary.txt"), []byte(sb.String()), 0o644)
+}
+
+func writeFileList(sb *strings.Builder, title string, files []string) {
+	fmt.Fprintf(sb, "%s=%d\n", title, len(files))
+	for _, file := range files {
+		info, err := os.Stat(file)
+		if err != nil {
+			fmt.Fprintf(sb, "- %s\n", file)
+			continue
+		}
+		fmt.Fprintf(sb, "- %s (%d bytes)\n", file, info.Size())
+	}
 }
 
 func refreshBuildManifest(

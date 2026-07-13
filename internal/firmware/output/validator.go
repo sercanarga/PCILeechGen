@@ -135,6 +135,8 @@ func outputFileRequired(dir string, name string) bool {
 		return generatedLocalparamPresent(dir, "MSIX_NUM_VECTORS")
 	case "pcileech_nvme_admin_responder.sv", "pcileech_nvme_dma_bridge.sv":
 		return generatedFeatureEnabled(dir, "HAS_NVME_RESP")
+	case "pcileech_ethernet_dma_bridge.sv", "pcileech_ethernet_dma_engine.sv":
+		return generatedFeatureEnabled(dir, "HAS_ETHERNET_DMA")
 	default:
 		return true
 	}

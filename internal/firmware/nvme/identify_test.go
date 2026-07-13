@@ -427,3 +427,28 @@ func TestBuildIdentifyData_RawControllerOverridesAllForced(t *testing.T) {
 		t.Errorf("CTRATT must be forced to 0, got 0x%08X", got)
 	}
 }
+
+func TestBuildIdentifyData_RawNamespaceNormalizesToFirmwareContract(t *testing.T) {
+	rawNS := make([]byte, 4096)
+	binary.LittleEndian.PutUint64(rawNS[0x000:], 250000)
+	binary.LittleEndian.PutUint64(rawNS[0x008:], 250000)
+	binary.LittleEndian.PutUint64(rawNS[0x010:], 120000)
+	rawNS[0x01A] = 0x01
+	binary.LittleEndian.PutUint32(rawNS[0x0C0:], 0x000C0000)
+
+	id := BuildIdentifyData(sampleIDs(), nil, &ControllerIdentity{RawNamespaceIdent: rawNS})
+	info := NamespaceInfoFromIdentify(id)
+
+	if info.LBADataSizePower != 9 {
+		t.Fatalf("LBADS normalized: got %d want 9", info.LBADataSizePower)
+	}
+	if info.ActiveFormat != 0 {
+		t.Fatalf("active format normalized: got %d want 0", info.ActiveFormat)
+	}
+	if info.NSZE != 2000000 || info.NCAP != 2000000 || info.NUSE != 960000 {
+		t.Fatalf("namespace size normalization mismatch: %+v", info)
+	}
+	if issues := ValidateNamespace(id.Namespace[:]); len(issues) != 0 {
+		t.Fatalf("ValidateNamespace returned issues: %v", issues)
+	}
+}

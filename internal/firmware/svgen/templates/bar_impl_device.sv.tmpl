@@ -50,6 +50,25 @@ module {{ .BARImplementationModuleName }} #(
     output wire [31:0]  nvme_acq_lo,
     output wire [31:0]  nvme_acq_hi,
     output wire [31:0]  nvme_csts
+{{ end }}{{ if eq .DeviceClass "ethernet" }}    ,
+    output wire [63:0]  eth_rdbal,
+    output wire [31:0]  eth_rdlen,
+    output wire [31:0]  eth_rdh,
+    output wire [31:0]  eth_rdt,
+    output wire [63:0]  eth_tdbal,
+    output wire [31:0]  eth_tdlen,
+    output wire [31:0]  eth_tdh,
+    output wire [31:0]  eth_tdt,
+    output wire [31:0]  eth_ims,
+    output wire         eth_rdt_write,
+    output wire [31:0]  eth_rdt_value,
+    output wire         eth_tdt_write,
+    output wire [31:0]  eth_tdt_value,
+    input  wire         eth_rdh_valid,
+    input  wire [31:0]  eth_rdh_value,
+    input  wire         eth_tdh_valid,
+    input  wire [31:0]  eth_tdh_value,
+    input  wire         eth_icr_set
 {{ end }});
 
     wire wr_in_range = (wr_addr < BAR_SIZE);
@@ -60,6 +79,94 @@ module {{ .BARImplementationModuleName }} #(
     // registers
 {{ range .BARModel.Registers }}
     reg [{{ sub (mul .Width 8) 1 }}:0] reg_0x{{ hex08 .Offset }};  // {{ .Name }}
+{{ end }}
+
+{{ if eq .DeviceClass "ethernet" }}
+    reg eth_rdt_write_r;
+    reg [31:0] eth_rdt_value_r;
+    reg eth_tdt_write_r;
+    reg [31:0] eth_tdt_value_r;
+
+    assign eth_rdbal = {reg_0x00000284, reg_0x00000280};
+    assign eth_rdlen = reg_0x00000288;
+    assign eth_rdh = reg_0x00002810;
+    assign eth_rdt = reg_0x00002818;
+    assign eth_tdbal = {reg_0x00000384, reg_0x00000380};
+    assign eth_tdlen = reg_0x00000388;
+    assign eth_tdh = reg_0x00003810;
+    assign eth_tdt = reg_0x00003818;
+    assign eth_ims = reg_0x000000D0;
+    assign eth_rdt_write = eth_rdt_write_r;
+    assign eth_rdt_value = eth_rdt_value_r;
+    assign eth_tdt_write = eth_tdt_write_r;
+    assign eth_tdt_value = eth_tdt_value_r;
+
+    always @(posedge clk) begin
+        if (rst) begin
+            eth_rdt_write_r <= 1'b0;
+            eth_rdt_value_r <= 32'h0;
+            eth_tdt_write_r <= 1'b0;
+            eth_tdt_value_r <= 32'h0;
+            reg_0x000000C0 <= 32'h0;
+            reg_0x00002810 <= 32'h0;
+            reg_0x00003810 <= 32'h0;
+            reg_0x00000014 <= 32'h0;
+            reg_0x00000020 <= 32'h08000000;
+            reg_0x00004000 <= 32'h0;
+            reg_0x00004004 <= 32'h0;
+            reg_0x00004008 <= 32'h0;
+            reg_0x0000400C <= 32'h0;
+            reg_0x00004010 <= 32'h0;
+        end else begin
+            eth_rdt_write_r <= 1'b0;
+            eth_tdt_write_r <= 1'b0;
+            if (wr_valid && ((wr_offset & 32'hFFFFFFFC) == 32'h00002818)) begin
+                eth_rdt_write_r <= 1'b1;
+                eth_rdt_value_r <= wr_data;
+            end
+            if (wr_valid && ((wr_offset & 32'hFFFFFFFC) == 32'h00003818)) begin
+                eth_tdt_write_r <= 1'b1;
+                eth_tdt_value_r <= wr_data;
+            end
+            if (wr_valid && ((wr_offset & 32'hFFFFFFFC) == 32'h00000014))
+                reg_0x00000014 <= (wr_data & 32'h1) | 32'h00000020 | 32'h11000000;
+            if (wr_valid && ((wr_offset & 32'hFFFFFFFC) == 32'h00000020)) begin
+                case (wr_data[20:16])
+                    5'd0: reg_0x00000020 <= (wr_data & 32'h03FF0000) | 32'h00001140 | 32'h10000000;
+                    5'd1: reg_0x00000020 <= (wr_data & 32'h03FF0000) | 32'h0000796D | 32'h10000000;
+                    5'd2: reg_0x00000020 <= (wr_data & 32'h03FF0000) | 32'h0000001C | 32'h10000000;
+                    5'd3: reg_0x00000020 <= (wr_data & 32'h03FF0000) | 32'h0000C800 | 32'h10000000;
+                    5'd4: reg_0x00000020 <= (wr_data & 32'h03FF0000) | 32'h000001E1 | 32'h10000000;
+                    5'd5: reg_0x00000020 <= (wr_data & 32'h03FF0000) | 32'h0000CDE1 | 32'h10000000;
+                    5'd9: reg_0x00000020 <= (wr_data & 32'h03FF0000) | 32'h00000300 | 32'h10000000;
+                    5'd10: reg_0x00000020 <= (wr_data & 32'h03FF0000) | 32'h00003800 | 32'h10000000;
+                    default: reg_0x00000020 <= (wr_data & 32'h03FF0000) | 32'h10000000;
+                endcase
+            end
+            if (eth_rdh_valid) begin
+                reg_0x00002810 <= eth_rdh_value;
+                if (reg_0x00004000 == 32'hFFFFFFFF) begin
+                    reg_0x00004000 <= 32'h0;
+                    reg_0x00004004 <= reg_0x00004004 + 1'b1;
+                end else begin
+                    reg_0x00004000 <= reg_0x00004000 + 1'b1;
+                end
+            end
+            if (eth_tdh_valid) begin
+                reg_0x00003810 <= eth_tdh_value;
+                if (reg_0x00004008 == 32'hFFFFFFFF) begin
+                    reg_0x00004008 <= 32'h0;
+                    reg_0x0000400C <= reg_0x0000400C + 1'b1;
+                end else begin
+                    reg_0x00004008 <= reg_0x00004008 + 1'b1;
+                end
+            end
+            if (eth_icr_set)
+                reg_0x000000C0 <= reg_0x000000C0 | 32'h00000080;
+            if (wr_valid && ((wr_offset & 32'hFFFFFFFC) == 32'h000000C0))
+                reg_0x000000C0 <= reg_0x000000C0 & ~wr_data;
+        end
+    end
 {{ end }}
 {{ if .CompiledBehavior }}
     reg [{{ sub .CompiledBehavior.StateBits 1 }}:0] behavior_state;

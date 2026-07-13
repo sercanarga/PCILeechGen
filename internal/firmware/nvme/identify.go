@@ -17,6 +17,16 @@ type IdentifyData struct {
 	Namespace  [4096]byte // CNS=0, NSID=1
 }
 
+const DefaultNamespaceLBAs uint64 = 2000409264
+
+type NamespaceInfo struct {
+	NSZE             uint64
+	NCAP             uint64
+	NUSE             uint64
+	ActiveFormat     uint8
+	LBADataSizePower uint8
+}
+
 // ControllerIdentity holds donor-captured NVMe controller strings. Empty fields
 // use neutral values because a PCI ID is not enough to identify a drive model.
 type ControllerIdentity struct {
@@ -52,6 +62,7 @@ func BuildIdentifyData(ids firmware.DeviceIDs, barData []byte, identity *Control
 	} else {
 		d.Namespace = buildIdentifyNamespace(barData)
 	}
+	normalizeNamespace(&d.Namespace)
 
 	return d
 }
@@ -188,7 +199,7 @@ func buildIdentifyNamespace(barData []byte) [4096]byte {
 	var data [4096]byte
 
 	// 1 TB / 512 B sectors; kept in sync with the templates' NVME_ADVERTISED_LBAS.
-	var nsze uint64 = 2000409264
+	var nsze uint64 = DefaultNamespaceLBAs
 	_ = barData // reserved for future donor extraction
 
 	binary.LittleEndian.PutUint64(data[0x000:], nsze) // NSZE
@@ -212,6 +223,87 @@ func buildIdentifyNamespace(barData []byte) [4096]byte {
 	binary.LittleEndian.PutUint32(data[0x0C0:], 0x00090000)
 
 	return data
+}
+
+func normalizeNamespace(data *[4096]byte) {
+	nsze := binary.LittleEndian.Uint64(data[0x000:])
+	ncap := binary.LittleEndian.Uint64(data[0x008:])
+	nuse := binary.LittleEndian.Uint64(data[0x010:])
+	lbaf0 := binary.LittleEndian.Uint32(data[0x0C0:])
+	lbads := uint((lbaf0 >> 16) & 0xFF)
+
+	if nsze == 0 {
+		nsze = DefaultNamespaceLBAs
+	}
+	if lbads > 9 {
+		shift := lbads - 9
+		if shift < 32 {
+			nsze <<= shift
+			ncap <<= shift
+			nuse <<= shift
+		}
+	}
+	if ncap == 0 || ncap > nsze {
+		ncap = nsze
+	}
+	if nuse == 0 || nuse > ncap {
+		nuse = ncap
+	}
+
+	binary.LittleEndian.PutUint64(data[0x000:], nsze)
+	binary.LittleEndian.PutUint64(data[0x008:], ncap)
+	binary.LittleEndian.PutUint64(data[0x010:], nuse)
+	data[0x019] = 0x00
+	data[0x01A] = 0x00
+	binary.LittleEndian.PutUint32(data[0x0C0:], 0x00090000)
+}
+
+func NamespaceInfoFromIdentify(id *IdentifyData) NamespaceInfo {
+	if id == nil {
+		return NamespaceInfo{}
+	}
+	return NamespaceInfoFromBytes(id.Namespace[:])
+}
+
+func NamespaceInfoFromBytes(data []byte) NamespaceInfo {
+	if len(data) < 0x0C4 {
+		return NamespaceInfo{}
+	}
+	lbaf0 := binary.LittleEndian.Uint32(data[0x0C0:])
+	return NamespaceInfo{
+		NSZE:             binary.LittleEndian.Uint64(data[0x000:]),
+		NCAP:             binary.LittleEndian.Uint64(data[0x008:]),
+		NUSE:             binary.LittleEndian.Uint64(data[0x010:]),
+		ActiveFormat:     data[0x01A] & 0x0F,
+		LBADataSizePower: uint8((lbaf0 >> 16) & 0xFF),
+	}
+}
+
+func ValidateNamespace(data []byte) []string {
+	var issues []string
+	if len(data) != 4096 {
+		return []string{fmt.Sprintf("Identify Namespace size is %d bytes, want 4096", len(data))}
+	}
+	info := NamespaceInfoFromBytes(data)
+	if info.NSZE == 0 {
+		issues = append(issues, "Identify Namespace NSZE is zero")
+	}
+	if info.NCAP == 0 {
+		issues = append(issues, "Identify Namespace NCAP is zero")
+	}
+	if info.NCAP > info.NSZE {
+		issues = append(issues, fmt.Sprintf("Identify Namespace NCAP exceeds NSZE: %d > %d", info.NCAP, info.NSZE))
+	}
+	if info.NUSE > info.NCAP {
+		issues = append(issues, fmt.Sprintf("Identify Namespace NUSE exceeds NCAP: %d > %d", info.NUSE, info.NCAP))
+	}
+	if info.ActiveFormat != 0 {
+		issues = append(issues, fmt.Sprintf("Identify Namespace active LBA format is %d, want 0", info.ActiveFormat))
+	}
+	if info.LBADataSizePower != 9 {
+		issues = append(issues, fmt.Sprintf("Identify Namespace LBADS is %d, want 9 for 512-byte sectors", info.LBADataSizePower))
+	}
+	return issues
 }
 
 // generateSerialNumber creates a vendor-prefixed random serial.

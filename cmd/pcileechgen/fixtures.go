@@ -12,7 +12,8 @@ import (
 )
 
 var fixturesOpts struct {
-	out string
+	out          string
+	demoProfiles bool
 }
 
 var fixturesCmd = &cobra.Command{
@@ -38,6 +39,23 @@ var fixturesCmd = &cobra.Command{
 			}
 			fmt.Println("wrote", path)
 		}
+		if fixturesOpts.demoProfiles {
+			for _, name := range synthetic.DemoProfileNames() {
+				ctx := synthetic.BuildDemoProfile(name)
+				if ctx == nil {
+					return fmt.Errorf("no demo profile builder for %q", name)
+				}
+				data, err := json.MarshalIndent(ctx, "", "  ")
+				if err != nil {
+					return fmt.Errorf("marshal %s: %w", name, err)
+				}
+				path := filepath.Join(fixturesOpts.out, name+".json")
+				if err := os.WriteFile(path, data, 0o644); err != nil {
+					return fmt.Errorf("write %s: %w", path, err)
+				}
+				fmt.Println("wrote", path)
+			}
+		}
 		return nil
 	},
 }
@@ -45,5 +63,7 @@ var fixturesCmd = &cobra.Command{
 func init() {
 	fixturesCmd.Flags().StringVar(&fixturesOpts.out, "out", "testdata/donors",
 		"output directory for fixture JSON files")
+	fixturesCmd.Flags().BoolVar(&fixturesOpts.demoProfiles, "demo-profiles", false,
+		"also write named profiles: NICv2, RTL8125, RealtekRTL8125, IntelI210, IntelI219, IntelI225, DiskTest, NVMEv2")
 	rootCmd.AddCommand(fixturesCmd)
 }
