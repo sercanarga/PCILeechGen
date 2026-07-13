@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # lint generated SV across all donor fixtures and boards
 set -uo pipefail
+shopt -s nullglob
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
@@ -10,6 +11,10 @@ require verilator
 require ./bin/pcileechgen
 
 FIXTURES=(testdata/donors/*.json)
+if [ "${#FIXTURES[@]}" -eq 0 ]; then
+  echo "ERROR: no donor fixtures found under testdata/donors" >&2
+  exit 1
+fi
 LEGACY_BOARDS=(pciescreamer NeTV2_35T NeTV2_100T acorn litefury sp605_ft601)
 # Board names come from the CLI so the matrix stays in sync with board.go.
 # (NR>2 skips the two-line table header; bash 3.2 compat via while-read.)
@@ -29,6 +34,9 @@ SVGEN_PATTERN='pcileech_lifecycle_service.sv|pcileech_dma_tag_service.sv|pcileec
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
+REPORT="${HDL_LINT_REPORT:-hdl-lint-report.tsv}"
+printf 'fixture\tboard\tstatus\tdetail\n' > "$REPORT"
+
 total=0; pass=0; skip=0; fail=0; modern_multibar_pass=0
 
 for fixture in "${FIXTURES[@]}"; do
@@ -40,6 +48,7 @@ for fixture in "${FIXTURES[@]}"; do
     case " ${LEGACY_BOARDS[*]} " in
       *" $board "*)
         echo "SKIP  $cell (explicit legacy board allowlist)"
+        printf '%s\t%s\tSKIP\tlegacy board allowlist\n' "$class" "$board" >> "$REPORT"
         skip=$((skip+1))
         continue
         ;;
@@ -52,12 +61,15 @@ for fixture in "${FIXTURES[@]}"; do
       # Donor BAR > board BRAM (or other benign incompatibility): skip, do not fail CI.
       if grep -Eq 'board sources not found at' "$build_log"; then
         echo "SKIP  $cell (board source unavailable — see $build_log)"
+        printf '%s\t%s\tSKIP\tboard source unavailable\n' "$class" "$board" >> "$REPORT"
         skip=$((skip+1))
       elif grep -Eq 'insufficient block RAM|exceeds board BRAM' "$build_log"; then
         echo "SKIP  $cell (build incompatible — see $build_log)"
+        printf '%s\t%s\tSKIP\tbuild incompatible\n' "$class" "$board" >> "$REPORT"
         skip=$((skip+1))
       else
         echo "FAIL  $cell (build failed — see $build_log)"
+        printf '%s\t%s\tFAIL\tbuild failed\n' "$class" "$board" >> "$REPORT"
         cat "$build_log" >&2
         fail=$((fail+1))
       fi
@@ -73,6 +85,7 @@ for fixture in "${FIXTURES[@]}"; do
 
     if [ "${#sv_files[@]}" -eq 0 ]; then
       echo "SKIP  $cell (no svgen SV emitted)"
+      printf '%s\t%s\tSKIP\tno generated SV\n' "$class" "$board" >> "$REPORT"
       skip=$((skip+1))
       continue
     fi
@@ -83,12 +96,14 @@ for fixture in "${FIXTURES[@]}"; do
           "${sv_files[@]}" testdata/stubs/blackbox.sv \
           >"$lint_log" 2>&1; then
       echo "PASS  $cell"
+      printf '%s\t%s\tPASS\tlint passed\n' "$class" "$board" >> "$REPORT"
       pass=$((pass+1))
       if [ "$cell" = "multibar×PCIeSquirrel" ]; then
         modern_multibar_pass=1
       fi
     else
       echo "FAIL  $cell (see $lint_log)"
+      printf '%s\t%s\tFAIL\tverilator failed\n' "$class" "$board" >> "$REPORT"
       cat "$lint_log" >&2
       fail=$((fail+1))
     fi

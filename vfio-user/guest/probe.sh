@@ -84,14 +84,14 @@ if [ "$rebind" = 1 ] && [ "$driver" != none ]; then
 fi
 bars=0
 if [ -f "$found/resource" ]; then
-    while read -r start end flags; do
+    while read -r start end _; do
         if [ "$start" != 0 ] || [ "$end" != 0 ]; then
             bars=$((bars + 1))
         fi
     done <"$found/resource"
 fi
 status=pass
-detail=driver-bound
+detail='driver-bound'
 case "$case_name" in
     nvme|sata|xhci)
         if [ "$driver" = none ]; then
@@ -110,7 +110,7 @@ case "$case_name" in
         ;;
 esac
 if [ "$rebind" = 1 ] && [ "$status" = pass ]; then
-    detail=rebind-reset-driver-bound
+    detail='rebind-reset-driver-bound'
 fi
 printf '{"event":"result","case":"%s","status":"%s","bdf":"%s","vendor":"%s","device":"%s","class":"%s","driver":"%s","bars":%s,"detail":"%s"}\n' \
     "$case_name" "$status" "$bdf" "$vendor" "$device" "$class" "$driver" "$bars" "$detail"

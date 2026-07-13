@@ -16,13 +16,27 @@ struct ethernet_state {
 static uint32_t *reg32(struct ethernet_state *s, uint64_t off)
 {
     switch (off) {
-    case 0x0000: return &s->ctrl; case 0x0008: return &s->status;
-    case 0x0014: return &s->eerd; case 0x0020: return &s->mdic; case 0x00c0: return &s->icr;
-    case 0x00d0: return &s->ims; case 0x0288: return &s->rdlen;
-    case 0x2810: return &s->rdh; case 0x2818: return &s->rdt;
-    case 0x0388: return &s->tdlen; case 0x3810: return &s->tdh;
-    case 0x3818: return &s->tdt; default: return NULL;
+    case 0x0000: return &s->ctrl;
+    case 0x0008: return &s->status;
+    case 0x0014: return &s->eerd;
+    case 0x0020: return &s->mdic;
+    case 0x00c0: return &s->icr;
+    case 0x00d0: return &s->ims;
+    case 0x0288: return &s->rdlen;
+    case 0x2810: return &s->rdh;
+    case 0x2818: return &s->rdt;
+    case 0x0388: return &s->tdlen;
+    case 0x3810: return &s->tdh;
+    case 0x3818: return &s->tdt;
+    default: return NULL;
     }
+}
+
+static int ring_ready(const struct ethernet_state *state)
+{
+    return state->rdlen >= 16 && state->tdlen >= 16 &&
+           (state->rdlen % 16) == 0 && (state->tdlen % 16) == 0 &&
+           state->tdh < state->tdlen / 16 && state->rdt < state->rdlen / 16;
 }
 
 static uint64_t reg64(struct ethernet_state *s, uint64_t off)
@@ -58,6 +72,7 @@ static ssize_t ethernet_read(void *opaque, unsigned bir, uint64_t offset,
 {
     struct ethernet_state *state = opaque;
     uint32_t *reg;
+    if (data == NULL) return -EINVAL;
     if (bir == 0 && length == 4 && (reg = reg32(state, offset)) != NULL) {
         memcpy(data, reg, 4); return 4;
     }
@@ -73,6 +88,7 @@ static ssize_t ethernet_write(void *opaque, unsigned bir, uint64_t offset,
 {
     struct ethernet_state *state = opaque;
     uint32_t value;
+    if (data == NULL) return -EINVAL;
     if (bir == 0 && length == 4 && (offset == 0x0280 || offset == 0x0380)) {
         memcpy(&value, data, 4); if (offset == 0x0280) state->rdbal = value; else state->tdbal = value; return 4;
     }
@@ -90,9 +106,7 @@ static ssize_t ethernet_write(void *opaque, unsigned bir, uint64_t offset,
         if (offset == 0x00d0) { state->ims = value; return 4; }
         *reg32(state, offset) = value;
         if (offset == 0x3818 && state->host.dma_read != NULL && state->host.dma_write != NULL &&
-            state->tdlen >= 16 && (state->tdlen % 16) == 0 &&
-            state->rdlen >= 16 && (state->rdlen % 16) == 0 &&
-            state->tdh < state->tdlen / 16 && state->rdt < state->rdlen / 16) {
+            ring_ready(state)) {
             uint8_t tx[16]; uint64_t desc = state->tdbal + (uint64_t)state->tdh * 16;
             if (state->host.dma_read(state->host.opaque, desc, tx, sizeof(tx)) == 0) {
                 uint64_t buf; uint16_t len; memcpy(&buf, tx, 8); memcpy(&len, tx + 8, 2);

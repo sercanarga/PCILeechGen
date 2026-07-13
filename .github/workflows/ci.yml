@@ -42,6 +42,28 @@ jobs:
       - name: Run tests
         run: go test -race ./...
 
+      - name: Go race summary
+        run: go test -race ./internal/firmware/nvme ./internal/firmware/svgen
+
+      - name: ShellCheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+          shellcheck --version
+          shellcheck tests/cocotb/generate_all.sh vfio-user/guest/init vfio-user/guest/probe.sh
+
+      - name: Clang-Tidy behavior sources
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-tidy libcmocka-dev libjson-c-dev libssl-dev
+          clang-tidy --version
+          cflags="-D_GNU_SOURCE -std=c11 -I vfio-user/include -I/usr/local/include $(pkg-config --cflags cmocka json-c openssl)"
+          clang-tidy vfio-user/src/behavior_ahci.c vfio-user/src/behavior_ethernet.c \
+            vfio-user/src/behavior_gpu.c vfio-user/src/behavior_hda.c \
+            vfio-user/src/behavior_nvme.c vfio-user/src/behavior_static.c \
+            vfio-user/src/behavior_xhci.c \
+            -checks='-*,clang-analyzer-*' -- $cflags
+
   hdl-lint:
     name: HDL Lint (Verilator)
     runs-on: ubuntu-latest
@@ -95,4 +117,9 @@ jobs:
           tests/cocotb/generate_all.sh
 
       - name: Run VFIO-user tests
-        run: make -C vfio-user clean test
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: |
+          make -C vfio-user clean test
+          make -C vfio-user clean test SANITIZE='-fsanitize=address,undefined -fno-omit-frame-pointer'

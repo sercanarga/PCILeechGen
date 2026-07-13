@@ -57,3 +57,13 @@ fix: recheck BIOS + Windows settings; compare to a known-good firmware.
 Note (not a bug): xHCI (USB) emulation is partial.
 Clones enumerate, but host read/write + doorbell gaps remain, so USBXHCI often
 hits Code 10 (e.g. VIA VL805). Targeted this cycle.
+
+Validation boundary: generated HDL lint is a structural check, not firmware
+proof. A passing lint cell does not validate Vivado timing, board pinout, or a
+device's runtime protocol.
+
+Parameter matrix: DSTRD, BAR sizing, and MSI-X table/PBA placement must be
+validated from the acquisition manifest before claiming a device is usable.
+Missing donor register traces or firmware/VBIOS payloads are blockers; do not
+replace them with synthetic binary data. Use `HDL_LINT_REPORT=path.tsv
+make hdl-lint` to retain a machine-readable fixture/board result report.

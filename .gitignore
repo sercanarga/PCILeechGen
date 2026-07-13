@@ -47,6 +47,7 @@ tests/cocotb/out/
 tests/cocotb/out_*/
 tests/cocotb/sim_build/
 results.xml
+hdl-lint-report.tsv
 __pycache__/
 *.pyc
 .pytest_cache/

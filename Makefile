@@ -29,6 +29,7 @@ lint:
 # Clean build artifacts
 clean:
 	rm -rf $(BUILD_DIR)
+	rm -f hdl-lint-report.tsv
 	rm -f coverage.out coverage.html
 	rm -f PCILeechGen-EarlyAccess-*.zip
 
