@@ -108,7 +108,7 @@ test-valgrind:
 	@if ! command -v valgrind >/dev/null 2>&1; then \
 		echo 'valgrind not installed; skipping optional memory check'; \
 	else \
-		$(MAKE) clean test && \
+		$(MAKE) clean test SANITIZE= && \
 		valgrind --leak-check=full --error-exitcode=1 ./build/test_device_model && \
 		valgrind --leak-check=full --error-exitcode=1 ./build/test_behavior_nvme && \
 		valgrind --leak-check=full --error-exitcode=1 ./build/test_behavior_hda && \
