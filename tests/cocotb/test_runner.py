@@ -305,6 +305,7 @@ class SourceContractTests(unittest.TestCase):
         self.assertNotIn("MODULE ?=", source)
         self.assertIn("COCOTB_TEST_MODULES", source)
         self.assertIn("PYTHONPATH := $(COCOTB_TEST_DIR)", source)
+        self.assertNotIn("override export PYTHONPATH", source)
         self.assertIn("COCOTB_RESULTS_FILE", source)
         self.assertIn("prepare-config", source)
 
@@ -315,6 +316,7 @@ class SourceContractTests(unittest.TestCase):
         self.assertNotIn("rm -rf", source)
         self.assertNotIn("tests/cocotb/out_", source)
         self.assertNotIn(">/dev/null 2>&1", source)
+        self.assertIn("--skip-vivado --force", source)
 
     def test_requirements_are_pinned(self) -> None:
         requirements = (TEST_DIR / "requirements.txt").read_text(encoding="utf-8").splitlines()

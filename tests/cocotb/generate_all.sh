@@ -63,7 +63,10 @@ for name in nvme audio xhci multibar ethernet wifi sata gpu thunderbolt generic;
   [ ! -e "$output" ] || { echo "fixture output already exists: $output" >&2; exit 2; }
 
   echo "generating $name ($board)"
-  "$generator" build --from-json "$fixture" --board "$board" --skip-vivado \
+  # The committed matrix deliberately includes real donor BARs larger than
+  # the compact PCIeSquirrel BRAM. These are behavioral RTL fixtures, so use
+  # the same explicit forced-generation policy as the VFIO fixture matrix.
+  "$generator" build --from-json "$fixture" --board "$board" --skip-vivado --force \
     --output "$output"
   "$generator" verify-manifest --manifest "$output/build_manifest.json" \
     --output-dir "$output"

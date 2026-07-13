@@ -16,7 +16,10 @@ RTL += $(foreach f,$(SRC_NEEDED),$(wildcard $(FIXTURE_DIR)/src/$(f)))
 VERILOG_SOURCES := $(RTL) $(COCOTB_TEST_DIR)/cocotb_stubs.sv $(COCOTB_TEST_DIR)/$(TB_TOP).sv
 TOPLEVEL := tb_top
 EXTRA_ARGS += -Wno-fatal -I$(FIXTURE_DIR) -I$(FIXTURE_DIR)/src --timing
-override export PYTHONPATH := $(COCOTB_TEST_DIR)
+# The Cocotb simulator embeds Python and imports test modules from this path.
+# `override export` is parsed by GNU Make as an override directive rather than
+# a variable assignment here; use the standard export assignment form.
+export PYTHONPATH := $(COCOTB_TEST_DIR)
 
 ifndef COCOTB_MAKEFILES
 $(error COCOTB_MAKEFILES must point to the active virtualenv's cocotb makefiles)
