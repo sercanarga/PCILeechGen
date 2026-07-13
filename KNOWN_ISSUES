@@ -84,6 +84,26 @@ order:
 The generated HDL lint result alone does not prove Windows driver
 compatibility, Vivado timing, board pinout, or firmware protocol correctness.
 
+## Windows Code 28: driver not installed
+
+Code 28 is normally a driver-selection or package problem, not a BAR runtime
+failure. Check the device's complete PCI hardware IDs against the driver's INF
+Models section, including `VEN`, `DEV`, `SUBSYS`, `REV`, and class-specific IDs.
+Also verify that the INF's referenced SYS/CAT/Include files exist, the target
+Windows architecture is covered, and the package is staged in the Driver Store.
+
+For an offline fixture check, run:
+
+```text
+python3 tools/check_inf_compat.py \
+  --model tests/cocotb/out_nvme/device_model.json \
+  --inf path/to/vendor-driver.inf
+```
+
+The checker returns `pass` for a matching hardware/compatible ID, `fail` for
+an installed INF with no match, and `blocked` when the model or INF is absent.
+Do not interpret a `blocked` result as firmware validation.
+
 ## Fixture and manifest requirements
 
 Every donor fixture must have a generated `device_model.json` and manifest with
