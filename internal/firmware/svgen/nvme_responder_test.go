@@ -136,8 +136,9 @@ func TestGenerateNVMeResponderSV_VendorDiagnosticLog(t *testing.T) {
 	for _, want := range []string{
 		"LOG_PAGE_VENDOR    = 8'hC0",
 		"8'd48: log_page_word = 32'h00000001",
-		"8'd0: log_page_word = 32'h454C4350",
-		"8'd6: log_page_word = 32'h0000003F",
+		"8'd0: log_page_word = 32'h444D564E",
+		"8'd18: log_page_word = stat_flush_cmds[31:0]",
+		"8'd45: log_page_word = {31'h0, feat_write_cache[0]}",
 	} {
 		if !strings.Contains(result, want) {
 			t.Errorf("vendor diagnostic log should contain %q", want)

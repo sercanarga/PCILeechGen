@@ -271,10 +271,10 @@ static void completes_vendor_log_page(void **state)
     assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x1000,
                                               &tail, sizeof(tail)), 4);
     assert_int_equal(fixture->behavior.service(fixture->behavior.state), 0);
-    assert_int_equal(host.memory[0x3ff0], 'P');
-    assert_int_equal(host.memory[0x3ff1], 'C');
-    assert_int_equal(host.memory[0x3ff2], 'L');
-    assert_int_equal(host.memory[0x3ff3], 'E');
+    assert_int_equal(host.memory[0x3ff0], 'N');
+    assert_int_equal(host.memory[0x3ff1], 'V');
+    assert_int_equal(host.memory[0x3ff2], 'M');
+    assert_int_equal(host.memory[0x3ff3], 'D');
     assert_int_equal(cq->status, 1);
 }
 

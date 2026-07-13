@@ -242,9 +242,9 @@ static int dma_prp(struct nvme_state *state, const struct nvme_sqe *sqe,
 
 
 static int write_prps(struct nvme_state *state, const struct nvme_sqe *sqe,
-                      const uint8_t *data, size_t length)
+                      uint8_t *data, size_t length)
 {
-    return dma_prp(state, sqe, (uint8_t *)data, length, true);
+    return dma_prp(state, sqe, data, length, true);
 }
 
 static int read_prps(struct nvme_state *state, const struct nvme_sqe *sqe,
@@ -283,12 +283,15 @@ static void fill_log_page(const struct nvme_state *state, uint8_t page,
         memcpy(data + 8, "1.0     ", 8);
         break;
     case 0xc0:
-        put32(data, 0, 0x454c4350); /* PCLE */
-        put32(data, 4, 0x00010000);
-        put32(data, 8, 0x00002000); /* 32 KiB MDTS */
-        put32(data, 12, NVME_NAMESPACE_LBAS * NVME_LBA_BYTES / 4);
-        put32(data, 16, 0x0000003f);
-        put32(data, 28, ((uint32_t)state->model->device_id << 16) |
+        put32(data, 0, 0x444d564e); /* NVMD */
+        put32(data, 4, 0x00000002);
+        put32(data, 8, NVME_NAMESPACE_LBAS);
+        put32(data, 12, 0x00002000); /* 32 KiB MDTS */
+        put64(data, 32, state->data_units_read);
+        put64(data, 40, state->data_units_written);
+        put32(data, 176, state->power_cycles);
+        put32(data, 180, 0);
+        put32(data, 184, ((uint32_t)state->model->device_id << 16) |
                          state->model->vendor_id);
         break;
     default:

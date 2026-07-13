@@ -538,14 +538,30 @@ module pcileech_nvme_admin_responder #(
                 end
                 LOG_PAGE_VENDOR: begin
                     case (dw_index[7:0])
-                        8'd0: log_page_word = 32'h454C4350; // "PCLE".
-                        8'd1: log_page_word = 32'h00010000; // format version 1.
-                        8'd2: log_page_word = {8'h00, 8'h20, 16'h2000}; // MDTS 32 KiB.
-                        8'd3: log_page_word = 32'd{{ .NVMeDiskWords }};
-                        8'd4: log_page_word = 32'h{{ if gt .NVMeAdvertisedLBAs 0 }}{{ lo32 .NVMeAdvertisedLBAs }}{{ else }}7730B0F0{{ end }};
-                        8'd5: log_page_word = 32'h{{ if gt .NVMeAdvertisedLBAs 0 }}{{ hi32 .NVMeAdvertisedLBAs }}{{ else }}00000000{{ end }};
-                        8'd6: log_page_word = 32'h0000003F; // Identify, logs, I/O, DSM, format, and zeroes.
-                        8'd7: log_page_word = {16'h{{ hex04 .DeviceIDs.DeviceID }}, 16'h{{ hex04 .DeviceIDs.VendorID }}};
+                        8'd0: log_page_word = 32'h444D564E; // "NVMD".
+                        8'd1: log_page_word = 32'h00000002; // format version 2.
+                        8'd2: log_page_word = 32'h{{ if gt .NVMeAdvertisedLBAs 0 }}{{ lo32 .NVMeAdvertisedLBAs }}{{ else }}7730B0F0{{ end }};
+                        8'd3: log_page_word = {8'h00, 8'h20, 8'h00, 8'h20}; // PRP/list profile, 32 KiB MDTS.
+                        8'd4: log_page_word = 32'h00002000; // MAX_XFER_DW.
+                        8'd5: log_page_word = 32'h00000000; // transport timeout profile.
+                        8'd6: log_page_word = 32'h00000000; // transport clock profile.
+                        8'd8: log_page_word = stat_data_units_read[31:0];
+                        8'd9: log_page_word = stat_data_units_read[63:32];
+                        8'd10: log_page_word = stat_data_units_written[31:0];
+                        8'd11: log_page_word = stat_data_units_written[63:32];
+                        8'd18: log_page_word = stat_flush_cmds[31:0];
+                        8'd19: log_page_word = stat_flush_cmds[63:32];
+                        8'd20: log_page_word = stat_dataset_cmds[31:0];
+                        8'd21: log_page_word = stat_dataset_cmds[63:32];
+                        8'd22: log_page_word = stat_write_zero_cmds[31:0];
+                        8'd23: log_page_word = stat_write_zero_cmds[63:32];
+                        8'd24: log_page_word = 32'h00000000; // format count.
+                        8'd25: log_page_word = 32'h00000000;
+                        8'd32: log_page_word = stat_cmds_completed;
+                        8'd33: log_page_word = stat_media_errors;
+                        8'd44: log_page_word = power_cycle_count;
+                        8'd45: log_page_word = {31'h0, feat_write_cache[0]};
+                        8'd46: log_page_word = {16'h{{ hex04 .DeviceIDs.DeviceID }}, 16'h{{ hex04 .DeviceIDs.VendorID }}};
                         default: log_page_word = 32'h00000000;
                     endcase
                 end
