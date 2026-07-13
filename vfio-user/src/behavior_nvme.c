@@ -51,6 +51,12 @@ struct nvme_state {
     uint32_t unsafe_shutdowns;
     uint32_t power_cycles;
     uint32_t power_on_hours;
+    uint32_t feat_arbitration;
+    uint32_t feat_power_mgmt;
+    uint32_t feat_temp_threshold;
+    uint32_t feat_write_cache;
+    uint32_t feat_irq_coalescing;
+    uint32_t feat_async_event_cfg;
 };
 
 struct nvme_sqe {
@@ -415,8 +421,28 @@ static int process_admin(struct nvme_state *state, uint16_t tail)
                 feature != 0x06 && feature != 0x07 && feature != 0x08 &&
                 feature != 0x09 && feature != 0x0a && feature != 0x0b) {
                 status = 2;
-            } else if (sqe.opcode == 0x0a && feature == 0x07) {
-                result = state->io_sq_created ? 0x00010001u : 0;
+            } else if (sqe.opcode == 0x09) {
+                switch (feature) {
+                case 0x01: state->feat_arbitration = sqe.cdw11; break;
+                case 0x02: state->feat_power_mgmt = sqe.cdw11; break;
+                case 0x04: state->feat_temp_threshold = sqe.cdw11; break;
+                case 0x06: state->feat_write_cache = sqe.cdw11; break;
+                case 0x08: state->feat_irq_coalescing = sqe.cdw11; break;
+                case 0x0b: state->feat_async_event_cfg = sqe.cdw11; break;
+                case 0x07: break;
+                default: break;
+                }
+            } else {
+                switch (feature) {
+                case 0x01: result = state->feat_arbitration; break;
+                case 0x02: result = state->feat_power_mgmt; break;
+                case 0x04: result = state->feat_temp_threshold; break;
+                case 0x06: result = state->feat_write_cache; break;
+                case 0x07: result = state->io_sq_created ? 0x00010001u : 0; break;
+                case 0x08: result = state->feat_irq_coalescing; break;
+                case 0x0b: result = state->feat_async_event_cfg; break;
+                default: result = 0; break;
+                }
             }
         } else if (sqe.opcode == 0x80) {
             if (sqe.nsid != 1 || sqe.cdw10 != 0) {
