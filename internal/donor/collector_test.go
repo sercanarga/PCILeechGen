@@ -7,6 +7,21 @@ import (
 	"github.com/sercanarga/pcileechgen/internal/pci"
 )
 
+func TestCollectorDefaultsToReadOnly(t *testing.T) {
+	collector := NewCollector()
+	if collector.options.AllowStateChanges || collector.options.ProfileBARs {
+		t.Fatalf("unsafe collector defaults: %+v", collector.options)
+	}
+}
+
+func TestCollectorBARProfilingRequiresStateChangeConsent(t *testing.T) {
+	collector := NewCollectorWithOptions(CollectorOptions{ProfileBARs: true})
+	_, err := collector.Collect(pci.BDF{})
+	if err == nil || !strings.Contains(err.Error(), "requires explicit permission") {
+		t.Fatalf("Collect error = %v, want explicit consent error", err)
+	}
+}
+
 func TestIsAllFF(t *testing.T) {
 	tests := []struct {
 		name string

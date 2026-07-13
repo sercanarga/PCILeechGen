@@ -15,18 +15,20 @@ import (
 
 // buildFlags groups all build command flags.
 type buildFlags struct {
-	bdf           string
-	board         string
-	vivadoPath    string
-	output        string
-	skipVivado    bool
-	jobs          int
-	timeout       int
-	libDir        string
-	fromJSON      string
-	stockBar      bool
-	behaviorRules string
-	force         bool
+	bdf               string
+	board             string
+	vivadoPath        string
+	output            string
+	skipVivado        bool
+	jobs              int
+	timeout           int
+	libDir            string
+	fromJSON          string
+	stockBar          bool
+	behaviorRules     string
+	force             bool
+	allowStateChanges bool
+	profileBARs       bool
 }
 
 var buildOpts buildFlags
@@ -102,6 +104,12 @@ func runBuild(cmd *cobra.Command, args []string) error {
 func loadDonorContext() (*donor.DeviceContext, error) {
 	var ctx *donor.DeviceContext
 	var err error
+	if buildOpts.fromJSON != "" && buildOpts.bdf != "" {
+		return nil, fmt.Errorf("--bdf and --from-json are mutually exclusive")
+	}
+	if buildOpts.profileBARs && !buildOpts.allowStateChanges {
+		return nil, fmt.Errorf("--profile-bars requires --allow-device-state-changes")
+	}
 	if buildOpts.fromJSON != "" {
 		slog.Info("loading device context", "file", buildOpts.fromJSON)
 		ctx, err = donor.LoadContext(buildOpts.fromJSON)
@@ -118,7 +126,16 @@ func loadDonorContext() (*donor.DeviceContext, error) {
 		}
 		slog.Info("target device", "bdf", bdf.String())
 		slog.Info("collecting donor device data")
-		collector := donor.NewCollector()
+		if buildOpts.allowStateChanges {
+			slog.Warn("live donor state changes enabled; collection may bind drivers, change power/command registers, or reset the device")
+		}
+		if buildOpts.profileBARs {
+			slog.Warn("destructive BAR profiling enabled; probe writes may trigger irreversible device side effects")
+		}
+		collector := donor.NewCollectorWithOptions(donor.CollectorOptions{
+			AllowStateChanges: buildOpts.allowStateChanges,
+			ProfileBARs:       buildOpts.profileBARs,
+		})
 		ctx, err = collector.Collect(bdf)
 		if err != nil {
 			return nil, fmt.Errorf("device data collection failed: %w", err)
@@ -173,6 +190,8 @@ func init() {
 	buildCmd.Flags().StringVar(&buildOpts.libDir, "lib-dir", "lib/pcileech-fpga", "path to pcileech-fpga library")
 	buildCmd.Flags().BoolVar(&buildOpts.stockBar, "stock-bar", false, "use stock bar controller (diagnostic: skip custom SV modules)")
 	buildCmd.Flags().BoolVar(&buildOpts.force, "force", false, "ignore donor BAR > board BRAM check")
+	buildCmd.Flags().BoolVar(&buildOpts.allowStateChanges, "allow-device-state-changes", false, "allow live collection to change power state, PCI command, driver binding, or reset the donor")
+	buildCmd.Flags().BoolVar(&buildOpts.profileBARs, "profile-bars", false, "destructively probe live BAR registers (requires --allow-device-state-changes)")
 
 	_ = buildCmd.MarkFlagRequired("board")
 

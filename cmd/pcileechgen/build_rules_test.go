@@ -5,6 +5,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/sercanarga/pcileechgen/internal/donor"
@@ -68,5 +69,23 @@ func TestLoadDonorContext_RejectsInvalidBehaviorRules(t *testing.T) {
 	buildOpts = buildFlags{fromJSON: contextPath, behaviorRules: rulesPath}
 	if _, err := loadDonorContext(); err == nil {
 		t.Fatal("expected unsupported rule schema version to be rejected")
+	}
+}
+
+func TestLoadDonorContextRejectsMutuallyExclusiveSources(t *testing.T) {
+	previous := buildOpts
+	t.Cleanup(func() { buildOpts = previous })
+	buildOpts = buildFlags{bdf: "0000:01:00.0", fromJSON: "context.json"}
+	if _, err := loadDonorContext(); err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("loadDonorContext error = %v", err)
+	}
+}
+
+func TestLoadDonorContextRequiresConsentForBARProfiling(t *testing.T) {
+	previous := buildOpts
+	t.Cleanup(func() { buildOpts = previous })
+	buildOpts = buildFlags{bdf: "0000:01:00.0", profileBARs: true}
+	if _, err := loadDonorContext(); err == nil || !strings.Contains(err.Error(), "requires --allow-device-state-changes") {
+		t.Fatalf("loadDonorContext error = %v", err)
 	}
 }

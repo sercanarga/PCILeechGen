@@ -8,7 +8,7 @@ import (
 
 func TestDeviceContext_NVMeIdentity_RoundTrip(t *testing.T) {
 	cs := pci.NewConfigSpace()
-	cs.Size = 64
+	cs.Size = pci.ConfigSpaceLegacySize
 	cs.WriteU32(0, 0x12345678)
 
 	ctx := &DeviceContext{
@@ -45,7 +45,7 @@ func TestDeviceContext_NVMeIdentity_RoundTrip(t *testing.T) {
 
 func TestDeviceContext_NVMeIdentity_NilOmitted(t *testing.T) {
 	cs := pci.NewConfigSpace()
-	cs.Size = 64
+	cs.Size = pci.ConfigSpaceLegacySize
 	cs.WriteU32(0, 0x12345678)
 
 	ctx := &DeviceContext{ConfigSpace: cs}

@@ -23,23 +23,40 @@ const (
 
 // Collector gathers donor PCI data from sysfs.
 type Collector struct {
-	sysfs *SysfsReader
+	sysfs   *SysfsReader
+	options CollectorOptions
+}
+
+// CollectorOptions controls operations that can alter a live donor. Both
+// options default to false so ordinary collection remains read-only.
+type CollectorOptions struct {
+	AllowStateChanges bool
+	ProfileBARs       bool
 }
 
 func NewCollector() *Collector {
+	return NewCollectorWithOptions(CollectorOptions{})
+}
+
+func NewCollectorWithOptions(options CollectorOptions) *Collector {
 	return &Collector{
-		sysfs: NewSysfsReader(),
+		sysfs:   NewSysfsReader(),
+		options: options,
 	}
 }
 
 // NewCollectorWithSysfs lets tests inject a fake sysfs reader.
 func NewCollectorWithSysfs(sr *SysfsReader) *Collector {
 	return &Collector{
-		sysfs: sr,
+		sysfs:   sr,
+		options: CollectorOptions{},
 	}
 }
 
 func (c *Collector) Collect(bdf pci.BDF) (*DeviceContext, error) {
+	if c.options.ProfileBARs && !c.options.AllowStateChanges {
+		return nil, fmt.Errorf("BAR profiling requires explicit permission for device state changes")
+	}
 	ctx := &DeviceContext{
 		CollectedAt: time.Now(),
 		ToolVersion: version.Version,
@@ -68,10 +85,15 @@ func (c *Collector) Collect(bdf pci.BDF) (*DeviceContext, error) {
 
 	// One shared native-driver visit for the whole Collect() (see runNativeVisit):
 	// the BAR fallback and the NVMe identity capture reuse a single rebind cycle.
-	visit := &nativeVisitCache{bdf: bdf, bars: bars, nvme: isNVMeClass(ctx.Device.ClassCode)}
+	var visit *nativeVisitCache
+	if c.options.AllowStateChanges {
+		visit = &nativeVisitCache{bdf: bdf, bars: bars, nvme: isNVMeClass(ctx.Device.ClassCode)}
+	}
 
 	ctx.BARContents = c.collectBARMemory(bdf, bars, visit)
-	ctx.BARProfiles = c.collectBARProfiles(bdf, bars, ctx.BARContents)
+	if c.options.ProfileBARs {
+		ctx.BARProfiles = c.collectBARProfiles(bdf, bars, ctx.BARContents)
+	}
 	ctx.Capabilities = pci.ParseCapabilities(cs)
 	ctx.ExtCapabilities = pci.ParseExtCapabilities(cs)
 	ctx.MSIXData = c.collectMSIXData(cs, ctx.BARContents)
@@ -453,6 +475,9 @@ func (c *Collector) collectNVMeIdentity(bdf pci.BDF, classCode uint32, vc *nativ
 func (c *Collector) collectConfigSpace(bdf pci.BDF) (*pci.ConfigSpace, error) {
 	cs, err := c.sysfs.ReadConfigSpace(bdf)
 	if err != nil {
+		if !c.options.AllowStateChanges {
+			return nil, fmt.Errorf("config space read failed for %s: %w (VFIO binding requires --allow-device-state-changes)", bdf, err)
+		}
 		slog.Info("sysfs config read failed, trying VFIO", "error", err)
 		if bindErr := vfio.BindToVFIO(bdf.String()); bindErr != nil {
 			return nil, fmt.Errorf("config space read failed for %s (sysfs: %w, VFIO: %w)", bdf, err, bindErr)
@@ -473,19 +498,20 @@ func (c *Collector) collectBARMemory(bdf pci.BDF, bars []pci.BAR, vc *nativeVisi
 
 	contents := make(map[int][]byte)
 
-	// wake device from D3 if needed, otherwise BAR reads return 0xFF
-	if err := vfio.WakeToD0(bdf.String()); err != nil {
-		slog.Warn("could not wake device to D0", "bdf", bdf, "error", err)
+	if c.options.AllowStateChanges {
+		// PMCSR writes are intentionally opt-in; ordinary collection is read-only.
+		if err := vfio.WakeToD0(bdf.String()); err != nil {
+			slog.Warn("could not wake device to D0", "bdf", bdf, "error", err)
+		}
 	}
 
-	// try reading without touching config space first.
-	// works on most devices since BIOS/previous driver left memory space on.
+	// Always try a read-only BAR snapshot first.
 	c.readBARs(bdf, eligible, contents)
-	if !memBARsAllFF(contents, bars) {
+	if !memBARsAllFF(contents, bars) || !c.options.AllowStateChanges {
 		return contents
 	}
 
-	// didn't work, try enabling memory space (vfio-pci clears it on bind).
+	// Explicit consent allows recovery operations that modify donor state.
 	if vfio.IsBoundToVFIO(bdf.String()) {
 		if err := vfio.EnableMemorySpace(bdf.String()); err != nil {
 			slog.Warn("could not enable PCI memory space",
@@ -501,9 +527,8 @@ func (c *Collector) collectBARMemory(bdf pci.BDF, bars []pci.BAR, vc *nativeVisi
 		}
 	}
 
-	// last resort: let the native driver init the device (single shared visit).
-	// avoid VFIO sessions here, session close can trigger FLR.
-	if vfio.IsBoundToVFIO(bdf.String()) {
+	// Last resort after explicit consent: let the native driver initialize it.
+	if vc != nil && vfio.IsBoundToVFIO(bdf.String()) {
 		slog.Info("all memory BAR contents are 0xFF, attempting native driver visit")
 		res, vErr := c.runNativeVisit(vc)
 		if vErr != nil {

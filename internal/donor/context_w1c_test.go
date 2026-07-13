@@ -12,6 +12,7 @@ func TestDeviceContext_W1CMaskRoundTrip(t *testing.T) {
 	ctx := &DeviceContext{
 		CollectedAt: time.Now(),
 		ConfigSpace: pci.NewConfigSpace(),
+		BARs:        []pci.BAR{{Index: 0, Type: pci.BARTypeMem32, Size: 4096}},
 		BARProfiles: map[int]*BARProfile{
 			0: {BarIndex: 0, Size: 4096, Probes: []BARProbeResult{
 				{Offset: 0x10, Original: 0x000000FF, RWMask: 0x000000FF, W1CMask: 0x00000010, MaybeRW1C: true},
