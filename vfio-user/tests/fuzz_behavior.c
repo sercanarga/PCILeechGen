@@ -90,8 +90,14 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     }
 
 done:
-    if (nvme != NULL) nvme->destroy(nvme->state);
-    if (ethernet != NULL) ethernet->destroy(ethernet->state);
+    if (nvme != NULL) {
+        nvme->destroy(nvme->state);
+        free(nvme);
+    }
+    if (ethernet != NULL) {
+        ethernet->destroy(ethernet->state);
+        free(ethernet);
+    }
     device_model_free(nvme_model);
     device_model_free(ethernet_model);
     return 0;
