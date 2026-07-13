@@ -1,0 +1,6 @@
+# json-c 0.19 on macOS leaves parsed nested JSON tree allocations reachable
+# after json_object_put(root); this applies only to the external parser frame.
+leak:json_tokener_parse_ex
+
+# LLVM 22's macOS libFuzzer runtime retains its RSS monitor thread at exit.
+leak:StartRssThread

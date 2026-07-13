@@ -7,6 +7,8 @@
 # Build output
 pcileech_datastore/
 *.bin
+!vfio-user/tests/fuzz-corpus/
+!vfio-user/tests/fuzz-corpus/*.bin
 *.bit
 *.json
 !internal/board/boards.json
