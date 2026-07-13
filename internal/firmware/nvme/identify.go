@@ -17,7 +17,8 @@ type IdentifyData struct {
 	Namespace  [4096]byte // CNS=0, NSID=1
 }
 
-// ControllerIdentity holds donor-captured NVMe controller strings; empty fields fall back to synthesis.
+// ControllerIdentity holds donor-captured NVMe controller strings. Empty fields
+// use neutral values because a PCI ID is not enough to identify a drive model.
 type ControllerIdentity struct {
 	Serial string
 	Model  string
@@ -105,7 +106,7 @@ func buildIdentifyController(ids firmware.DeviceIDs, barData []byte, identity *C
 		mn = strings.TrimSpace(identity.Model)
 	}
 	if mn == "" {
-		mn = modelNumberForVendor(ids.VendorID)
+		mn = modelNumberForDevice(ids)
 	}
 	copy(data[0x018:0x040], padASCII(mn, 40))
 
@@ -115,14 +116,14 @@ func buildIdentifyController(ids firmware.DeviceIDs, barData []byte, identity *C
 		fr = strings.TrimSpace(identity.FWRev)
 	}
 	if fr == "" {
-		fr = firmwareRevisionForVendor(ids.VendorID)
+		fr = "1.0"
 	}
 	copy(data[0x040:0x048], padASCII(fr, 8))
 
 	data[0x048] = 6 // RAB
 
 	// IEEE OUI
-	oui := ouiForVendor(ids.VendorID)
+	oui := [3]byte{}
 	data[0x049] = oui[2]
 	data[0x04A] = oui[1]
 	data[0x04B] = oui[0]
@@ -215,7 +216,7 @@ func buildIdentifyNamespace(barData []byte) [4096]byte {
 
 // generateSerialNumber creates a vendor-prefixed random serial.
 func generateSerialNumber(ids firmware.DeviceIDs) string {
-	prefix := vendorSNPrefix(ids.VendorID)
+	prefix := vendorSNPrefix()
 	const chars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 	buf := make([]byte, 12)
 	randBytes := make([]byte, 12)
@@ -226,84 +227,12 @@ func generateSerialNumber(ids firmware.DeviceIDs) string {
 	return prefix + string(buf)
 }
 
-func vendorSNPrefix(vid uint16) string {
-	switch vid {
-	case 0x144D:
-		return "S6PXNG0T"
-	case 0x1179:
-		return "Y9SF7"
-	case 0x1987:
-		return "PHS"
-	case 0x15B7:
-		return "WD-"
-	case 0x1C5C:
-		return "SKH"
-	case 0x8086:
-		return "BTLH"
-	case 0x1E0F:
-		return "KX"
-	default:
-		return "NVME"
-	}
+func vendorSNPrefix() string {
+	return "NVME"
 }
 
-func modelNumberForVendor(vid uint16) string {
-	switch vid {
-	case 0x144D:
-		return "Samsung SSD 980 PRO 1TB"
-	case 0x1179:
-		return "TOSHIBA KXG60ZNV1T02"
-	case 0x1987:
-		return "Sabrent Rocket 4.0 1TB"
-	case 0x15B7:
-		return "WD Black SN850X 1TB"
-	case 0x1C5C:
-		return "SK hynix PC801 NVMe 1TB"
-	case 0x8086:
-		return "Intel SSD 670p 1TB"
-	case 0x1E0F:
-		return "KIOXIA EXCERIA PRO 1TB"
-	case 0x126F:
-		return "NVMe SSD 1TB"
-	default:
-		return "NVMe SSD Drive 1TB"
-	}
-}
-
-func ouiForVendor(vid uint16) [3]byte {
-	switch vid {
-	case 0x144D:
-		return [3]byte{0x00, 0x25, 0x38}
-	case 0x8086:
-		return [3]byte{0x5C, 0xD2, 0xE4}
-	case 0x15B7:
-		return [3]byte{0x00, 0x1B, 0x44}
-	case 0x1C5C:
-		return [3]byte{0xAC, 0xE4, 0x2E}
-	default:
-		return [3]byte{0x00, 0x00, 0x00}
-	}
-}
-
-func firmwareRevisionForVendor(vid uint16) string {
-	switch vid {
-	case 0x144D:
-		return "5B2QGXA7"
-	case 0x1179:
-		return "ADHA0101"
-	case 0x1987:
-		return "RKT4CB.2"
-	case 0x15B7:
-		return "620311WD"
-	case 0x1C5C:
-		return "41062C20"
-	case 0x8086:
-		return "002C"
-	case 0x1E0F:
-		return "1102"
-	default:
-		return "1.0"
-	}
+func modelNumberForDevice(ids firmware.DeviceIDs) string {
+	return fmt.Sprintf("PCILeechGen NVMe %04X:%04X", ids.VendorID, ids.DeviceID)
 }
 
 func padASCII(s string, n int) []byte {

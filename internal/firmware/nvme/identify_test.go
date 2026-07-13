@@ -211,13 +211,23 @@ func TestPadASCII(t *testing.T) {
 	}
 }
 
-func TestIdentifyController_Samsung_MN(t *testing.T) {
+func TestIdentifyController_MissingIdentityIsNeutral(t *testing.T) {
 	ids := sampleIDs()
 	ids.VendorID = 0x144D
 	id := BuildIdentifyData(ids, nil, nil)
 	mn := string(id.Controller[0x018:0x040])
-	if mn[:7] != "Samsung" {
-		t.Errorf("Samsung VID should produce Samsung MN, got: %q", mn)
+	if strings.Contains(mn, "Samsung") {
+		t.Errorf("missing donor identity must not claim Samsung, got: %q", mn)
+	}
+	if !strings.HasPrefix(mn, "PCILeechGen NVMe 144D:") {
+		t.Errorf("missing donor identity should use neutral model, got: %q", mn)
+	}
+	sn := string(id.Controller[0x004:0x018])
+	if strings.HasPrefix(sn, "S6PXNG0T") {
+		t.Errorf("missing donor identity must not use Samsung serial prefix, got: %q", sn)
+	}
+	if got := trimCtrlString(id.Controller[0x040:0x048]); got != "1.0" {
+		t.Errorf("missing donor identity should use neutral firmware revision, got: %q", got)
 	}
 }
 
@@ -273,8 +283,8 @@ func TestBuildIdentifyData_NilIdentityFallsBackToSynthesis(t *testing.T) {
 	id := BuildIdentifyData(ids, nil, nil)
 
 	mn := trimCtrlString(id.Controller[0x18:0x40])
-	if !strings.HasPrefix(mn, "Samsung") {
-		t.Errorf("nil identity should fall back to Samsung MN, got %q", mn)
+	if strings.Contains(mn, "Samsung") {
+		t.Errorf("nil identity must not fall back to Samsung MN, got %q", mn)
 	}
 }
 
@@ -291,8 +301,8 @@ func TestBuildIdentifyData_PartialCapturedIdentityFallsBackPerField(t *testing.T
 		t.Errorf("SN: got %q, want REALSERIAL", sn)
 	}
 	mn := trimCtrlString(id.Controller[0x18:0x40])
-	if !strings.HasPrefix(mn, "Samsung") {
-		t.Errorf("empty Model should fall back to synthesized Samsung MN, got %q", mn)
+	if !strings.HasPrefix(mn, "PCILeechGen NVMe 144D:") {
+		t.Errorf("empty Model should fall back to neutral model, got %q", mn)
 	}
 }
 
