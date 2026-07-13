@@ -778,6 +778,7 @@ func extractHDLThroughAlways(t *testing.T, source, start, always string) string 
 
 func extractHDLBlock(t *testing.T, source, start, end string) string {
 	t.Helper()
+	source = strings.ReplaceAll(source, string([]byte{13, 10}), string([]byte{10}))
 	startIndex := strings.Index(source, start)
 	if startIndex < 0 {
 		t.Fatalf("start marker missing: %s", start)

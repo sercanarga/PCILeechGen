@@ -187,7 +187,8 @@ int behavior_create(const struct device_model *model,
     if (model->class_code == 0x0c0330) {
         return behavior_xhci_create(model, out, err, err_len);
     }
-    if (model->class_code == 0x020000) {
+    if (model->class_code == 0x020000 &&
+        model->vendor_id == 0x8086 && model->device_id == 0x15b7) {
         return behavior_ethernet_create(model, out, err, err_len);
     }
     return behavior_static_create(model, out, err, err_len);

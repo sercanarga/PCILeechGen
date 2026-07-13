@@ -1,6 +1,7 @@
 package output
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -11,6 +12,7 @@ import (
 	"github.com/sercanarga/pcileechgen/internal/board"
 	"github.com/sercanarga/pcileechgen/internal/donor"
 	"github.com/sercanarga/pcileechgen/internal/firmware"
+	"github.com/sercanarga/pcileechgen/internal/firmware/devclass"
 	"github.com/sercanarga/pcileechgen/internal/firmware/devicemodel"
 	"github.com/sercanarga/pcileechgen/internal/firmware/nvme"
 	"github.com/sercanarga/pcileechgen/internal/firmware/svgen"
@@ -148,6 +150,7 @@ endmodule`,
 	for _, name := range []string{
 		"device_context.json",
 		"device_model.json",
+		"emulation_report.json",
 		"pcileech_cfgspace.coe",
 		"vivado_generate_project.tcl",
 		"build_manifest.json",
@@ -155,6 +158,17 @@ endmodule`,
 		if _, werr := os.Stat(filepath.Join(outDir, name)); werr != nil {
 			t.Errorf("WriteAll did not produce %s: %v", name, werr)
 		}
+	}
+	reportData, err := os.ReadFile(filepath.Join(outDir, "emulation_report.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report emulationReport
+	if err := json.Unmarshal(reportData, &report); err != nil {
+		t.Fatalf("WriteAll emulation report is invalid: %v", err)
+	}
+	if !report.StockBAR || report.Support.Level != devclass.EmulationIdentity {
+		t.Fatalf("stock BAR report overstates support: %+v", report)
 	}
 	data, err := os.ReadFile(filepath.Join(outDir, "device_model.json"))
 	if err != nil {

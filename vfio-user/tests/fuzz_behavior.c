@@ -82,10 +82,10 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
         nvme->write(nvme->state, 0, 0x1000, &value, 4);
     } else {
         uint64_t ring = 0x3000;
-        ethernet->write(ethernet->state, 0, 0x280, &ring, 4);
-        ethernet->write(ethernet->state, 0, 0x380, &ring, 4);
-        ethernet->write(ethernet->state, 0, 0x288, &value, 4);
-        ethernet->write(ethernet->state, 0, 0x388, &value, 4);
+        ethernet->write(ethernet->state, 0, 0x2800, &ring, 4);
+        ethernet->write(ethernet->state, 0, 0x3800, &ring, 4);
+        ethernet->write(ethernet->state, 0, 0x2808, &value, 4);
+        ethernet->write(ethernet->state, 0, 0x3808, &value, 4);
         ethernet->write(ethernet->state, 0, 0x3818, &value, 4);
     }
 

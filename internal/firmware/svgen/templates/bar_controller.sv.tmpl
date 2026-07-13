@@ -391,6 +391,75 @@ module pcileech_tlps128_bar_controller(
     assign in_is_wr_ready = wrengine_ready;
 {{ end }}
 
+{{ if .EthernetDMA }}
+    pcileech_ethernet_dma_engine i_ethernet_dma_engine(
+        .rst            ( device_reset                  ),
+        .clk            ( clk                           ),
+        .dma_enabled    ( dma_enabled                   ),
+        .rdbal          ( eth_rdbal                     ),
+        .rdlen          ( eth_rdlen                     ),
+        .rdh            ( eth_rdh                       ),
+        .rdt            ( eth_rdt                       ),
+        .rdt_value      ( eth_rdt_value                 ),
+        .rdt_write      ( eth_rdt_write                 ),
+        .tdbal          ( eth_tdbal                     ),
+        .tdlen          ( eth_tdlen                     ),
+        .tdh            ( eth_tdh                       ),
+        .tdt            ( eth_tdt                       ),
+        .tdt_value      ( eth_tdt_value                 ),
+        .tdt_write      ( eth_tdt_write                 ),
+        .rdh_valid      ( eth_rdh_valid                 ),
+        .rdh_value      ( eth_rdh_value                 ),
+        .tdh_valid      ( eth_tdh_valid                 ),
+        .tdh_value      ( eth_tdh_value                 ),
+        .icr_cause      ( eth_icr_cause                 ),
+        .dma_rd_req     ( eth_dma_rd_req                ),
+        .dma_rd_addr    ( eth_dma_rd_addr               ),
+        .dma_rd_len     ( eth_dma_rd_len                ),
+        .dma_rd_valid   ( eth_dma_rd_valid              ),
+        .dma_rd_data    ( eth_dma_rd_data               ),
+        .dma_rd_done    ( eth_dma_rd_done               ),
+        .dma_rd_error   ( eth_dma_rd_error              ),
+        .dma_wr_req     ( eth_dma_wr_req                ),
+        .dma_wr_addr    ( eth_dma_wr_addr               ),
+        .dma_wr_data    ( eth_dma_wr_data               ),
+        .dma_wr_be      ( eth_dma_wr_be                 ),
+        .dma_wr_valid   ( eth_dma_wr_valid              ),
+        .dma_wr_done    ( eth_dma_wr_done               )
+    );
+
+    pcileech_ethernet_dma_bridge i_ethernet_dma_bridge(
+        .rst            ( device_reset                  ),
+        .clk            ( clk                           ),
+        .dma_enabled    ( dma_enabled                   ),
+        .pcie_id        ( pcie_id                       ),
+        .dma_wr_req     ( eth_dma_wr_req                ),
+        .dma_wr_addr    ( eth_dma_wr_addr               ),
+        .dma_wr_data    ( eth_dma_wr_data               ),
+        .dma_wr_be      ( eth_dma_wr_be                 ),
+        .dma_wr_valid   ( eth_dma_wr_valid              ),
+        .dma_wr_done    ( eth_dma_wr_done               ),
+        .dma_rd_req     ( eth_dma_rd_req                ),
+        .dma_rd_addr    ( eth_dma_rd_addr               ),
+        .dma_rd_len     ( eth_dma_rd_len                ),
+        .dma_rd_valid   ( eth_dma_rd_valid              ),
+        .dma_rd_data    ( eth_dma_rd_data               ),
+        .dma_rd_done    ( eth_dma_rd_done               ),
+        .dma_rd_error   ( eth_dma_rd_error              ),
+        .tlp_tx_tdata   ( eth_tlp_tx_tdata              ),
+        .tlp_tx_tkeepdw ( eth_tlp_tx_tkeepdw            ),
+        .tlp_tx_tvalid  ( eth_tlp_tx_tvalid             ),
+        .tlp_tx_tlast   ( eth_tlp_tx_tlast              ),
+        .tlp_tx_tuser   ( eth_tlp_tx_tuser              ),
+        .tlp_tx_tready  ( eth_tlp_tx_tready             ),
+        .tlp_rx_tdata   ( tlps_in.tdata                 ),
+        .tlp_rx_tkeepdw ( tlps_in.tkeepdw               ),
+        .tlp_rx_tvalid  ( tlps_in.tvalid                ),
+        .tlp_rx_tuser   ( tlps_in.tuser                 ),
+        .dbg_status     (                               )
+    );
+{{ end }}
+
 {{ if .LatencyConfig }}
     // BAR0 raw response wires (before latency emulation)
     wire [87:0] bar0_raw_ctx;
@@ -557,6 +626,40 @@ module pcileech_tlps128_bar_controller(
     assign nvme_msix_vector_masked = 1'b1;
 {{ end }}{{ end }}
 
+{{ if .EthernetDMA }}
+    wire [63:0] eth_rdbal;
+    wire [31:0] eth_rdlen, eth_rdh, eth_rdt;
+    wire [63:0] eth_tdbal;
+    wire [31:0] eth_tdlen, eth_tdh, eth_tdt;
+    wire        eth_rdt_write, eth_tdt_write;
+    wire [31:0] eth_rdt_value, eth_tdt_value;
+    wire        eth_rdh_valid;
+    wire [31:0] eth_rdh_value;
+    wire        eth_tdh_valid;
+    wire [31:0] eth_tdh_value;
+    wire [31:0] eth_icr_cause;
+    wire        eth_irq_event;
+    wire        eth_dma_rd_req;
+    wire [63:0] eth_dma_rd_addr;
+    wire [9:0]  eth_dma_rd_len;
+    wire        eth_dma_rd_valid;
+    wire [31:0] eth_dma_rd_data;
+    wire        eth_dma_rd_done;
+    wire        eth_dma_rd_error;
+    wire        eth_dma_wr_req;
+    wire [63:0] eth_dma_wr_addr;
+    wire [31:0] eth_dma_wr_data;
+    wire [3:0]  eth_dma_wr_be;
+    wire        eth_dma_wr_valid;
+    wire        eth_dma_wr_done;
+    wire [127:0] eth_tlp_tx_tdata;
+    wire [3:0]   eth_tlp_tx_tkeepdw;
+    wire         eth_tlp_tx_tvalid;
+    wire         eth_tlp_tx_tlast;
+    wire [8:0]   eth_tlp_tx_tuser;
+    wire         eth_tlp_tx_tready;
+{{ end }}
+
 
 {{ range .BARSlots }}
     assign bar_rsp_ctx[{{ .BIR }}]   = bar_base_ctx[{{ .BIR }}];
@@ -647,6 +750,26 @@ module pcileech_tlps128_bar_controller(
         .msi_trigger     ( hda_msi_trigger               ),
         .rirbintsts      ( hda_rirbintsts                ),
         .crst_falling    ( hda_crst_falling              )
+{{ end }}
+{{ if .EthernetDMA }}        ,
+        .eth_rdbal       ( eth_rdbal                    ),
+        .eth_rdlen       ( eth_rdlen                    ),
+        .eth_rdh         ( eth_rdh                      ),
+        .eth_rdt         ( eth_rdt                      ),
+        .eth_tdbal       ( eth_tdbal                    ),
+        .eth_tdlen       ( eth_tdlen                    ),
+        .eth_tdh         ( eth_tdh                      ),
+        .eth_tdt         ( eth_tdt                      ),
+        .eth_rdt_write   ( eth_rdt_write                ),
+        .eth_rdt_value   ( eth_rdt_value                ),
+        .eth_tdt_write   ( eth_tdt_write                ),
+        .eth_tdt_value   ( eth_tdt_value                ),
+        .eth_rdh_valid   ( eth_rdh_valid                ),
+        .eth_rdh_value   ( eth_rdh_value                ),
+        .eth_tdh_valid   ( eth_tdh_valid                ),
+        .eth_tdh_value   ( eth_tdh_value                ),
+        .eth_icr_cause   ( eth_icr_cause                ),
+        .eth_irq_event   ( eth_irq_event                )
 {{ end }}
     );
 {{ end }}
@@ -908,6 +1031,7 @@ module pcileech_tlps128_bar_controller(
     wire        nvme_dma_rd_valid;
     wire [31:0] nvme_dma_rd_data;
     wire        nvme_dma_rd_done;
+    wire        nvme_dma_rd_error;
     wire        nvme_dma_wr_req;
     wire [63:0] nvme_dma_wr_addr;
     wire [31:0] nvme_dma_wr_data;
@@ -1088,6 +1212,7 @@ module pcileech_tlps128_bar_controller(
         .dma_rd_valid       ( nvme_dma_rd_valid             ),
         .dma_rd_data        ( nvme_dma_rd_data              ),
         .dma_rd_done        ( nvme_dma_rd_done              ),
+        .dma_rd_error       ( nvme_dma_rd_error             ),
         .tlp_tx_tdata       ( nvme_tlp_tx_tdata             ),
         .tlp_tx_tkeepdw     ( nvme_tlp_tx_tkeepdw           ),
         .tlp_tx_tvalid      ( nvme_tlp_tx_tvalid            ),
@@ -1122,11 +1247,13 @@ module pcileech_tlps128_bar_controller(
 
     wire nvme_dma_fifo_wr_en = nvme_tlp_tx_tvalid && !nvme_dma_fifo_full;
     wire nvme_dma_pkt_inc    = nvme_dma_fifo_wr_en && nvme_tlp_tx_tlast;
-    wire nvme_dma_pkt_dec    = nvme_dma_fifo_tvalid && nvme_dma_fifo_tlast;
+    wire nvme_dma_fifo_rd_en = tlps_dma_out.tready && nvme_dma_fifo_tvalid &&
+                               (nvme_dma_pkt_count != 11'd0);
+    wire nvme_dma_pkt_dec    = nvme_dma_fifo_rd_en && nvme_dma_fifo_tlast;
     wire [10:0] nvme_dma_pkt_count_next = nvme_dma_pkt_count +
                                           {10'h000, nvme_dma_pkt_inc} -
                                           {10'h000, nvme_dma_pkt_dec};
-    wire nvme_dma_fifo_rd_en = tlps_dma_out.tready && (nvme_dma_pkt_count_next != 11'd0);
+
 
     assign nvme_tlp_tx_tready = !nvme_dma_fifo_full;
 
@@ -1151,10 +1278,11 @@ module pcileech_tlps128_bar_controller(
 
     assign tlps_dma_out.tdata    = nvme_dma_fifo_tdata;
     assign tlps_dma_out.tkeepdw  = nvme_dma_fifo_tkeepdw;
-    assign tlps_dma_out.tvalid   = dma_enabled && nvme_dma_fifo_tvalid;
+    assign tlps_dma_out.tvalid   = dma_enabled && nvme_dma_fifo_tvalid &&
+                                   (nvme_dma_pkt_count != 11'd0);
     assign tlps_dma_out.tlast    = nvme_dma_fifo_tlast;
     assign tlps_dma_out.tuser    = {7'h00, nvme_dma_fifo_tlast, nvme_dma_fifo_first};
-    assign tlps_dma_out.has_data = dma_enabled && (nvme_dma_pkt_count_next != 11'd0);
+    assign tlps_dma_out.has_data = dma_enabled && (nvme_dma_pkt_count != 11'd0);
 
     assign tlps_out.tdata    = tlps_cpl.tdata;
     assign tlps_out.tkeepdw  = tlps_cpl.tkeepdw;
@@ -1163,6 +1291,59 @@ module pcileech_tlps128_bar_controller(
     assign tlps_out.tuser    = tlps_cpl.tuser;
     assign tlps_out.has_data = tlps_cpl.has_data;
     assign tlps_cpl.tready   = tlps_out.tready;
+{{ end }}
+
+{{ if .EthernetDMA }}
+    wire         eth_dma_fifo_full;
+    wire         eth_dma_fifo_first;
+    wire         eth_dma_fifo_tlast;
+    wire [3:0]   eth_dma_fifo_tkeepdw;
+    wire [127:0] eth_dma_fifo_tdata;
+    wire         eth_dma_fifo_tvalid;
+    reg  [10:0]  eth_dma_pkt_count;
+    wire eth_dma_fifo_wr_en = eth_tlp_tx_tvalid && !eth_dma_fifo_full;
+    wire eth_dma_pkt_inc = eth_dma_fifo_wr_en && eth_tlp_tx_tlast;
+    wire eth_dma_fifo_rd_en = tlps_dma_out.tready && eth_dma_fifo_tvalid &&
+                              (eth_dma_pkt_count != 11'd0);
+    wire eth_dma_pkt_dec = eth_dma_fifo_rd_en && eth_dma_fifo_tlast;
+    wire [10:0] eth_dma_pkt_count_next = eth_dma_pkt_count +
+                                          {10'h000, eth_dma_pkt_inc} -
+                                          {10'h000, eth_dma_pkt_dec};
+
+    assign eth_tlp_tx_tready = !eth_dma_fifo_full;
+
+    fifo_134_134_clk1_bar_rdrsp i_fifo_ethernet_dma(
+        .srst       ( device_reset || !dma_enabled                         ),
+        .clk        ( clk                                                   ),
+        .din        ( { eth_tlp_tx_tuser[0], eth_tlp_tx_tlast,
+                        eth_tlp_tx_tkeepdw, eth_tlp_tx_tdata }               ),
+        .wr_en      ( eth_dma_fifo_wr_en                                   ),
+        .rd_en      ( eth_dma_fifo_rd_en                                   ),
+        .dout       ( { eth_dma_fifo_first, eth_dma_fifo_tlast,
+                        eth_dma_fifo_tkeepdw, eth_dma_fifo_tdata }           ),
+        .full       ( eth_dma_fifo_full                                    ),
+        .empty      (                                                       ),
+        .prog_empty (                                                       ),
+        .valid      ( eth_dma_fifo_tvalid                                  )
+    );
+
+    always @(posedge clk)
+        eth_dma_pkt_count <= (device_reset || !dma_enabled) ? 11'd0 : eth_dma_pkt_count_next;
+
+    assign tlps_dma_out.tdata    = eth_dma_fifo_tdata;
+    assign tlps_dma_out.tkeepdw  = eth_dma_fifo_tkeepdw;
+    assign tlps_dma_out.tvalid   = dma_enabled && eth_dma_fifo_tvalid &&
+                                   (eth_dma_pkt_count != 11'd0);
+    assign tlps_dma_out.tlast    = eth_dma_fifo_tlast;
+    assign tlps_dma_out.tuser    = {7'h00, eth_dma_fifo_tlast, eth_dma_fifo_first};
+    assign tlps_dma_out.has_data = dma_enabled && (eth_dma_pkt_count != 11'd0);
+    assign tlps_out.tdata    = tlps_cpl.tdata;
+    assign tlps_out.tkeepdw  = tlps_cpl.tkeepdw;
+    assign tlps_out.tvalid   = tlps_cpl.tvalid;
+    assign tlps_out.tlast    = tlps_cpl.tlast;
+    assign tlps_out.tuser    = tlps_cpl.tuser;
+    assign tlps_out.has_data = tlps_cpl.has_data;
+    assign tlps_cpl.tready  = tlps_out.tready;
 {{ end }}
 
 {{ if and (eq .DeviceClass "audio") .HasClassEndpoint }}{{ if not (and (eq .DeviceClass "nvme") .NVMeIdentify) }}
@@ -1206,7 +1387,7 @@ module pcileech_tlps128_bar_controller(
 {{ end }}{{
  end }}
 
-{{ if not (or (and (eq .DeviceClass "nvme") .NVMeIdentify) (and (eq .DeviceClass "audio") .HasClassEndpoint)) }}
+{{ if not (or (and (eq .DeviceClass "nvme") .NVMeIdentify) (and (eq .DeviceClass "audio") .HasClassEndpoint) (and (eq .DeviceClass "ethernet") .HasClassEndpoint)) }}
     assign tlps_out.tdata    = tlps_cpl.tdata;
     assign tlps_out.tkeepdw  = tlps_cpl.tkeepdw;
     assign tlps_out.tvalid   = tlps_cpl.tvalid;
@@ -1252,7 +1433,7 @@ module pcileech_tlps128_bar_controller(
     );
 {{ end }}{{ end }}{{ end }}
 
-    assign intr_req = 1'b0{{ if and (eq .DeviceClass "audio") .HasClassEndpoint }} | hda_intr_req{{ end }}{{ if and (eq .DeviceClass "nvme") .NVMeIdentify (not .MSIXConfig) }} | nvme_intr_req{{ end }};
+    assign intr_req = 1'b0{{ if and (eq .DeviceClass "audio") .HasClassEndpoint }} | hda_intr_req{{ end }}{{ if and (eq .DeviceClass "nvme") .NVMeIdentify (not .MSIXConfig) }} | nvme_intr_req{{ end }}{{ if .EthernetDMA }} | eth_irq_event{{ end }};
 
 endmodule
 `default_nettype wire

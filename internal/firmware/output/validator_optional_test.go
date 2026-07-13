@@ -75,6 +75,9 @@ func writeOutputFixture(t *testing.T, tmpDir string, skip map[string]bool, devic
 		if name == "device_model.json" {
 			content = validOutputDeviceModelJSON(t)
 		}
+		if name == "emulation_report.json" {
+			content = []byte(`{"schema_version":1,"vendor_id":"1234","device_id":"5678","class_code":"ff0000","support":{"family":"generic","level":"identity","validated":true}}`)
+		}
 		if err := os.WriteFile(filepath.Join(tmpDir, name), content, 0644); err != nil {
 			t.Fatalf("WriteFile(%s): %v", name, err)
 		}

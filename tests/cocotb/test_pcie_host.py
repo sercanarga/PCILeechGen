@@ -77,7 +77,7 @@ async def recv_dma_all(dut, timeout=10000):
     return beats
 
 async def reset(dut):
-    cocotb.start_soon(Clock(dut.clk, 10, unit="ns").start())
+    cocotb.start_soon(Clock(dut.clk, 10, units="ns").start())
     dut.rst.value = 1
     dut.tlps_in_tvalid.value = 0
     dut.loopback_en.value = 1

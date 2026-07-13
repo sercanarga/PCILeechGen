@@ -29,7 +29,7 @@ if [ "${#BOARDS[@]}" -eq 0 ]; then
 fi
 
 # whitelist of svgen output files (primitives like pcileech_fifo.sv are blackboxed)
-SVGEN_PATTERN='pcileech_lifecycle_service.sv|pcileech_dma_tag_service.sv|pcileech_interrupt_service.sv|pcileech_bar_impl_device.sv|pcileech_tlps128_bar_controller.sv|pcileech_tlp_normalizer.sv|pcileech_tlp_ur_completer.sv|pcileech_bar_rsp_arbiter.sv|pcileech_tlps128_bar_rdengine.sv|pcileech_tlps128_bar_wrengine.sv|pcileech_bar_impl_none.sv|pcileech_bar_impl_zerowrite4k.sv|pcileech_bar_impl_msi.sv|tlp_latency_emulator.sv|device_config.sv|pcileech_msix_table.sv|pcileech_nvme_admin_responder.sv|pcileech_nvme_dma_bridge.sv|pcileech_bram_disk.sv|pcileech_hda_rirb_dma.sv|pcileech_hda_msi.sv'
+SVGEN_PATTERN='pcileech_lifecycle_service.sv|pcileech_dma_tag_service.sv|pcileech_interrupt_service.sv|pcileech_bar_impl_device.sv|pcileech_tlps128_bar_controller.sv|pcileech_tlp_normalizer.sv|pcileech_tlp_ur_completer.sv|pcileech_bar_rsp_arbiter.sv|pcileech_tlps128_bar_rdengine.sv|pcileech_tlps128_bar_wrengine.sv|pcileech_bar_impl_none.sv|pcileech_bar_impl_zerowrite4k.sv|pcileech_bar_impl_msi.sv|tlp_latency_emulator.sv|device_config.sv|pcileech_msix_table.sv|pcileech_nvme_admin_responder.sv|pcileech_nvme_dma_bridge.sv|pcileech_ethernet_dma_engine.sv|pcileech_ethernet_dma_bridge.sv|pcileech_bram_disk.sv|pcileech_hda_rirb_dma.sv|pcileech_hda_msi.sv'
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT

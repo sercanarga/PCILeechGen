@@ -128,10 +128,10 @@ func TestProfileForClass_Generic(t *testing.T) {
 	}
 }
 
-func TestProfileForClass_ProgIFAgnostic(t *testing.T) {
+func TestProfileForClass_RejectsWrongProgrammingInterface(t *testing.T) {
 	p := ProfileForClass(0x010801)
-	if p == nil {
-		t.Fatal("NVMe Fabrics should still match NVMe profile")
+	if p == nil || p.ClassName != "Generic" {
+		t.Fatalf("non-NVMe programming interface must use Generic profile: %+v", p)
 	}
 }
 

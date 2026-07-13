@@ -28,8 +28,9 @@ module pcileech_nvme_dma_bridge(
     output reg          dma_rd_valid,
     output reg [31:0]   dma_rd_data,
     output reg          dma_rd_done,
+    output reg          dma_rd_error,
 
-    // outgoing TLP stream - muxed with BAR read completions
+    // outgoing TLP stream
     output reg [127:0]  tlp_tx_tdata,
     output reg [3:0]    tlp_tx_tkeepdw,
     output reg          tlp_tx_tvalid,
@@ -195,6 +196,7 @@ module pcileech_nvme_dma_bridge(
             dma_wr_done     <= 1'b0;
             dma_rd_valid    <= 1'b0;
             dma_rd_done     <= 1'b0;
+            dma_rd_error    <= 1'b0;
             dma_rd_data     <= 32'h0;
             tlp_tx_tdata    <= 128'h0;
             tlp_tx_tkeepdw  <= 4'h0;
@@ -219,6 +221,7 @@ module pcileech_nvme_dma_bridge(
             dma_wr_done  <= 1'b0;
             dma_rd_valid <= 1'b0;
             dma_rd_done  <= 1'b0;
+            dma_rd_error <= 1'b0;
             tag_alloc_valid <= 1'b0;
 
             if (!dma_enabled) begin
@@ -273,6 +276,7 @@ module pcileech_nvme_dma_bridge(
                         bstate <= B_RD_SEND;
                     end else if (dma_enabled && dma_rd_req) begin
                         dma_rd_done <= 1'b1;
+                        dma_rd_error <= 1'b1;
                     end
                 end
 
@@ -319,6 +323,7 @@ module pcileech_nvme_dma_bridge(
                         rd_payload <= 32'h0;
                         rd_remaining <= 10'h0;
                         dma_rd_done <= 1'b1;
+                        dma_rd_error <= 1'b1;
                         bstate <= B_IDLE;
                     end else if (tag_outcome_valid &&
                                  (tag_outcome_tag == rd_active_tag) &&
@@ -326,6 +331,7 @@ module pcileech_nvme_dma_bridge(
                         rd_payload <= 32'h0;
                         rd_remaining <= 10'h0;
                         dma_rd_done <= 1'b1;
+                        dma_rd_error <= 1'b1;
                         bstate <= B_IDLE;
                 end
                 end

@@ -50,6 +50,25 @@ module {{ .BARImplementationModuleName }} #(
     output wire [31:0]  nvme_acq_lo,
     output wire [31:0]  nvme_acq_hi,
     output wire [31:0]  nvme_csts
+{{ end }}{{ if .EthernetDMA }}    ,
+    output wire [63:0]  eth_rdbal,
+    output wire [31:0]  eth_rdlen,
+    output wire [31:0]  eth_rdh,
+    output wire [31:0]  eth_rdt,
+    output wire [63:0]  eth_tdbal,
+    output wire [31:0]  eth_tdlen,
+    output wire [31:0]  eth_tdh,
+    output wire [31:0]  eth_tdt,
+    output wire         eth_rdt_write,
+    output wire [31:0]  eth_rdt_value,
+    output wire         eth_tdt_write,
+    output wire [31:0]  eth_tdt_value,
+    input  wire         eth_rdh_valid,
+    input  wire [31:0]  eth_rdh_value,
+    input  wire         eth_tdh_valid,
+    input  wire [31:0]  eth_tdh_value,
+    input  wire [31:0]  eth_icr_cause,
+    output wire         eth_irq_event
 {{ end }});
 
     wire wr_in_range = (wr_addr < BAR_SIZE);
@@ -60,6 +79,96 @@ module {{ .BARImplementationModuleName }} #(
     // registers
 {{ range .BARModel.Registers }}
     reg [{{ sub (mul .Width 8) 1 }}:0] reg_0x{{ hex08 .Offset }};  // {{ .Name }}
+{{ end }}
+
+{{ if .EthernetDMA }}
+    reg eth_rdt_write_r;
+    reg [31:0] eth_rdt_value_r;
+    reg eth_tdt_write_r;
+    reg [31:0] eth_tdt_value_r;
+
+    assign eth_rdbal = {reg_0x00002804, reg_0x00002800};
+    assign eth_rdlen = reg_0x00002808;
+    assign eth_rdh = reg_0x00002810;
+    assign eth_rdt = reg_0x00002818;
+    assign eth_tdbal = {reg_0x00003804, reg_0x00003800};
+    assign eth_tdlen = reg_0x00003808;
+    assign eth_tdh = reg_0x00003810;
+    assign eth_tdt = reg_0x00003818;
+    assign eth_rdt_write = eth_rdt_write_r;
+    assign eth_rdt_value = eth_rdt_value_r;
+    assign eth_tdt_write = eth_tdt_write_r;
+    assign eth_tdt_value = eth_tdt_value_r;
+
+    wire [31:0] eth_wr_be_mask = {
+        {8{wr_be[3]}}, {8{wr_be[2]}}, {8{wr_be[1]}}, {8{wr_be[0]}}
+    };
+    reg eth_irq_event_r;
+    assign eth_irq_event = eth_irq_event_r;
+
+    always @(posedge clk) begin
+        if (rst) begin
+            eth_rdt_write_r <= 1'b0;
+            eth_rdt_value_r <= 32'h0;
+            eth_tdt_write_r <= 1'b0;
+            eth_tdt_value_r <= 32'h0;
+            eth_irq_event_r <= 1'b0;
+            reg_0x000000C0 <= 32'h0;
+            reg_0x000000C8 <= 32'h0;
+            reg_0x000000D0 <= 32'h0;
+            reg_0x000000D8 <= 32'h0;
+            reg_0x00002810 <= 32'h0;
+            reg_0x00003810 <= 32'h0;
+            reg_0x00000014 <= 32'h0;
+            reg_0x00000020 <= 32'h08000000;
+        end else begin
+            eth_rdt_write_r <= 1'b0;
+            eth_tdt_write_r <= 1'b0;
+            eth_irq_event_r <= 1'b0;
+            reg_0x000000C8 <= 32'h0;
+            reg_0x000000D8 <= 32'h0;
+            if (wr_valid && ((wr_offset & 32'hFFFFFFFC) == 32'h00002818)) begin
+                eth_rdt_write_r <= 1'b1;
+                eth_rdt_value_r <= wr_data & 32'h0000FFFF;
+            end
+            if (wr_valid && ((wr_offset & 32'hFFFFFFFC) == 32'h00003818)) begin
+                eth_tdt_write_r <= 1'b1;
+                eth_tdt_value_r <= wr_data & 32'h0000FFFF;
+            end
+            if (wr_valid && ((wr_offset & 32'hFFFFFFFC) == 32'h00000014))
+                reg_0x00000014 <= (wr_data & 32'h1) | 32'h00000020 | 32'h11000000;
+            if (wr_valid && ((wr_offset & 32'hFFFFFFFC) == 32'h00000020)) begin
+                case (wr_data[20:16])
+                    5'd0: reg_0x00000020 <= (wr_data & 32'h03FF0000) | 32'h00001140 | 32'h10000000;
+                    5'd1: reg_0x00000020 <= (wr_data & 32'h03FF0000) | 32'h0000796D | 32'h10000000;
+                    default: reg_0x00000020 <= (wr_data & 32'h03FF0000) | 32'h10000000;
+                endcase
+            end
+            if (wr_valid && ((wr_offset & 32'hFFFFFFFC) == 32'h000000C8)) begin
+                reg_0x000000C0 <= reg_0x000000C0 | (wr_data & eth_wr_be_mask);
+                if (|(wr_data & eth_wr_be_mask & reg_0x000000D0))
+                    eth_irq_event_r <= 1'b1;
+            end
+            if (wr_valid && ((wr_offset & 32'hFFFFFFFC) == 32'h000000D0)) begin
+                reg_0x000000D0 <= reg_0x000000D0 | (wr_data & eth_wr_be_mask);
+                if (|(reg_0x000000C0 & wr_data & eth_wr_be_mask))
+                    eth_irq_event_r <= 1'b1;
+            end
+            if (wr_valid && ((wr_offset & 32'hFFFFFFFC) == 32'h000000D8))
+                reg_0x000000D0 <= reg_0x000000D0 & ~(wr_data & eth_wr_be_mask);
+            if (rd_req_valid && ((rd_req_offset & 32'hFFFFFFFC) == 32'h000000C0))
+                reg_0x000000C0 <= 32'h0;
+            if (eth_rdh_valid)
+                reg_0x00002810 <= eth_rdh_value;
+            if (eth_tdh_valid)
+                reg_0x00003810 <= eth_tdh_value;
+            if (eth_icr_cause != 32'h0) begin
+                reg_0x000000C0 <= reg_0x000000C0 | eth_icr_cause;
+                if (|(eth_icr_cause & reg_0x000000D0))
+                    eth_irq_event_r <= 1'b1;
+            end
+        end
+    end
 {{ end }}
 {{ if .CompiledBehavior }}
     reg [{{ sub .CompiledBehavior.StateBits 1 }}:0] behavior_state;
@@ -973,7 +1082,7 @@ module {{ .BARImplementationModuleName }} #(
     assign crst_falling = !reg_0x00000008[0] && crst_prev;  // CRST falling edge
 
 {{ end }}
-{{ if eq .DeviceClass "ethernet" }}
+{{ if and (eq .DeviceClass "ethernet") (not .EthernetDMA) }}
     // PHYAR/ERIAR done-flag auto-clear for r8169 driver.
     // Driver sets bit 31 and polls until it drops.
     // These registers are IsFSMDriven — sole driver is this always block.

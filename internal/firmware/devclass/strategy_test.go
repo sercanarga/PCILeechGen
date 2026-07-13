@@ -2,6 +2,7 @@ package devclass
 
 import (
 	"encoding/binary"
+	"fmt"
 	"testing"
 )
 
@@ -31,6 +32,16 @@ func TestStrategyForClass_xHCI(t *testing.T) {
 	}
 	if s.DeviceClass() != ClassXHCI {
 		t.Errorf("expected %s, got %s", ClassXHCI, s.DeviceClass())
+	}
+}
+
+func TestStrategyForClass_RejectsIncompatibleProgrammingInterfaces(t *testing.T) {
+	for _, classCode := range []uint32{0x010801, 0x0C0300, 0x0C0310, 0x0C0320} {
+		t.Run(fmt.Sprintf("%06x", classCode), func(t *testing.T) {
+			if got := StrategyForClass(classCode).DeviceClass(); got != ClassGeneric {
+				t.Fatalf("class %#06x selected %q, want generic", classCode, got)
+			}
+		})
 	}
 }
 

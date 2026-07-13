@@ -522,6 +522,60 @@ func buildEthernetBARModel(barData []byte) *BARModel {
 	}
 }
 
+// BuildIntelE1000BARModel returns the tested Intel I219-LM/e1000e register
+// subset used by the descriptor DMA engine. It is intentionally separate from
+// the class-wide Realtek model: PCI class 0x020000 alone does not identify a
+// compatible descriptor or register layout.
+func BuildIntelE1000BARModel(barData []byte) *BARModel {
+	regs := []BARRegister{
+		{Offset: 0x0000, Width: 4, Name: "CTRL", RWMask: 0xFFFFFFFF},
+		{Offset: 0x0008, Width: 4, Name: "STATUS", Reset: 0x80080783},
+		{Offset: 0x0014, Width: 4, Name: "EERD", RWMask: 0x00000001, IsFSMDriven: true},
+		{Offset: 0x0020, Width: 4, Name: "MDIC", Reset: 0x08000000, RWMask: 0xFFFFFFFF, IsFSMDriven: true},
+		{Offset: 0x00C0, Width: 4, Name: "ICR", IsFSMDriven: true},
+		{Offset: 0x00C8, Width: 4, Name: "ICS", RWMask: 0xFFFFFFFF, IsFSMDriven: true},
+		{Offset: 0x00D0, Width: 4, Name: "IMS", RWMask: 0xFFFFFFFF, IsFSMDriven: true},
+		{Offset: 0x00D8, Width: 4, Name: "IMC", RWMask: 0xFFFFFFFF, IsFSMDriven: true},
+		{Offset: 0x0100, Width: 4, Name: "RCTL", RWMask: 0xFFFFFFFF},
+		{Offset: 0x0400, Width: 4, Name: "TCTL", RWMask: 0xFFFFFFFF},
+		{Offset: 0x2800, Width: 4, Name: "RDBAL", RWMask: 0xFFFFFF80},
+		{Offset: 0x2804, Width: 4, Name: "RDBAH", RWMask: 0xFFFFFFFF},
+		{Offset: 0x2808, Width: 4, Name: "RDLEN", RWMask: 0x000FFF80},
+		{Offset: 0x2810, Width: 4, Name: "RDH", IsFSMDriven: true},
+		{Offset: 0x2818, Width: 4, Name: "RDT", RWMask: 0x0000FFFF},
+		{Offset: 0x3800, Width: 4, Name: "TDBAL", RWMask: 0xFFFFFF80},
+		{Offset: 0x3804, Width: 4, Name: "TDBAH", RWMask: 0xFFFFFFFF},
+		{Offset: 0x3808, Width: 4, Name: "TDLEN", RWMask: 0x000FFF80},
+		{Offset: 0x3810, Width: 4, Name: "TDH", IsFSMDriven: true},
+		{Offset: 0x3818, Width: 4, Name: "TDT", RWMask: 0x0000FFFF},
+		{Offset: 0x5400, Width: 4, Name: "RAL0", Reset: 0x49435002, RWMask: 0xFFFFFFFF},
+		{Offset: 0x5404, Width: 4, Name: "RAH0", Reset: 0x8000454C, RWMask: 0x8000FFFF},
+	}
+
+	populateResetValues(regs, barData)
+	for i := range regs {
+		switch regs[i].Offset {
+		case 0x0008:
+			if regs[i].Reset == 0 {
+				regs[i].Reset = 0x80080783
+			}
+		case 0x0020:
+			if regs[i].Reset == 0 {
+				regs[i].Reset = 0x08000000
+			}
+		case 0x5400:
+			if regs[i].Reset == 0 {
+				regs[i].Reset = 0x49435002
+			}
+		case 0x5404:
+			if regs[i].Reset == 0 {
+				regs[i].Reset = 0x8000454C
+			}
+		}
+	}
+	return &BARModel{Size: len(barData), Registers: regs}
+}
+
 // HD Audio BAR0. Sub-word regs packed into DWORDs for SV template.
 // buildAudioBARModel builds the HD Audio BAR0 register map.
 // When donor BAR data is all 0xFF (no codec connected), spec defaults are used.

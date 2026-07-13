@@ -209,13 +209,16 @@ func audioConfig() *SVGeneratorConfig {
 }
 
 func ethernetConfig() *SVGeneratorConfig {
+	model := barmodel.BuildIntelE1000BARModel(make([]byte, 0x20000))
+	model.BIR = 0
+	model.ClassSpecific = true
 	return &SVGeneratorConfig{
 		DeviceIDs: firmware.DeviceIDs{
-			VendorID:       0x10EC,
-			DeviceID:       0x8125,
-			SubsysVendorID: 0x10EC,
-			SubsysDeviceID: 0x8125,
-			RevisionID:     0x04,
+			VendorID:       0x8086,
+			DeviceID:       0x15B7,
+			SubsysVendorID: 0x8086,
+			SubsysDeviceID: 0x0000,
+			RevisionID:     0x31,
 			ClassCode:      0x020000,
 			HasPCIeCap:     true,
 			LinkSpeed:      3,
@@ -223,15 +226,11 @@ func ethernetConfig() *SVGeneratorConfig {
 		},
 		ClassCode:    0x020000,
 		DeviceClass:  "ethernet",
+		EthernetDMA:  true,
 		BuildEntropy: 0xFEEDFACE,
-		PRNGSeeds:    BuildPRNGSeeds(0x10EC, 0x8125, 0xFEEDFACE),
-		BARModel: &barmodel.BARModel{
-			Size: 4096,
-			Registers: []barmodel.BARRegister{
-				{Offset: 0x00, Width: 4, Name: "MAC0_3", RWMask: 0xFFFFFFFF, Reset: 0xBEADDE02},
-				{Offset: 0x6C, Width: 4, Name: "PHYSTATUS", RWMask: 0x00000000, Reset: 0x00003010},
-			},
-		},
+		PRNGSeeds:    BuildPRNGSeeds(0x8086, 0x15B7, 0xFEEDFACE),
+		BARModel:     model,
+		BARModels:    []*barmodel.BARModel{model},
 	}
 }
 
@@ -276,6 +275,23 @@ func TestGenerateBarImplDeviceSV_Ethernet(t *testing.T) {
 	// Ethernet should NOT have NVMe FSM
 	if strings.Contains(result, "cc_en_prev") {
 		t.Error("Ethernet should NOT contain NVMe FSM")
+	}
+}
+
+func TestGenerateBarControllerSV_EthernetDMA(t *testing.T) {
+	result, err := GenerateBarControllerSV(ethernetConfig())
+	if err != nil {
+		t.Fatalf("Ethernet bar_controller generation failed: %v", err)
+	}
+	for _, want := range []string{
+		"pcileech_ethernet_dma_engine",
+		"pcileech_ethernet_dma_bridge",
+		"i_fifo_ethernet_dma",
+		"eth_rdt_write",
+	} {
+		if !strings.Contains(result, want) {
+			t.Errorf("Ethernet bar_controller missing %q", want)
+		}
 	}
 }
 

@@ -117,6 +117,9 @@ func TestValidateOutputDir_WithFiles(t *testing.T) {
 			if name == "device_model.json" {
 				content = validOutputDeviceModelJSON(t)
 			}
+			if name == "emulation_report.json" {
+				content = []byte(`{"schema_version":1,"vendor_id":"1234","device_id":"5678","class_code":"ff0000","stock_bar":false,"support":{"family":"generic","level":"identity","validated":true}}`)
+			}
 			if err := os.WriteFile(filepath.Join(tmpDir, name), content, 0644); err != nil {
 				t.Fatal(err)
 			}
@@ -126,6 +129,23 @@ func TestValidateOutputDir_WithFiles(t *testing.T) {
 	result := ValidateOutputDir(tmpDir)
 	if result.HasFailures() {
 		t.Errorf("All files present, but got failures: %v", result.Failed)
+	}
+}
+
+func TestValidateEmulationReport(t *testing.T) {
+	valid := []byte(`{"schema_version":1,"vendor_id":"8086","device_id":"15b7","class_code":"020000","support":{"family":"intel-e1000e-i219","level":"dma","validated":true}}`)
+	if err := validateEmulationReport(valid); err != nil {
+		t.Fatalf("valid report rejected: %v", err)
+	}
+	for _, invalid := range [][]byte{
+		[]byte(`not-json`),
+		[]byte(`{"schema_version":0,"support":{"family":"generic","level":"identity"}}`),
+		[]byte(`{"schema_version":1,"vendor_id":"xyz","device_id":"5678","class_code":"ff0000","support":{"family":"generic","level":"identity"}}`),
+		[]byte(`{"schema_version":1,"vendor_id":"1234","device_id":"5678","class_code":"ff0000","support":{"family":"generic","level":"unknown"}}`),
+	} {
+		if err := validateEmulationReport(invalid); err == nil {
+			t.Fatalf("invalid report accepted: %s", invalid)
+		}
 	}
 }
 

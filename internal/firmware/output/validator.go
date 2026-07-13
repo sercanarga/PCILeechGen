@@ -1,9 +1,11 @@
 package output
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/sercanarga/pcileechgen/internal/firmware"
@@ -68,9 +70,56 @@ func ValidateOutputDir(dir string) *ValidationResult {
 				continue
 			}
 		}
+		if name == "emulation_report.json" {
+			data, readErr := os.ReadFile(path)
+			if readErr != nil {
+				result.fail(fmt.Sprintf("%s: unreadable: %v", name, readErr))
+				continue
+			}
+			if parseErr := validateEmulationReport(data); parseErr != nil {
+				result.fail(fmt.Sprintf("%s: invalid: %v", name, parseErr))
+				continue
+			}
+		}
 		result.pass(fmt.Sprintf("%s: OK (%d bytes)", name, info.Size()))
 	}
 	return result
+}
+
+func validateEmulationReport(data []byte) error {
+	var report emulationReport
+	if err := json.Unmarshal(data, &report); err != nil {
+		return fmt.Errorf("parse JSON: %w", err)
+	}
+	if report.SchemaVersion != 1 {
+		return fmt.Errorf("unsupported schema_version %d", report.SchemaVersion)
+	}
+	for name, value := range map[string]string{
+		"vendor_id": report.VendorID,
+		"device_id": report.DeviceID,
+	} {
+		if len(value) != 4 {
+			return fmt.Errorf("%s must contain exactly four hexadecimal digits", name)
+		}
+		if _, err := strconv.ParseUint(value, 16, 16); err != nil {
+			return fmt.Errorf("%s is not hexadecimal: %w", name, err)
+		}
+	}
+	if len(report.ClassCode) != 6 {
+		return fmt.Errorf("class_code must contain exactly six hexadecimal digits")
+	}
+	if _, err := strconv.ParseUint(report.ClassCode, 16, 24); err != nil {
+		return fmt.Errorf("class_code is not hexadecimal: %w", err)
+	}
+	if report.Support.Family == "" {
+		return fmt.Errorf("support.family is required")
+	}
+	switch report.Support.Level {
+	case "identity", "registers", "behavior", "dma":
+	default:
+		return fmt.Errorf("unsupported support.level %q", report.Support.Level)
+	}
+	return nil
 }
 
 // ValidateSVIDs checks that vendor/device IDs appear in generated SV.
@@ -135,6 +184,8 @@ func outputFileRequired(dir string, name string) bool {
 		return generatedLocalparamPresent(dir, "MSIX_NUM_VECTORS")
 	case "pcileech_nvme_admin_responder.sv", "pcileech_nvme_dma_bridge.sv":
 		return generatedFeatureEnabled(dir, "HAS_NVME_RESP")
+	case "pcileech_ethernet_dma_bridge.sv", "pcileech_ethernet_dma_engine.sv":
+		return generatedFeatureEnabled(dir, "HAS_ETHERNET_DMA")
 	default:
 		return true
 	}

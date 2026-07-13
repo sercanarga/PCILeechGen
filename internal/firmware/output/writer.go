@@ -3,6 +3,7 @@ package output
 
 import (
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -87,6 +88,9 @@ func (ow *OutputWriter) WriteAll(ctx *donor.DeviceContext, b *board.Board) error
 	if err := ow.writeDeviceModel(ctx, scrubbedCS, svCfg); err != nil {
 		return err
 	}
+	if err := ow.writeEmulationReport(ctx, ids, svCfg); err != nil {
+		return err
+	}
 
 	if err := ow.writeConfigSpaceArtifacts(ctx, scrubbedCS, b); err != nil {
 		return err
@@ -133,6 +137,54 @@ func (ow *OutputWriter) writeDeviceContext(ctx *donor.DeviceContext) error {
 	}
 	if err := ow.writeFile("device_context.json", string(data)); err != nil {
 		return fmt.Errorf("failed to write device context: %w", err)
+	}
+	return nil
+}
+
+type emulationReport struct {
+	SchemaVersion int                       `json:"schema_version"`
+	VendorID      string                    `json:"vendor_id"`
+	DeviceID      string                    `json:"device_id"`
+	ClassCode     string                    `json:"class_code"`
+	StockBAR      bool                      `json:"stock_bar"`
+	Support       devclass.EmulationSupport `json:"support"`
+}
+
+func (ow *OutputWriter) writeEmulationReport(ctx *donor.DeviceContext, ids firmware.DeviceIDs, cfg *svgen.SVGeneratorConfig) error {
+	hasMSIX := ctx.MSIXData != nil && ctx.MSIXData.TableSize > 0
+	support := devclass.AssessEmulation(ctx.Device.ClassCode, ids.VendorID, ids.DeviceID, hasMSIX)
+
+	if ow.StockBar && support.Level != devclass.EmulationIdentity {
+		support.Level = devclass.EmulationIdentity
+		support.Validated = true
+		support.Limitations = append([]string{"stock-bar mode disables generated register, behavior, and DMA emulation"}, support.Limitations...)
+	}
+	if support.Family == "intel-e1000e-i219" && cfg != nil && !cfg.EthernetDMA && support.Level == devclass.EmulationDMA {
+		support.Level = devclass.EmulationRegisters
+		support.Validated = false
+		support.Limitations = append([]string{"descriptor DMA was disabled by generated-build compatibility checks"}, support.Limitations...)
+	}
+
+	report := emulationReport{
+		SchemaVersion: 1,
+		VendorID:      fmt.Sprintf("%04x", ids.VendorID),
+		DeviceID:      fmt.Sprintf("%04x", ids.DeviceID),
+		ClassCode:     fmt.Sprintf("%06x", ctx.Device.ClassCode),
+		StockBAR:      ow.StockBar,
+		Support:       support,
+	}
+	data, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal emulation report: %w", err)
+	}
+	data = append(data, '\n')
+	if err := ow.writeFile("emulation_report.json", string(data)); err != nil {
+		return fmt.Errorf("failed to write emulation report: %w", err)
+	}
+	if support.Complete() {
+		slog.Info("emulation support assessed", "family", support.Family, "level", support.Level, "validated", support.Validated)
+	} else {
+		slog.Warn("partial donor emulation", "family", support.Family, "level", support.Level, "validated", support.Validated, "limitations", support.Limitations)
 	}
 	return nil
 }
@@ -452,6 +504,7 @@ func ListOutputFiles() []string {
 	return []string{
 		"device_context.json",
 		"device_model.json",
+		"emulation_report.json",
 		"pcileech_cfgspace.coe",
 		"pcileech_cfgspace_writemask.coe",
 		"pcileech_bar_zero4k.coe",
@@ -472,6 +525,8 @@ func ListOutputFiles() []string {
 		"pcileech_msix_table.sv",
 		"pcileech_nvme_admin_responder.sv",
 		"pcileech_nvme_dma_bridge.sv",
+		"pcileech_ethernet_dma_bridge.sv",
+		"pcileech_ethernet_dma_engine.sv",
 		"pcileech_bram_disk.sv",
 		"tlp_latency_emulator.sv",
 		"device_config.sv",
@@ -596,11 +651,40 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 			preferredBIR = profile.PreferredBAR
 		}
 	}
+	support := devclass.AssessEmulation(
+		ctx.Device.ClassCode,
+		ids.VendorID,
+		ids.DeviceID,
+		ctx.MSIXData != nil && ctx.MSIXData.TableSize > 0,
+	)
+	intelE1000Family := support.Family == "intel-e1000e-i219"
+	intelE1000DMA := intelE1000Family && support.Level == devclass.EmulationDMA
+	if intelE1000Family {
+		preferredBIR = 0
+	}
 
 	models, err := barmodel.BuildBARModels(ctx.BARs, ctx.BARContents, ctx.BARProfiles,
 		ctx.Device.ClassCode, preferredBIR)
 	if err != nil {
 		return nil, fmt.Errorf("invalid donor BAR topology: %w", err)
+	}
+	if intelE1000Family {
+		for index, model := range models {
+			if model == nil || model.BIR != 0 {
+				continue
+			}
+			replacement := barmodel.BuildIntelE1000BARModel(ctx.BARContents[0])
+			replacement.BIR = model.BIR
+			replacement.Size = model.Size
+			replacement.Aperture = model.Aperture
+			replacement.Type = model.Type
+			replacement.Prefetchable = model.Prefetchable
+			replacement.Is64Bit = model.Is64Bit
+			replacement.UpperBIR = model.UpperBIR
+			replacement.ClassSpecific = true
+			models[index] = replacement
+			break
+		}
 	}
 	primary := barmodel.ModelForBIR(models, preferredBIR)
 	if primary == nil && len(models) > 0 {
@@ -678,6 +762,7 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 		BuildEntropy:                entropy,
 		PRNGSeeds:                   svgen.BuildPRNGSeeds(ids.VendorID, ids.DeviceID, entropy),
 		DeviceClass:                 devClass,
+		EthernetDMA:                 intelE1000DMA && primary != nil && primary.BIR == 0 && primary.Size >= 0x5408,
 		Bar0Size:                    bar0Size,
 		ReadCompletionBoundaryBytes: 64,
 		MaxPayloadBytes:             128,
@@ -795,6 +880,11 @@ func (ow *OutputWriter) buildSVConfig(ctx *donor.DeviceContext, scrubbedCS *pci.
 	if msiInfo := extractMSIInfo(scrubbedCS); msiInfo != nil {
 		cfg.MSIConfig = msiInfo
 	}
+	// Ethernet DMA currently uses the legacy MSI request path. Keep it disabled
+	// for MSI-X donors until Ethernet vector delivery and PBA handling are wired.
+	if cfg.MSIXConfig != nil {
+		cfg.EthernetDMA = false
+	}
 
 	bram := b.BRAMSizeOrDefault()
 	// Validate *donor demand* (may exceed) against board BRAM; error unless --force.
@@ -897,6 +987,24 @@ func (ow *OutputWriter) writeConditionalArtifacts(cfg *svgen.SVGeneratorConfig, 
 		}
 	}
 
+	if cfg.EthernetDMA && cfg.BARModel != nil {
+		engineSV, err := svgen.GenerateEthernetDMAEngineSV(cfg)
+		if err != nil {
+			return fmt.Errorf("generating pcileech_ethernet_dma_engine.sv: %w", err)
+		}
+		if writeErr := ow.writeFile("pcileech_ethernet_dma_engine.sv", engineSV); writeErr != nil {
+			return writeErr
+		}
+
+		bridgeSV, err := svgen.GenerateEthernetDMABridgeSV(cfg)
+		if err != nil {
+			return fmt.Errorf("generating pcileech_ethernet_dma_bridge.sv: %w", err)
+		}
+		if writeErr := ow.writeFile("pcileech_ethernet_dma_bridge.sv", bridgeSV); writeErr != nil {
+			return writeErr
+		}
+	}
+
 	return nil
 }
 
@@ -915,6 +1023,12 @@ func (ow *OutputWriter) logSVSummary(cfg *svgen.SVGeneratorConfig) {
 		features = append(features, "HD Audio FSM", "RIRB DMA Bridge")
 		if cfg.MSIConfig != nil {
 			features = append(features, "MSI Interrupt Gen")
+		}
+	case devclass.ClassEthernet:
+		if cfg.EthernetDMA {
+			features = append(features, "Intel e1000e descriptor DMA", "Ethernet packet engine")
+		} else {
+			features = append(features, "static Ethernet BAR model")
 		}
 	}
 	if cfg.MSIXConfig != nil {
