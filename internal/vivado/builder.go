@@ -63,6 +63,9 @@ func (b *Builder) Build(ctx *donor.DeviceContext) error {
 	if err := ow.WriteAll(ctx, b.board); err != nil {
 		return fmt.Errorf("artifact generation failed: %w", err)
 	}
+	if _, err := fwout.VerifyManifest(filepath.Join(b.opts.OutputDir, "build_manifest.json"), b.opts.OutputDir); err != nil {
+		return fmt.Errorf("artifact manifest verification failed: %w", err)
+	}
 
 	slog.Info("artifacts written", "dir", b.opts.OutputDir)
 	for _, f := range fwout.ListOutputFiles() {
@@ -116,6 +119,9 @@ func (b *Builder) Build(ctx *donor.DeviceContext) error {
 	}
 
 	refreshBuildManifest(fwout.WriteBuildManifest, b.opts.OutputDir, ctx, b.board)
+	if _, err := fwout.VerifyManifest(filepath.Join(b.opts.OutputDir, "build_manifest.json"), b.opts.OutputDir); err != nil {
+		return fmt.Errorf("post-synthesis manifest verification failed: %w", err)
+	}
 
 	if err := chownOutputs(b.opts.OutputDir); err != nil {
 		slog.Warn("chown output files", "error", err)

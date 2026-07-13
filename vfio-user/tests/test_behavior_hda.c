@@ -1,5 +1,6 @@
 #include <setjmp.h>
 #include <stdarg.h>
+#include <errno.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -75,6 +76,7 @@ static void reset_and_process_corb(void **state)
     uint32_t value;
     uint64_t response;
 
+    assert_int_equal(behavior->bind_host(behavior->state, NULL), -EINVAL);
     assert_int_equal(behavior->bind_host(behavior->state, &ops), 0);
     base = 0x1000;
     assert_int_equal(behavior->write(behavior->state, 0, 0x40, &base, 8), 8);

@@ -133,6 +133,29 @@ class MatrixTests(unittest.TestCase):
             with self.assertRaisesRegex(matrix.CaseFailure, "not a socket"):
                 matrix.prepare_socket_path(path)
 
+    def test_prepare_socket_path_rejects_active_socket(self):
+        matrix = load_matrix()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "device.sock"
+            listener = socket.socket(socket.AF_UNIX)
+            listener.bind(str(path))
+            listener.listen(1)
+            try:
+                with self.assertRaisesRegex(matrix.CaseFailure, "already active"):
+                    matrix.prepare_socket_path(path)
+            finally:
+                listener.close()
+
+    def test_run_command_timeout_is_reported(self):
+        matrix = load_matrix()
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(matrix.CaseFailure, "timed out"):
+                matrix.run_command(
+                    [sys.executable, "-c", "import time; time.sleep(30)"],
+                    Path(tmp) / "command.log",
+                    timeout=1,
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,6 +1,7 @@
 #include <stdarg.h>
 #include <stddef.h>
 #include <setjmp.h>
+#include <errno.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -114,6 +115,10 @@ static uint32_t read32(struct fixture *fixture, uint64_t offset)
     return value;
 }
 
+static void configures_admin_queues(struct fixture *, struct fake_host *,
+                                    struct nvme_sqe **, struct nvme_cqe **,
+                                    uint32_t);
+
 
 static void exposes_generated_capability_registers(void **state)
 {
@@ -139,6 +144,20 @@ static void transitions_enable_and_shutdown_state(void **state)
 
     assert_int_equal(fixture->behavior.reset(fixture->behavior.state), 0);
     assert_int_equal(read32(fixture, 0x1c) & 0x0d, 0);
+}
+
+
+static void rejects_completion_doorbell_outside_queue(void **state)
+{
+    struct fixture *fixture = *state;
+    struct fake_host host = {0};
+    struct nvme_sqe *sqe;
+    struct nvme_cqe *cq;
+    uint32_t head = 2;
+
+    configures_admin_queues(fixture, &host, &sqe, &cq, 2);
+    assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x1004,
+                                              &head, sizeof(head)), -EINVAL);
 }
 
 
@@ -332,6 +351,7 @@ int main(void)
     const struct CMUnitTest tests[] = {
         cmocka_unit_test_setup_teardown(exposes_generated_capability_registers, setup, teardown),
         cmocka_unit_test_setup_teardown(transitions_enable_and_shutdown_state, setup, teardown),
+        cmocka_unit_test_setup_teardown(rejects_completion_doorbell_outside_queue, setup, teardown),
         cmocka_unit_test_setup_teardown(completes_identify_controller, setup, teardown),
         cmocka_unit_test_setup_teardown(completes_identify_namespace_across_prp_pages, setup, teardown),
         cmocka_unit_test_setup_teardown(wraps_admin_queue_phase, setup, teardown),

@@ -11,7 +11,7 @@ endif
 TARGET = build/vfio-device
 SRC = src/main.c src/vfio_device.c src/device_model.c src/behavior_static.c src/behavior_nvme.c src/behavior_hda.c src/behavior_gpu.c src/behavior_ahci.c src/behavior_xhci.c src/behavior_ethernet.c
 
-.PHONY: all image test test-matrix test-device-model test-behavior-static test-behavior-nvme test-behavior-hda test-behavior-gpu test-behavior-storage test-server matrix
+.PHONY: all image test test-matrix test-device-model test-behavior-static test-behavior-nvme test-behavior-hda test-behavior-gpu test-behavior-storage test-server matrix fuzz fuzz-smoke test-valgrind test-msan
 
 all: $(TARGET)
 
@@ -79,6 +79,44 @@ build/test_behavior_storage: tests/test_behavior_storage.c src/behavior_ahci.c s
 
 test-behavior-storage: build/test_behavior_storage
 	./build/test_behavior_storage
+
+fuzz:
+	@if ! command -v clang >/dev/null 2>&1; then echo 'clang is required for fuzz; install clang or use a clang toolchain' >&2; exit 2; fi
+	@mkdir -p build
+	clang $(CFLAGS) -fsanitize=fuzzer,address,undefined -fno-omit-frame-pointer \
+		$$(pkg-config --cflags json-c openssl) -o build/fuzz_behavior \
+		tests/fuzz_behavior.c src/behavior_nvme.c src/behavior_static.c src/behavior_ethernet.c \
+		src/behavior_hda.c src/behavior_gpu.c src/behavior_ahci.c src/behavior_xhci.c src/device_model.c \
+		$$(pkg-config --libs json-c openssl)
+	./build/fuzz_behavior -runs=1000
+
+fuzz-smoke:
+	@if ! command -v clang >/dev/null 2>&1; then echo 'clang is required for fuzz-smoke; install clang or use a clang toolchain' >&2; exit 2; fi
+	@mkdir -p build
+	clang $(CFLAGS) -DFUZZ_SMOKE $(SANITIZE) -fno-omit-frame-pointer \
+		$$(pkg-config --cflags json-c openssl) -o build/fuzz_behavior_smoke \
+		tests/fuzz_behavior.c src/behavior_nvme.c src/behavior_static.c src/behavior_ethernet.c \
+		src/behavior_hda.c src/behavior_gpu.c src/behavior_ahci.c src/behavior_xhci.c src/device_model.c \
+		$$(pkg-config --libs json-c openssl)
+	./build/fuzz_behavior_smoke
+
+test-valgrind:
+	@if ! command -v valgrind >/dev/null 2>&1; then \
+		echo 'valgrind not installed; skipping optional memory check'; \
+	else \
+		$(MAKE) clean test && \
+		valgrind --leak-check=full --error-exitcode=1 ./build/test_device_model && \
+		valgrind --leak-check=full --error-exitcode=1 ./build/test_behavior_nvme && \
+		valgrind --leak-check=full --error-exitcode=1 ./build/test_behavior_hda && \
+		valgrind --leak-check=full --error-exitcode=1 ./build/test_behavior_storage; \
+	fi
+
+test-msan:
+	@if [ "$(UNAME_S)" != "Linux" ] || ! command -v clang >/dev/null 2>&1; then \
+		echo 'MSan requires Linux and clang; skipping optional memory check'; \
+	else \
+		$(MAKE) clean test SANITIZE='-fsanitize=memory -fno-omit-frame-pointer'; \
+	fi
 
 image:
 	docker build -t pcileech-vfio-user -f Dockerfile ..

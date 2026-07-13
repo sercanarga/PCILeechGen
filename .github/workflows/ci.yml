@@ -99,6 +99,18 @@ jobs:
           path: hdl-lint-report.tsv
           if-no-files-found: error
 
+      - name: Summarize HDL lint report
+        if: always()
+        run: |
+          {
+            echo '## HDL lint matrix'
+            if [ -f hdl-lint-report.tsv ]; then
+              awk -F '\t' 'NR == 1 { next } { count[$3]++ } END { for (status in count) printf "- %s: %d\n", status, count[status] }' hdl-lint-report.tsv
+            else
+              echo '- report unavailable'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
   vfio-user:
     name: VFIO-user behavior tests
     runs-on: ubuntu-latest
