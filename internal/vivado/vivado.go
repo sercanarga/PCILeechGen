@@ -121,18 +121,93 @@ func (v *Vivado) RunTCL(tclScript string, workDir string, timeout time.Duration)
 
 	slog.Info("running Vivado", "cmd", strings.Join(cmd.Args, " "), "dir", workDir, "timeout", timeout)
 
-	if err := cmd.Run(); err != nil {
+	runErr := cmd.Run()
+	summary := summarizeRun(tclScript, output.String(), runErr)
+	if err := writeRunSummary(workDir, tclScript, summary); err != nil {
+		slog.Warn("write Vivado summary", "error", err)
+	}
+	if runErr != nil {
 		if ctx.Err() == context.DeadlineExceeded {
-			return fmt.Errorf("Vivado timed out after %s", timeout)
+			return fmt.Errorf("Vivado timed out after %s\n%s", timeout, summary)
 		}
-		return fmt.Errorf("Vivado execution failed: %w", err)
+		return fmt.Errorf("Vivado execution failed: %w\n%s", runErr, summary)
 	}
 
 	if line, ok := vivadoStartupFailure(output.String()); ok {
-		return fmt.Errorf("Vivado startup failed: %s", line)
+		return fmt.Errorf("Vivado startup failed: %s\n%s", line, summary)
 	}
 
+	slog.Info("Vivado summary written", "file", filepath.Join(workDir, summaryFileName(tclScript)))
 	return nil
+}
+
+func summaryFileName(tclScript string) string {
+	base := filepath.Base(tclScript)
+	base = strings.TrimSuffix(base, filepath.Ext(base))
+	if base == "" || base == "." {
+		base = "vivado"
+	}
+	return base + "_summary.txt"
+}
+
+// summarizeRun persists the existing structured Vivado report alongside a
+// concise diagnosis for common infrastructure failures. The result deliberately
+// includes only the report's bounded actionable entries, never the full log.
+func summarizeRun(tclScript, output string, runErr error) string {
+	var summary strings.Builder
+	summary.WriteString("Vivado summary for ")
+	summary.WriteString(filepath.Base(tclScript))
+	summary.WriteString("\n")
+	summary.WriteString(ParseOutput(output).Summary())
+	if runErr != nil {
+		fmt.Fprintf(&summary, "process_error=%v\n", runErr)
+	}
+	if diagnosis := classifyRunFailure(output, runErr); diagnosis != "" {
+		fmt.Fprintf(&summary, "diagnosis=%s\n", diagnosis)
+	}
+	return summary.String()
+}
+
+func classifyRunFailure(output string, runErr error) string {
+	text := strings.ToLower(output)
+	if runErr != nil {
+		text += "\n" + strings.ToLower(runErr.Error())
+	}
+	switch {
+	case strings.Contains(text, "out of memory"), strings.Contains(text, "oom-kill"),
+		strings.Contains(text, "killed process"), strings.Contains(text, "signal: killed"):
+		return "Vivado was killed by the OS, usually due to RAM pressure. Reduce --jobs or use a larger build host."
+	case strings.Contains(text, "no space left on device"):
+		return "The build host ran out of disk space. Clean old builds or enlarge the build volume."
+	case strings.Contains(text, "license"):
+		return "Vivado license or environment problem. Check XILINXD_LICENSE_FILE/LM_LICENSE_FILE."
+	case strings.Contains(text, "invalid xml"), strings.Contains(text, "part0_pins.xml"):
+		return "The Vivado installation or device-part database looks damaged; repair or reinstall Vivado."
+	case strings.Contains(text, "timing constraints are not met"), strings.Contains(text, "timing not met"):
+		return "Implementation completed but timing failed; review constraints and target clock settings."
+	case runErr != nil:
+		return "Vivado returned a non-zero exit status; review the actionable issues above."
+	}
+	return ""
+}
+
+func writeRunSummary(workDir, tclScript, summary string) error {
+	info, err := os.Lstat(workDir)
+	if err != nil {
+		return fmt.Errorf("inspect Vivado work directory: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return fmt.Errorf("Vivado work directory must be a real directory: %s", workDir)
+	}
+	path := filepath.Join(workDir, summaryFileName(tclScript))
+	if info, err := os.Lstat(path); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+			return fmt.Errorf("Vivado summary path must be absent or a regular file: %s", path)
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("inspect Vivado summary path: %w", err)
+	}
+	return os.WriteFile(path, []byte(summary), 0o644)
 }
 
 func vivadoStartupFailure(output string) (string, bool) {

@@ -133,7 +133,8 @@ exit 0
 	}
 
 	v := &Vivado{Path: installDir, Version: filepath.Base(installDir)}
-	err := v.RunTCL("vivado_generate_project.tcl", t.TempDir(), 5*time.Second)
+	workDir := t.TempDir()
+	err := v.RunTCL("vivado_generate_project.tcl", workDir, 5*time.Second)
 
 	if err == nil {
 		t.Fatal("RunTCL should fail when Vivado reports a startup failure")
@@ -143,6 +144,56 @@ exit 0
 	}
 	if !strings.Contains(err.Error(), "libtinfo.so.5") {
 		t.Fatalf("RunTCL error = %q, want loader detail", err.Error())
+	}
+	summary, readErr := os.ReadFile(filepath.Join(workDir, "vivado_generate_project_summary.txt"))
+	if readErr != nil {
+		t.Fatalf("read Vivado summary: %v", readErr)
+	}
+	if !strings.Contains(string(summary), "Build Status: unknown") {
+		t.Fatalf("summary = %q, want structured report", summary)
+	}
+}
+
+func TestSummarizeRunIncludesBoundedReportAndDiagnosis(t *testing.T) {
+	output := strings.Join([]string{
+		"WARNING: [Synth 8-7080] benign merged",
+		"CRITICAL WARNING: [Place 30-123] congested",
+		"ERROR: [Route 35-39] routing failed",
+		"ERROR: [Common 17-69] out of memory while placing design",
+	}, "\n")
+	summary := summarizeRun("vivado_build.tcl", output, errors.New("exit status 1"))
+	for _, want := range []string{
+		"Vivado summary for vivado_build.tcl",
+		"Build Status: FAILED",
+		"Errors: 2, Critical Warnings: 1, Warnings: 1",
+		"process_error=exit status 1",
+		"diagnosis=Vivado was killed by the OS",
+	} {
+		if !strings.Contains(summary, want) {
+			t.Fatalf("summary missing %q:\n%s", want, summary)
+		}
+	}
+}
+
+func TestWriteRunSummaryRejectsSymlink(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(root, "outside.txt")
+	if err := os.WriteFile(outside, []byte("preserve"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "vivado_build_summary.txt")
+	if err := os.Symlink(outside, path); err != nil {
+		t.Skipf("symlink support unavailable: %v", err)
+	}
+	if err := writeRunSummary(root, "vivado_build.tcl", "replacement"); err == nil {
+		t.Fatal("writeRunSummary accepted a symlink")
+	}
+	contents, err := os.ReadFile(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(contents) != "preserve" {
+		t.Fatalf("symlink target changed to %q", contents)
 	}
 }
 
