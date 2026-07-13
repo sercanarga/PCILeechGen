@@ -351,6 +351,9 @@ func TestHDLLintHarnessRequiresNamedModernMultibarPass(t *testing.T) {
 		"FAIL  mandatory modern multibar×PCIeSquirrel cell did not pass",
 		"./bin/pcileechgen verify-manifest",
 		"scripts/manifest_sv_files.py",
+		"out=\"$TMP/generated/$class/$board\"",
+		"log_dir=\"$TMP/logs/$class\"",
+		"build_log=\"$log_dir/$board.build.log\"",
 	} {
 		if !strings.Contains(script, want) {
 			t.Errorf("HDL harness missing policy token %q", want)
@@ -360,6 +363,7 @@ func TestHDLLintHarnessRequiresNamedModernMultibarPass(t *testing.T) {
 		"legacy board source lacks IfAXIS128 controller architecture",
 		"legacy board source lacks generated-controller integration modules",
 		"SVGEN_PATTERN",
+		"mkdir -p \"$out\"",
 	} {
 		if strings.Contains(script, forbidden) {
 			t.Errorf("HDL harness retains content-based legacy skip %q", forbidden)

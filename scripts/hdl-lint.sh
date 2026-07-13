@@ -61,7 +61,11 @@ for fixture in "${FIXTURES[@]}"; do
   for board in "${BOARDS[@]}"; do
     total=$((total+1))
     cell="${class}×${board}"
-    out="$TMP/$class/$board"
+    # The generator only reuses directories that carry its ownership marker.
+    # Keep diagnostics separate, and leave each generated-output path absent so
+    # `pcileechgen build` can create and mark it itself.
+    out="$TMP/generated/$class/$board"
+    log_dir="$TMP/logs/$class"
     case " ${LEGACY_BOARDS[*]} " in
       *" $board "*)
         echo "SKIP  $cell (explicit legacy board allowlist)"
@@ -70,9 +74,9 @@ for fixture in "${FIXTURES[@]}"; do
         continue
         ;;
     esac
-    mkdir -p "$out"
+    mkdir -p "$log_dir"
 
-    build_log="$out/build.log"
+    build_log="$log_dir/$board.build.log"
     if ! ./bin/pcileechgen build --from-json "$fixture" --board "$board" \
           --skip-vivado --output "$out" --force >"$build_log" 2>&1; then
       # Donor BAR > board BRAM (or other benign incompatibility): skip, do not fail CI.
