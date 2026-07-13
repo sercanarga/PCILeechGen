@@ -400,6 +400,13 @@ static void processes_io_write_read_and_flush(void **state)
 
     io_sq = (struct nvme_sqe *)&host.memory[0x7000];
     io_cq = (struct nvme_cqe *)&host.memory[0x6000];
+    if (fixture->model->msix_vectors > 0) {
+        uint32_t mask = 1u << 30;
+        assert_int_equal(fixture->behavior.write(fixture->behavior.state,
+                                                  fixture->model->msix_table_bir,
+                                                  fixture->model->msix_table_offset + 12,
+                                                  &mask, sizeof(mask)), 4);
+    }
     memcpy(&host.memory[0x8000], payload, sizeof(payload));
     io_sq[0].opcode = 0x01;
     io_sq[0].cid = 10;
@@ -411,6 +418,13 @@ static void processes_io_write_read_and_flush(void **state)
                                               &doorbell, sizeof(doorbell)), 4);
     assert_int_equal(fixture->behavior.service(fixture->behavior.state), 0);
     assert_int_equal(io_cq[0].status, 1);
+    if (fixture->model->msix_vectors > 0) {
+        uint32_t unmask = 0;
+        assert_int_equal(fixture->behavior.write(fixture->behavior.state,
+                                                  fixture->model->msix_table_bir,
+                                                  fixture->model->msix_table_offset + 12,
+                                                  &unmask, sizeof(unmask)), 4);
+    }
 
     io_sq[1].opcode = 0x02;
     io_sq[1].cid = 11;

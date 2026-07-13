@@ -42,6 +42,8 @@ struct nvme_state {
     bool io_sq_created;
     bool io_cq_created;
     unsigned io_vector;
+    bool msix_masked;
+    bool msix_pending;
     uint8_t *namespace_data;
     uint64_t read_commands;
     uint64_t write_commands;
@@ -501,6 +503,10 @@ static int post_io_cqe(struct nvme_state *state, const struct nvme_sqe *sqe,
     if (state->io_cq_tail == 0) {
         state->io_cq_phase ^= 1;
     }
+    if (state->msix_masked) {
+        state->msix_pending = true;
+        return 0;
+    }
     return state->host.irq(state->host.opaque, state->io_vector);
 }
 
@@ -654,6 +660,8 @@ static int nvme_reset(void *opaque)
     state->io_sq_created = false;
     state->io_cq_created = false;
     state->io_vector = 0;
+    state->msix_masked = false;
+    state->msix_pending = false;
     if (state->namespace_data != NULL) {
         memset(state->namespace_data, 0, NVME_NAMESPACE_LBAS * NVME_LBA_BYTES);
     }
@@ -675,6 +683,24 @@ static ssize_t nvme_write(void *opaque, unsigned bir, uint64_t offset,
 {
     struct nvme_state *state = opaque;
     ssize_t result = state->registers.write(state->registers.state, bir, offset, buf, len);
+
+    if (result >= 0 && state->model->msix_vectors > 0 &&
+        bir == state->model->msix_table_bir && len == sizeof(uint32_t) &&
+        offset >= state->model->msix_table_offset + 12 &&
+        offset < state->model->msix_table_offset +
+                 (uint64_t)state->model->msix_vectors * 16 &&
+        (offset - state->model->msix_table_offset - 12) % 16 == 0) {
+        uint32_t value;
+
+        memcpy(&value, buf, sizeof(value));
+        state->msix_masked = (value & (1u << 30)) != 0;
+        if (!state->msix_masked && state->msix_pending) {
+            state->msix_pending = false;
+            if (state->host.irq(state->host.opaque, state->io_vector) < 0) {
+                return -EIO;
+            }
+        }
+    }
 
     if (result >= 0 && bir == 0 && len == sizeof(uint64_t) &&
         (offset == 0x28 || offset == 0x30)) {
