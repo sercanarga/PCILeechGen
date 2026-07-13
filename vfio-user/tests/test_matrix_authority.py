@@ -217,6 +217,7 @@ class PipelineAuthorityTests(unittest.TestCase):
             root = Path(tmp)
             artifacts = root / "artifacts"
             write_device_model(artifacts, case)
+            lease = self.matrix.SocketLease(root / "socket-lease", root / "socket-lease" / "s")
 
             def fake_run(_command, *, stdout, **_kwargs):
                 stdout.write(guest_log(case))
@@ -229,7 +230,7 @@ class PipelineAuthorityTests(unittest.TestCase):
                     return_value=(
                         object(),
                         object(),
-                        root / "device.sock",
+                        lease,
                         {
                             "event": "ready",
                             "vendor_id": "1234",
@@ -284,6 +285,7 @@ class PipelineAuthorityTests(unittest.TestCase):
             write_device_model(artifacts, case)
             process = object()
             output = object()
+            lease = self.matrix.SocketLease(root / "socket-lease", root / "socket-lease" / "s")
             with (
                 mock.patch.object(
                     self.matrix,
@@ -291,7 +293,7 @@ class PipelineAuthorityTests(unittest.TestCase):
                     return_value=(
                         process,
                         output,
-                        root / "device.sock",
+                        lease,
                         {"event": "ready", "vendor_id": "ffff"},
                     ),
                 ),
@@ -307,7 +309,7 @@ class PipelineAuthorityTests(unittest.TestCase):
                         Path("initrd"),
                     )
 
-            stop_server.assert_called_once_with(process, output)
+            stop_server.assert_called_once_with(process, output, lease)
 
     def test_rebind_requires_positive_reset_and_rebind_evidence(self):
         case = self.matrix.CASES["audio"]

@@ -8,10 +8,10 @@ import platform
 import re
 import select
 import signal
-import socket
 import stat
 import subprocess
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
@@ -44,6 +44,7 @@ PCI_BDF = re.compile(
     r"^(?P<domain>[0-9a-fA-F]{4}):(?P<bus>[0-9a-fA-F]{2}):"
     r"(?P<device>[0-9a-fA-F]{2})\.(?P<function>[0-7])$"
 )
+UNIX_SOCKET_PATH_LIMIT = 103
 
 
 class CaseFailure(RuntimeError):
@@ -56,6 +57,12 @@ class CaseBlocked(RuntimeError):
             raise ValueError(f"blocked reason is not allowlisted: {reason}")
         super().__init__(detail)
         self.reason = reason
+
+
+@dataclass(frozen=True)
+class SocketLease:
+    directory: Path
+    path: Path
 
 
 @dataclass(frozen=True)
@@ -362,67 +369,164 @@ def build_contract(case: Case, artifacts: Path) -> dict:
         raise CaseFailure(f"{case.name}: invalid generated device contract: {exc}") from exc
 
 
-def prepare_socket_path(path: Path) -> None:
-    if not path.exists():
-        return
-    if not stat.S_ISSOCK(path.stat().st_mode):
-        raise CaseFailure(f"VFIO socket path exists but is not a socket: {path}")
-    probe = socket.socket(socket.AF_UNIX)
+def allocate_socket_lease(case: Case, work_dir: Path) -> SocketLease:
+    work_dir.mkdir(parents=True, exist_ok=True)
+    directory = Path(
+        tempfile.mkdtemp(prefix=".v-", dir=work_dir.resolve())
+    )
     try:
-        probe.settimeout(0.2)
+        directory.chmod(0o700)
+        lease = SocketLease(directory=directory, path=directory / "s")
+        if len(os.fsencode(lease.path)) > UNIX_SOCKET_PATH_LIMIT:
+            raise CaseFailure(
+                f"{case.name}: VFIO Unix socket path exceeds "
+                f"{UNIX_SOCKET_PATH_LIMIT} bytes: {lease.path}"
+            )
+        return lease
+    except BaseException:
+        directory.rmdir()
+        raise
+
+
+def wait_for_unix_socket(lease: SocketLease, process: subprocess.Popen,
+                         timeout: float) -> None:
+    if timeout <= 0:
+        raise CaseFailure("VFIO server did not publish a Unix socket before readiness timeout")
+    deadline = time.monotonic() + timeout
+    while True:
+        returncode = process.poll()
+        if returncode is not None:
+            raise CaseFailure(
+                f"VFIO server exited with status {returncode} before publishing its Unix socket"
+            )
         try:
-            probe.connect(str(path))
-        except (ConnectionRefusedError, FileNotFoundError, socket.timeout):
-            path.unlink()
-            return
-        raise CaseFailure(f"VFIO socket is already active: {path}")
-    finally:
-        probe.close()
+            metadata = lease.path.lstat()
+        except FileNotFoundError:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise CaseFailure(
+                    "VFIO server did not publish a Unix socket before readiness timeout"
+                )
+            time.sleep(min(0.01, remaining))
+            continue
+        # A connect probe can consume libvfio-user's QEMU client slot. The private
+        # lease directory plus lstat proves the published node without touching it.
+        if not stat.S_ISSOCK(metadata.st_mode):
+            raise CaseFailure(f"VFIO readiness path is not a Unix socket: {lease.path}")
+        if process.poll() is not None:
+            raise CaseFailure("VFIO server exited while publishing its Unix socket")
+        return
+
+
+def _path_is_present(path: Path) -> bool:
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def _remove_socket_lease_directory(lease: SocketLease, errors: list[str]) -> None:
+    try:
+        lease.directory.rmdir()
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        errors.append(f"failed to remove private socket directory {lease.directory}: {exc}")
 
 
 def start_server(case: Case, artifacts: Path, work_dir: Path, timeout: int = 10):
     binary = ROOT / "vfio-user" / "build" / "vfio-device"
     if not binary.is_file():
         raise CaseFailure(f"VFIO server binary is missing: {binary}")
-    socket_path = work_dir / "device.sock"
+    if timeout <= 0:
+        raise CaseFailure("VFIO server readiness timeout must be positive")
     log_path = work_dir / "server.log"
     work_dir.mkdir(parents=True, exist_ok=True)
-    prepare_socket_path(socket_path)
-    with log_path.open("w", encoding="utf-8") as log:
-        process = subprocess.Popen(
-            [str(binary), "--artifacts", str(artifacts), "--socket", str(socket_path)],
-            cwd=ROOT / "vfio-user",
-            stdout=subprocess.PIPE,
-            stderr=log,
-            text=True,
-            start_new_session=True,
-        )
+    lease = allocate_socket_lease(case, work_dir)
+    try:
+        log = log_path.open("w", encoding="utf-8")
+    except BaseException:
+        lease.directory.rmdir()
+        raise
+    with log:
         try:
+            process = subprocess.Popen(
+                [
+                    str(binary),
+                    "--artifacts",
+                    str(artifacts),
+                    "--socket",
+                    str(lease.path),
+                ],
+                cwd=ROOT / "vfio-user",
+                stdout=subprocess.PIPE,
+                stderr=log,
+                text=True,
+                start_new_session=True,
+            )
+        except BaseException:
+            lease.directory.rmdir()
+            raise
+        try:
+            deadline = time.monotonic() + timeout
             ready, _, _ = select.select([process.stdout], [], [], timeout)
             if not ready:
                 raise CaseFailure(f"{case.name}: VFIO server did not become ready")
             line = process.stdout.readline()
-            record = json.loads(line)
-            if record.get("event") != "ready":
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise CaseFailure(f"{case.name}: malformed readiness record") from exc
+            if not isinstance(record, dict) or record.get("event") != "ready":
                 raise CaseFailure(f"{case.name}: invalid readiness record")
-            return process, process.stdout, socket_path, record
-        except BaseException:
-            stop_server(process, process.stdout)
+            wait_for_unix_socket(lease, process, deadline - time.monotonic())
+            return process, process.stdout, lease, record
+        except BaseException as exc:
+            try:
+                stop_server(process, process.stdout, lease)
+            except CaseFailure as cleanup_exc:
+                raise CaseFailure(
+                    f"{case.name}: server startup failed ({exc}); cleanup failed: {cleanup_exc}"
+                ) from exc
             raise
-        finally:
-            if process.poll() is not None:
-                process.stdout.close()
 
 
-def stop_server(process: subprocess.Popen, output) -> None:
+def stop_server(process: subprocess.Popen, output, lease: SocketLease, *,
+                process_timeout: float = 5, socket_timeout: float = 1) -> None:
+    errors = []
+    try:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=process_timeout)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=process_timeout)
+    except (OSError, subprocess.SubprocessError) as exc:
+        errors.append(f"failed to stop VFIO server process: {exc}")
+
+    try:
+        output.close()
+    except OSError as exc:
+        errors.append(f"failed to close VFIO server output: {exc}")
+
     if process.poll() is None:
-        process.terminate()
-        try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait()
-    output.close()
+        errors.append("VFIO server process is still running; socket lease was retained")
+    else:
+        deadline = time.monotonic() + max(0, socket_timeout)
+        while _path_is_present(lease.path) and time.monotonic() < deadline:
+            time.sleep(min(0.01, max(0, deadline - time.monotonic())))
+        if _path_is_present(lease.path):
+            errors.append(f"VFIO server did not remove Unix socket: {lease.path}")
+            try:
+                lease.path.unlink()
+            except OSError as exc:
+                errors.append(f"failed to remove abandoned Unix socket {lease.path}: {exc}")
+        _remove_socket_lease_directory(lease, errors)
+
+    if errors:
+        raise CaseFailure("; ".join(errors))
 
 
 def _normalized_architecture(value: str) -> str:
@@ -458,8 +562,8 @@ def qemu_requires_kvm(case: Case, kvm_path: Path = Path("/dev/kvm"), *,
 
 
 def run_server_smoke(case: Case, artifacts: Path, work_dir: Path, timeout: int = 10) -> dict:
-    process, output, _, record = start_server(case, artifacts, work_dir, timeout)
-    stop_server(process, output)
+    process, output, lease, record = start_server(case, artifacts, work_dir, timeout)
+    stop_server(process, output, lease)
     return record
 
 
@@ -485,11 +589,11 @@ def run_qemu_case(case: Case, artifacts: Path, work_dir: Path,
                 f"{case.name}: QEMU version mismatch; expected {expected_version!r}",
             )
     contract = build_contract(case, artifacts)
-    process, output, socket_path, readiness = start_server(case, artifacts, work_dir)
+    process, output, lease, readiness = start_server(case, artifacts, work_dir)
     try:
         validate_readiness(readiness, contract, case)
         qemu_log = work_dir / "qemu.log"
-        command = build_qemu_command(case, socket_path, kernel, initrd, artifacts,
+        command = build_qemu_command(case, lease.path, kernel, initrd, artifacts,
                                      qemu=qemu, shared_memory=shared_memory,
                                      rebind=rebind)
         try:
@@ -507,7 +611,7 @@ def run_qemu_case(case: Case, artifacts: Path, work_dir: Path,
         validate_guest_result(guest, case, rebind=rebind)
         return guest
     finally:
-        stop_server(process, output)
+        stop_server(process, output, lease)
 
 
 def validate_guest_result(guest: GuestResult, case: Case, *, rebind: bool = False) -> None:

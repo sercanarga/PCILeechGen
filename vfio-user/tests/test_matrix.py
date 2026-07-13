@@ -1,10 +1,15 @@
+import concurrent.futures
+import io
 import importlib.util
 import json
+import os
 import socket
+import stat
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "matrix.py"
@@ -32,6 +37,30 @@ def generic_guest_log(kernel_line=""):
         '"class":"000000","driver":"none","bars":1,"detail":"enumeration"}'
     )
     return "\n".join(lines) + "\n"
+
+
+class FakeServerProcess:
+    def __init__(self, stdout=None, on_terminate=None):
+        self.stdout = stdout if stdout is not None else io.StringIO()
+        self.returncode = None
+        self.on_terminate = on_terminate
+
+    def poll(self):
+        return self.returncode
+
+    def terminate(self):
+        if self.on_terminate is not None:
+            self.on_terminate()
+        self.returncode = -15
+
+    def wait(self, timeout=None):
+        del timeout
+        if self.returncode is None:
+            self.returncode = 0
+        return self.returncode
+
+    def kill(self):
+        self.returncode = -9
 
 
 class MatrixTests(unittest.TestCase):
@@ -184,36 +213,173 @@ class MatrixTests(unittest.TestCase):
         append = command[command.index("-append") + 1]
         self.assertIn("vfio_rebind=1", append)
 
-    def test_prepare_socket_path_removes_stale_socket(self):
+    def test_socket_leases_are_private_unique_and_never_reuse_a_stale_path(self):
         matrix = load_matrix()
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "device.sock"
-            listener = socket.socket(socket.AF_UNIX)
-            listener.bind(str(path))
-            listener.close()
-            matrix.prepare_socket_path(path)
-            self.assertFalse(path.exists())
-
-    def test_prepare_socket_path_rejects_non_socket(self):
-        matrix = load_matrix()
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "device.sock"
-            path.write_text("occupied", encoding="utf-8")
-            with self.assertRaisesRegex(matrix.CaseFailure, "not a socket"):
-                matrix.prepare_socket_path(path)
-
-    def test_prepare_socket_path_rejects_active_socket(self):
-        matrix = load_matrix()
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "device.sock"
-            listener = socket.socket(socket.AF_UNIX)
-            listener.bind(str(path))
-            listener.listen(1)
+            work_dir = Path(tmp)
+            stale_path = work_dir / "device.sock"
+            stale_listener = socket.socket(socket.AF_UNIX)
+            stale_listener.bind(str(stale_path))
+            stale_listener.close()
             try:
-                with self.assertRaisesRegex(matrix.CaseFailure, "already active"):
-                    matrix.prepare_socket_path(path)
+                with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+                    leases = list(
+                        executor.map(
+                            lambda _index: matrix.allocate_socket_lease(
+                                matrix.CASES["generic"], work_dir
+                            ),
+                            range(16),
+                        )
+                    )
+
+                self.assertEqual(len({lease.path for lease in leases}), len(leases))
+                self.assertTrue(os.path.lexists(stale_path))
+                for lease in leases:
+                    self.assertFalse(os.path.lexists(lease.path))
+                    self.assertTrue(stat.S_ISDIR(lease.directory.lstat().st_mode))
+                    self.assertEqual(stat.S_IMODE(lease.directory.lstat().st_mode), 0o700)
+                    lease.directory.rmdir()
+            finally:
+                stale_path.unlink()
+
+    def test_readiness_socket_evidence_rejects_non_socket(self):
+        matrix = load_matrix()
+        with tempfile.TemporaryDirectory() as tmp:
+            lease = matrix.allocate_socket_lease(matrix.CASES["generic"], Path(tmp))
+            lease.path.write_text("not a socket", encoding="utf-8")
+
+            with self.assertRaisesRegex(matrix.CaseFailure, "not a Unix socket"):
+                matrix.wait_for_unix_socket(
+                    lease,
+                    FakeServerProcess(),
+                    timeout=0.05,
+                )
+
+            lease.path.unlink()
+            lease.directory.rmdir()
+
+    def test_stop_server_requires_server_to_remove_socket(self):
+        matrix = load_matrix()
+        with tempfile.TemporaryDirectory() as tmp:
+            lease = matrix.allocate_socket_lease(matrix.CASES["generic"], Path(tmp))
+            listener = socket.socket(socket.AF_UNIX)
+            listener.bind(str(lease.path))
+            try:
+                with self.assertRaisesRegex(matrix.CaseFailure, "did not remove Unix socket"):
+                    matrix.stop_server(
+                        FakeServerProcess(),
+                        io.StringIO(),
+                        lease,
+                        socket_timeout=0.02,
+                    )
             finally:
                 listener.close()
+
+            self.assertFalse(os.path.lexists(lease.path))
+            self.assertFalse(lease.directory.exists())
+
+    def test_start_server_returns_only_after_real_socket_is_ready(self):
+        matrix = load_matrix()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            binary = root / "vfio-user" / "build" / "vfio-device"
+            binary.parent.mkdir(parents=True)
+            binary.write_text("fake", encoding="utf-8")
+            work_dir = root / "work"
+            artifacts = root / "artifacts"
+            artifacts.mkdir()
+            listener = socket.socket(socket.AF_UNIX)
+
+            def fake_popen(command, **_kwargs):
+                socket_path = Path(command[command.index("--socket") + 1])
+                listener.bind(str(socket_path))
+
+                def remove_socket():
+                    listener.close()
+                    socket_path.unlink()
+
+                return FakeServerProcess(
+                    io.StringIO('{"event":"ready"}\n'),
+                    on_terminate=remove_socket,
+                )
+
+            with (
+                mock.patch.object(matrix, "ROOT", root),
+                mock.patch.object(matrix.subprocess, "Popen", side_effect=fake_popen),
+                mock.patch.object(
+                    matrix.select,
+                    "select",
+                    side_effect=lambda reads, _writes, _errors, _timeout: (reads, [], []),
+                ),
+            ):
+                process, output, lease, record = matrix.start_server(
+                    matrix.CASES["generic"], artifacts, work_dir, timeout=0.2
+                )
+                self.assertEqual(record["event"], "ready")
+                self.assertTrue(stat.S_ISSOCK(lease.path.lstat().st_mode))
+                matrix.stop_server(process, output, lease, socket_timeout=0.05)
+
+            self.assertFalse(lease.directory.exists())
+
+    def test_ready_record_without_socket_fails_and_releases_private_lease(self):
+        matrix = load_matrix()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            binary = root / "vfio-user" / "build" / "vfio-device"
+            binary.parent.mkdir(parents=True)
+            binary.write_text("fake", encoding="utf-8")
+            work_dir = root / "work"
+            artifacts = root / "artifacts"
+            artifacts.mkdir()
+            processes = []
+
+            def fake_popen(_command, **_kwargs):
+                process = FakeServerProcess(io.StringIO('{"event":"ready"}\n'))
+                processes.append(process)
+                return process
+
+            with (
+                mock.patch.object(matrix, "ROOT", root),
+                mock.patch.object(matrix.subprocess, "Popen", side_effect=fake_popen),
+                mock.patch.object(
+                    matrix.select,
+                    "select",
+                    side_effect=lambda reads, _writes, _errors, _timeout: (reads, [], []),
+                ),
+            ):
+                with self.assertRaisesRegex(matrix.CaseFailure, "did not publish a Unix socket"):
+                    matrix.start_server(
+                        matrix.CASES["generic"], artifacts, work_dir, timeout=0.02
+                    )
+
+            self.assertEqual(processes[0].returncode, -15)
+            self.assertEqual(list(work_dir.glob(".v-*")), [])
+
+    def test_server_spawn_failure_releases_private_lease(self):
+        matrix = load_matrix()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            binary = root / "vfio-user" / "build" / "vfio-device"
+            binary.parent.mkdir(parents=True)
+            binary.write_text("fake", encoding="utf-8")
+            work_dir = root / "work"
+            artifacts = root / "artifacts"
+            artifacts.mkdir()
+
+            with (
+                mock.patch.object(matrix, "ROOT", root),
+                mock.patch.object(
+                    matrix.subprocess,
+                    "Popen",
+                    side_effect=OSError("spawn failed"),
+                ),
+            ):
+                with self.assertRaisesRegex(OSError, "spawn failed"):
+                    matrix.start_server(
+                        matrix.CASES["generic"], artifacts, work_dir, timeout=0.02
+                    )
+
+            self.assertEqual(list(work_dir.glob(".v-*")), [])
 
     def test_run_command_timeout_is_reported(self):
         matrix = load_matrix()
