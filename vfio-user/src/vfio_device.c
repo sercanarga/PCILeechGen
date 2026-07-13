@@ -9,6 +9,7 @@
 #include <sys/stat.h>
 #include <sys/mman.h>
 #include <sys/uio.h>
+#include <syslog.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -21,6 +22,15 @@ struct server_state {
     struct device_behavior *behavior;
     vfu_ctx_t *context;
 };
+
+
+static void vfio_log(vfu_ctx_t *context, int level, const char *message)
+{
+    (void)context;
+    if (level <= LOG_WARNING) {
+        fprintf(stderr, "libvfio-user: %s\n", message);
+    }
+}
 
 
 static ssize_t access_bir(vfu_ctx_t *context, unsigned bir, char *buf,
@@ -195,7 +205,10 @@ static int register_standard_capabilities(vfu_ctx_t *context,
 
         if (id == PCI_CAP_ID_PM || id == PCI_CAP_ID_MSI ||
             id == PCI_CAP_ID_MSIX || id == PCI_CAP_ID_EXP) {
-            if (vfu_pci_add_capability(context, offset, 0,
+            /* libvfio-user validates complete capability sizes, which can be
+             * larger than a compact donor snapshot's adjacent offsets. Let it
+             * assign a non-overlapping layout and rebuild the next pointers. */
+            if (vfu_pci_add_capability(context, 0, 0,
                                        (void *)(source + offset)) < 0) {
                 return -1;
             }
@@ -257,6 +270,7 @@ int vfio_device_run(const struct device_model *model,
         .model = model,
         .behavior = behavior,
     };
+    const char *stage = "validate arguments";
     int result = -1;
 
     if (model == NULL || behavior == NULL || socket_path == NULL || stop == NULL) {
@@ -269,51 +283,64 @@ int vfio_device_run(const struct device_model *model,
     if (require_unused_socket_path(socket_path) < 0) {
         return -1;
     }
+    stage = "create socket context";
     state.context = vfu_create_ctx(VFU_TRANS_SOCK, socket_path,
                                    LIBVFIO_USER_FLAG_ATTACH_NB, &state, VFU_DEV_TYPE_PCI);
-    if (state.context == NULL ||
+    if (state.context == NULL) {
+        goto done;
+    }
+    stage = "initialize PCI context";
+    if (vfu_setup_log(state.context, vfio_log, LOG_DEBUG) < 0 ||
         vfu_pci_init(state.context, VFU_PCI_TYPE_EXPRESS, PCI_HEADER_TYPE_NORMAL, 0) < 0) {
         goto done;
     }
-    memcpy(vfu_pci_get_config_space(state.context), model->config_space, model->config_space_size);
+    /* The standard header is copied verbatim. Capabilities are registered
+     * below, rather than copying their raw linked-list bytes into the library
+     * context before it validates and lays them out. */
+    memcpy(vfu_pci_get_config_space(state.context), model->config_space,
+           model->config_space_size < 0x40 ? model->config_space_size : 0x40);
     ((uint8_t *)vfu_pci_get_config_space(state.context))[0x34] = 0;
+    stage = "register PCI capabilities";
     if (register_standard_capabilities(state.context, model) < 0) {
         goto done;
     }
-    if (vfu_setup_region(state.context, VFU_PCI_DEV_CFG_REGION_IDX,
-                         model->config_space_size, NULL,
-                         VFU_REGION_FLAG_RW,
-                         NULL, 0, -1, 0) < 0) {
-        goto done;
-    }
+    /* vfu_pci_init owns the mandatory 4 KiB PCI configuration region. The
+     * donor payload is only its initial config image (normally 256 bytes),
+     * so registering it again at the shorter donor length is invalid. */
     struct behavior_host_ops host = {
         .opaque = &state,
         .dma_read = host_dma_read,
         .dma_write = host_dma_write,
         .irq = host_irq,
     };
+    stage = "bind behavior host";
     if (behavior->bind_host == NULL || behavior->bind_host(behavior->state, &host) < 0) {
         errno = EINVAL;
         goto done;
     }
+    stage = "configure BAR regions";
     if (setup_regions(&state) < 0 ||
         vfu_setup_device_reset_cb(state.context, device_reset) < 0 ||
         vfu_setup_device_dma(state.context, LIBVFIO_USER_MAX_DMA_REGIONS,
                              dma_register, dma_unregister) < 0) {
         goto done;
     }
+    stage = "configure MSI interrupts";
     if (model->msi_vectors > 0 &&
         vfu_setup_device_nr_irqs(state.context, VFU_DEV_MSI_IRQ, model->msi_vectors) < 0) {
         goto done;
     }
+    stage = "configure INTx interrupts";
     if (model->config_space_size > 0x3d && model->config_space[0x3d] != 0 &&
         vfu_setup_device_nr_irqs(state.context, VFU_DEV_INTX_IRQ, 1) < 0) {
         goto done;
     }
+    stage = "configure MSI-X interrupts";
     if (model->msix_vectors > 0 && config_has_capability(model, PCI_CAP_ID_MSIX) &&
         vfu_setup_device_nr_irqs(state.context, VFU_DEV_MSIX_IRQ, model->msix_vectors) < 0) {
         goto done;
     }
+    stage = "realize VFIO device";
     if (vfu_realize_ctx(state.context) < 0) {
         goto done;
     }
@@ -354,6 +381,9 @@ int vfio_device_run(const struct device_model *model,
     result = 0;
 
 done:
+    if (result < 0) {
+        fprintf(stderr, "vfio device %s: %s\n", stage, strerror(errno));
+    }
     if (state.context != NULL) {
         vfu_destroy_ctx(state.context);
     }
