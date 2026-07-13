@@ -222,10 +222,11 @@ Windows device-history cleanup
   Safety properties:
     - scans only PCI and USB instance keys in dynamically discovered,
       numbered ControlSets; it never acts through CurrentControlSet
-    - exports every selected key and writes a manifest before it changes a
-      service or registry key
-    - restores every valid backup and the original DeviceInstall service state
-      if cleanup fails
+    - exports every selected key before mutation; the manifest binds each
+      absolute backup path to its byte length and SHA-256 digest
+    - on failure, attempts both verified `.reg` re-import and restoration of the
+      original DeviceInstall service state, even if service restoration is the
+      first error
     - supports PowerShell WhatIf mode with zero writes:
 
         .\cleanup_device_history.ps1 -WhatIf
@@ -234,9 +235,18 @@ Windows device-history cleanup
       always asks for the exact phrase `PURGE DEVICE HISTORY`
 
   To restore a failed cleanup manually, import each `.reg` file listed in the
-  backup directory's `manifest.json`, for example:
+  backup directory's `manifest.json` after checking its recorded SHA-256, for
+  example:
 
-    reg import "C:\Users\you\Desktop\PCILeechGen-DeviceHistory-YYYYMMDD-HHMMSS\registry-000.reg"
+    reg import "C:\Users\you\Desktop\PCILeechGen-DeviceHistory-YYYYMMDD-HHMMSS-GUID\registry-000.reg"
+
+  Recovery scope: `.reg` export/import preserves registry keys and values, but
+  not key ownership, ACLs, or other security descriptors. The optional purge of
+  setup logs, event logs, and device metadata is irreversible and is never
+  represented by the registry backup.
+
+  Developer safety tests require Windows PowerShell 5.1 and exactly Pester
+  5.7.1. CI installs that version side-by-side with Windows' bundled Pester 3.4.
 
   Requires Administrator privileges. Reboot after cleanup before reconnecting
   the device.

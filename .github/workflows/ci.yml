@@ -7,6 +7,27 @@ on:
     branches: [main]
 
 jobs:
+  windows-device-cleanup:
+    name: Windows device-cleanup safety
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install pinned Pester
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Install-Module -Name Pester -RequiredVersion 5.7.1 -Scope CurrentUser -Force -SkipPublisherCheck
+
+      - name: Run cleanup safety tests on Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Import-Module -FullyQualifiedName @{ ModuleName = 'Pester'; RequiredVersion = '5.7.1' } -Force
+          Invoke-Pester -Path tools/tests/CleanupDeviceHistory.Tests.ps1 -CI -Output Detailed
+
   test:
     name: Test
     runs-on: ubuntu-latest

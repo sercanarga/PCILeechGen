@@ -2,6 +2,8 @@ Set-StrictMode -Version Latest
 
 $script:IrreversiblePurgePhrase = 'PURGE DEVICE HISTORY'
 $script:RegistrySystemRoot = 'Registry::HKEY_LOCAL_MACHINE\SYSTEM'
+$script:BackupSchemaVersion = 2
+$script:Sha256Pattern = '^[0-9A-F]{64}$'
 
 function Test-NumberedControlSetName {
     [CmdletBinding()]
@@ -31,6 +33,119 @@ function ConvertTo-NativeRegistryPath {
     return ($safePath -replace '^Registry::HKEY_LOCAL_MACHINE\\', 'HKLM\')
 }
 
+function ConvertTo-AbsoluteFileSystemPath {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [string]$Description = 'Path'
+    )
+
+    if (-not [System.IO.Path]::IsPathRooted($Path)) {
+        throw "$Description must be an absolute filesystem path: $Path"
+    }
+
+    try {
+        $absolutePath = [System.IO.Path]::GetFullPath($Path)
+        $pathRoot = [System.IO.Path]::GetPathRoot($absolutePath)
+        if (-not [string]::Equals($absolutePath, $pathRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $trimCharacters = [char[]]@(
+                [System.IO.Path]::DirectorySeparatorChar,
+                [System.IO.Path]::AltDirectorySeparatorChar
+            )
+            $absolutePath = $absolutePath.TrimEnd($trimCharacters)
+        }
+        return $absolutePath
+    }
+    catch {
+        throw "$Description is not a valid filesystem path: $Path"
+    }
+}
+
+function Assert-BackupFilePath {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [Parameter(Mandatory)][string]$Path
+    )
+
+    $absoluteRoot = ConvertTo-AbsoluteFileSystemPath -Path $Root -Description 'Backup root'
+    $absolutePath = ConvertTo-AbsoluteFileSystemPath -Path $Path -Description 'Backup file'
+    $parent = [System.IO.Path]::GetDirectoryName($absolutePath)
+    if (-not [string]::Equals($parent, $absoluteRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Backup file must be a direct child of its recorded root: $absolutePath"
+    }
+
+    return $absolutePath
+}
+
+function Assert-NotReparsePoint {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [string]$Description = 'Path'
+    )
+
+    $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+    if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "$Description cannot be a filesystem reparse point: $Path"
+    }
+
+    return $item
+}
+
+function Get-StreamSha256 {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][System.IO.Stream]$Stream)
+
+    $algorithm = $null
+    try {
+        $Stream.Position = 0
+        $algorithm = [System.Security.Cryptography.SHA256]::Create()
+        $hash = $algorithm.ComputeHash($Stream)
+        return ([System.BitConverter]::ToString($hash) -replace '-', '')
+    }
+    finally {
+        if ($null -ne $algorithm) {
+            $algorithm.Dispose()
+        }
+        $Stream.Position = 0
+    }
+}
+
+function Import-VerifiedRegistryKey {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Source,
+        [Parameter(Mandatory)][string]$ExpectedSha256
+    )
+
+    if ($ExpectedSha256 -cnotmatch $script:Sha256Pattern) {
+        throw "Backup has an invalid SHA-256 digest: $Source"
+    }
+
+    $stream = $null
+    try {
+        # Deny writes and deletes between verification and reg.exe opening the file.
+        $stream = [System.IO.File]::Open(
+            $Source,
+            [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::Read,
+            [System.IO.FileShare]::Read
+        )
+        $actualSha256 = Get-StreamSha256 -Stream $stream
+        if ($actualSha256 -cne $ExpectedSha256) {
+            throw "Backup SHA-256 mismatch: $Source"
+        }
+
+        Import-RegistryKey -Source $Source
+    }
+    finally {
+        if ($null -ne $stream) {
+            $stream.Dispose()
+        }
+    }
+}
+
 function Get-NumberedControlSetNames {
     [CmdletBinding()]
     param([string]$SystemRoot = $script:RegistrySystemRoot)
@@ -39,7 +154,7 @@ function Get-NumberedControlSetNames {
         $children = Get-ChildItem -LiteralPath $SystemRoot -ErrorAction Stop
     }
     catch {
-        throw "Unable to enumerate SYSTEM control sets at $SystemRoot: $($_.Exception.Message)"
+        throw "Unable to enumerate SYSTEM control sets at ${SystemRoot}: $($_.Exception.Message)"
     }
 
     return @($children |
@@ -65,14 +180,14 @@ function Get-DeviceHistoryEntries {
             continue
         }
         catch {
-            throw "Unable to inspect $hivePath: $($_.Exception.Message)"
+            throw "Unable to inspect ${hivePath}: $($_.Exception.Message)"
         }
 
         try {
             $hardwareKeys = Get-ChildItem -LiteralPath $hivePath -ErrorAction Stop
         }
         catch {
-            throw "Unable to enumerate $hivePath: $($_.Exception.Message)"
+            throw "Unable to enumerate ${hivePath}: $($_.Exception.Message)"
         }
 
         foreach ($hardwareKey in $hardwareKeys) {
@@ -153,7 +268,7 @@ function New-DeviceHistoryBackup {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)]$Device,
-        [string]$BackupRoot = (Join-Path $env:USERPROFILE ("Desktop\PCILeechGen-DeviceHistory-{0}" -f (Get-Date -Format 'yyyyMMdd-HHmmss')))
+        [string]$BackupRoot = (Join-Path $env:USERPROFILE ("Desktop\PCILeechGen-DeviceHistory-{0}-{1}" -f (Get-Date -Format 'yyyyMMdd-HHmmss'), [Guid]::NewGuid().ToString('N')))
     )
 
     $paths = @($Device.RegistryPaths | ForEach-Object { [string]$_ })
@@ -161,29 +276,42 @@ function New-DeviceHistoryBackup {
         throw 'Refusing to create a backup without exact device registry paths.'
     }
 
-    $null = New-Item -ItemType Directory -Path $BackupRoot -Force -ErrorAction Stop
+    $absoluteBackupRoot = ConvertTo-AbsoluteFileSystemPath -Path $BackupRoot -Description 'Backup root'
+    if (Test-Path -LiteralPath $absoluteBackupRoot) {
+        throw "Refusing to reuse an existing backup root: $absoluteBackupRoot"
+    }
+
+    $null = New-Item -ItemType Directory -Path $absoluteBackupRoot -ErrorAction Stop
+    $null = Assert-NotReparsePoint -Path $absoluteBackupRoot -Description 'Backup root'
     $entries = [System.Collections.Generic.List[object]]::new()
     $index = 0
     foreach ($path in $paths) {
         $safePath = Assert-DeviceHistoryRegistryPath -Path $path
-        $file = Join-Path $BackupRoot ("registry-{0:D3}.reg" -f $index)
+        $file = Assert-BackupFilePath -Root $absoluteBackupRoot -Path (Join-Path $absoluteBackupRoot ("registry-{0:D3}.reg" -f $index))
         Export-RegistryKey -NativePath (ConvertTo-NativeRegistryPath -Path $safePath) -Destination $file
+        $fileItem = Assert-NotReparsePoint -Path $file -Description 'Registry backup file'
+        $sha256 = (Get-FileHash -LiteralPath $file -Algorithm SHA256 -ErrorAction Stop).Hash.ToUpperInvariant()
+        if ($sha256 -cnotmatch $script:Sha256Pattern) {
+            throw "Unable to calculate a valid SHA-256 digest for registry backup: $file"
+        }
         $entries.Add([pscustomobject]@{
                 RegistryPath = $safePath
                 File         = $file
+                Length       = [long]$fileItem.Length
+                Sha256       = $sha256
             })
         $index++
     }
 
-    $manifestPath = Join-Path $BackupRoot 'manifest.json'
+    $manifestPath = Assert-BackupFilePath -Root $absoluteBackupRoot -Path (Join-Path $absoluteBackupRoot 'manifest.json')
     @{
-        SchemaVersion = 1
+        SchemaVersion = $script:BackupSchemaVersion
         CreatedAt     = (Get-Date).ToUniversalTime().ToString('o')
         Entries       = $entries.ToArray()
     } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $manifestPath -Encoding UTF8 -ErrorAction Stop
 
     return [pscustomobject]@{
-        Root         = $BackupRoot
+        Root         = $absoluteBackupRoot
         ManifestPath = $manifestPath
         Entries      = $entries.ToArray()
     }
@@ -193,14 +321,25 @@ function Restore-DeviceHistoryBackup {
     [CmdletBinding()]
     param([Parameter(Mandatory)]$Backup)
 
+    $backupRoot = ConvertTo-AbsoluteFileSystemPath -Path ([string]$Backup.Root) -Description 'Backup root'
+    if (-not (Test-Path -LiteralPath $backupRoot -PathType Container)) {
+        throw "Backup root is missing: $backupRoot"
+    }
+    $null = Assert-NotReparsePoint -Path $backupRoot -Description 'Backup root'
+
     $errors = [System.Collections.Generic.List[System.Exception]]::new()
     foreach ($entry in $Backup.Entries) {
         try {
             $null = Assert-DeviceHistoryRegistryPath -Path $entry.RegistryPath
-            if (-not (Test-Path -LiteralPath $entry.File -PathType Leaf)) {
-                throw "Backup file is missing: $($entry.File)"
+            $file = Assert-BackupFilePath -Root $backupRoot -Path ([string]$entry.File)
+            if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
+                throw "Backup file is missing: $file"
             }
-            Import-RegistryKey -Source $entry.File
+            $fileItem = Assert-NotReparsePoint -Path $file -Description 'Registry backup file'
+            if ([long]$fileItem.Length -ne [long]$entry.Length) {
+                throw "Backup length mismatch: $file"
+            }
+            Import-VerifiedRegistryKey -Source $file -ExpectedSha256 ([string]$entry.Sha256)
         }
         catch {
             $errors.Add($_.Exception)
@@ -332,7 +471,9 @@ function Invoke-DeviceHistoryCleanup {
         $errors.Add($_.Exception)
     }
     finally {
+        $rollbackAttempted = $false
         if ($errors.Count -gt 0 -and $null -ne $backup) {
+            $rollbackAttempted = $true
             try {
                 Restore-DeviceHistoryBackup -Backup $backup
             }
@@ -349,10 +490,21 @@ function Invoke-DeviceHistoryCleanup {
                 $errors.Add($_.Exception)
             }
         }
+
+        # If service restoration is the first failure, registry mutation must
+        # still be rolled back. A prior cleanup failure already triggered it.
+        if ($errors.Count -gt 0 -and $null -ne $backup -and -not $rollbackAttempted) {
+            try {
+                Restore-DeviceHistoryBackup -Backup $backup
+            }
+            catch {
+                $errors.Add($_.Exception)
+            }
+        }
     }
 
     if ($errors.Count -gt 0) {
-        throw [System.AggregateException]::new('Device-history cleanup failed; rollback and service restoration were attempted.', [System.Exception[]]$errors.ToArray())
+        throw [System.AggregateException]::new('Device-history cleanup failed; recovery was attempted wherever prior state was available.', [System.Exception[]]$errors.ToArray())
     }
 
     return [pscustomobject]@{ Performed = $true; Backup = $backup }
