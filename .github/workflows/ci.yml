@@ -50,7 +50,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y shellcheck
           shellcheck --version
-          shellcheck tests/cocotb/generate_all.sh vfio-user/guest/init vfio-user/guest/probe.sh
+          shellcheck scripts/hdl-lint.sh scripts/hdl-lint-negative-test.sh \
+            scripts/hdl-lint-selection-test.sh tests/cocotb/generate_all.sh \
+            vfio-user/guest/init vfio-user/guest/probe.sh
 
       - name: Clang-Tidy behavior sources
         run: |
@@ -88,6 +90,12 @@ jobs:
 
       - name: Build pcileechgen
         run: make build
+
+      - name: Test HDL lint manifest selection
+        run: ./scripts/hdl-lint-selection-test.sh
+
+      - name: Run HDL lint negative controls
+        run: ./scripts/hdl-lint-negative-test.sh
 
       - name: Run HDL lint
         run: make hdl-lint

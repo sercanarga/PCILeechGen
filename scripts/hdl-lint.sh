@@ -4,11 +4,12 @@ set -uo pipefail
 shopt -s nullglob
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$REPO_ROOT"
+cd "$REPO_ROOT" || exit 1
 
 require() { command -v "$1" >/dev/null 2>&1 || { echo "missing dep: $1" >&2; exit 1; }; }
 require verilator
 require ./bin/pcileechgen
+require python3
 
 FIXTURES=(testdata/donors/*.json)
 if [ "${#FIXTURES[@]}" -eq 0 ]; then
@@ -27,9 +28,6 @@ if [ "${#BOARDS[@]}" -eq 0 ]; then
   echo "ERROR: no boards parsed from 'pcileechgen boards'" >&2
   exit 1
 fi
-
-# whitelist of svgen output files (primitives like pcileech_fifo.sv are blackboxed)
-SVGEN_PATTERN='pcileech_lifecycle_service.sv|pcileech_dma_tag_service.sv|pcileech_interrupt_service.sv|pcileech_bar_impl_device.sv|pcileech_tlps128_bar_controller.sv|pcileech_tlp_normalizer.sv|pcileech_tlp_ur_completer.sv|pcileech_bar_rsp_arbiter.sv|pcileech_tlps128_bar_rdengine.sv|pcileech_tlps128_bar_wrengine.sv|pcileech_bar_impl_none.sv|pcileech_bar_impl_zerowrite4k.sv|pcileech_bar_impl_msi.sv|tlp_latency_emulator.sv|device_config.sv|pcileech_msix_table.sv|pcileech_nvme_admin_responder.sv|pcileech_nvme_dma_bridge.sv|pcileech_bram_disk.sv|pcileech_hda_rirb_dma.sv|pcileech_hda_msi.sv'
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -76,12 +74,30 @@ for fixture in "${FIXTURES[@]}"; do
       continue
     fi
 
+    manifest="$out/build_manifest.json"
+    verify_log="$out/manifest-verify.log"
+    if ! ./bin/pcileechgen verify-manifest --manifest "$manifest" --output-dir "$out" \
+          >"$verify_log" 2>&1; then
+      echo "FAIL  $cell (manifest verification failed — see $verify_log)"
+      printf '%s\t%s\tFAIL\tmanifest verification failed\n' "$class" "$board" >> "$REPORT"
+      cat "$verify_log" >&2
+      fail=$((fail+1))
+      continue
+    fi
+
+    selector_log="$out/manifest-sv-files.log"
+    if ! selector_output="$(python3 scripts/manifest_sv_files.py "$manifest" "$out" 2>"$selector_log")"; then
+      echo "FAIL  $cell (manifest SV selection failed — see $selector_log)"
+      printf '%s\t%s\tFAIL\tmanifest SV selection failed\n' "$class" "$board" >> "$REPORT"
+      cat "$selector_log" >&2
+      fail=$((fail+1))
+      continue
+    fi
+
     sv_files=()
-    while IFS= read -r f; do sv_files+=("$f"); done < <(
-      find "$out" -name '*.sv' -print \
-        | grep -E "$SVGEN_PATTERN" \
-        | sort
-    )
+    if [ -n "$selector_output" ]; then
+      while IFS= read -r f; do sv_files+=("$f"); done <<< "$selector_output"
+    fi
 
     if [ "${#sv_files[@]}" -eq 0 ]; then
       echo "SKIP  $cell (no svgen SV emitted)"

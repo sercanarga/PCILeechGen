@@ -1,7 +1,15 @@
 #!/usr/bin/env bash
 # verify verilator catches real errors (smoke test)
 set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
+
 command -v verilator >/dev/null 2>&1 || { echo "verilator missing"; exit 1; }
+command -v python3 >/dev/null 2>&1 || { echo "python3 missing"; exit 1; }
+
+SELECTOR="$REPO_ROOT/scripts/manifest_sv_files.py"
+[ -f "$SELECTOR" ] || { echo "manifest SV selector missing: $SELECTOR"; exit 1; }
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
@@ -52,6 +60,41 @@ if verilator --lint-only --Wall -Wno-fatal "$TMP/cqe_bad.sv" \
 else
   echo "OK (c): CQE-packing test correctly fails lint"
 fi
+
+# Manifest path traversal must be rejected even when the entry is not selected.
+SELECTOR_OUT="$TMP/selector"
+mkdir -p "$SELECTOR_OUT"
+cat > "$SELECTOR_OUT/build_manifest.json" <<'EOF'
+{"files":[{"name":"../escape.txt"}]}
+EOF
+if python3 "$SELECTOR" "$SELECTOR_OUT/build_manifest.json" "$SELECTOR_OUT" \
+     >"$TMP/d.out" 2>"$TMP/d.log"; then
+  echo "NEGATIVE TEST (d) FAILED: selector accepted parent traversal"; exit 1
+fi
+echo "OK (d): manifest parent traversal correctly fails selection"
+
+# A selected manifest entry must exist as a regular file.
+cat > "$SELECTOR_OUT/build_manifest.json" <<'EOF'
+{"files":[{"name":"missing.sv"}]}
+EOF
+if python3 "$SELECTOR" "$SELECTOR_OUT/build_manifest.json" "$SELECTOR_OUT" \
+     >"$TMP/e.out" 2>"$TMP/e.log"; then
+  echo "NEGATIVE TEST (e) FAILED: selector accepted missing SV"; exit 1
+fi
+echo "OK (e): missing manifest SV correctly fails selection"
+
+# A selected manifest entry must not be a symlink, even when it resolves inside
+# the output directory.
+printf 'module real; endmodule\n' > "$SELECTOR_OUT/real.sv"
+ln -s real.sv "$SELECTOR_OUT/linked.sv"
+cat > "$SELECTOR_OUT/build_manifest.json" <<'EOF'
+{"files":[{"name":"linked.sv"}]}
+EOF
+if python3 "$SELECTOR" "$SELECTOR_OUT/build_manifest.json" "$SELECTOR_OUT" \
+     >"$TMP/f.out" 2>"$TMP/f.log"; then
+  echo "NEGATIVE TEST (f) FAILED: selector accepted symlinked SV"; exit 1
+fi
+echo "OK (f): symlinked manifest SV correctly fails selection"
 
 echo ""
 echo "All negative checks passed."
