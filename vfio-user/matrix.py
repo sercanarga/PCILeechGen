@@ -6,11 +6,12 @@ import json
 import argparse
 import platform
 import re
+import secrets
 import select
 import signal
 import stat
 import subprocess
-import tempfile
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -45,6 +46,12 @@ PCI_BDF = re.compile(
     r"(?P<device>[0-9a-fA-F]{2})\.(?P<function>[0-7])$"
 )
 UNIX_SOCKET_PATH_LIMIT = 103
+WORK_ROOT_SENTINEL = ".pcileechgen-vfio-matrix-v1"
+WORK_ROOT_SENTINEL_CONTENT = "owned by PCILeechGen VFIO matrix\n"
+CASE_SENTINEL = ".pcileechgen-vfio-case-v1"
+CASE_SENTINEL_CONTENT = "owned by PCILeechGen VFIO matrix case\n"
+PRIVATE_DIRECTORY_MODE = 0o700
+PRIVATE_FILE_MODE = 0o600
 
 
 class CaseFailure(RuntimeError):
@@ -369,13 +376,578 @@ def build_contract(case: Case, artifacts: Path) -> dict:
         raise CaseFailure(f"{case.name}: invalid generated device contract: {exc}") from exc
 
 
-def allocate_socket_lease(case: Case, work_dir: Path) -> SocketLease:
-    work_dir.mkdir(parents=True, exist_ok=True)
-    directory = Path(
-        tempfile.mkdtemp(prefix=".v-", dir=work_dir.resolve())
+def _effective_uid() -> int:
+    return os.geteuid()
+
+
+def _nofollow_flag() -> int:
+    flag = getattr(os, "O_NOFOLLOW", 0)
+    if flag == 0:
+        raise CaseFailure("VFIO matrix requires O_NOFOLLOW support")
+    return flag
+
+
+def _directory_flags() -> int:
+    return (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | _nofollow_flag()
+    )
+
+
+def _file_read_flags() -> int:
+    return os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | _nofollow_flag()
+
+
+def _same_file(left: os.stat_result, right: os.stat_result) -> bool:
+    return (left.st_dev, left.st_ino) == (right.st_dev, right.st_ino)
+
+
+def _validate_directory_metadata(
+    metadata: os.stat_result,
+    label: str,
+    *,
+    require_owner: bool,
+    require_private: bool,
+) -> None:
+    if not stat.S_ISDIR(metadata.st_mode):
+        raise CaseFailure(f"{label} must be a real directory")
+    if require_owner and metadata.st_uid != _effective_uid():
+        raise CaseFailure(f"{label} is not owned by the current user")
+    if require_private and stat.S_IMODE(metadata.st_mode) != PRIVATE_DIRECTORY_MODE:
+        raise CaseFailure(f"{label} must have mode 0700")
+
+
+def _canonical_leaf(path: Path, label: str) -> Path:
+    absolute = path.expanduser().absolute()
+    if absolute == absolute.parent or not absolute.name:
+        raise CaseFailure(f"refusing filesystem root as {label}")
+    try:
+        parent = absolute.parent.resolve(strict=True)
+    except OSError as exc:
+        raise CaseFailure(f"cannot resolve {label} parent {absolute.parent}: {exc}") from exc
+    if not parent.is_dir():
+        raise CaseFailure(f"{label} parent is not a directory: {parent}")
+    return parent / absolute.name
+
+
+def _open_directory_path(
+    path: Path,
+    label: str,
+    *,
+    require_owner: bool = True,
+    require_private: bool = True,
+) -> tuple[Path, int]:
+    absolute = path.expanduser().absolute()
+    canonical = absolute if absolute == absolute.parent else _canonical_leaf(path, label)
+    try:
+        before = os.lstat(canonical)
+    except OSError as exc:
+        raise CaseFailure(f"cannot inspect {label} {canonical}: {exc}") from exc
+    if stat.S_ISLNK(before.st_mode):
+        raise CaseFailure(f"{label} must not be a symlink: {canonical}")
+    _validate_directory_metadata(
+        before,
+        label,
+        require_owner=require_owner,
+        require_private=require_private,
     )
     try:
-        directory.chmod(0o700)
+        descriptor = os.open(canonical, _directory_flags())
+    except OSError as exc:
+        raise CaseFailure(f"cannot safely open {label} {canonical}: {exc}") from exc
+    after = os.fstat(descriptor)
+    try:
+        if not _same_file(before, after):
+            raise CaseFailure(f"{label} changed while it was being opened: {canonical}")
+        _validate_directory_metadata(
+            after,
+            label,
+            require_owner=require_owner,
+            require_private=require_private,
+        )
+    except BaseException:
+        os.close(descriptor)
+        raise
+    return canonical, descriptor
+
+
+def _open_directory_at(
+    parent_descriptor: int,
+    name: str,
+    label: str,
+    *,
+    require_owner: bool = True,
+    require_private: bool = True,
+) -> int:
+    try:
+        before = os.stat(name, dir_fd=parent_descriptor, follow_symlinks=False)
+    except OSError as exc:
+        raise CaseFailure(f"cannot inspect {label}: {exc}") from exc
+    if stat.S_ISLNK(before.st_mode):
+        raise CaseFailure(f"{label} must not be a symlink")
+    _validate_directory_metadata(
+        before,
+        label,
+        require_owner=require_owner,
+        require_private=require_private,
+    )
+    try:
+        descriptor = os.open(name, _directory_flags(), dir_fd=parent_descriptor)
+    except OSError as exc:
+        raise CaseFailure(f"cannot safely open {label}: {exc}") from exc
+    after = os.fstat(descriptor)
+    try:
+        if not _same_file(before, after):
+            raise CaseFailure(f"{label} changed while it was being opened")
+        _validate_directory_metadata(
+            after,
+            label,
+            require_owner=require_owner,
+            require_private=require_private,
+        )
+    except BaseException:
+        os.close(descriptor)
+        raise
+    return descriptor
+
+
+def _validate_simple_name(name: str, label: str) -> None:
+    if not name or name in {".", ".."} or Path(name).name != name:
+        raise CaseFailure(f"{label} must be a simple filename: {name!r}")
+
+
+def _create_sentinel_at(directory_descriptor: int, name: str, content: str) -> None:
+    flags = (
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_CLOEXEC", 0)
+        | _nofollow_flag()
+    )
+    descriptor = os.open(
+        name,
+        flags,
+        PRIVATE_FILE_MODE,
+        dir_fd=directory_descriptor,
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+            descriptor = -1
+            output.write(content)
+            output.flush()
+            os.fsync(output.fileno())
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+def _read_sentinel_at(
+    directory_descriptor: int,
+    name: str,
+    expected: str,
+    label: str,
+) -> None:
+    try:
+        descriptor = os.open(
+            name,
+            _file_read_flags(),
+            dir_fd=directory_descriptor,
+        )
+    except OSError as exc:
+        raise CaseFailure(f"{label} is missing or unsafe: {exc}") from exc
+    try:
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != _effective_uid()
+            or metadata.st_nlink != 1
+            or stat.S_IMODE(metadata.st_mode) != PRIVATE_FILE_MODE
+        ):
+            raise CaseFailure(f"{label} must be a private, owned regular file")
+        with os.fdopen(descriptor, "r", encoding="utf-8") as source:
+            descriptor = -1
+            content = source.read(len(expected) + 1)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+    if content != expected:
+        raise CaseFailure(f"{label} has unexpected content")
+
+
+def _validate_owned_regular_at(directory_descriptor: int, name: str, label: str) -> None:
+    try:
+        metadata = os.stat(name, dir_fd=directory_descriptor, follow_symlinks=False)
+    except OSError as exc:
+        raise CaseFailure(f"cannot inspect {label}: {exc}") from exc
+    if stat.S_ISLNK(metadata.st_mode):
+        raise CaseFailure(f"{label} must not be a symlink")
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != _effective_uid()
+        or metadata.st_nlink != 1
+    ):
+        raise CaseFailure(f"{label} must be an owned regular file")
+
+
+def _validate_work_root_entries(root_descriptor: int) -> None:
+    allowed_cases = set(CASES)
+    for name in os.listdir(root_descriptor):
+        if name == WORK_ROOT_SENTINEL:
+            continue
+        if name == "summary.json":
+            _validate_owned_regular_at(root_descriptor, name, "VFIO matrix summary")
+            continue
+        if name not in allowed_cases:
+            raise CaseFailure(f"unrecognized entry in VFIO matrix work root: {name}")
+        case_descriptor = _open_directory_at(
+            root_descriptor,
+            name,
+            f"VFIO matrix case directory {name}",
+        )
+        try:
+            _read_sentinel_at(
+                case_descriptor,
+                CASE_SENTINEL,
+                CASE_SENTINEL_CONTENT,
+                f"VFIO matrix case sentinel for {name}",
+            )
+        finally:
+            os.close(case_descriptor)
+
+
+def prepare_work_root(raw_path: Path) -> Path:
+    candidate = _canonical_leaf(raw_path, "VFIO matrix work root")
+    parent, parent_descriptor = _open_directory_path(
+        candidate.parent,
+        "VFIO matrix work-root parent",
+        require_owner=False,
+        require_private=False,
+    )
+    candidate = parent / candidate.name
+    try:
+        try:
+            metadata = os.stat(
+                candidate.name,
+                dir_fd=parent_descriptor,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            os.mkdir(
+                candidate.name,
+                PRIVATE_DIRECTORY_MODE,
+                dir_fd=parent_descriptor,
+            )
+            metadata = os.stat(
+                candidate.name,
+                dir_fd=parent_descriptor,
+                follow_symlinks=False,
+            )
+        if stat.S_ISLNK(metadata.st_mode):
+            raise CaseFailure(f"VFIO matrix work root must not be a symlink: {candidate}")
+        root_descriptor = _open_directory_at(
+            parent_descriptor,
+            candidate.name,
+            "VFIO matrix work root",
+            require_private=False,
+        )
+    finally:
+        os.close(parent_descriptor)
+
+    try:
+        entries = set(os.listdir(root_descriptor))
+        if WORK_ROOT_SENTINEL not in entries:
+            if entries:
+                raise CaseFailure(
+                    f"refusing unowned, non-empty VFIO matrix work root: {candidate}"
+                )
+            os.fchmod(root_descriptor, PRIVATE_DIRECTORY_MODE)
+            if os.listdir(root_descriptor):
+                raise CaseFailure(
+                    f"VFIO matrix work root changed while ownership was established: {candidate}"
+                )
+            _create_sentinel_at(
+                root_descriptor,
+                WORK_ROOT_SENTINEL,
+                WORK_ROOT_SENTINEL_CONTENT,
+            )
+        else:
+            _validate_directory_metadata(
+                os.fstat(root_descriptor),
+                "VFIO matrix work root",
+                require_owner=True,
+                require_private=True,
+            )
+        _read_sentinel_at(
+            root_descriptor,
+            WORK_ROOT_SENTINEL,
+            WORK_ROOT_SENTINEL_CONTENT,
+            "VFIO matrix work-root sentinel",
+        )
+        _validate_work_root_entries(root_descriptor)
+    finally:
+        os.close(root_descriptor)
+    return candidate
+
+
+def _reject_symlinks_at(directory_descriptor: int, display_path: Path) -> None:
+    for name in os.listdir(directory_descriptor):
+        try:
+            metadata = os.stat(
+                name,
+                dir_fd=directory_descriptor,
+                follow_symlinks=False,
+            )
+        except OSError as exc:
+            raise CaseFailure(
+                f"cannot inspect VFIO matrix output {display_path / name}: {exc}"
+            ) from exc
+        if stat.S_ISLNK(metadata.st_mode):
+            raise CaseFailure(
+                "symlink in VFIO matrix case output is not allowed: "
+                f"{display_path / name}"
+            )
+        if stat.S_ISDIR(metadata.st_mode):
+            child_descriptor = _open_directory_at(
+                directory_descriptor,
+                name,
+                f"VFIO matrix output directory {display_path / name}",
+                require_owner=False,
+                require_private=False,
+            )
+            try:
+                _reject_symlinks_at(child_descriptor, display_path / name)
+            finally:
+                os.close(child_descriptor)
+
+
+def _clear_directory_at(
+    directory_descriptor: int,
+    display_path: Path,
+    *,
+    preserve: frozenset[str] = frozenset(),
+) -> None:
+    for name in os.listdir(directory_descriptor):
+        if name in preserve:
+            continue
+        try:
+            metadata = os.stat(
+                name,
+                dir_fd=directory_descriptor,
+                follow_symlinks=False,
+            )
+            if stat.S_ISDIR(metadata.st_mode) and not stat.S_ISLNK(metadata.st_mode):
+                child_descriptor = _open_directory_at(
+                    directory_descriptor,
+                    name,
+                    f"VFIO matrix output directory {display_path / name}",
+                    require_owner=False,
+                    require_private=False,
+                )
+                try:
+                    _clear_directory_at(child_descriptor, display_path / name)
+                finally:
+                    os.close(child_descriptor)
+                os.rmdir(name, dir_fd=directory_descriptor)
+            else:
+                os.unlink(name, dir_fd=directory_descriptor)
+        except OSError as exc:
+            raise CaseFailure(
+                f"cannot clear VFIO matrix output {display_path / name}: {exc}"
+            ) from exc
+
+
+def prepare_case_directory(work_root: Path, case: Case) -> Path:
+    root = prepare_work_root(work_root)
+    root, root_descriptor = _open_directory_path(root, "VFIO matrix work root")
+    try:
+        _validate_simple_name(case.name, "VFIO matrix case name")
+        try:
+            os.stat(case.name, dir_fd=root_descriptor, follow_symlinks=False)
+        except FileNotFoundError:
+            os.mkdir(case.name, PRIVATE_DIRECTORY_MODE, dir_fd=root_descriptor)
+            case_descriptor = _open_directory_at(
+                root_descriptor,
+                case.name,
+                f"VFIO matrix case directory {case.name}",
+            )
+            try:
+                _create_sentinel_at(
+                    case_descriptor,
+                    CASE_SENTINEL,
+                    CASE_SENTINEL_CONTENT,
+                )
+            except BaseException:
+                os.close(case_descriptor)
+                os.rmdir(case.name, dir_fd=root_descriptor)
+                raise
+        else:
+            case_descriptor = _open_directory_at(
+                root_descriptor,
+                case.name,
+                f"VFIO matrix case directory {case.name}",
+            )
+            _read_sentinel_at(
+                case_descriptor,
+                CASE_SENTINEL,
+                CASE_SENTINEL_CONTENT,
+                f"VFIO matrix case sentinel for {case.name}",
+            )
+        try:
+            case_path = root / case.name
+            _reject_symlinks_at(case_descriptor, case_path)
+            _clear_directory_at(
+                case_descriptor,
+                case_path,
+                preserve=frozenset({CASE_SENTINEL}),
+            )
+            _read_sentinel_at(
+                case_descriptor,
+                CASE_SENTINEL,
+                CASE_SENTINEL_CONTENT,
+                f"VFIO matrix case sentinel for {case.name}",
+            )
+        finally:
+            os.close(case_descriptor)
+    finally:
+        os.close(root_descriptor)
+    return root / case.name
+
+
+def _output_parent(path: Path) -> tuple[Path, str, int]:
+    _validate_simple_name(path.name, "VFIO matrix output name")
+    parent, descriptor = _open_directory_path(
+        path.parent,
+        f"VFIO matrix output directory for {path.name}",
+    )
+    return parent, path.name, descriptor
+
+
+def _validate_output_target_at(directory_descriptor: int, name: str) -> None:
+    try:
+        metadata = os.stat(name, dir_fd=directory_descriptor, follow_symlinks=False)
+    except FileNotFoundError:
+        return
+    if stat.S_ISLNK(metadata.st_mode):
+        raise CaseFailure(f"refusing symlink VFIO matrix output file: {name}")
+    if not stat.S_ISREG(metadata.st_mode):
+        raise CaseFailure(f"VFIO matrix output must be a regular file: {name}")
+
+
+def _create_temporary_file_at(directory_descriptor: int, final_name: str) -> tuple[str, int]:
+    flags = (
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_CLOEXEC", 0)
+        | _nofollow_flag()
+    )
+    for _attempt in range(128):
+        name = f".{final_name}.{secrets.token_hex(8)}.tmp"
+        try:
+            descriptor = os.open(
+                name,
+                flags,
+                PRIVATE_FILE_MODE,
+                dir_fd=directory_descriptor,
+            )
+        except FileExistsError:
+            continue
+        return name, descriptor
+    raise CaseFailure(f"cannot allocate temporary output for {final_name}")
+
+
+def _open_log_output(path: Path, *, binary: bool):
+    _parent, name, directory_descriptor = _output_parent(path)
+    temporary_name = ""
+    descriptor = -1
+    try:
+        _validate_output_target_at(directory_descriptor, name)
+        temporary_name, descriptor = _create_temporary_file_at(directory_descriptor, name)
+        _validate_output_target_at(directory_descriptor, name)
+        os.replace(
+            temporary_name,
+            name,
+            src_dir_fd=directory_descriptor,
+            dst_dir_fd=directory_descriptor,
+        )
+        temporary_name = ""
+        mode = "wb" if binary else "w"
+        if binary:
+            output = os.fdopen(descriptor, mode)
+        else:
+            output = os.fdopen(descriptor, mode, encoding="utf-8")
+        descriptor = -1
+        return output
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        if temporary_name:
+            try:
+                os.unlink(temporary_name, dir_fd=directory_descriptor)
+            except FileNotFoundError:
+                pass
+        os.close(directory_descriptor)
+
+
+def _read_output_text(path: Path) -> str:
+    _parent, name, directory_descriptor = _output_parent(path)
+    descriptor = -1
+    try:
+        descriptor = os.open(name, _file_read_flags(), dir_fd=directory_descriptor)
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != _effective_uid()
+            or metadata.st_nlink != 1
+            or stat.S_IMODE(metadata.st_mode) != PRIVATE_FILE_MODE
+        ):
+            raise CaseFailure(f"VFIO matrix output is not a private regular file: {path}")
+        with os.fdopen(descriptor, "r", encoding="utf-8") as source:
+            descriptor = -1
+            return source.read()
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        os.close(directory_descriptor)
+
+
+def allocate_socket_lease(case: Case, work_dir: Path) -> SocketLease:
+    work_dir, descriptor = _open_directory_path(
+        work_dir,
+        "VFIO matrix socket work directory",
+    )
+    lease_name = ""
+    try:
+        for _attempt in range(128):
+            lease_name = f".v-{secrets.token_hex(6)}"
+            try:
+                os.mkdir(lease_name, PRIVATE_DIRECTORY_MODE, dir_fd=descriptor)
+            except FileExistsError:
+                continue
+            break
+        else:
+            raise CaseFailure(f"{case.name}: cannot allocate a private socket directory")
+
+        lease_descriptor = _open_directory_at(
+            descriptor,
+            lease_name,
+            f"{case.name} VFIO socket lease directory",
+            require_private=False,
+        )
+        try:
+            os.fchmod(lease_descriptor, PRIVATE_DIRECTORY_MODE)
+            _validate_directory_metadata(
+                os.fstat(lease_descriptor),
+                f"{case.name} VFIO socket lease directory",
+                require_owner=True,
+                require_private=True,
+            )
+        finally:
+            os.close(lease_descriptor)
+
+        directory = work_dir / lease_name
         lease = SocketLease(directory=directory, path=directory / "s")
         if len(os.fsencode(lease.path)) > UNIX_SOCKET_PATH_LIMIT:
             raise CaseFailure(
@@ -384,8 +956,14 @@ def allocate_socket_lease(case: Case, work_dir: Path) -> SocketLease:
             )
         return lease
     except BaseException:
-        directory.rmdir()
+        if lease_name:
+            try:
+                os.rmdir(lease_name, dir_fd=descriptor)
+            except FileNotFoundError:
+                pass
         raise
+    finally:
+        os.close(descriptor)
 
 
 def wait_for_unix_socket(lease: SocketLease, process: subprocess.Popen,
@@ -442,10 +1020,16 @@ def start_server(case: Case, artifacts: Path, work_dir: Path, timeout: int = 10)
     if timeout <= 0:
         raise CaseFailure("VFIO server readiness timeout must be positive")
     log_path = work_dir / "server.log"
-    work_dir.mkdir(parents=True, exist_ok=True)
+    checked_work_dir, work_descriptor = _open_directory_path(
+        work_dir,
+        f"VFIO matrix case directory for {case.name}",
+    )
+    os.close(work_descriptor)
+    work_dir = checked_work_dir
+    log_path = work_dir / "server.log"
     lease = allocate_socket_lease(case, work_dir)
     try:
-        log = log_path.open("w", encoding="utf-8")
+        log = _open_log_output(log_path, binary=False)
     except BaseException:
         lease.directory.rmdir()
         raise
@@ -597,13 +1181,13 @@ def run_qemu_case(case: Case, artifacts: Path, work_dir: Path,
                                      qemu=qemu, shared_memory=shared_memory,
                                      rebind=rebind)
         try:
-            with qemu_log.open("w", encoding="utf-8") as log:
+            with _open_log_output(qemu_log, binary=False) as log:
                 result = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT,
                                         timeout=timeout, check=False)
         except subprocess.TimeoutExpired as exc:
             _retain_guest_records(qemu_log, work_dir / "guest-results.jsonl")
             raise CaseFailure(f"{case.name}: QEMU timed out after {timeout}s") from exc
-        text = qemu_log.read_text(encoding="utf-8")
+        text = _read_output_text(qemu_log)
         _retain_guest_records(qemu_log, work_dir / "guest-results.jsonl")
         if result.returncode != 0:
             raise CaseFailure(f"{case.name}: QEMU exited {result.returncode}")
@@ -665,22 +1249,34 @@ def device_for(artifacts: Path) -> str:
 
 
 def _atomic_write(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary_name = tempfile.mkstemp(
-        dir=path.parent,
-        prefix=f".{path.name}.",
-        suffix=".tmp",
-    )
-    temporary = Path(temporary_name)
+    _parent, name, directory_descriptor = _output_parent(path)
+    temporary_name = ""
+    descriptor = -1
     try:
+        _validate_output_target_at(directory_descriptor, name)
+        temporary_name, descriptor = _create_temporary_file_at(directory_descriptor, name)
         with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+            descriptor = -1
             output.write(text)
             output.flush()
             os.fsync(output.fileno())
-        os.replace(temporary, path)
-    except BaseException:
-        temporary.unlink(missing_ok=True)
-        raise
+        _validate_output_target_at(directory_descriptor, name)
+        os.replace(
+            temporary_name,
+            name,
+            src_dir_fd=directory_descriptor,
+            dst_dir_fd=directory_descriptor,
+        )
+        temporary_name = ""
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        if temporary_name:
+            try:
+                os.unlink(temporary_name, dir_fd=directory_descriptor)
+            except FileNotFoundError:
+                pass
+        os.close(directory_descriptor)
 
 
 def _atomic_write_json(path: Path, value: object) -> None:
@@ -688,11 +1284,13 @@ def _atomic_write_json(path: Path, value: object) -> None:
 
 
 def _retain_guest_records(qemu_log: Path, destination: Path) -> None:
-    if not qemu_log.is_file():
+    try:
+        text = _read_output_text(qemu_log)
+    except FileNotFoundError:
         _atomic_write(destination, "")
         return
     records = []
-    for line in qemu_log.read_text(encoding="utf-8").splitlines():
+    for line in text.splitlines():
         stripped = line.strip()
         if stripped.startswith("{"):
             records.append(stripped)
@@ -730,9 +1328,15 @@ def run_case(case: Case, work_root: Path, timeout: int = 120,
              qemu: Path | None = None, kernel: Path | None = None,
              initrd: Path | None = None, shared_memory: bool = False,
              rebind: bool = False, qemu_version: str | None = None) -> dict:
-    case_dir = work_root / case.name
+    try:
+        case_dir = prepare_case_directory(work_root, case)
+    except (CaseFailure, OSError) as exc:
+        return {
+            "case": case.name,
+            "status": "fail",
+            "detail": f"unsafe VFIO matrix workspace: {exc}",
+        }
     artifacts = case_dir / "artifacts"
-    case_dir.mkdir(parents=True, exist_ok=True)
     generation_log = case_dir / "generation.log"
     try:
         if qemu is None:
@@ -815,13 +1419,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--shared-memory", action="store_true")
     parser.add_argument("--rebind", action="store_true")
     args = parser.parse_args(argv)
+    try:
+        work_root = prepare_work_root(args.work_dir)
+    except (CaseFailure, OSError) as exc:
+        print(f"VFIO matrix: {exc}", file=sys.stderr)
+        return 2
     selected = [CASES[args.case]] if args.case else list(CASES.values())
-    results = [run_case(case, args.work_dir, qemu=args.qemu, kernel=args.kernel,
+    results = [run_case(case, work_root, qemu=args.qemu, kernel=args.kernel,
                         initrd=args.initrd, shared_memory=args.shared_memory,
                         rebind=args.rebind, qemu_version=args.qemu_version)
                for case in selected]
     summary = summarize_results(results)
-    _atomic_write_json(args.work_dir / "summary.json", summary)
+    _atomic_write_json(work_root / "summary.json", summary)
     print(json.dumps(summary, indent=2, sort_keys=True))
     return summary["exit_code"]
 
@@ -846,8 +1455,7 @@ def run_command(argv: Sequence[str], log_path: Path, timeout: int) -> None:
     if timeout <= 0:
         raise ValueError("timeout must be positive")
 
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    with log_path.open("wb") as log:
+    with _open_log_output(log_path, binary=True) as log:
         process = subprocess.Popen(
             list(argv),
             cwd=ROOT,

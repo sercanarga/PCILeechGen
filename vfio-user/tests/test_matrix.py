@@ -98,6 +98,153 @@ class MatrixTests(unittest.TestCase):
                     timeout=5,
                 )
 
+    def test_work_root_rejects_symlink_without_touching_target(self):
+        matrix = load_matrix()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "target"
+            target.mkdir()
+            valuable = target / "valuable.txt"
+            valuable.write_text("preserve", encoding="utf-8")
+            work_root = root / "matrix"
+            work_root.symlink_to(target, target_is_directory=True)
+
+            with self.assertRaisesRegex(matrix.CaseFailure, "must not be a symlink"):
+                matrix.prepare_work_root(work_root)
+
+            self.assertEqual(valuable.read_text(encoding="utf-8"), "preserve")
+            self.assertFalse((target / matrix.WORK_ROOT_SENTINEL).exists())
+
+    def test_work_root_refuses_unowned_existing_tree(self):
+        matrix = load_matrix()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            work_root = Path(tmp) / "matrix"
+            work_root.mkdir(mode=0o700)
+            valuable = work_root / "valuable.txt"
+            valuable.write_text("preserve", encoding="utf-8")
+
+            with self.assertRaisesRegex(matrix.CaseFailure, "unowned, non-empty"):
+                matrix.prepare_work_root(work_root)
+
+            self.assertEqual(valuable.read_text(encoding="utf-8"), "preserve")
+            self.assertFalse((work_root / matrix.WORK_ROOT_SENTINEL).exists())
+
+    def test_owned_case_rerun_clears_only_the_owned_case(self):
+        matrix = load_matrix()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            work_root = matrix.prepare_work_root(Path(tmp) / "matrix")
+            case_dir = matrix.prepare_case_directory(
+                work_root,
+                matrix.CASES["generic"],
+            )
+            nested = case_dir / "artifacts" / "nested"
+            nested.mkdir(parents=True)
+            (nested / "generated.bin").write_bytes(b"generated")
+            summary = work_root / "summary.json"
+            matrix._atomic_write(summary, "{}\n")
+
+            rerun = matrix.prepare_case_directory(
+                work_root,
+                matrix.CASES["generic"],
+            )
+
+            self.assertEqual(rerun, case_dir)
+            self.assertEqual(
+                {entry.name for entry in case_dir.iterdir()},
+                {matrix.CASE_SENTINEL},
+            )
+            self.assertEqual(summary.read_text(encoding="utf-8"), "{}\n")
+            self.assertEqual(stat.S_IMODE(work_root.stat().st_mode), 0o700)
+            self.assertEqual(stat.S_IMODE(case_dir.stat().st_mode), 0o700)
+
+    def test_owned_case_rejects_symlink_before_cleanup(self):
+        matrix = load_matrix()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            work_root = matrix.prepare_work_root(root / "matrix")
+            case_dir = matrix.prepare_case_directory(
+                work_root,
+                matrix.CASES["generic"],
+            )
+            valuable = root / "valuable.txt"
+            valuable.write_text("preserve", encoding="utf-8")
+            linked_log = case_dir / "generation.log"
+            linked_log.symlink_to(valuable)
+
+            with self.assertRaisesRegex(matrix.CaseFailure, "symlink.*not allowed"):
+                matrix.prepare_case_directory(
+                    work_root,
+                    matrix.CASES["generic"],
+                )
+
+            self.assertEqual(valuable.read_text(encoding="utf-8"), "preserve")
+            self.assertTrue(linked_log.is_symlink())
+
+    def test_run_command_rejects_symlink_log_without_truncating_target(self):
+        matrix = load_matrix()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            logs = root / "logs"
+            logs.mkdir(mode=0o700)
+            valuable = root / "valuable.txt"
+            valuable.write_text("preserve", encoding="utf-8")
+            log_path = logs / "command.log"
+            log_path.symlink_to(valuable)
+
+            with self.assertRaisesRegex(matrix.CaseFailure, "refusing symlink"):
+                matrix.run_command(
+                    [sys.executable, "-c", "print('must not run')"],
+                    log_path,
+                    timeout=5,
+                )
+
+            self.assertEqual(valuable.read_text(encoding="utf-8"), "preserve")
+            self.assertTrue(log_path.is_symlink())
+
+    def test_run_command_replaces_existing_hardlink_without_truncating_source(self):
+        matrix = load_matrix()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            logs = root / "logs"
+            logs.mkdir(mode=0o700)
+            valuable = root / "valuable.txt"
+            valuable.write_text("preserve", encoding="utf-8")
+            log_path = logs / "command.log"
+            os.link(valuable, log_path)
+
+            matrix.run_command(
+                [sys.executable, "-c", "print('new log')"],
+                log_path,
+                timeout=5,
+            )
+
+            self.assertEqual(valuable.read_text(encoding="utf-8"), "preserve")
+            self.assertEqual(log_path.read_text(encoding="utf-8"), "new log\n")
+            self.assertNotEqual(valuable.stat().st_ino, log_path.stat().st_ino)
+
+    def test_atomic_result_write_rejects_symlink_target(self):
+        matrix = load_matrix()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            work_root = matrix.prepare_work_root(root / "matrix")
+            valuable = root / "valuable.txt"
+            valuable.write_text("preserve", encoding="utf-8")
+            summary = work_root / "summary.json"
+            summary.symlink_to(valuable)
+
+            with self.assertRaisesRegex(matrix.CaseFailure, "refusing symlink"):
+                matrix._atomic_write(summary, "unsafe\n")
+
+            self.assertEqual(valuable.read_text(encoding="utf-8"), "preserve")
+            self.assertTrue(summary.is_symlink())
+
     def test_parse_guest_results_requires_passing_terminal_record(self):
         matrix = load_matrix()
 
@@ -286,6 +433,7 @@ class MatrixTests(unittest.TestCase):
             binary.parent.mkdir(parents=True)
             binary.write_text("fake", encoding="utf-8")
             work_dir = root / "work"
+            work_dir.mkdir(mode=0o700)
             artifacts = root / "artifacts"
             artifacts.mkdir()
             listener = socket.socket(socket.AF_UNIX)
@@ -329,6 +477,7 @@ class MatrixTests(unittest.TestCase):
             binary.parent.mkdir(parents=True)
             binary.write_text("fake", encoding="utf-8")
             work_dir = root / "work"
+            work_dir.mkdir(mode=0o700)
             artifacts = root / "artifacts"
             artifacts.mkdir()
             processes = []
@@ -363,6 +512,7 @@ class MatrixTests(unittest.TestCase):
             binary.parent.mkdir(parents=True)
             binary.write_text("fake", encoding="utf-8")
             work_dir = root / "work"
+            work_dir.mkdir(mode=0o700)
             artifacts = root / "artifacts"
             artifacts.mkdir()
 
