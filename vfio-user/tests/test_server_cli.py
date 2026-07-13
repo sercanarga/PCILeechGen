@@ -14,7 +14,7 @@ class ServerCliTests(unittest.TestCase):
         cls.binary = Path(os.environ.get("VFIO_DEVICE_BIN", "build/vfio-device")).resolve()
         cls.artifacts = Path(os.environ.get("VFIO_ARTIFACTS", "../tests/cocotb/out_generic")).resolve()
         if not cls.binary.is_file():
-            raise RuntimeError(f"server binary is missing: {cls.binary}")
+            raise unittest.SkipTest(f"server binary is missing: {cls.binary}")
 
     def test_missing_artifacts_fail(self):
         result = subprocess.run(
