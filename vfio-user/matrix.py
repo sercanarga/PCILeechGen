@@ -6,6 +6,8 @@ import json
 import argparse
 import select
 import signal
+import socket
+import stat
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -101,6 +103,24 @@ def build_command(case: Case, output: Path) -> list[str]:
     ]
 
 
+def prepare_socket_path(path: Path) -> None:
+    if not path.exists():
+        return
+    if not stat.S_ISSOCK(path.stat().st_mode):
+        raise CaseFailure(f"VFIO socket path exists but is not a socket: {path}")
+    probe = socket.socket(socket.AF_UNIX)
+    try:
+        probe.settimeout(0.2)
+        try:
+            probe.connect(str(path))
+        except (ConnectionRefusedError, FileNotFoundError, socket.timeout):
+            path.unlink()
+            return
+        raise CaseFailure(f"VFIO socket is already active: {path}")
+    finally:
+        probe.close()
+
+
 def start_server(case: Case, artifacts: Path, work_dir: Path, timeout: int = 10):
     binary = ROOT / "vfio-user" / "build" / "vfio-device"
     if not binary.is_file():
@@ -108,6 +128,7 @@ def start_server(case: Case, artifacts: Path, work_dir: Path, timeout: int = 10)
     socket_path = work_dir / "device.sock"
     log_path = work_dir / "server.log"
     work_dir.mkdir(parents=True, exist_ok=True)
+    prepare_socket_path(socket_path)
     with log_path.open("w", encoding="utf-8") as log:
         process = subprocess.Popen(
             [str(binary), "--artifacts", str(artifacts), "--socket", str(socket_path)],
@@ -126,6 +147,9 @@ def start_server(case: Case, artifacts: Path, work_dir: Path, timeout: int = 10)
             if record.get("event") != "ready":
                 raise CaseFailure(f"{case.name}: invalid readiness record")
             return process, process.stdout, socket_path, record
+        except BaseException:
+            stop_server(process, process.stdout)
+            raise
         finally:
             if process.poll() is not None:
                 process.stdout.close()

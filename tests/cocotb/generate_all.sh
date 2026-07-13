@@ -9,9 +9,18 @@ for name in nvme audio xhci multibar ethernet wifi sata gpu thunderbolt generic;
   [ "$name" = "nvme" ] && board="ac701_ft601"
   echo -n "  $name ($board)... "
   rm -rf "tests/cocotb/out_$name"
-  "$GEN" build --from-json "$fixture" --board "$board" --skip-vivado \
-    --output "tests/cocotb/out_$name" --force >/dev/null 2>&1 \
-    && echo "OK" || echo "FAIL"
+  output="tests/cocotb/out_$name"
+  if ! "$GEN" build --from-json "$fixture" --board "$board" --skip-vivado \
+    --output "$output" --force >/dev/null 2>&1; then
+    echo "FAIL"
+    exit 1
+  fi
+  if ! "$GEN" verify-manifest --manifest "$output/build_manifest.json" \
+    --output-dir "$output" >/dev/null; then
+    echo "FAIL (manifest)"
+    exit 1
+  fi
+  echo "OK"
 done
 # default out = nvme (backwards compat)
 rm -rf tests/cocotb/out

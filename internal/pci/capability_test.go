@@ -4,6 +4,47 @@ import (
 	"testing"
 )
 
+func FuzzParseCapabilities(f *testing.F) {
+	seeds := [][]byte{
+		{0x40, 0x01, 0x00},
+		{0x40, 0x05, 0x50, 0x11, 0x00},
+		{0xff, 0xff, 0xff, 0xff},
+	}
+	for _, seed := range seeds {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, data []byte) {
+		cs := NewConfigSpace()
+		cs.WriteU16(0x06, 0x0010)
+		cs.WriteU8(0x34, 0x40)
+		for i, value := range data {
+			offset := 0x40 + i
+			if offset >= ConfigSpaceLegacySize {
+				break
+			}
+			cs.WriteU8(offset, value)
+		}
+		_ = ParseCapabilities(cs)
+	})
+}
+
+func FuzzParseExtCapabilities(f *testing.F) {
+	f.Add([]byte{0x01, 0x00, 0x01, 0x00})
+	f.Add([]byte{0xff, 0xff, 0xff, 0xff})
+	f.Fuzz(func(t *testing.T, data []byte) {
+		cs := NewConfigSpace()
+		cs.Size = ConfigSpaceSize
+		for i, value := range data {
+			offset := 0x100 + i
+			if offset >= ConfigSpaceSize {
+				break
+			}
+			cs.WriteU8(offset, value)
+		}
+		_ = ParseExtCapabilities(cs)
+	})
+}
+
 func TestParseCapabilities(t *testing.T) {
 	cs := NewConfigSpace()
 

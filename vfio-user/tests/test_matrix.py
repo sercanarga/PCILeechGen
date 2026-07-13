@@ -1,4 +1,5 @@
 import importlib.util
+import socket
 import sys
 import tempfile
 import unittest
@@ -113,6 +114,24 @@ class MatrixTests(unittest.TestCase):
 
         append = command[command.index("-append") + 1]
         self.assertIn("vfio_rebind=1", append)
+
+    def test_prepare_socket_path_removes_stale_socket(self):
+        matrix = load_matrix()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "device.sock"
+            listener = socket.socket(socket.AF_UNIX)
+            listener.bind(str(path))
+            listener.close()
+            matrix.prepare_socket_path(path)
+            self.assertFalse(path.exists())
+
+    def test_prepare_socket_path_rejects_non_socket(self):
+        matrix = load_matrix()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "device.sock"
+            path.write_text("occupied", encoding="utf-8")
+            with self.assertRaisesRegex(matrix.CaseFailure, "not a socket"):
+                matrix.prepare_socket_path(path)
 
 
 if __name__ == "__main__":

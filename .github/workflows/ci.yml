@@ -62,7 +62,7 @@ jobs:
             vfio-user/src/behavior_gpu.c vfio-user/src/behavior_hda.c \
             vfio-user/src/behavior_nvme.c vfio-user/src/behavior_static.c \
             vfio-user/src/behavior_xhci.c \
-            -checks='-*,clang-analyzer-*' -- $cflags
+            -checks='-*,clang-analyzer-*' -warnings-as-errors='*' -- $cflags
 
   hdl-lint:
     name: HDL Lint (Verilator)
@@ -90,6 +90,14 @@ jobs:
 
       - name: Run HDL lint
         run: make hdl-lint
+
+      - name: Upload HDL lint report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hdl-lint-report
+          path: hdl-lint-report.tsv
+          if-no-files-found: error
 
   vfio-user:
     name: VFIO-user behavior tests
