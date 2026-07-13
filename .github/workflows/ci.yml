@@ -84,5 +84,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libcmocka-dev libjson-c-dev libssl-dev
 
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Generate VFIO-user fixtures
+        run: |
+          go build -trimpath -o bin/pcileechgen ./cmd/pcileechgen
+          tests/cocotb/generate_all.sh
+
       - name: Run VFIO-user tests
         run: make -C vfio-user clean test
