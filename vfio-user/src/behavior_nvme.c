@@ -54,6 +54,10 @@ struct nvme_state {
     uint64_t write_commands;
     uint64_t data_units_read;
     uint64_t data_units_written;
+    uint64_t flush_cmds;
+    uint64_t dataset_cmds;
+    uint64_t write_zero_cmds;
+    uint64_t format_cmds;
     uint32_t error_log_entries;
     uint32_t unsafe_shutdowns;
     uint32_t power_cycles;
@@ -307,11 +311,13 @@ static int dma_prp(struct nvme_state *state, const struct nvme_sqe *sqe,
         if (device_to_host) {
             state->dma_mwr_tlps++;
             if (state->host.dma_write(state->host.opaque, address, data, chunk) < 0) {
+                state->transport_errors++;
                 return -EIO;
             }
         } else {
             state->dma_mrd_tlps++;
             if (state->host.dma_read(state->host.opaque, address, data, chunk) < 0) {
+                state->transport_errors++;
                 return -EIO;
             }
         }
@@ -332,6 +338,7 @@ static int dma_prp(struct nvme_state *state, const struct nvme_sqe *sqe,
                 state->prp_list_fetches++;
                 if (state->host.dma_read(state->host.opaque, list_address,
                                          &address, sizeof(address)) < 0) {
+                    state->transport_errors++;
                     return -EIO;
                 }
                 list_index = 1;
@@ -346,6 +353,7 @@ static int dma_prp(struct nvme_state *state, const struct nvme_sqe *sqe,
             if (state->host.dma_read(state->host.opaque,
                                      list_address + (uint64_t)list_index * sizeof(address),
                                      &address, sizeof(address)) < 0) {
+                state->transport_errors++;
                 return -EIO;
             }
             state->prp_list_fetches++;
@@ -404,28 +412,42 @@ static void fill_log_page(const struct nvme_state *state, uint8_t page,
         put32(data, 4, 0x00000002);
         put32(data, 8, NVME_NAMESPACE_LBAS);
         put32(data, 12, 0x00002000); /* 32 KiB MDTS */
-        put64(data, 32, state->data_units_read);
-        put64(data, 40, state->data_units_written);
+        put32(data, 32, state->dma_mrd_tlps);
+        put32(data, 36, state->dma_mrd_tlps >> 32);
+        put32(data, 40, state->dma_mwr_tlps);
+        put32(data, 44, state->dma_mwr_tlps >> 32);
+        put32(data, 48, state->prp_list_fetches);
+        put32(data, 52, state->prp_list_fetches >> 32);
+        put32(data, 56, state->queue_resets);
+        put32(data, 60, state->queue_resets >> 32);
+        put32(data, 64, state->shutdowns);
+        put32(data, 68, state->shutdowns >> 32);
+        put32(data, 72, state->flush_cmds);
+        put32(data, 76, state->flush_cmds >> 32);
+        put32(data, 80, state->dataset_cmds);
+        put32(data, 84, state->dataset_cmds >> 32);
+        put32(data, 88, state->write_zero_cmds);
+        put32(data, 92, state->write_zero_cmds >> 32);
+        put32(data, 96, state->format_cmds);
+        put32(data, 100, state->format_cmds >> 32);
+        put32(data, 112, state->timeout_errors);
+        put32(data, 116, state->timeout_errors >> 32);
+        put32(data, 120, state->cpl_errors);
+        put32(data, 124, state->cpl_errors >> 32);
+        put32(data, 128, state->invalid_cmds);
+        put32(data, 132, state->error_log_entries);
+        put32(data, 136, 0);
+        put32(data, 140, state->unsafe_shutdowns);
+        put32(data, 144, 0);
+        put32(data, 148, state->transport_errors);
+        put32(data, 152, state->transport_errors >> 32);
+        put32(data, 156, 0);
+        put32(data, 160, state->msix_pending ? 1u : 0u);
+        put32(data, 164, state->io_vector);
+        put32(data, 168, 1);
+        put32(data, 172, state->feat_async_event_cfg & 0xff);
         put32(data, 176, state->power_cycles);
-        put32(data, 184, state->dma_mrd_tlps);
-        put32(data, 188, state->dma_mrd_tlps >> 32);
-        put32(data, 192, state->dma_mwr_tlps);
-        put32(data, 196, state->dma_mwr_tlps >> 32);
-        put32(data, 200, state->prp_list_fetches);
-        put32(data, 204, state->prp_list_fetches >> 32);
-        put32(data, 208, state->queue_resets);
-        put32(data, 212, state->queue_resets >> 32);
-        put32(data, 216, state->shutdowns);
-        put32(data, 220, state->shutdowns >> 32);
-        put32(data, 224, state->timeout_errors);
-        put32(data, 228, state->timeout_errors >> 32);
-        put32(data, 232, state->cpl_errors);
-        put32(data, 236, state->cpl_errors >> 32);
-        put32(data, 240, state->invalid_cmds);
-        put32(data, 244, state->transport_errors);
-        put32(data, 248, state->transport_errors >> 32);
-        put32(data, 252, state->aer_events);
-        put32(data, 256, state->aer_events >> 32);
+        put32(data, 180, state->feat_write_cache & 1u);
         break;
     default:
         break;
@@ -588,6 +610,7 @@ static int process_admin(struct nvme_state *state, uint16_t tail)
             if (sqe.nsid != 1 || sqe.cdw10 != 0) {
                 status = 0x20a;
             } else {
+                state->format_cmds++;
                 namespace_reset(state);
             }
         } else if (sqe.opcode == 0x00 || sqe.opcode == 0x01 ||
@@ -638,6 +661,7 @@ static int post_io_cqe(struct nvme_state *state, const struct nvme_sqe *sqe,
     if (state->host.dma_write(state->host.opaque,
                               state->io_cq + (uint64_t)state->io_cq_tail * sizeof(cqe),
                               &cqe, sizeof(cqe)) < 0) {
+        state->cpl_errors++;
         return -EIO;
     }
     state->io_cq_tail = (uint16_t)((state->io_cq_tail + 1) % state->io_cq_size);
@@ -671,6 +695,8 @@ static int process_io(struct nvme_state *state, uint16_t tail)
             if (sqe.prp1 || sqe.prp2 || sqe.cdw10 || sqe.cdw11 || sqe.cdw12 ||
                 sqe.cdw13 || sqe.cdw14 || sqe.cdw15) {
                 status = 2;
+            } else {
+                state->flush_cmds++;
             }
         } else if (sqe.opcode == 0x01 || sqe.opcode == 0x02 || sqe.opcode == 0x08) {
             uint64_t lba = (uint64_t)sqe.cdw10 | ((uint64_t)sqe.cdw11 << 32);
@@ -709,6 +735,7 @@ static int process_io(struct nvme_state *state, uint16_t tail)
                         state->data_units_read += (length + 511) / 512;
                     }
                 } else {
+                    state->write_zero_cmds++;
                     namespace_zero(state, byte_offset, length);
                 }
                 free(buffer);
@@ -723,6 +750,7 @@ static int process_io(struct nvme_state *state, uint16_t tail)
             if (read_prps(state, &sqe, ranges, range_length) < 0) {
                 status = 0x13;
             } else {
+                state->dataset_cmds++;
                 if (count > NVME_MDTS_BYTES / 16) {
                     count = NVME_MDTS_BYTES / 16;
                 }

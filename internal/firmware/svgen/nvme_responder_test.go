@@ -139,10 +139,10 @@ func TestGenerateNVMeResponderSV_VendorDiagnosticLog(t *testing.T) {
 		"8'd0: log_page_word = 32'h444D564E",
 		"8'd18: log_page_word = stat_flush_cmds[31:0]",
 		"8'd45: log_page_word = {31'h0, feat_write_cache[0]}",
-		"8'd46: log_page_word = stat_dma_mrd_tlps[31:0]",
-		"8'd50: log_page_word = stat_prp_list_fetches[31:0]",
-		"8'd60: log_page_word = stat_invalid_cmds",
-		"8'd63: log_page_word = stat_aer_events[31:0]",
+		"8'd8: log_page_word = stat_dma_mrd_tlps[31:0]",
+		"8'd12: log_page_word = stat_prp_list_fetches[31:0]",
+		"8'd32: log_page_word = stat_invalid_cmds",
+		"8'd40: log_page_word = {30'h0, aer_event_pending, aer_registered}",
 	} {
 		if !strings.Contains(result, want) {
 			t.Errorf("vendor diagnostic log should contain %q", want)
