@@ -253,6 +253,31 @@ static void completes_identify_namespace_across_prp_pages(void **state)
     assert_int_equal(host.irqs, 1);
 }
 
+static void completes_vendor_log_page(void **state)
+{
+    struct fixture *fixture = *state;
+    struct fake_host host = {0};
+    struct nvme_sqe *sqe;
+    struct nvme_cqe *cq;
+    uint32_t tail = 1;
+
+    configures_admin_queues(fixture, &host, &sqe, &cq, 4);
+    sqe->opcode = 0x02;
+    sqe->cid = 13;
+    sqe->nsid = 0;
+    sqe->prp1 = 0x3ff0;
+    sqe->prp2 = 0x5000;
+    sqe->cdw10 = 0xc0 | (1u << 16);
+    assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x1000,
+                                              &tail, sizeof(tail)), 4);
+    assert_int_equal(fixture->behavior.service(fixture->behavior.state), 0);
+    assert_int_equal(host.memory[0x3ff0], 'P');
+    assert_int_equal(host.memory[0x3ff1], 'C');
+    assert_int_equal(host.memory[0x3ff2], 'L');
+    assert_int_equal(host.memory[0x3ff3], 'E');
+    assert_int_equal(cq->status, 1);
+}
+
 
 static void wraps_admin_queue_phase(void **state)
 {
@@ -345,6 +370,69 @@ static void defers_submission_when_completion_queue_is_full(void **state)
     assert_int_equal(host.irqs, 3);
 }
 
+static void processes_io_write_read_and_flush(void **state)
+{
+    struct fixture *fixture = *state;
+    struct fake_host host = {0};
+    struct nvme_sqe *admin_sq;
+    struct nvme_cqe *admin_cq;
+    struct nvme_sqe *io_sq;
+    struct nvme_cqe *io_cq;
+    uint32_t tail;
+    uint32_t doorbell;
+    const uint8_t payload[512] = {0x50, 0x43, 0x49, 0x4c, 0x45, 0x45, 0x43, 0x48};
+
+    configures_admin_queues(fixture, &host, &admin_sq, &admin_cq, 4);
+    admin_sq[0].opcode = 0x01;
+    admin_sq[0].cid = 1;
+    admin_sq[0].prp1 = 0x6000;
+    admin_sq[0].cdw10 = (3u << 16) | 1u;
+    admin_sq[1].opcode = 0x05;
+    admin_sq[1].cid = 2;
+    admin_sq[1].prp1 = 0x7000;
+    admin_sq[1].cdw10 = (3u << 16) | 1u;
+    tail = 2;
+    assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x1000,
+                                              &tail, sizeof(tail)), 4);
+    assert_int_equal(fixture->behavior.service(fixture->behavior.state), 0);
+    assert_int_equal(admin_cq[0].status, 1);
+    assert_int_equal(admin_cq[1].status, 1);
+
+    io_sq = (struct nvme_sqe *)&host.memory[0x7000];
+    io_cq = (struct nvme_cqe *)&host.memory[0x6000];
+    memcpy(&host.memory[0x8000], payload, sizeof(payload));
+    io_sq[0].opcode = 0x01;
+    io_sq[0].cid = 10;
+    io_sq[0].nsid = 1;
+    io_sq[0].prp1 = 0x8000;
+    io_sq[0].cdw12 = 0;
+    doorbell = 1;
+    assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x1008,
+                                              &doorbell, sizeof(doorbell)), 4);
+    assert_int_equal(fixture->behavior.service(fixture->behavior.state), 0);
+    assert_int_equal(io_cq[0].status, 1);
+
+    io_sq[1].opcode = 0x02;
+    io_sq[1].cid = 11;
+    io_sq[1].nsid = 1;
+    io_sq[1].prp1 = 0x9000;
+    doorbell = 2;
+    assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x1008,
+                                              &doorbell, sizeof(doorbell)), 4);
+    assert_int_equal(fixture->behavior.service(fixture->behavior.state), 0);
+    assert_memory_equal(&host.memory[0x9000], payload, sizeof(payload));
+    assert_int_equal(io_cq[1].status, 1);
+
+    io_sq[2].opcode = 0x00;
+    io_sq[2].cid = 12;
+    io_sq[2].nsid = 1;
+    doorbell = 3;
+    assert_int_equal(fixture->behavior.write(fixture->behavior.state, 0, 0x1008,
+                                              &doorbell, sizeof(doorbell)), 4);
+    assert_int_equal(fixture->behavior.service(fixture->behavior.state), 0);
+    assert_int_equal(io_cq[2].status, 1);
+}
+
 
 int main(void)
 {
@@ -354,8 +442,10 @@ int main(void)
         cmocka_unit_test_setup_teardown(rejects_completion_doorbell_outside_queue, setup, teardown),
         cmocka_unit_test_setup_teardown(completes_identify_controller, setup, teardown),
         cmocka_unit_test_setup_teardown(completes_identify_namespace_across_prp_pages, setup, teardown),
+        cmocka_unit_test_setup_teardown(completes_vendor_log_page, setup, teardown),
         cmocka_unit_test_setup_teardown(wraps_admin_queue_phase, setup, teardown),
         cmocka_unit_test_setup_teardown(defers_submission_when_completion_queue_is_full, setup, teardown),
+        cmocka_unit_test_setup_teardown(processes_io_write_read_and_flush, setup, teardown),
     };
 
     return cmocka_run_group_tests(tests, NULL, NULL);
