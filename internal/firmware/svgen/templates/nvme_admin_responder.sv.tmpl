@@ -361,6 +361,7 @@ module pcileech_nvme_admin_responder #(
     localparam [7:0] LOG_PAGE_ERROR     = 8'h01;
     localparam [7:0] LOG_PAGE_SMART     = 8'h02;
     localparam [7:0] LOG_PAGE_FW_SLOT   = 8'h03;
+    localparam [7:0] LOG_PAGE_VENDOR    = 8'hC0;
 
     reg [63:0] stat_data_units_read;
     reg [63:0] stat_data_units_written;
@@ -484,6 +485,7 @@ module pcileech_nvme_admin_responder #(
                 LOG_PAGE_SUPPORTED: begin
                     case (dw_index[7:0])
                         8'h00: log_page_word = 32'h01010101; // 00h, 01h, 02h, 03h supported.
+                        8'd48: log_page_word = 32'h00000001; // C0h vendor diagnostics.
                         default: log_page_word = 32'h00000000;
                     endcase
                 end
@@ -531,6 +533,19 @@ module pcileech_nvme_admin_responder #(
                         8'd0: log_page_word = 32'h00000001;
                         8'd2: log_page_word = 32'h{{ if .NVMeIdentify }}{{ hex02 (index .NVMeIdentify.Controller 67) }}{{ hex02 (index .NVMeIdentify.Controller 66) }}{{ hex02 (index .NVMeIdentify.Controller 65) }}{{ hex02 (index .NVMeIdentify.Controller 64) }}{{ else }}20202020{{ end }}; // "DNV1" little-endian.
                         8'd3: log_page_word = 32'h{{ if .NVMeIdentify }}{{ hex02 (index .NVMeIdentify.Controller 71) }}{{ hex02 (index .NVMeIdentify.Controller 70) }}{{ hex02 (index .NVMeIdentify.Controller 69) }}{{ hex02 (index .NVMeIdentify.Controller 68) }}{{ else }}20202020{{ end }}; // ".000" little-endian-ish filler.
+                        default: log_page_word = 32'h00000000;
+                    endcase
+                end
+                LOG_PAGE_VENDOR: begin
+                    case (dw_index[7:0])
+                        8'd0: log_page_word = 32'h454C4350; // "PCLE".
+                        8'd1: log_page_word = 32'h00010000; // format version 1.
+                        8'd2: log_page_word = {8'h00, 8'h20, 16'h2000}; // MDTS 32 KiB.
+                        8'd3: log_page_word = 32'd{{ .NVMeDiskWords }};
+                        8'd4: log_page_word = 32'h{{ if gt .NVMeAdvertisedLBAs 0 }}{{ lo32 .NVMeAdvertisedLBAs }}{{ else }}7730B0F0{{ end }};
+                        8'd5: log_page_word = 32'h{{ if gt .NVMeAdvertisedLBAs 0 }}{{ hi32 .NVMeAdvertisedLBAs }}{{ else }}00000000{{ end }};
+                        8'd6: log_page_word = 32'h0000003F; // Identify, logs, I/O, DSM, format, and zeroes.
+                        8'd7: log_page_word = {16'h{{ hex04 .DeviceIDs.DeviceID }}, 16'h{{ hex04 .DeviceIDs.VendorID }}};
                         default: log_page_word = 32'h00000000;
                     endcase
                 end
@@ -1154,7 +1169,8 @@ module pcileech_nvme_admin_responder #(
                                         LOG_PAGE_SUPPORTED,
                                         LOG_PAGE_ERROR,
                                         LOG_PAGE_SMART,
-                                        LOG_PAGE_FW_SLOT: begin
+                                        LOG_PAGE_FW_SLOT,
+                                        LOG_PAGE_VENDOR: begin
                                             data_dw_cnt <= 11'h0;
                                             state <= S_EXEC_LOGPAGE;
                                         end

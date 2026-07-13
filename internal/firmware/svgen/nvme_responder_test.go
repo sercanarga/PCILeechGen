@@ -125,6 +125,29 @@ func TestGenerateNVMeResponderSV_FirmwareSlotLogUsesIdentifyFirmware(t *testing.
 	}
 }
 
+func TestGenerateNVMeResponderSV_VendorDiagnosticLog(t *testing.T) {
+	cfg := testConfig()
+
+	result, err := GenerateNVMeResponderSV(cfg)
+	if err != nil {
+		t.Fatalf("GenerateNVMeResponderSV failed: %v", err)
+	}
+
+	for _, want := range []string{
+		"LOG_PAGE_VENDOR    = 8'hC0",
+		"8'd48: log_page_word = 32'h00000001",
+		"8'd0: log_page_word = 32'h454C4350",
+		"8'd6: log_page_word = 32'h0000003F",
+	} {
+		if !strings.Contains(result, want) {
+			t.Errorf("vendor diagnostic log should contain %q", want)
+		}
+	}
+	if !strings.Contains(result, "LOG_PAGE_VENDOR: begin") {
+		t.Error("Get Log Page should accept vendor diagnostic page")
+	}
+}
+
 func TestGenerateNVMeResponderSV_QueueValidation(t *testing.T) {
 	cfg := testConfig()
 

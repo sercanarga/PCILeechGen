@@ -339,6 +339,8 @@ func svFuncMap() template.FuncMap {
 		"hex16":         func(v uint64) string { return fmt.Sprintf("%016X", v) },
 		"hex04":         func(v uint16) string { return fmt.Sprintf("%04X", v) },
 		"hex02":         func(v uint8) string { return fmt.Sprintf("%02X", v) },
+		"lo32":          func(v uint64) string { return fmt.Sprintf("%08X", uint32(v)) },
+		"hi32":          func(v uint64) string { return fmt.Sprintf("%08X", uint32(v>>32)) },
 		"sub":           func(a, b int) int { return a - b },
 		"mul":           func(a, b int) int { return a * b },
 		"alignedOffset": func(off uint32) uint32 { return (off / 4) * 4 },
