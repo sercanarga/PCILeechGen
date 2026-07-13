@@ -53,9 +53,10 @@ problem: lone-dma-test shows BAD DTB / can't find ntoskrnl
 cause: usually BIOS / Windows DMA settings, not the firmware.
 fix: recheck BIOS + Windows settings; compare to a known-good firmware.
 
-Note (not a bug): NVMe full disk emulation is still in progress.
-The admin queue and init work, but BRAM cache + IO queues are not done yet, so
-NVMe donors commonly hit Code 10 / stornvme Event 11 until then.
+Note (scope): NVMe emulation has an admin queue, one I/O queue pair, and a
+bounded BRAM-backed namespace. It is not a full copy of the donor disk.
+The namespace is board-scaled (8,192 or 32,768 words on supported boards) and
+NVMe builds are rejected on 35T/50T boards without enough block RAM.
 
 Note (not a bug): xHCI (USB) emulation is partial.
 Clones enumerate, but host read/write + doorbell gaps remain, so USBXHCI often
