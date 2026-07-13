@@ -207,24 +207,36 @@ UTILITIES
 ---------
 Windows device-history cleanup
 
-  After flashing and testing, Windows caches device metadata in the
-  registry. Stale entries from earlier builds can cause conflicts, Code 10
-  errors, or driver misidentification. The tools/ directory has an
-  interactive cleanup utility:
+  After flashing and testing, Windows can cache PCI/USB device metadata in
+  the registry. Stale entries from earlier builds can cause conflicts, Code 10
+  errors, or driver misidentification. The tools/ directory has an interactive
+  cleanup utility:
 
     cleanup_device_history.bat      double-click launcher (runs as Admin)
-    cleanup_device_history.ps1      PowerShell script with arrow-key menu
+    cleanup_device_history.ps1      PowerShell script with an interactive selector
 
   Usage:
     double-click cleanup_device_history.bat and confirm the UAC prompt, or
     open PowerShell as Administrator and run: .\cleanup_device_history.ps1
 
-  Features:
-    - scans PCI and USB device history across all ControlSets
-    - deduplicates by hardware ID and instance ID
-    - interactive arrow-key menu with driver info and type tags
-    - automatic registry backup to the desktop before any change
-    - cleans setupapi logs, DeviceMetadataStore, PnP event logs
+  Safety properties:
+    - scans only PCI and USB instance keys in dynamically discovered,
+      numbered ControlSets; it never acts through CurrentControlSet
+    - exports every selected key and writes a manifest before it changes a
+      service or registry key
+    - restores every valid backup and the original DeviceInstall service state
+      if cleanup fails
+    - supports PowerShell WhatIf mode with zero writes:
+
+        .\cleanup_device_history.ps1 -WhatIf
+
+    - keeps setupapi/event-log/metadata purging opt-in; that irreversible mode
+      always asks for the exact phrase `PURGE DEVICE HISTORY`
+
+  To restore a failed cleanup manually, import each `.reg` file listed in the
+  backup directory's `manifest.json`, for example:
+
+    reg import "C:\Users\you\Desktop\PCILeechGen-DeviceHistory-YYYYMMDD-HHMMSS\registry-000.reg"
 
   Requires Administrator privileges. Reboot after cleanup before reconnecting
   the device.
