@@ -205,9 +205,6 @@ static int register_standard_capabilities(vfu_ctx_t *context,
 
         if (id == PCI_CAP_ID_PM || id == PCI_CAP_ID_MSI ||
             id == PCI_CAP_ID_MSIX || id == PCI_CAP_ID_EXP) {
-            /* libvfio-user validates complete capability sizes, which can be
-             * larger than a compact donor snapshot's adjacent offsets. Let it
-             * assign a non-overlapping layout and rebuild the next pointers. */
             if (vfu_pci_add_capability(context, 0, 0,
                                        (void *)(source + offset)) < 0) {
                 return -1;
@@ -294,9 +291,6 @@ int vfio_device_run(const struct device_model *model,
         vfu_pci_init(state.context, VFU_PCI_TYPE_EXPRESS, PCI_HEADER_TYPE_NORMAL, 0) < 0) {
         goto done;
     }
-    /* The standard header is copied verbatim. Capabilities are registered
-     * below, rather than copying their raw linked-list bytes into the library
-     * context before it validates and lays them out. */
     memcpy(vfu_pci_get_config_space(state.context), model->config_space,
            model->config_space_size < 0x40 ? model->config_space_size : 0x40);
     ((uint8_t *)vfu_pci_get_config_space(state.context))[0x34] = 0;
@@ -304,9 +298,6 @@ int vfio_device_run(const struct device_model *model,
     if (register_standard_capabilities(state.context, model) < 0) {
         goto done;
     }
-    /* vfu_pci_init owns the mandatory 4 KiB PCI configuration region. The
-     * donor payload is only its initial config image (normally 256 bytes),
-     * so registering it again at the shorter donor length is invalid. */
     struct behavior_host_ops host = {
         .opaque = &state,
         .dma_read = host_dma_read,

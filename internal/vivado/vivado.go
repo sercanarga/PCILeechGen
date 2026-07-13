@@ -150,9 +150,6 @@ func summaryFileName(tclScript string) string {
 	return base + "_summary.txt"
 }
 
-// summarizeRun persists the existing structured Vivado report alongside a
-// concise diagnosis for common infrastructure failures. The result deliberately
-// includes only the report's bounded actionable entries, never the full log.
 func summarizeRun(tclScript, output string, runErr error) string {
 	var summary strings.Builder
 	summary.WriteString("Vivado summary for ")
