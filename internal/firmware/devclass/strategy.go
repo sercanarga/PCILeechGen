@@ -54,11 +54,12 @@ func StrategyForClass(classCode uint32) DeviceStrategy {
 func StrategyForClassAndVendor(classCode uint32, vendorID uint16) DeviceStrategy {
 	baseClass := (classCode >> 16) & 0xFF
 	subClass := (classCode >> 8) & 0xFF
+	progIF := classCode & 0xFF
 
 	switch {
-	case baseClass == 0x01 && subClass == 0x08:
+	case baseClass == 0x01 && subClass == 0x08 && progIF == 0x02:
 		return &nvmeStrategy{baseStrategy{"NVMe", ClassNVMe, nvmeProfile}}
-	case baseClass == 0x0C && subClass == 0x03:
+	case baseClass == 0x0C && subClass == 0x03 && progIF == 0x30:
 		return &xhciStrategy{baseStrategy{"xHCI", ClassXHCI, xhciProfile}}
 	case baseClass == 0x02 && subClass == 0x00:
 		return &ethernetStrategy{baseStrategy{"Ethernet", ClassEthernet, ethernetProfile}}

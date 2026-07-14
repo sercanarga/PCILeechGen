@@ -34,6 +34,23 @@ func TestStrategyForClass_xHCI(t *testing.T) {
 	}
 }
 
+func TestStrategyForClass_RequiresExactProgrammingInterface(t *testing.T) {
+	tests := []struct {
+		name      string
+		classCode uint32
+	}{
+		{name: "NVMe subclass with non-NVMe programming interface", classCode: 0x010800},
+		{name: "USB controller with non-xHCI programming interface", classCode: 0x0C0320},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := StrategyForClass(tt.classCode).DeviceClass(); got != ClassGeneric {
+				t.Fatalf("StrategyForClass(0x%06x) = %s, want %s", tt.classCode, got, ClassGeneric)
+			}
+		})
+	}
+}
+
 func TestStrategyForClass_Ethernet(t *testing.T) {
 	s := StrategyForClass(0x020000)
 	if s == nil {

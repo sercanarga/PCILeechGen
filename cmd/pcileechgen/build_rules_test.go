@@ -5,12 +5,24 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/sercanarga/pcileechgen/internal/donor"
 	"github.com/sercanarga/pcileechgen/internal/donor/behavior"
 	"github.com/sercanarga/pcileechgen/internal/pci"
 )
+
+func TestLoadDonorContext_RejectsBDFAndJSONTogether(t *testing.T) {
+	previous := buildOpts
+	t.Cleanup(func() { buildOpts = previous })
+	buildOpts = buildFlags{bdf: "0000:03:00.0", fromJSON: "device_context.json"}
+
+	_, err := loadDonorContext()
+	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("loadDonorContext error = %v, want mutually exclusive flags error", err)
+	}
+}
 
 func TestLoadDonorContext_AttachesValidatedBehaviorRules(t *testing.T) {
 	dir := t.TempDir()

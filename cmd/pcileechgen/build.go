@@ -102,6 +102,9 @@ func runBuild(cmd *cobra.Command, args []string) error {
 func loadDonorContext() (*donor.DeviceContext, error) {
 	var ctx *donor.DeviceContext
 	var err error
+	if buildOpts.fromJSON != "" && buildOpts.bdf != "" {
+		return nil, fmt.Errorf("--bdf and --from-json are mutually exclusive")
+	}
 	if buildOpts.fromJSON != "" {
 		slog.Info("loading device context", "file", buildOpts.fromJSON)
 		ctx, err = donor.LoadContext(buildOpts.fromJSON)
