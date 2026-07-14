@@ -66,14 +66,14 @@ async def reset(dut):
     for _ in range(200): await RisingEdge(dut.clk)
 
 
-async def read_bar(dut, addr, tag):
-    await send(dut, mrd3(addr=addr, tag=tag))
+async def read_bar(dut, addr, tag, bar=0):
+    await send(dut, mrd3(addr=addr, tag=tag), bar=bar)
     cpls = await recv_all(dut)
     if not cpls:
         return None
     return bswap32(cpls[0][3])
 
 
-async def write_bar(dut, addr, data):
-    await send(dut, mwr3(addr=addr, data=data))
+async def write_bar(dut, addr, data, bar=0):
+    await send(dut, mwr3(addr=addr, data=data), bar=bar)
     for _ in range(20): await RisingEdge(dut.clk)
