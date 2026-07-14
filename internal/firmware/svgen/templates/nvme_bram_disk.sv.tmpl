@@ -45,7 +45,7 @@ module pcileech_bram_disk #(
         (BACKING_LBAS >= 128) ? 32  :
         (BACKING_LBAS >= 64)  ? 16  : 0;
     localparam integer PINNED_SLOTS = PIN_WINDOW_LBAS * 2;
-    localparam [63:0]  WIN64 = {32'h0, PIN_WINDOW_LBAS[31:0]}; // window width for 64-bit offset compares
+    localparam [63:0]  WIN64 = 64'(PIN_WINDOW_LBAS);
     localparam integer HASH_SLOTS = (BACKING_LBAS > PINNED_SLOTS) ?
                                     (BACKING_LBAS - PINNED_SLOTS) : 1;
     localparam integer HASH_WIDTH = (HASH_SLOTS <= 2) ? 1 : $clog2(HASH_SLOTS);

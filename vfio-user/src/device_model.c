@@ -321,7 +321,7 @@ static int parse_bars(json_object *root, struct device_model *model,
         json_object *reset_image = NULL;
         const char *type_name;
         uint64_t bir, size, width;
-        bool prefetchable;
+        bool prefetchable = false;
 
         if (!json_object_is_type(bar, json_type_object)) {
             return fail(err, err_len, "BAR entry must be an object");
