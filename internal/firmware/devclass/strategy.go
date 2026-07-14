@@ -6,16 +6,13 @@ const ClassCodeNVMe uint32 = 0x010802
 
 const ClassCodeXHCI uint32 = 0x0C0330
 
-// IsNVMe reports whether classCode identifies the standardized NVMe
-// programming interface, not merely the broader NVM-controller subclass.
+// IsNVMe requires the NVMe programming interface.
 func IsNVMe(classCode uint32) bool { return classCode&0xFFFFFF == ClassCodeNVMe }
 
-// IsXHCI reports whether classCode identifies the xHCI programming interface.
+// IsXHCI requires the xHCI programming interface.
 func IsXHCI(classCode uint32) bool { return classCode&0xFFFFFF == ClassCodeXHCI }
 
-// IsBARCritical reports whether useful BAR state is required to model the
-// device class. Exact programming interfaces are required where PCI defines
-// multiple interfaces under the same subclass.
+// IsBARCritical reports whether the model requires captured BAR state.
 func IsBARCritical(classCode uint32) bool {
 	switch {
 	case IsNVMe(classCode), IsXHCI(classCode):

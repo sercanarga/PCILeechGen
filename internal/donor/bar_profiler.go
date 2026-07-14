@@ -23,21 +23,17 @@ type BARProfile struct {
 	Probes   []BARProbeResult `json:"probes"`
 }
 
-// BARProfiler snapshots BAR registers by default. Active write probing is
-// intentionally opt-in because writes to unknown MMIO registers can start DMA,
-// reset hardware, acknowledge interrupts, or otherwise change device state.
+// BARProfiler reads BAR registers without writing by default.
 type BARProfiler struct {
 	active bool
 }
 
 func NewBARProfiler() *BARProfiler { return &BARProfiler{} }
 
-// NewActiveBARProfiler enables the legacy destructive write/readback probe.
-// Callers must only use it for a device and register range known to be safe.
+// NewActiveBARProfiler enables write/readback probing.
 func NewActiveBARProfiler() *BARProfiler { return &BARProfiler{active: true} }
 
-// ProfileBAR snapshots each DWORD. It only performs write/readback probing when
-// the profiler was explicitly created with NewActiveBARProfiler.
+// ProfileBAR profiles each complete DWORD in a BAR.
 func (p *BARProfiler) ProfileBAR(resourcePath string, barIndex, maxSize int) (*BARProfile, error) {
 	flags := os.O_RDONLY
 	prot := syscall.PROT_READ

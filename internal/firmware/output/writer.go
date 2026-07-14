@@ -163,8 +163,6 @@ func (ow *OutputWriter) writeAllPrepared(ctx *donor.DeviceContext, b *board.Boar
 	return nil
 }
 
-// validateOutputTarget verifies ownership without changing the current output.
-// Generation happens in a sibling staging directory so failures leave it intact.
 func (ow *OutputWriter) validateOutputTarget() (string, error) {
 	if ow.OutputDir == "" {
 		return "", fmt.Errorf("output directory is empty")
