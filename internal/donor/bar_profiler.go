@@ -23,18 +23,33 @@ type BARProfile struct {
 	Probes   []BARProbeResult `json:"probes"`
 }
 
-// BARProfiler probes BAR registers via mmap to find RW/RO/RW1C bits.
-type BARProfiler struct{}
+// BARProfiler snapshots BAR registers by default. Active write probing is
+// intentionally opt-in because writes to unknown MMIO registers can start DMA,
+// reset hardware, acknowledge interrupts, or otherwise change device state.
+type BARProfiler struct {
+	active bool
+}
 
 func NewBARProfiler() *BARProfiler { return &BARProfiler{} }
 
-// ProfileBAR mmaps a sysfs resource file R/W, writes test patterns to
-// each register, reads back, and restores the original value.
-// Returns a per-register RW mask and RW1C flag.
+// NewActiveBARProfiler enables the legacy destructive write/readback probe.
+// Callers must only use it for a device and register range known to be safe.
+func NewActiveBARProfiler() *BARProfiler { return &BARProfiler{active: true} }
+
+// ProfileBAR snapshots each DWORD. It only performs write/readback probing when
+// the profiler was explicitly created with NewActiveBARProfiler.
 func (p *BARProfiler) ProfileBAR(resourcePath string, barIndex, maxSize int) (*BARProfile, error) {
-	f, err := os.OpenFile(resourcePath, os.O_RDWR, 0)
+	flags := os.O_RDONLY
+	prot := syscall.PROT_READ
+	mode := "read-only"
+	if p != nil && p.active {
+		flags = os.O_RDWR
+		prot |= syscall.PROT_WRITE
+		mode = "active"
+	}
+	f, err := os.OpenFile(resourcePath, flags, 0)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open BAR%d for R/W: %w", barIndex, err)
+		return nil, fmt.Errorf("failed to open BAR%d for %s profiling: %w", barIndex, mode, err)
 	}
 	defer f.Close()
 
@@ -54,10 +69,9 @@ func (p *BARProfiler) ProfileBAR(resourcePath string, barIndex, maxSize int) (*B
 	pageSize := os.Getpagesize()
 	mmapSize := ((size + pageSize - 1) / pageSize) * pageSize
 
-	mapped, err := syscall.Mmap(int(f.Fd()), 0, mmapSize,
-		syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_SHARED)
+	mapped, err := syscall.Mmap(int(f.Fd()), 0, mmapSize, prot, syscall.MAP_SHARED)
 	if err != nil {
-		return nil, fmt.Errorf("mmap R/W failed for BAR%d: %w", barIndex, err)
+		return nil, fmt.Errorf("mmap %s failed for BAR%d: %w", mode, barIndex, err)
 	}
 	defer func() {
 		if unmapErr := syscall.Munmap(mapped); unmapErr != nil {
@@ -70,9 +84,25 @@ func (p *BARProfiler) ProfileBAR(resourcePath string, barIndex, maxSize int) (*B
 		Size:     size,
 	}
 
-	profile.Probes = probeRegisters(mapped, size)
+	if p != nil && p.active {
+		profile.Probes = probeRegisters(mapped, size)
+	} else {
+		profile.Probes = snapshotRegisters(mapped, size)
+	}
 
 	return profile, nil
+}
+
+func snapshotRegisters(mem []byte, size int) []BARProbeResult {
+	numRegs := size / 4
+	probes := make([]BARProbeResult, 0, numRegs)
+	for off := 0; off < numRegs*4; off += 4 {
+		probes = append(probes, BARProbeResult{
+			Offset:   uint32(off),
+			Original: binary.LittleEndian.Uint32(mem[off : off+4]),
+		})
+	}
+	return probes
 }
 
 // ProfileBARFromBuffer runs probing against an in-memory buffer (for tests).

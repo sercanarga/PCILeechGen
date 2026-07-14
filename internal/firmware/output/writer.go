@@ -56,9 +56,44 @@ func NewOutputWriter(outputDir, libDir string, jobs, timeout int) *OutputWriter 
 
 // WriteAll is the main entry point - generates everything.
 func (ow *OutputWriter) WriteAll(ctx *donor.DeviceContext, b *board.Board) error {
-	if err := ow.prepareOutputDir(); err != nil {
+	if ctx == nil {
+		return fmt.Errorf("device context is nil")
+	}
+	data, err := ctx.ToJSON()
+	if err != nil {
+		return fmt.Errorf("clone device context: %w", err)
+	}
+	workCtx, err := donor.FromJSON(data)
+	if err != nil {
+		return fmt.Errorf("clone device context: %w", err)
+	}
+
+	target, err := ow.validateOutputTarget()
+	if err != nil {
 		return fmt.Errorf("prepare output directory: %w", err)
 	}
+	stage, err := os.MkdirTemp(filepath.Dir(target), "."+filepath.Base(target)+".tmp-")
+	if err != nil {
+		return fmt.Errorf("create output staging directory: %w", err)
+	}
+	defer os.RemoveAll(stage)
+	if err := os.WriteFile(filepath.Join(stage, outputOwnershipMarker), []byte(outputOwnershipContent), 0644); err != nil {
+		return fmt.Errorf("write staging ownership marker: %w", err)
+	}
+
+	worker := *ow
+	worker.OutputDir = stage
+	if err := worker.writeAllPrepared(workCtx, b); err != nil {
+		return err
+	}
+	if err := publishOutputDirectory(stage, target); err != nil {
+		return fmt.Errorf("publish generated output: %w", err)
+	}
+	ow.OutputDir = target
+	return nil
+}
+
+func (ow *OutputWriter) writeAllPrepared(ctx *donor.DeviceContext, b *board.Board) error {
 
 	ids := firmware.ExtractDeviceIDs(ctx.ConfigSpace, ctx.ExtCapabilities)
 
@@ -124,6 +159,84 @@ func (ow *OutputWriter) WriteAll(ctx *donor.DeviceContext, b *board.Board) error
 
 	if err := writeBuildManifest(ow.OutputDir, ctx, b, false); err != nil {
 		return fmt.Errorf("failed to write build manifest: %w", err)
+	}
+	return nil
+}
+
+// validateOutputTarget verifies ownership without changing the current output.
+// Generation happens in a sibling staging directory so failures leave it intact.
+func (ow *OutputWriter) validateOutputTarget() (string, error) {
+	if ow.OutputDir == "" {
+		return "", fmt.Errorf("output directory is empty")
+	}
+	target, err := filepath.Abs(ow.OutputDir)
+	if err != nil {
+		return "", fmt.Errorf("resolve output directory: %w", err)
+	}
+	target = filepath.Clean(target)
+	if target == filepath.Dir(target) {
+		return "", fmt.Errorf("refusing filesystem root as output directory")
+	}
+	if err := validateExistingOutputAncestor(target); err != nil {
+		return "", err
+	}
+	info, err := os.Lstat(target)
+	if os.IsNotExist(err) {
+		return target, nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("inspect output directory: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return "", fmt.Errorf("output directory must be a real directory: %s", target)
+	}
+	marker := filepath.Join(target, outputOwnershipMarker)
+	markerInfo, err := os.Lstat(marker)
+	if os.IsNotExist(err) {
+		return "", fmt.Errorf("refusing unowned existing output directory: %s", target)
+	}
+	if err != nil {
+		return "", fmt.Errorf("inspect output ownership marker: %w", err)
+	}
+	if markerInfo.Mode()&os.ModeSymlink != 0 || !markerInfo.Mode().IsRegular() {
+		return "", fmt.Errorf("output ownership marker is not a regular file: %s", marker)
+	}
+	contents, err := os.ReadFile(marker)
+	if err != nil {
+		return "", fmt.Errorf("read output ownership marker: %w", err)
+	}
+	if string(contents) != outputOwnershipContent {
+		return "", fmt.Errorf("output ownership marker has unexpected content: %s", marker)
+	}
+	return target, nil
+}
+
+func publishOutputDirectory(stage, target string) error {
+	backup := target + ".previous"
+	if _, err := os.Lstat(backup); err == nil {
+		return fmt.Errorf("backup path already exists: %s", backup)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("inspect backup path: %w", err)
+	}
+	hadTarget := false
+	if _, err := os.Lstat(target); err == nil {
+		hadTarget = true
+		if err := os.Rename(target, backup); err != nil {
+			return fmt.Errorf("move previous output aside: %w", err)
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("inspect output target: %w", err)
+	}
+	if err := os.Rename(stage, target); err != nil {
+		if hadTarget {
+			_ = os.Rename(backup, target)
+		}
+		return fmt.Errorf("activate staged output: %w", err)
+	}
+	if hadTarget {
+		if err := os.RemoveAll(backup); err != nil {
+			return fmt.Errorf("remove previous output: %w", err)
+		}
 	}
 	return nil
 }
@@ -456,18 +569,21 @@ func (ow *OutputWriter) patchSVSources(b *board.Board, ids firmware.DeviceIDs) e
 			if eerr := extractSubModules(ctrlSrc, dstDir, barControllerSubModules); eerr != nil {
 				return fmt.Errorf("failed to extract BAR controller sub-modules: %w", eerr)
 			}
-		} else if !os.IsNotExist(err) {
+		} else if os.IsNotExist(err) {
+			return fmt.Errorf("required BAR controller not found: %s", ctrlSrc)
+		} else {
 			return fmt.Errorf("failed to inspect BAR controller: %w", err)
 		}
 	} else {
 		slog.Info("stock-bar mode: keeping stock bar controller")
-		// In stock mode, re-copy the controller since copyDirExcluding skipped it.
 		srcFile := filepath.Join(srcDir, "pcileech_tlps128_bar_controller.sv")
 		dstFile := filepath.Join(dstDir, "pcileech_tlps128_bar_controller.sv")
-		if data, err := os.ReadFile(srcFile); err == nil {
-			if writeErr := writeRegularFile(dstFile, data); writeErr != nil {
-				return fmt.Errorf("failed to copy stock BAR controller: %w", writeErr)
-			}
+		data, err := os.ReadFile(srcFile)
+		if err != nil {
+			return fmt.Errorf("failed to read required stock BAR controller: %w", err)
+		}
+		if err := writeRegularFile(dstFile, data); err != nil {
+			return fmt.Errorf("failed to copy stock BAR controller: %w", err)
 		}
 	}
 
@@ -558,8 +674,7 @@ func extractSubModules(srcPath string, dstDir string, subModules []string) error
 		searchStr := "module " + modName
 		start := strings.Index(content, searchStr)
 		if start == -1 {
-			slog.Warn("sub-module not found in board controller", "module", modName)
-			continue
+			return fmt.Errorf("required sub-module %s not found in %s", modName, srcPath)
 		}
 
 		// Find the end: next "\nmodule " after our match, or end of file.
@@ -574,7 +689,7 @@ func extractSubModules(srcPath string, dstDir string, subModules []string) error
 
 		dstFile := filepath.Join(dstDir, modName+".sv")
 		if err := writeRegularFile(dstFile, []byte(modBody)); err != nil {
-			slog.Warn("failed to write sub-module file", "module", modName, "error", err)
+			return fmt.Errorf("write required sub-module %s: %w", modName, err)
 		}
 	}
 	return nil

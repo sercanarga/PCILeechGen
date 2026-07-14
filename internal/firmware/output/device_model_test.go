@@ -1,6 +1,7 @@
 package output
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -114,6 +115,10 @@ func TestOutputWriterWriteAllWithRealisticDonor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load realistic donor fixture: %v", err)
 	}
+	originalContext, err := ctx.ToJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	libDir := t.TempDir()
 	srcDir := filepath.Join(libDir, "test-board", "src")
@@ -144,6 +149,13 @@ endmodule`,
 	}
 	if werr := writer.WriteAll(ctx, b); werr != nil {
 		t.Fatalf("WriteAll realistic donor: %v", werr)
+	}
+	contextAfterWrite, err := ctx.ToJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(contextAfterWrite, originalContext) {
+		t.Fatal("WriteAll mutated its donor context")
 	}
 	for _, name := range []string{
 		"device_context.json",

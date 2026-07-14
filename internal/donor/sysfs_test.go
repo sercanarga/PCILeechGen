@@ -1,6 +1,8 @@
 package donor
 
 import (
+	"bytes"
+	"encoding/binary"
 	"os"
 	"path/filepath"
 	"testing"
@@ -406,6 +408,36 @@ func TestProfileBAR_InvalidPath(t *testing.T) {
 	_, err := p.ProfileBAR("/nonexistent/resource", 0, 4096)
 	if err == nil {
 		t.Error("ProfileBAR should fail with invalid path")
+	}
+}
+
+func TestBARProfilerDefaultsToReadOnlySnapshot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "resource0")
+	want := make([]byte, os.Getpagesize())
+	binary.LittleEndian.PutUint32(want[0:4], 0x12345678)
+	binary.LittleEndian.PutUint32(want[4:8], 0xaabbccdd)
+	if err := os.WriteFile(path, want, 0444); err != nil {
+		t.Fatal(err)
+	}
+
+	profile, err := NewBARProfiler().ProfileBAR(path, 0, 8)
+	if err != nil {
+		t.Fatalf("ProfileBAR: %v", err)
+	}
+	if len(profile.Probes) != 2 || profile.Probes[0].Original != 0x12345678 || profile.Probes[1].Original != 0xaabbccdd {
+		t.Fatalf("unexpected snapshot: %+v", profile.Probes)
+	}
+	for _, probe := range profile.Probes {
+		if probe.RWMask != 0 || probe.W1CMask != 0 || probe.MaybeRW1C {
+			t.Fatalf("read-only snapshot reported write semantics: %+v", probe)
+		}
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatal("read-only profiling changed the resource")
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sercanarga/pcileechgen/internal/board"
 	"github.com/sercanarga/pcileechgen/internal/donor"
 	"github.com/sercanarga/pcileechgen/internal/firmware/barprofile"
 	"github.com/sercanarga/pcileechgen/internal/pci"
@@ -96,6 +97,66 @@ func TestPrepareOutputDirRejectsSymlink(t *testing.T) {
 	err := NewOutputWriter(target, "lib/pcileech-fpga", 4, 3600).prepareOutputDir()
 	if err == nil || !strings.Contains(err.Error(), "real directory") {
 		t.Fatalf("prepareOutputDir error = %v, want symlink rejection", err)
+	}
+}
+
+func TestPublishOutputDirectoryReplacesWholeTree(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "output")
+	stage := filepath.Join(root, "stage")
+	if err := os.Mkdir(target, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(target, "stale.sv"), []byte("stale"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(stage, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stage, "current.sv"), []byte("current"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := publishOutputDirectory(stage, target); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(target, "stale.sv")); !os.IsNotExist(err) {
+		t.Fatalf("stale artifact survived replacement: %v", err)
+	}
+	if data, err := os.ReadFile(filepath.Join(target, "current.sv")); err != nil || string(data) != "current" {
+		t.Fatalf("current artifact missing: %q, %v", data, err)
+	}
+}
+
+func TestExtractSubModulesFailsWhenRequiredModuleMissing(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "controller.sv")
+	if err := os.WriteFile(src, []byte("module present; endmodule\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	err := extractSubModules(src, t.TempDir(), []string{"missing"})
+	if err == nil || !strings.Contains(err.Error(), "required sub-module missing") {
+		t.Fatalf("extractSubModules error = %v", err)
+	}
+}
+
+func TestWriteAllFailurePreservesPreviousOutput(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "output")
+	ow := NewOutputWriter(target, filepath.Join(t.TempDir(), "missing-lib"), 1, 1)
+	if err := ow.prepareOutputDir(); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := filepath.Join(target, "previous.txt")
+	if err := os.WriteFile(sentinel, []byte("keep"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := ow.WriteAll(outputModelContext(), &board.Board{Name: "missing", ProjectDir: "missing"})
+	if err == nil {
+		t.Fatal("WriteAll unexpectedly succeeded")
+	}
+	data, readErr := os.ReadFile(sentinel)
+	if readErr != nil || string(data) != "keep" {
+		t.Fatalf("previous output changed after failed generation: %q, %v", data, readErr)
 	}
 }
 
