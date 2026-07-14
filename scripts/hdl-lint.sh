@@ -132,7 +132,9 @@ for fixture in "${FIXTURES[@]}"; do
     fi
 
     lint_log="$out/verilator.log"
-    if verilator --lint-only -Wno-fatal --top-module pcileech_tlps128_bar_controller \
+    if verilator --lint-only -Wno-TIMESCALEMOD -Wno-WIDTHEXPAND \
+          -Wno-WIDTHTRUNC -Wno-CASEINCOMPLETE \
+          --top-module pcileech_tlps128_bar_controller \
           +incdir+"$out/src" \
           "${sv_files[@]}" testdata/stubs/blackbox.sv \
           >"$lint_log" 2>&1; then

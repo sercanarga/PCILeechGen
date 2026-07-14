@@ -174,7 +174,9 @@ test-valgrind:
 	@if ! command -v valgrind >/dev/null 2>&1; then \
 		echo 'valgrind not installed; skipping optional memory check'; \
 	else \
-		$(MAKE) clean test SANITIZE= && \
+		$(MAKE) clean test-fixtures build/test_device_model build/test_behavior_static \
+			build/test_behavior_nvme build/test_behavior_hda build/test_behavior_gpu \
+			build/test_behavior_storage SANITIZE= && \
 		VFIO_TEST_FIXTURE_ROOT="$(VFIO_TEST_FIXTURE_ROOT)" valgrind --leak-check=full --error-exitcode=1 ./build/test_device_model && \
 		VFIO_TEST_FIXTURE_ROOT="$(VFIO_TEST_FIXTURE_ROOT)" valgrind --leak-check=full --error-exitcode=1 ./build/test_behavior_nvme && \
 		VFIO_TEST_FIXTURE_ROOT="$(VFIO_TEST_FIXTURE_ROOT)" valgrind --leak-check=full --error-exitcode=1 ./build/test_behavior_hda && \

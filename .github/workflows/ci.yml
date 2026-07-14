@@ -13,7 +13,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       - name: Install pinned Pester
         shell: powershell
@@ -34,12 +34,12 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           submodules: recursive
 
       - name: Setup Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: go.mod
 
@@ -85,7 +85,10 @@ jobs:
             vfio-user/src/behavior_gpu.c vfio-user/src/behavior_hda.c \
             vfio-user/src/behavior_nvme.c vfio-user/src/behavior_static.c \
             vfio-user/src/behavior_xhci.c \
-            -checks='-*,clang-analyzer-core.*,-clang-analyzer-core.NullDereference' \
+            -checks='-*,clang-analyzer-core.*' \
+            -warnings-as-errors='*' -- $cflags
+          clang-tidy vfio-user/src/device_model.c \
+            -checks='-*,clang-analyzer-core.NullDereference' \
             -warnings-as-errors='*' -- $cflags
 
   hdl-lint:
@@ -94,7 +97,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           submodules: recursive
 
@@ -105,7 +108,7 @@ jobs:
           verilator --version
 
       - name: Setup Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: go.mod
 
@@ -123,7 +126,7 @@ jobs:
 
       - name: Upload HDL lint report
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: hdl-lint-report
           path: hdl-lint-report.tsv
@@ -147,7 +150,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           submodules: recursive
 
@@ -157,7 +160,7 @@ jobs:
           sudo apt-get install -y clang libcmocka-dev libjson-c-dev libssl-dev valgrind
 
       - name: Setup Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: go.mod
 
@@ -168,7 +171,6 @@ jobs:
         run: |
           make -C vfio-user clean test
           make -C vfio-user clean test SANITIZE='-fsanitize=address,undefined -fno-omit-frame-pointer'
-          make -C vfio-user fuzz-smoke
           make -C vfio-user fuzz
           make -C vfio-user test-valgrind
 
@@ -178,17 +180,17 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           submodules: recursive
 
       - name: Setup Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: go.mod
 
       - name: Setup Python 3.13
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.13'
 
@@ -211,17 +213,17 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           submodules: recursive
 
       - name: Setup Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: go.mod
 
       - name: Setup Python 3.13
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.13'
 
