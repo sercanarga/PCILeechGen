@@ -72,6 +72,20 @@ static void rejects_capability_cycle(void **state)
     assert_non_null(strstr(err, "capability chain"));
 }
 
+static void rejects_excessive_bar_allocation(void **state)
+{
+    struct device_model model = {0};
+    char err[256] = {0};
+
+    (void)state;
+    model.config_space_size = 256;
+    model.bar_count = 1;
+    model.bars[0].bir = 0;
+    model.bars[0].size = UINT64_C(512) * 1024 * 1024;
+    assert_true(device_model_validate(&model, err, sizeof(err)) < 0);
+    assert_non_null(strstr(err, "allocation budget"));
+}
+
 
 static void loads_every_generated_model(void **state)
 {
@@ -99,6 +113,7 @@ int main(void)
         cmocka_unit_test(loads_generated_nvme_model),
         cmocka_unit_test(rejects_non_power_of_two_bar),
         cmocka_unit_test(rejects_capability_cycle),
+        cmocka_unit_test(rejects_excessive_bar_allocation),
         cmocka_unit_test(loads_every_generated_model),
     };
 

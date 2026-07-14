@@ -11,6 +11,8 @@
 #include <json-c/json.h>
 #include <openssl/evp.h>
 
+#define DEVICE_MAX_BAR_SIZE (UINT64_C(256) * 1024 * 1024)
+#define DEVICE_MAX_TOTAL_BAR_SIZE (UINT64_C(512) * 1024 * 1024)
 
 static int fail(char *err, size_t err_len, const char *format, ...)
 {
@@ -106,6 +108,41 @@ static json_object *required(json_object *parent, const char *name,
         return NULL;
     }
     return value;
+}
+
+static int json_uint(json_object *parent, const char *name, uint64_t maximum,
+                     uint64_t *out, char *err, size_t err_len)
+{
+    json_object *value = required(parent, name, err, err_len);
+    int64_t parsed;
+
+    if (value == NULL) {
+        return -1;
+    }
+    if (!json_object_is_type(value, json_type_int)) {
+        return fail(err, err_len, "JSON field %s must be an integer", name);
+    }
+    parsed = json_object_get_int64(value);
+    if (parsed < 0 || (uint64_t)parsed > maximum) {
+        return fail(err, err_len, "JSON field %s is outside the allowed range", name);
+    }
+    *out = (uint64_t)parsed;
+    return 0;
+}
+
+static int parse_json_bool(json_object *parent, const char *name, bool *out,
+                           char *err, size_t err_len)
+{
+    json_object *value = required(parent, name, err, err_len);
+
+    if (value == NULL) {
+        return -1;
+    }
+    if (!json_object_is_type(value, json_type_boolean)) {
+        return fail(err, err_len, "JSON field %s must be a boolean", name);
+    }
+    *out = json_object_get_boolean(value);
+    return 0;
 }
 
 
@@ -221,26 +258,26 @@ static int parse_function(json_object *root, struct device_model *model,
         return fail(err, err_len, "device model must contain exactly one PCI function");
     }
     function = json_object_array_get_idx(functions, 0);
-    json_object *vendor_id = required(function, "vendor_id", err, err_len);
-    json_object *device_id = required(function, "device_id", err, err_len);
-    json_object *subsystem_vendor_id = required(function, "subsystem_vendor_id", err, err_len);
-    json_object *subsystem_device_id = required(function, "subsystem_device_id", err, err_len);
-    json_object *revision_id = required(function, "revision_id", err, err_len);
-    json_object *class_code = required(function, "class_code", err, err_len);
-    json_object *header_type = required(function, "header_type", err, err_len);
+    uint64_t vendor_id, device_id, subsystem_vendor_id, subsystem_device_id;
+    uint64_t revision_id, class_code, header_type;
 
-    if (vendor_id == NULL || device_id == NULL || subsystem_vendor_id == NULL ||
-        subsystem_device_id == NULL || revision_id == NULL || class_code == NULL ||
-        header_type == NULL) {
+    if (!json_object_is_type(function, json_type_object) ||
+        json_uint(function, "vendor_id", UINT16_MAX, &vendor_id, err, err_len) < 0 ||
+        json_uint(function, "device_id", UINT16_MAX, &device_id, err, err_len) < 0 ||
+        json_uint(function, "subsystem_vendor_id", UINT16_MAX, &subsystem_vendor_id, err, err_len) < 0 ||
+        json_uint(function, "subsystem_device_id", UINT16_MAX, &subsystem_device_id, err, err_len) < 0 ||
+        json_uint(function, "revision_id", UINT8_MAX, &revision_id, err, err_len) < 0 ||
+        json_uint(function, "class_code", UINT32_C(0xffffff), &class_code, err, err_len) < 0 ||
+        json_uint(function, "header_type", UINT8_MAX, &header_type, err, err_len) < 0) {
         return -1;
     }
-    model->vendor_id = (uint16_t)json_object_get_int64(vendor_id);
-    model->device_id = (uint16_t)json_object_get_int64(device_id);
-    model->subsystem_vendor_id = (uint16_t)json_object_get_int64(subsystem_vendor_id);
-    model->subsystem_device_id = (uint16_t)json_object_get_int64(subsystem_device_id);
-    model->revision_id = (uint8_t)json_object_get_int64(revision_id);
-    model->class_code = (uint32_t)json_object_get_int64(class_code);
-    model->header_type = (uint8_t)json_object_get_int64(header_type);
+    model->vendor_id = (uint16_t)vendor_id;
+    model->device_id = (uint16_t)device_id;
+    model->subsystem_vendor_id = (uint16_t)subsystem_vendor_id;
+    model->subsystem_device_id = (uint16_t)subsystem_device_id;
+    model->revision_id = (uint8_t)revision_id;
+    model->class_code = (uint32_t)class_code;
+    model->header_type = (uint8_t)header_type;
     return 0;
 }
 
@@ -249,14 +286,18 @@ static int parse_config(json_object *root, struct device_model *model,
                         char *err, size_t err_len)
 {
     json_object *config = required(root, "config_space", err, err_len);
-    json_object *size;
+    uint64_t size;
     json_object *image;
 
-    if (config == NULL || (size = required(config, "size", err, err_len)) == NULL ||
+    if (config == NULL || !json_object_is_type(config, json_type_object) ||
+        json_uint(config, "size", sizeof(model->config_space), &size, err, err_len) < 0 ||
         (image = required(config, "reset_image", err, err_len)) == NULL) {
         return -1;
     }
-    model->config_space_size = (size_t)json_object_get_int64(size);
+    if (!json_object_is_type(image, json_type_string)) {
+        return fail(err, err_len, "JSON field reset_image must be a string");
+    }
+    model->config_space_size = (size_t)size;
     return decode_config_image(json_object_get_string(image), model->config_space,
                                sizeof(model->config_space), model->config_space_size,
                                err, err_len);
@@ -276,21 +317,29 @@ static int parse_bars(json_object *root, struct device_model *model,
     model->bar_count = json_object_array_length(bars);
     for (index = 0; index < model->bar_count; ++index) {
         json_object *bar = json_object_array_get_idx(bars, index);
-        json_object *bir = required(bar, "bir", err, err_len);
-        json_object *type = required(bar, "type", err, err_len);
-        json_object *size = required(bar, "size", err, err_len);
-        json_object *prefetchable = required(bar, "prefetchable", err, err_len);
-        json_object *width = required(bar, "address_width", err, err_len);
+        json_object *type;
         json_object *reset_image = NULL;
         const char *type_name;
+        uint64_t bir, size, width;
+        bool prefetchable;
 
-        if (bir == NULL || type == NULL || size == NULL || prefetchable == NULL || width == NULL) {
+        if (!json_object_is_type(bar, json_type_object)) {
+            return fail(err, err_len, "BAR entry must be an object");
+        }
+        type = required(bar, "type", err, err_len);
+        if (type == NULL ||
+            !json_object_is_type(type, json_type_string) ||
+            json_uint(bar, "bir", DEVICE_MAX_BARS - 1, &bir, err, err_len) < 0 ||
+            json_uint(bar, "size", DEVICE_MAX_BAR_SIZE, &size, err, err_len) < 0 ||
+            parse_json_bool(bar, "prefetchable", &prefetchable, err, err_len) < 0 ||
+            json_uint(bar, "address_width", 64, &width, err, err_len) < 0 ||
+            (width != 32 && width != 64)) {
             return -1;
         }
-        model->bars[index].bir = (unsigned)json_object_get_int(bir);
-        model->bars[index].size = (uint64_t)json_object_get_int64(size);
-        model->bars[index].prefetchable = json_object_get_boolean(prefetchable);
-        model->bars[index].is_64bit = json_object_get_int(width) == 64;
+        model->bars[index].bir = (unsigned)bir;
+        model->bars[index].size = size;
+        model->bars[index].prefetchable = prefetchable;
+        model->bars[index].is_64bit = width == 64;
         if (json_object_object_get_ex(bar, "reset_image", &reset_image) &&
             json_object_is_type(reset_image, json_type_string) &&
             json_object_get_string_len(reset_image) > 0) {
@@ -329,41 +378,49 @@ static int parse_interrupts(json_object *root, struct device_model *model,
     json_object *msix = NULL;
     size_t index;
 
-    if (json_object_object_get_ex(root, "interrupts", &interrupts) &&
-        json_object_is_type(interrupts, json_type_array)) {
+    if (json_object_object_get_ex(root, "interrupts", &interrupts)) {
+        if (!json_object_is_type(interrupts, json_type_array)) {
+            return fail(err, err_len, "interrupts must be an array");
+        }
         for (index = 0; index < json_object_array_length(interrupts); ++index) {
             json_object *entry = json_object_array_get_idx(interrupts, index);
-            json_object *kind = required(entry, "kind", err, err_len);
-            json_object *vectors = required(entry, "vectors", err, err_len);
+            json_object *kind;
+            uint64_t vectors;
 
-            if (kind == NULL || vectors == NULL) {
+            if (!json_object_is_type(entry, json_type_object)) {
+                return fail(err, err_len, "interrupt entry must be an object");
+            }
+            kind = required(entry, "kind", err, err_len);
+            if (kind == NULL ||
+                !json_object_is_type(kind, json_type_string) ||
+                json_uint(entry, "vectors", UINT16_MAX, &vectors, err, err_len) < 0) {
                 return -1;
             }
             if (strcmp(json_object_get_string(kind), "msi") == 0) {
-                model->msi_vectors = (unsigned)json_object_get_int(vectors);
+                model->msi_vectors = (unsigned)vectors;
             } else if (strcmp(json_object_get_string(kind), "msix") == 0) {
-                model->msix_vectors = (unsigned)json_object_get_int(vectors);
+                model->msix_vectors = (unsigned)vectors;
             }
         }
     }
     if (!json_object_object_get_ex(root, "msix", &msix) || json_object_is_type(msix, json_type_null)) {
         return 0;
     }
-    json_object *table_size = required(msix, "table_size", err, err_len);
-    json_object *table_bir = required(msix, "table_bir", err, err_len);
-    json_object *table_offset = required(msix, "table_offset", err, err_len);
-    json_object *pba_bir = required(msix, "pba_bir", err, err_len);
-    json_object *pba_offset = required(msix, "pba_offset", err, err_len);
+    uint64_t table_size, table_bir, table_offset, pba_bir, pba_offset;
 
-    if (table_size == NULL || table_bir == NULL || table_offset == NULL ||
-        pba_bir == NULL || pba_offset == NULL) {
+    if (!json_object_is_type(msix, json_type_object) ||
+        json_uint(msix, "table_size", UINT16_MAX, &table_size, err, err_len) < 0 ||
+        json_uint(msix, "table_bir", DEVICE_MAX_BARS - 1, &table_bir, err, err_len) < 0 ||
+        json_uint(msix, "table_offset", UINT64_MAX, &table_offset, err, err_len) < 0 ||
+        json_uint(msix, "pba_bir", DEVICE_MAX_BARS - 1, &pba_bir, err, err_len) < 0 ||
+        json_uint(msix, "pba_offset", UINT64_MAX, &pba_offset, err, err_len) < 0) {
         return -1;
     }
-    model->msix_vectors = (unsigned)json_object_get_int64(table_size);
-    model->msix_table_bir = (unsigned)json_object_get_int64(table_bir);
-    model->msix_table_offset = (uint64_t)json_object_get_int64(table_offset);
-    model->msix_pba_bir = (unsigned)json_object_get_int64(pba_bir);
-    model->msix_pba_offset = (uint64_t)json_object_get_int64(pba_offset);
+    model->msix_vectors = (unsigned)table_size;
+    model->msix_table_bir = (unsigned)table_bir;
+    model->msix_table_offset = table_offset;
+    model->msix_pba_bir = (unsigned)pba_bir;
+    model->msix_pba_offset = pba_offset;
     return 0;
 }
 
@@ -468,6 +525,7 @@ int device_model_validate(const struct device_model *model, char *err, size_t er
 {
     bool used[DEVICE_MAX_BARS] = {false};
     size_t index;
+    uint64_t total_bar_size = 0;
 
     if (model == NULL) {
         return fail(err, err_len, "device model is null");
@@ -488,6 +546,11 @@ int device_model_validate(const struct device_model *model, char *err, size_t er
         if (bar->size < 4 || (bar->size & (bar->size - 1)) != 0) {
             return fail(err, err_len, "BAR%u size must be a power of two", bar->bir);
         }
+        if (bar->size > DEVICE_MAX_BAR_SIZE ||
+            total_bar_size > DEVICE_MAX_TOTAL_BAR_SIZE - bar->size) {
+            return fail(err, err_len, "BAR allocation budget exceeded");
+        }
+        total_bar_size += bar->size;
         if (bar->is_64bit && bar->bir == DEVICE_MAX_BARS - 1) {
             return fail(err, err_len, "64-bit BAR cannot start at BAR5");
         }

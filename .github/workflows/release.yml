@@ -1,33 +1,20 @@
 name: Release
 
 on:
-  push:
-    branches: [main]
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
 
 permissions:
   contents: write
 
 jobs:
-  test:
-    name: Test
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-        with:
-          submodules: recursive
-
-      - name: Setup Go
-        uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-
-      - name: Run tests
-        run: go test -race -count=1 ./...
-
   release:
     name: Build & Release
-    needs: test
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.event == 'push'
     runs-on: ubuntu-latest
 
     strategy:
@@ -44,6 +31,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
         with:
+          ref: ${{ github.event.workflow_run.head_sha }}
           submodules: recursive
 
       - name: Setup Go
@@ -53,11 +41,12 @@ jobs:
 
       - name: Build binary
         env:
+          RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
         run: |
-          VERSION=${GITHUB_SHA::8}
+          VERSION=${RELEASE_SHA::8}
           OUTPUT_NAME=pcileechgen-${{ matrix.suffix }}
           go build -trimpath \
             -ldflags "-s -w -X github.com/sercanarga/pcileechgen/internal/version.Version=${VERSION}" \
@@ -78,11 +67,20 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Create tag
+        env:
+          RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
-          SHORT_SHA=${GITHUB_SHA::7}
-          git tag "${SHORT_SHA}"
+          SHORT_SHA=${RELEASE_SHA::7}
+          git fetch --force --tags origin
+          if git rev-parse --verify --quiet "refs/tags/${SHORT_SHA}"; then
+            test "$(git rev-list -n 1 "${SHORT_SHA}")" = "${RELEASE_SHA}"
+            exit 0
+          fi
+          git tag "${SHORT_SHA}" "${RELEASE_SHA}"
           git push origin "${SHORT_SHA}"
 
       - name: Download all artifacts
@@ -98,7 +96,9 @@ jobs:
 
       - name: Set short SHA
         id: vars
-        run: echo "short_sha=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+        env:
+          RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: echo "short_sha=${RELEASE_SHA::7}" >> "$GITHUB_OUTPUT"
 
       - name: Create release
         uses: softprops/action-gh-release@v2
@@ -106,9 +106,8 @@ jobs:
           tag_name: ${{ steps.vars.outputs.short_sha }}
           name: Build ${{ steps.vars.outputs.short_sha }}
           body: |
-            Build - `main` branch, commit `${{ github.sha }}`
+            Build - `main` branch, commit `${{ github.event.workflow_run.head_sha }}`
           files: |
             dist/pcileechgen-*
             dist/checksums-sha256.txt
           make_latest: true
-

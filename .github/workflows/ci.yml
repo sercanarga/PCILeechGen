@@ -63,9 +63,6 @@ jobs:
       - name: Run tests
         run: go test -race ./...
 
-      - name: Go race summary
-        run: go test -race ./internal/firmware/nvme ./internal/firmware/svgen
-
       - name: Test generated-artifact cleanup guard
         run: python3 -m unittest tools/tests/test_cleanup_generated.py -v
 
@@ -175,8 +172,8 @@ jobs:
           make -C vfio-user fuzz
           make -C vfio-user test-valgrind
 
-  cocotb:
-    name: Cocotb RTL matrix
+  cocotb-stable:
+    name: Cocotb RTL matrix (stable)
     runs-on: ubuntu-latest
 
     steps:
@@ -204,5 +201,38 @@ jobs:
       - name: Check Verilator version
         run: verilator --version
 
-      - name: Run hermetic Cocotb matrix
-        run: make cocotb-test COCOTB_PYTHON=python3.13
+      - name: Run stable hermetic Cocotb matrix
+        run: make cocotb-test-stable COCOTB_PYTHON=python3.13
+
+  cocotb-experimental:
+    name: Cocotb RTL matrix (experimental)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Setup Python 3.13
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Install Verilator
+        uses: YosysHQ/setup-oss-cad-suite@853bb54f52246aa8fb4fab963f104cfb6676197a # v4
+        with:
+          version: '2026-07-13'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check Verilator version
+        run: verilator --version
+
+      - name: Run experimental hermetic Cocotb matrix
+        run: make cocotb-test-experimental COCOTB_PYTHON=python3.13

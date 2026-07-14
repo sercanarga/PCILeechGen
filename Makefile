@@ -1,4 +1,4 @@
-.PHONY: build test lint clean install fixtures hdl-lint early-access cocotb-bootstrap cocotb-test cocotb-clean
+.PHONY: build test lint clean install fixtures hdl-lint early-access cocotb-bootstrap cocotb-test cocotb-test-stable cocotb-test-experimental cocotb-clean
 
 override BINARY_NAME := pcileechgen
 override BUILD_DIR := bin
@@ -9,9 +9,9 @@ LDFLAGS=-s -w
 COCOTB_PYTHON ?= python3.13
 COCOTB_VENV := bin/cocotb-venv
 COCOTB_OUTPUT_ROOT := tests/cocotb/out_matrix
-# Keep the default CI gate to models whose RTL contract currently passes.
-# Ethernet DMA remains Early Access; SATA/GPU failures are tracked separately.
-COCOTB_CASES ?= nvme generic audio xhci wifi
+COCOTB_STABLE_CASES := nvme generic audio xhci wifi
+COCOTB_EXPERIMENTAL_CASES := ethernet sata gpu
+COCOTB_CASES ?= $(COCOTB_STABLE_CASES)
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS += -X github.com/sercanarga/pcileechgen/internal/version.Version=$(VERSION)
@@ -59,6 +59,12 @@ cocotb-test: build cocotb-bootstrap
 		--generator "$(BUILD_DIR)/$(BINARY_NAME)" \
 		--output-root "$(COCOTB_OUTPUT_ROOT)" \
 		$(foreach case,$(COCOTB_CASES),--case $(case))
+
+cocotb-test-stable:
+	$(MAKE) cocotb-test COCOTB_CASES="$(COCOTB_STABLE_CASES)"
+
+cocotb-test-experimental:
+	$(MAKE) cocotb-test COCOTB_CASES="$(COCOTB_EXPERIMENTAL_CASES)"
 
 cocotb-clean:
 	$(COCOTB_PYTHON) tests/cocotb/run_matrix.py --clean --output-root "$(COCOTB_OUTPUT_ROOT)"

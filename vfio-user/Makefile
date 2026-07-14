@@ -32,7 +32,8 @@ test: test-fixtures test-matrix test-device-model test-behavior-static test-beha
 
 test-matrix:
 	python3 -m unittest tests/test_matrix.py tests/test_matrix_authority.py \
-		tests/test_test_fixture_root_guard.py tests/test_fixture_contract.py -v
+		tests/test_test_fixture_root_guard.py tests/test_fixture_contract.py \
+		tests/test_inf_compat.py -v
 
 test-fixture-root-check:
 	@python3 "$(VFIO_TEST_FIXTURE_GUARD)" --project-root "$(CURDIR)" --fixture-root "$(VFIO_TEST_FIXTURE_ROOT)" --prepare
@@ -177,6 +178,8 @@ test-valgrind:
 		VFIO_TEST_FIXTURE_ROOT="$(VFIO_TEST_FIXTURE_ROOT)" valgrind --leak-check=full --error-exitcode=1 ./build/test_device_model && \
 		VFIO_TEST_FIXTURE_ROOT="$(VFIO_TEST_FIXTURE_ROOT)" valgrind --leak-check=full --error-exitcode=1 ./build/test_behavior_nvme && \
 		VFIO_TEST_FIXTURE_ROOT="$(VFIO_TEST_FIXTURE_ROOT)" valgrind --leak-check=full --error-exitcode=1 ./build/test_behavior_hda && \
+		VFIO_TEST_FIXTURE_ROOT="$(VFIO_TEST_FIXTURE_ROOT)" valgrind --leak-check=full --error-exitcode=1 ./build/test_behavior_gpu && \
+		valgrind --leak-check=full --error-exitcode=1 ./build/test_behavior_static && \
 		VFIO_TEST_FIXTURE_ROOT="$(VFIO_TEST_FIXTURE_ROOT)" valgrind --leak-check=full --error-exitcode=1 ./build/test_behavior_storage; \
 	fi
 
