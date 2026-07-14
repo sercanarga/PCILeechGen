@@ -1015,6 +1015,7 @@ module pcileech_tlps128_bar_controller(
         .doorbell_is_cq     ( nvme_db_is_cq                 ),
         .doorbell_qid       ( nvme_db_qid                   ),
         .doorbell_val       ( nvme_db_val                   ),
+        .msix_trigger       (                               ),
         .msix_vector_addr   ( nvme_msix_vector_addr         ),
         .msix_vector_data   ( nvme_msix_vector_data         ),
         .irq_delivery_valid ( nvme_irq_delivery_valid       ),
