@@ -72,7 +72,14 @@ func (ow *OutputWriter) WriteAll(ctx *donor.DeviceContext, b *board.Board) error
 	if err != nil {
 		return fmt.Errorf("prepare output directory: %w", err)
 	}
-	stage, err := os.MkdirTemp(filepath.Dir(target), "."+filepath.Base(target)+".tmp-")
+	parent := filepath.Dir(target)
+	if err := os.MkdirAll(parent, 0755); err != nil {
+		return fmt.Errorf("create output parent: %w", err)
+	}
+	if err := validateRealDirectory(parent, "output parent"); err != nil {
+		return err
+	}
+	stage, err := os.MkdirTemp(parent, "."+filepath.Base(target)+".tmp-")
 	if err != nil {
 		return fmt.Errorf("create output staging directory: %w", err)
 	}

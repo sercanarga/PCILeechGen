@@ -160,6 +160,19 @@ func TestWriteAllFailurePreservesPreviousOutput(t *testing.T) {
 	}
 }
 
+func TestWriteAllCreatesNestedOutputParent(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "generated", "nvme", "board")
+	ow := NewOutputWriter(target, filepath.Join(t.TempDir(), "missing-lib"), 1, 1)
+
+	err := ow.WriteAll(outputModelContext(), &board.Board{Name: "missing", ProjectDir: "missing"})
+	if err == nil {
+		t.Fatal("WriteAll unexpectedly succeeded")
+	}
+	if strings.Contains(err.Error(), "create output staging directory") {
+		t.Fatalf("nested output parent was not prepared: %v", err)
+	}
+}
+
 func TestWriteFileRejectsSymlink(t *testing.T) {
 	root := t.TempDir()
 	outside := filepath.Join(root, "outside.txt")
