@@ -9,8 +9,8 @@ LDFLAGS=-s -w
 COCOTB_PYTHON ?= python3.13
 COCOTB_VENV := bin/cocotb-venv
 COCOTB_OUTPUT_ROOT := tests/cocotb/out_matrix
-COCOTB_STABLE_CASES := nvme generic audio xhci wifi
-COCOTB_EXPERIMENTAL_CASES := ethernet sata gpu
+COCOTB_STABLE_CASES := nvme generic audio xhci wifi sata gpu
+COCOTB_EXPERIMENTAL_CASES := ethernet
 COCOTB_CASES ?= $(COCOTB_STABLE_CASES)
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
