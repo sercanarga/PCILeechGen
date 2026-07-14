@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 #Requires -Modules @{ ModuleName = 'Pester'; RequiredVersion = '5.7.1' }
 
-$modulePath = Join-Path $PSScriptRoot '..' 'DeviceHistoryCleanup.psm1'
+$modulePath = Join-Path (Join-Path $PSScriptRoot '..') 'DeviceHistoryCleanup.psm1'
 Import-Module $modulePath -Force
 
 Describe 'DeviceHistoryCleanup safety contract' {

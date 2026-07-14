@@ -174,10 +174,10 @@ test-valgrind:
 		echo 'valgrind not installed; skipping optional memory check'; \
 	else \
 		$(MAKE) clean test SANITIZE= && \
-		valgrind --leak-check=full --error-exitcode=1 ./build/test_device_model && \
-		valgrind --leak-check=full --error-exitcode=1 ./build/test_behavior_nvme && \
-		valgrind --leak-check=full --error-exitcode=1 ./build/test_behavior_hda && \
-		valgrind --leak-check=full --error-exitcode=1 ./build/test_behavior_storage; \
+		VFIO_TEST_FIXTURE_ROOT="$(VFIO_TEST_FIXTURE_ROOT)" valgrind --leak-check=full --error-exitcode=1 ./build/test_device_model && \
+		VFIO_TEST_FIXTURE_ROOT="$(VFIO_TEST_FIXTURE_ROOT)" valgrind --leak-check=full --error-exitcode=1 ./build/test_behavior_nvme && \
+		VFIO_TEST_FIXTURE_ROOT="$(VFIO_TEST_FIXTURE_ROOT)" valgrind --leak-check=full --error-exitcode=1 ./build/test_behavior_hda && \
+		VFIO_TEST_FIXTURE_ROOT="$(VFIO_TEST_FIXTURE_ROOT)" valgrind --leak-check=full --error-exitcode=1 ./build/test_behavior_storage; \
 	fi
 
 test-msan:
