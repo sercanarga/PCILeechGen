@@ -1,0 +1,76 @@
+{{define "bar_controller_hda"}}{{ if and (eq .DeviceClass "audio") .HasClassEndpoint }}
+    // ========================================================================
+    // HDA RIRB DMA Bridge
+    // Writes fake RIRB responses to system memory so hdaudio.sys can read
+    // codec responses. Without this, responses only go to MMIO registers
+    // that the driver never reads.
+    // ========================================================================
+    wire        hda_dma_req_valid;
+    wire [31:0] hda_dma_resp_lo;
+    wire [31:0] hda_dma_resp_hi;
+    wire [7:0]  hda_dma_resp_wp;
+    wire [31:0] hda_dma_rirb_lbase;
+    wire [31:0] hda_dma_rirb_ubase;
+    wire        hda_dma_req_ready;
+    wire        hda_dma_done;
+    wire        hda_crst_falling;
+
+    wire [127:0] hda_tlp_tx_tdata;
+    wire [3:0]   hda_tlp_tx_tkeepdw;
+    wire         hda_tlp_tx_tvalid;
+    wire         hda_tlp_tx_tlast;
+    wire [8:0]   hda_tlp_tx_tuser;
+    wire         hda_tlp_tx_tready;
+
+    pcileech_hda_rirb_dma i_hda_rirb_dma(
+        .rst            ( device_reset                  ),
+        .clk            ( clk                           ),
+        .dma_enabled    ( dma_enabled                   ),
+        .pcie_id        ( pcie_id                       ),
+        .crst_falling   ( hda_crst_falling              ),
+        .dma_req_valid  ( hda_dma_req_valid             ),
+        .dma_req_lo     ( hda_dma_resp_lo               ),
+        .dma_req_hi     ( hda_dma_resp_hi               ),
+        .dma_req_wp     ( hda_dma_resp_wp               ),
+        .dma_req_ready  ( hda_dma_req_ready             ),
+        .rirb_lbase     ( hda_dma_rirb_lbase            ),
+        .rirb_ubase     ( hda_dma_rirb_ubase            ),
+        .dma_done       ( hda_dma_done                  ),
+        .tlp_tx_tdata   ( hda_tlp_tx_tdata              ),
+        .tlp_tx_tkeepdw ( hda_tlp_tx_tkeepdw            ),
+        .tlp_tx_tvalid  ( hda_tlp_tx_tvalid             ),
+        .tlp_tx_tlast   ( hda_tlp_tx_tlast              ),
+        .tlp_tx_tuser   ( hda_tlp_tx_tuser              ),
+        .tlp_tx_tready  ( hda_tlp_tx_tready             )
+    );
+
+    wire        hda_msi_trigger;
+    wire [31:0] hda_rirbintsts;
+    wire        hda_intr_req;
+
+    pcileech_interrupt_service #(
+        .NUM_VECTORS       ( 1 )
+    ) i_hda_interrupt_service(
+        .clk               ( clk                                ),
+        .rst             ( device_reset || hda_crst_falling ),
+        .quiesce           ( lifecycle_quiesce                  ),
+        .msix_mode         ( 1'b0                               ),
+        .function_enable   ( cfg_msi_enable                     ),
+        .function_mask     ( 1'b0                               ),
+        .event_valid     ( hda_msi_trigger                    ),
+        .event_vector      ( 16'd0                              ),
+        .vector_select     (                                    ),
+        .vector_masked     ( 1'b0                               ),
+        .delivery_ready    ( 1'b1                               ),
+        .delivery_done     ( 1'b0                               ),
+        .delivery_valid    (                                    ),
+        .delivery_vector   (                                    ),
+        .msi_pulse       ( hda_intr_req                       ),
+        .pba_set_valid     (                                    ),
+        .pba_clear_valid   (                                    ),
+        .pba_vector        (                                    )
+    );
+
+{{ end }}
+
+{{end}}

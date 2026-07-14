@@ -189,8 +189,20 @@ func (c *SVGeneratorConfig) NVMeCQ1DoorbellOffset() uint32 {
 }
 
 func renderTemplate(name string, data any) (string, error) {
-	tmplStr := mustReadTemplate(name + ".sv.tmpl")
-	tmpl, err := template.New(name).Funcs(svFuncMap()).Parse(tmplStr)
+	tmpl := template.New(name).Funcs(svFuncMap())
+	parts := map[string][]string{
+		"bar_controller": {"core", "response", "hda", "nvme_output"},
+		"bar_impl_device": {
+			"nvme", "nvme_wiring", "xhci", "audio", "audio_response_rom",
+			"audio_response_fsm", "audio_interrupts", "ethernet", "msix",
+		},
+	}
+	for _, part := range parts[name] {
+		if _, err := tmpl.Parse(mustReadTemplate(name + "_" + part + ".sv.tmpl")); err != nil {
+			return "", fmt.Errorf("parsing %s template: %w", name, err)
+		}
+	}
+	tmpl, err := tmpl.Parse(mustReadTemplate(name + ".sv.tmpl"))
 	if err != nil {
 		return "", fmt.Errorf("parsing %s template: %w", name, err)
 	}

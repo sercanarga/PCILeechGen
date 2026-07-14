@@ -1,0 +1,12 @@
+{{ define "bar_impl_device_nvme_wiring" }}{{ if eq .DeviceClass "nvme" }}
+    // NVMe register output wiring
+    assign nvme_cc     = reg_0x00000014;
+    assign nvme_aqa    = reg_0x00000024;
+    assign nvme_asq_lo = reg_0x00000028;
+    assign nvme_asq_hi = reg_0x0000002C;
+    assign nvme_acq_lo = reg_0x00000030;
+    assign nvme_acq_hi = reg_0x00000034;
+    assign nvme_csts   = reg_0x0000001C;
+    assign nvme_cc_shn = reg_0x00000014[15:14];
+{{ end }}
+{{ end }}

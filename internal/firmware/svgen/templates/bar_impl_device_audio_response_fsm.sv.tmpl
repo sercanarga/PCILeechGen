@@ -1,0 +1,339 @@
+{{ define "bar_impl_device_audio_response_fsm" }}    // MMIO write detection for FSM-driven registers (0x48, 0x58).
+    // These are excluded from the generic write case to avoid multi-driver
+    // conflicts, so we detect and forward writes here.
+    reg wr_0x48_pending, wr_0x58_pending;
+    reg [31:0] wr_0x48_data, wr_0x58_data;
+    reg [3:0]  wr_0x48_be,   wr_0x58_be;
+
+    always @(posedge clk) begin
+        if (rst) begin
+            wr_0x48_pending <= 1'b0;
+            wr_0x58_pending <= 1'b0;
+        end else begin
+            wr_0x48_pending <= wr_valid && (wr_addr[31:0] & 32'hFFFFFFFC) == 32'h00000048;
+            wr_0x58_pending <= wr_valid && (wr_addr[31:0] & 32'hFFFFFFFC) == 32'h00000058;
+            wr_0x48_data    <= wr_data;
+            wr_0x58_data    <= wr_data;
+            wr_0x48_be      <= wr_be;
+            wr_0x58_be      <= wr_be;
+        end
+    end
+
+    always @(posedge clk) begin
+        if (rst) begin
+            rirb_response_fsm  <= 8'h00;
+            rirb_fake_response <= 64'h0;
+            corbwp_prev        <= 8'h00;
+            rirb_pending_count <= 8'h00;
+            rirb_wp_count      <= 8'h00;
+            rirb_response_idx  <= 6'd0;
+            corb_cte_prev      <= 1'b0;
+            rirb_cte_prev      <= 1'b0;
+            dma_req_valid_r    <= 1'b0;
+            dma_resp_lo_r      <= 32'h0;
+            dma_resp_hi_r      <= 32'h0;
+            dma_resp_wp_r      <= 8'h0;
+            intfl_set_req      <= 1'b0;
+            dma_recovery_count <= 16'h0;
+            dma_round_count    <= 4'h0;
+            // FSM-driven register resets (sole driver for these regs)
+            reg_0x00000048     <= 32'h00000000;
+            reg_0x00000058     <= 32'h00000000;
+            reg_0x0000005C     <= 32'h00820000;
+            reg_0x00000070     <= 32'h00000000;
+            reg_0x00000074     <= 32'h00000000;
+        end else begin
+            // Default: no INTFL set request this cycle.
+            // Response commit path below may set this to 1.
+            intfl_set_req <= 1'b0;
+
+            // CRST falling edge guard: if CRST is being asserted, suppress all
+            // FSM activity this cycle. The CRST block (separate always block)
+            // resets all state vars — we must not fight it with our own
+            // assignments. Without this guard, both blocks drive the same regs
+            // and the result is synthesis-tool-dependent.
+
+            // Track CTE for reinitialization detection
+            if (!crst_falling && !crst_rising) begin
+                corb_cte_prev <= corb_cte;
+                rirb_cte_prev <= rirb_cte;
+
+                // corbwp_prev is NOT updated here - only when
+                // corbwp_changed fires to avoid losing VERB deltas.
+            end else if (crst_falling) begin
+                corb_cte_prev <= 1'b0;
+                rirb_cte_prev <= 1'b0;
+                corbwp_prev   <= 8'h00;
+            end
+
+            // CRST rising edge: controller coming out of reset
+            if (crst_rising) begin
+                rirb_response_idx  <= 6'd0;
+                rirb_pending_count <= 8'h00;
+                rirb_response_fsm  <= 8'h00;
+                rirb_wp_count      <= 8'h00;
+                corb_cte_prev      <= 1'b0;
+                rirb_cte_prev      <= 1'b0;
+                corbwp_prev        <= 8'h00;
+                dma_req_valid_r    <= 1'b0;
+                dma_resp_lo_r      <= 32'h0;
+                dma_resp_hi_r      <= 32'h0;
+                dma_resp_wp_r      <= 8'h0;
+                dma_recovery_count <= 16'h0;
+                dma_round_count    <= 4'h0;
+            end
+
+            // CORB/RIRB reinitialization: driver disabled CTE → reset ROM index
+            // and pending state so the next discovery cycle starts from index 0.
+            // Guarded by !crst_falling — CRST block handles reset.
+            //
+            // This is critical: hdaudio.sys re-enumeration expects the same
+            // discovery-phase responses (indices 0-19) as the first boot.
+            // If we don't reset rirb_response_idx, we'll serve runtime-zone
+            // responses to discovery VERBs, causing Code 10 on re-plug.
+            if (rb_reinit && !crst_falling) begin
+                rirb_response_idx  <= 6'd0;
+                rirb_pending_count <= 8'h00;
+                rirb_response_fsm  <= 8'h00;
+                rirb_wp_count      <= 8'h00;  // Reset WP — driver expects fresh buffer
+                corbwp_prev        <= 8'h00;
+                reg_0x00000048[23:16] <= 8'h00;  // reset CORBRP to 0
+                reg_0x0000005C[9:8] <= 2'b0;  // clear RIRBSTS (RINTFL + OIS)
+                // Clear DMA handshake state to prevent bridge from accepting
+                // stale request data after reinit. Without this, if reinit
+                // fires while FSM is in state 0x10/0x11, dma_req_valid_r
+                // stays asserted and the bridge sends garbage TLPs.
+                dma_req_valid_r    <= 1'b0;
+                dma_done_latched   <= 1'b0;
+                dma_timed_out      <= 1'b0;
+                dma_recovery_count <= 16'h0;
+                dma_round_count    <= 4'h0;
+                // NOTE: RIRBLBASE/RIRBUBASE preserved, driver may not reprogram
+                // them on re-init if the buffer address hasn't changed.
+            end
+
+            // DMA done latch and timeout tracking
+            if (rirb_response_fsm == 8'h11 && dma_done_latched) begin
+                dma_done_latched <= 1'b0;
+            end else if (dma_done) begin
+                dma_done_latched <= 1'b1;
+            end else if (rirb_response_fsm != 8'h11 && rirb_response_fsm != 8'h10) begin
+                dma_done_latched <= 1'b0;
+            end
+
+            if (rirb_response_fsm == 8'h11) begin
+                dma_wait_counter <= dma_wait_counter + 1'b1;
+                if (dma_wait_counter >= 28'hFFFFFFF)
+                    dma_timed_out <= 1'b1;
+            end else begin
+                dma_wait_counter <= 28'h0;
+                dma_timed_out <= 1'b0;
+            end
+
+            // MMIO write forwarding for FSM-driven registers.
+
+            // 0x48: CORBWP (bits 7:0 writable), CORBRPRST (bit 31 self-clear)
+            // bits 23:16 (CORBRP) handled by FSM above, not host-writable.
+            if (wr_0x48_pending && !rb_reinit && !crst_falling) begin
+                if (wr_0x48_be[0]) reg_0x00000048[7:0]   <= (reg_0x00000048[7:0]   & ~8'hFF) | (wr_0x48_data[7:0]   & 8'hFF);
+                if (wr_0x48_be[3]) reg_0x00000048[31]    <= wr_0x48_data[31];  // CORBRPRST
+            end
+
+            // 0x58: RIRBWPRST (bit 15 self-clear), RINTCNT (bits 31:16 writable)
+            // bits 7:0 (RIRBWP) driven by FSM, not host-writable.
+            if (wr_0x58_pending && !rb_reinit && !crst_falling) begin
+                if (wr_0x58_be[1]) reg_0x00000058[15]    <= wr_0x58_data[15];  // RIRBWPRST
+                if (wr_0x58_be[2]) reg_0x00000058[23:16] <= wr_0x58_data[23:16];
+                if (wr_0x58_be[3]) reg_0x00000058[31:24] <= wr_0x58_data[31:24];
+            end
+
+            // RIRBCTL/RIRBSTS driver write - merged into FSM to avoid multi-driver
+            if (rirbctl_rw1c && !rb_reinit) begin
+                if (hda_wr_be[0]) begin
+                    reg_0x0000005C[0] <= rirbctl_wr_rintctl_val;
+                    reg_0x0000005C[1] <= rirbctl_wr_cte_val;
+                    reg_0x0000005C[2] <= rirbctl_wr_oie_val;
+                end
+                if (hda_wr_be[1]) begin
+                    reg_0x0000005C[10:8] <= reg_0x0000005C[10:8] & ~rirbsts_clear_mask;
+                end
+            end
+
+            // RIRBWPRST: driver writes 1 to bit 15 of 0x58 to reset RIRBWP
+            if (reg_0x00000058[15] && !crst_falling) begin
+                rirb_wp_count <= 8'h00;
+                reg_0x00000058[15] <= 1'b0;  // auto-clear RIRBWPRST
+            end
+
+            // CORBRPRST: driver writes 1 to bit 31 of 0x48 to reset CORBRP
+            if (reg_0x00000048[31] && !crst_falling) begin
+                reg_0x00000048[23:16] <= 8'h00;  // reset CORBRP to 0
+                reg_0x00000048[31] <= 1'b0;  // auto-clear CORBRPRST
+            end
+
+            // Enqueue: add the actual number of entries the driver submitted.
+            // Guard: if rb_reinit is active, ignore corbwp_changed in the same
+            // cycle. Without this, a driver that changes CORBWP while disabling
+            // CTE would leave a stale pending count after reinitialization.
+            // Guarded by !crst_falling — CRST block handles reset.
+            if (corbwp_changed && !rb_reinit && !crst_falling) begin
+                // Saturating addition: prevent overflow when DMA is stuck.
+                // If pending_count + delta would exceed 255, cap at 255.
+                // Without this, overflow wraps to 0 and the FSM stops
+                // producing responses, causing hdaudio.sys Code 10.
+                if (rirb_pending_count + corbwp_delta < rirb_pending_count) begin
+                    rirb_pending_count <= 8'hFF;
+                end else begin
+                    rirb_pending_count <= rirb_pending_count + corbwp_delta;
+                end
+                // Auto-advance CORB read pointer (controller consumed CORB entries)
+                reg_0x00000048[23:16] <= reg_0x00000048[23:16] + corbwp_delta;
+                // Snapshot CORBWP so next delta is calculated correctly
+                corbwp_prev <= reg_0x00000048[7:0];
+            end
+
+            // All FSM transitions are guarded by !crst_falling to avoid fighting
+            // with the CRST block which resets state vars in a separate always block.
+
+            // Build response data when starting a new response
+            if (rirb_response_fsm == 8'h00 && rirb_pending_count > 8'h00 && !crst_falling) begin
+                // Look up the next response from the CA0132 ROM
+                rirb_fake_response <= rirb_rom_response(rirb_response_idx);
+                // Cycle: advance up to 63, then wrap to 32 (extended runtime zone).
+                // Wrapping to 32 instead of 0 avoids re-sending discovery-phase
+                // responses, which would confuse the driver during sustained operation.
+                rirb_response_idx  <= (rirb_response_idx < 6'd63) ? rirb_response_idx + 6'h1 : 6'd32;
+                rirb_response_fsm  <= 8'h04; // 4-cycle delay before committing
+            end
+
+            // Response FSM countdown
+            if (rirb_response_fsm > 8'h00 && rirb_response_fsm <= 8'h04 && !crst_falling) begin
+                rirb_response_fsm <= rirb_response_fsm - 8'h01;
+
+                // When FSM reaches 1, initiate DMA write handshake with bridge
+                if (rirb_response_fsm == 8'h01) begin
+                    dma_req_valid_r <= 1'b1;
+                    dma_resp_lo_r   <= rirb_fake_response[31:0];
+                    // convert ROM custom format to HDA spec RESP_EX:
+                    // ROM resp_hi[3:0] = type (1=solicited, 2=unsolicited)
+                    // HDA spec RESP_EX: [3:0]=codec_addr, [4]=unsolicited
+                    // all responses come from codec 0 (matches STATESTS bit 0)
+                    dma_resp_hi_r   <= (rirb_fake_response[35:32] == 4'h2) ?
+                                       32'h00000010 :  // codec 0, unsolicited
+                                       32'h00000000;   // codec 0, solicited
+                    dma_resp_wp_r   <= rirb_wp_count + 8'h01;
+                    rirb_response_fsm <= 8'h10; // enter DMA accept wait (outside countdown range)
+                end
+            end
+
+            // DMA handshake state machine (states 0x10/0x11, outside countdown range):
+            //   0x10: wait for bridge to accept request (dma_req_ready)
+            //   0x11: wait for bridge to complete write (dma_done)
+            if (rirb_response_fsm == 8'h10 && dma_req_valid_r && dma_req_ready && !crst_falling) begin
+                // Bridge accepted the request, clear our request
+                dma_req_valid_r <= 1'b0;
+                rirb_response_fsm <= 8'h11;
+            end
+
+            // Bridge recovery: if bridge timed out (returned to IDLE, dma_req_ready=1)
+            // but we're still in state 0x11 waiting for dma_done, re-assert the request
+            // so the bridge can accept it again with fresh data.
+            // Only trigger recovery when neither success nor timeout is pending —
+            // if dma_done_latched or dma_timed_out is set, other paths handle it
+            // and retry would cause state corruption or permanent loop.
+            // Limit: after 65536 recovery attempts, give up: the bridge is permanently
+            // stuck (e.g. downstream AXI blocked). Abort this response so the FSM
+            // can process remaining pending responses instead of freezing forever.
+            if (rirb_response_fsm == 8'h11 && dma_req_ready && !dma_req_valid_r && !dma_done && !dma_done_latched && !dma_timed_out && !crst_falling) begin
+                if (dma_recovery_count >= 16'hFFFF) begin
+                    if (dma_round_count >= 4'hF) begin
+                        // Bridge permanently stuck after 16 rounds.
+                        // Last resort: commit via MMIO so driver makes progress.
+                        rirb_wp_count <= rirb_wp_count + 8'h01;
+                        reg_0x00000070[31:0] <= dma_resp_lo_r;
+                        reg_0x00000074[31:0] <= dma_resp_hi_r;
+                        if (dma_resp_hi_r[4])
+                            reg_0x0000005C[9] <= 1'b1;
+                        intfl_set_req <= 1'b1;
+                        rirb_pending_count <= rirb_pending_count - 8'h01;
+                        rirb_response_fsm  <= 8'h00;
+                        dma_req_valid_r    <= 1'b0;
+                        dma_recovery_count <= 16'h0;
+                        dma_round_count    <= 4'h0;
+                        dma_done_latched   <= 1'b0;
+                        dma_timed_out      <= 1'b0;
+                    end else begin
+                        // Restart countdown with same response data in rirb_fake_response
+                        rirb_response_fsm  <= 8'h04;
+                        dma_req_valid_r    <= 1'b0;
+                        dma_recovery_count <= 16'h0;
+                        dma_round_count    <= dma_round_count + 4'h1;
+                        dma_done_latched   <= 1'b0;
+                        dma_timed_out      <= 1'b0;
+                    end
+                end else begin
+                    // Bridge returned to IDLE: re-assert request for retry
+                    dma_req_valid_r    <= 1'b1;
+                    rirb_response_fsm  <= 8'h10;
+                    dma_wait_counter   <= 28'h0;
+                    dma_timed_out      <= 1'b0;
+                    dma_recovery_count <= dma_recovery_count + 16'h1;
+                end
+            end
+
+            if (rirb_response_fsm == 8'h11 && !crst_falling) begin
+                // Waiting for DMA bridge to complete the write.
+                // Use latched done signal to avoid missing the 1-cycle pulse.
+                if (dma_done_latched) begin
+                    // DMA write completed: now commit to MMIO registers
+
+                    // Increment RIRBWP counter (8-bit, wraps at 256 per RIRBSIZE).
+                    // Mask to RIRBSIZE: the size field at 0x5C[31:24] encodes
+                    // supported buffer sizes. 0x40 = 256 entries (full 8-bit range).
+                    // We mask to prevent WP from exceeding the programmed size.
+                    rirb_wp_count <= rirb_wp_count + 8'h01;
+
+                    // Write response data to MMIO response registers (for drivers
+                    // that may fall back to reading these instead of DMA buffer).
+                    reg_0x00000070[31:0] <= dma_resp_lo_r;
+                    reg_0x00000074[31:0] <= dma_resp_hi_r;
+
+                    // Set RIRBSTS.UIS for unsolicited responses
+                    // RESP_EX bit 4 = unsolicited flag (set by format conversion above)
+                    if (dma_resp_hi_r[4]) begin
+                        reg_0x0000005C[9] <= 1'b1;
+                    end
+
+                    // Set RIRBINTSTS.INTFL: tells driver a response is available.
+                    // Actual register write is handled by consolidated INTFL driver
+                    // at end of FSM block; set flag so it can merge with clear requests.
+                    intfl_set_req <= 1'b1;
+
+                    // Decrement pending count (one response delivered)
+                    rirb_pending_count <= rirb_pending_count - 8'h01;
+                    dma_recovery_count <= 16'h0;
+                    dma_round_count    <= 4'h0;
+
+                    // Return to idle: ready for next CORB entry
+                    rirb_response_fsm <= 8'h00;
+                end else if (dma_timed_out) begin
+                    // DMA bridge didn't respond within timeout: return to idle
+                    // but PRESERVE pending_count. The response data remains
+                    // latched in dma_resp_lo/hi/wp_r registers. On the next
+                    // cycle, pending_count > 0 triggers a new response attempt
+                    // with the same data, giving the bridge another chance.
+                    // Only after bridge timeout+recovery cycle (16384+ cycles)
+                    // does the request get re-submitted cleanly.
+                    // Decrementing pending_count here would permanently lose
+                    // the response, causing RIRBWP to stall and the driver
+                    // to eventually timeout with Code 10.
+                    // Clear stale latch to prevent false dma_done on next request.
+                    dma_done_latched  <= 1'b0;
+                    dma_timed_out     <= 1'b0;
+                    rirb_response_fsm <= 8'h00;
+                end
+            end
+        end
+    end
+
+{{ end }}

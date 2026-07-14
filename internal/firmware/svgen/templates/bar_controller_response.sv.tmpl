@@ -1,0 +1,439 @@
+{{define "bar_controller_response"}}{{ if .LatencyConfig }}
+{{ if eq .DeviceClass "nvme" }}
+    // The incoming PCIe RX stream has no backpressure at this layer. Gating
+    // writes on emulated latency would drop MMIO writes such as AQA/ASQ/ACQ/CC
+    // during the controller-enable handshake. bar0_wr_ack is still driven by the
+    // latency emulator but no longer gates write acceptance.
+    wire        bar0_wr_ack;
+    assign in_is_wr_ready = wrengine_ready;
+{{ else }}
+    // Write backpressure: combine wrengine ready with BAR0 write latency ack.
+    // New writes are blocked until the previous BAR0 write's emulated latency completes.
+    wire        bar0_wr_ack;
+    assign in_is_wr_ready = wrengine_ready && bar0_wr_ack;
+{{ end }}
+{{ if not (eq .DeviceClass "audio") }}
+    // Non-HDA builds have no CRST reset source; tie inert so the latency
+    // emulator / spill reset arms never fire. Declared here because the latency
+    // FSM below references it unconditionally (HDA builds declare a real wire
+    // driven by the RIRB DMA bridge further down).
+    wire        hda_crst_falling = 1'b0;
+{{ end }}
+{{ else }}
+    assign in_is_wr_ready = wrengine_ready;
+{{ end }}
+
+{{ if .LatencyConfig }}
+    // BAR0 raw response wires (before latency emulation)
+    wire [87:0] bar0_raw_ctx;
+    wire [31:0] bar0_raw_data;
+    wire        bar0_raw_valid;
+
+    // latency emulated response
+    wire [87:0] bar0_emu_ctx;
+    wire [31:0] bar0_emu_data;
+    wire        bar0_emu_valid;
+    wire        bar0_emu_busy; // from latency emulator: request_pending
+    wire        bar0_emu_ready = !bar0_emu_busy; // 1 when emulator can accept new data
+    reg         bar0_emu_busy_d1; // delayed busy for edge detection
+    wire        bar0_emu_accepted = bar0_emu_busy && !bar0_emu_busy_d1; // 0->1 edge = data taken
+
+    // 16-deep circular buffer between BAR engine and latency emulator.
+    // Always captures BAR responses on bar0_raw_valid (1-cycle pulse).
+    // The latency emulator processes one request at a time; the 16-deep
+    // buffer absorbs back-to-back BAR responses from multi-DWORD reads.
+    //
+    // Sizing: the BAR produces responses at 1/cycle (pipelined 2-cycle latency).
+    // The emulator drains at 1 per MIN_LATENCY cycles (default MIN=2, drain=0.5/cycle).
+    // Net fill rate = 0.5 entries/cycle. For a max 32-DWORD BAR read (128 bytes),
+    // the worst-case peak is 16 entries - hence 16-deep.
+    //
+    // AXI-style handshake:
+    //   Push: bar0_raw_valid && !full  (unconditional capture)
+    //   Pop:  bar0_emu_accepted        (emulator went idle->busy = took data)
+    //
+    // Address capture: rd_req_addr is a live signal that increments every
+    // cycle during multi-DWORD reads. By the time the BAR produces a response
+    // (2-cycle latency), rd_req_addr has advanced. We reconstruct the correct
+    // address from rd_req_ctx which contains {first, last, data[31:12], dwaddr}
+    // set by the rdengine at request time.
+    reg  [87:0] bar0_buf_ctx  [0:15];
+    reg  [31:0] bar0_buf_data [0:15];
+    reg  [31:0] bar0_buf_addr [0:15]; // reconstructed request address from ctx
+    reg  [4:0]  bar0_buf_count;   // number of entries (0-16)
+    reg  [3:0]  bar0_buf_rd;      // read pointer
+    reg  [3:0]  bar0_buf_wr;      // write pointer
+    wire        bar0_buf_full  = (bar0_buf_count >= 5'd16);
+    wire        bar0_buf_empty = (bar0_buf_count == 5'd0);
+    // Backpressure the read engine before the spill overflows (2-cycle pipeline needs headroom).
+    wire        bar0_buf_almost_full = (bar0_buf_count >= 5'd14) || bar0_spill_valid;
+    wire [87:0] bar0_buf_ctx_w   = bar0_buf_ctx[bar0_buf_rd];
+    wire [31:0] bar0_buf_data_w  = bar0_buf_data[bar0_buf_rd];
+    wire [31:0] bar0_buf_addr_w  = bar0_buf_addr[bar0_buf_rd]; // address from buffer head
+    // bar0_buf_write defined in spill section below (line 199)
+    wire        bar0_buf_pop     = bar0_emu_accepted && !bar0_buf_empty;
+    // Reconstruct address from ctx: {first[87], last[86], data[31:12]..}
+    wire [31:0] bar0_req_addr_from_ctx = {bar0_raw_ctx[31:12], bar0_raw_ctx[11:2], 2'b00};
+
+    // Buffer overflow retry: when the buffer is full, hold the response in
+    // a spill register and retry on the next cycle. Prevents silent data loss
+    // during sustained multi-DWORD reads when the latency emulator can't drain
+    // fast enough (e.g., during HDA DMA backpressure).
+    //
+    // CRITICAL: spill drains BEFORE accepting new data. Without this, when
+    // buffer stays full across multiple cycles, each new response overwrites
+    // the spill and permanently loses the previous one.
+    reg         bar0_spill_valid;
+    reg  [87:0] bar0_spill_ctx;
+    reg  [31:0] bar0_spill_data;
+
+    always @(posedge clk) begin
+        if (device_reset) begin
+            bar0_spill_valid <= 1'b0;
+            bar0_spill_ctx   <= 88'h0;
+            bar0_spill_data  <= 32'h0;
+        end else if (hda_crst_falling) begin
+            // CRST soft reset: clear spill register.
+            // Old spill data would otherwise be injected into the cleared buffer.
+            bar0_spill_valid <= 1'b0;
+            bar0_spill_ctx   <= 88'h0;
+            bar0_spill_data  <= 32'h0;
+        end else if (bar0_spill_valid && !bar0_buf_full) begin
+            // Drain spill to buffer - takes priority over new data
+            bar0_spill_valid <= 1'b0;
+        end else if (!bar0_spill_valid && bar0_raw_valid && bar0_buf_full) begin
+            // Only capture new response in spill when spill slot is empty.
+            // If spill is already valid and buffer is full, the new response
+            // is dropped (buffer will drain soon and spill will retry).
+            bar0_spill_valid <= 1'b1;
+            bar0_spill_ctx   <= bar0_raw_ctx;
+            bar0_spill_data  <= bar0_raw_data;
+        end
+    end
+
+    // Push to buffer: either new response or retry from spill.
+    // Spill drain takes priority - new data is only accepted when spill is empty.
+    wire bar0_buf_write = (bar0_spill_valid && !bar0_buf_full) ||
+                          (!bar0_spill_valid && bar0_raw_valid && !bar0_buf_full);
+{{ end }}
+    wire [87:0] bar_base_ctx[7];
+    wire [31:0] bar_base_data[7];
+    wire [6:0]  bar_base_valid;
+    wire [87:0] bar_rsp_ctx[7];
+    wire [31:0] bar_rsp_data[7];
+    wire [6:0]  bar_rsp_valid;
+    assign bar_base_ctx[6]   = 88'h0;
+    assign bar_base_data[6]  = 32'h0;
+    assign bar_base_valid[6] = 1'b0;
+
+{{ if or .LatencyConfig .MSIXConfig }}
+    // BAR0 into the read mux. NVMe bypasses the latency emulator so CC.EN<->
+    // CSTS.RDY polling sees fresh reads (a stale CSTS=0 fails ControllerEnable).
+    wire [87:0] bar0_base_ctx;
+    wire [31:0] bar0_base_data;
+    wire        bar0_base_valid;
+{{ end }}
+{{ if .LatencyConfig }}
+{{ if eq .DeviceClass "nvme" }}
+    assign bar0_base_ctx   = bar0_raw_ctx;
+    assign bar0_base_data  = bar0_raw_data;
+    assign bar0_base_valid = bar0_raw_valid;
+{{ else }}
+    assign bar0_base_ctx   = bar0_emu_ctx;
+    assign bar0_base_data  = bar0_emu_data;
+    assign bar0_base_valid = bar0_emu_valid;
+{{ end }}
+{{ end }}
+{{ if and .BARModel (or .LatencyConfig .MSIXConfig) }}
+    assign bar_base_ctx[{{ .BARModel.BIR }}]   = bar0_base_ctx;
+    assign bar_base_data[{{ .BARModel.BIR }}]  = bar0_base_data;
+    assign bar_base_valid[{{ .BARModel.BIR }}] = bar0_base_valid;
+{{ end }}
+
+{{ if .MSIXConfig }}
+    wire [87:0] msix_rsp_ctx;
+    wire [31:0] msix_rsp_data;
+    wire        msix_rsp_valid;
+    wire [2:0]  msix_rsp_bir;
+    wire        msix_addr_hit;
+{{ end }}
+{{ if and (eq .DeviceClass "nvme") .NVMeIdentify }}
+    wire        nvme_shutdown_complete;
+    wire        nvme_dma_cancel;
+    wire        nvme_controller_fatal;
+    wire        nvme_irq_event_valid;
+    wire [15:0] nvme_irq_event_vector;
+    wire        nvme_irq_delivery_valid;
+    wire        nvme_irq_delivery_ready;
+    wire        nvme_irq_delivery_done;
+    wire [15:0] nvme_irq_delivery_vector;
+    wire [15:0] nvme_msix_vector_select;
+    wire [63:0] nvme_msix_vector_addr;
+    wire [31:0] nvme_msix_vector_data;
+    wire        nvme_msix_vector_masked;
+    wire        nvme_msix_pba_set_valid;
+    wire        nvme_msix_pba_clear_valid;
+    wire [15:0] nvme_msix_pba_vector;
+{{ if not .MSIXConfig }}    wire        nvme_intr_req;
+{{ end }}
+    wire        nvme_disk_req_valid;
+    wire        nvme_disk_req_write;
+    wire        nvme_disk_req_flush;
+    wire [63:0] nvme_disk_req_lba;
+    wire [6:0]  nvme_disk_req_word;
+    wire [31:0] nvme_disk_req_wdata;
+    wire        nvme_disk_req_done;
+    wire [31:0] nvme_disk_req_rdata;
+    wire        nvme_disk_req_hit;
+    wire        nvme_disk_busy;
+    wire        nvme_disk_error;
+{{ if not .MSIXConfig }}    assign nvme_msix_vector_addr   = 64'h0;
+    assign nvme_msix_vector_data   = 32'h0;
+    assign nvme_msix_vector_masked = 1'b1;
+{{ end }}{{ end }}
+
+
+{{ range .BARSlots }}
+    assign bar_rsp_ctx[{{ .BIR }}]   = bar_base_ctx[{{ .BIR }}];
+    assign bar_rsp_data[{{ .BIR }}]  = bar_base_data[{{ .BIR }}];
+    assign bar_rsp_valid[{{ .BIR }}] = bar_base_valid[{{ .BIR }}];
+{{ end }}
+{{ if .MSIXConfig }}    assign bar_rsp_ctx[6]   = msix_rsp_ctx;
+    assign bar_rsp_data[6]  = msix_rsp_data;
+    assign bar_rsp_valid[6] = msix_rsp_valid;
+{{ else }}    assign bar_rsp_ctx[6]   = 88'h0;
+    assign bar_rsp_data[6]  = 32'h0;
+    assign bar_rsp_valid[6] = 1'b0;
+{{ end }}
+    wire [6:0] bar_rsp_ready;
+    pcileech_bar_rsp_arbiter i_bar_rsp_arbiter(
+        .clk        ( clk           ),
+        .rst        ( device_reset  ),
+        .in_valid   ( bar_rsp_valid ),
+        .in_ctx     ( bar_rsp_ctx   ),
+        .in_data    ( bar_rsp_data  ),
+        .in_ready   ( bar_rsp_ready ),
+        .out_valid  ( rd_rsp_valid  ),
+        .out_ctx    ( rd_rsp_ctx    ),
+        .out_data   ( rd_rsp_data   )
+    );
+
+{{ if or .BARModel (not .DonorBARTopology) }}
+
+{{ if and (eq .DeviceClass "nvme") .HasClassEndpoint }}
+    // NVMe register wires -- from bar_impl_device to admin responder
+    wire [31:0] nvme_reg_cc;
+    wire [31:0] nvme_reg_aqa;
+    wire [31:0] nvme_reg_asq_lo;
+    wire [31:0] nvme_reg_asq_hi;
+    wire [31:0] nvme_reg_acq_lo;
+    wire [31:0] nvme_reg_acq_hi;
+    wire [31:0] nvme_reg_csts;
+    wire [1:0]  nvme_reg_cc_shn;
+{{ end }}
+
+{{ if .BARModel }}
+    pcileech_bar_impl_device #(
+        .BAR_SIZE       ( {{ .BARModel.Size }} )
+    ) i_bar{{ .BARModel.BIR }}(
+{{ else }}
+    pcileech_bar_impl_zerowrite4k i_bar0(
+{{ end }}
+        .rst            ( device_reset                  ),
+        .clk            ( clk                           ),
+        .wr_addr        ( {{ if .BARModel }}wr_addr_bar0{{ else }}wr_addr{{ end }} ),
+        .wr_be          ( wr_be                         ),
+        .wr_data        ( wr_data                       ),
+        .wr_valid       ( wr_valid && wr_bar[{{ if .BARModel }}{{ .BARModel.BIR }}{{ else }}0{{ end }}]{{ if .BARModel }} && bar0_wr_hit{{ end }}{{ if .MSIXConfig }} && !msix_wr_table_select && !msix_wr_pba_select{{ end }} ),
+        .rd_req_ctx     ( rd_req_ctx                    ),
+        .rd_req_addr    ( {{ if .BARModel }}rd_req_addr_bar0{{ else }}rd_req_addr{{ end }} ),
+        .rd_req_valid   ( rd_req_valid && rd_req_bar[{{ if .BARModel }}{{ .BARModel.BIR }}{{ else }}0{{ end }}]{{ if .BARModel }} && bar0_rd_hit{{ end }}{{ if .MSIXConfig }} && !msix_addr_hit{{ end }} ),
+{{ if .LatencyConfig }}
+        .rd_rsp_ctx     ( bar0_raw_ctx                  ),
+        .rd_rsp_data    ( bar0_raw_data                 ),
+        .rd_rsp_valid   ( bar0_raw_valid                )
+{{ else if .MSIXConfig }}
+        .rd_rsp_ctx     ( bar0_base_ctx                 ),
+        .rd_rsp_data    ( bar0_base_data                ),
+        .rd_rsp_valid   ( bar0_base_valid               )
+{{ else }}
+        .rd_rsp_ctx     ( bar_base_ctx[{{ if .BARModel }}{{ .BARModel.BIR }}{{ else }}0{{ end }}]   ),
+        .rd_rsp_data    ( bar_base_data[{{ if .BARModel }}{{ .BARModel.BIR }}{{ else }}0{{ end }}]  ),
+        .rd_rsp_valid   ( bar_base_valid[{{ if .BARModel }}{{ .BARModel.BIR }}{{ else }}0{{ end }}] )
+{{ end }}
+{{ if and (eq .DeviceClass "nvme") .HasClassEndpoint }}        ,
+        .nvme_cc        ( nvme_reg_cc                   ),
+        .nvme_aqa       ( nvme_reg_aqa                  ),
+        .nvme_asq_lo    ( nvme_reg_asq_lo               ),
+        .nvme_asq_hi    ( nvme_reg_asq_hi               ),
+        .nvme_acq_lo    ( nvme_reg_acq_lo               ),
+        .nvme_acq_hi    ( nvme_reg_acq_hi               ),
+        .nvme_csts      ( nvme_reg_csts                 ),
+        .nvme_cc_shn    ( nvme_reg_cc_shn               ),
+        .nvme_shutdown_complete ( nvme_shutdown_complete ),
+        .controller_fatal ( nvme_controller_fatal       )
+{{ end }}{{ if and (eq .DeviceClass "audio") .HasClassEndpoint }}        ,
+        // HDA RIRB DMA bridge ports
+        .dma_req_valid   ( hda_dma_req_valid             ),
+        .dma_resp_lo     ( hda_dma_resp_lo               ),
+        .dma_resp_hi     ( hda_dma_resp_hi               ),
+        .dma_resp_wp     ( hda_dma_resp_wp               ),
+        .dma_rirb_lbase  ( hda_dma_rirb_lbase            ),
+        .dma_rirb_ubase  ( hda_dma_rirb_ubase            ),
+        .dma_req_ready   ( hda_dma_req_ready             ),
+        .dma_done        ( hda_dma_done                  ),
+        // MSI interrupt ports
+        .msi_trigger     ( hda_msi_trigger               ),
+        .rirbintsts      ( hda_rirbintsts                ),
+        .crst_falling    ( hda_crst_falling              )
+{{ end }}
+    );
+{{ end }}
+
+{{ if .LatencyConfig }}
+    tlp_latency_emulator i_latency_emu(
+        .clk            ( clk                           ),
+        .rst            ( device_reset                  ),
+        .crst_falling   ( hda_crst_falling              ),
+        .req_valid      ( !bar0_buf_empty               ), // data available in buffer
+        .req_ctx        ( bar0_buf_ctx_w                ), // read from buffer head
+        .req_data       ( bar0_buf_data_w               ),
+        .req_addr       ( bar0_buf_addr_w               ), // address from buffered request head
+        .req_ready      (                               ),
+{{ if and .MSIXConfig (eq .DeviceClass "nvme") }}
+        .rsp_valid      ( bar0_emu_valid                ),
+        .rsp_ctx        ( bar0_emu_ctx                  ),
+        .rsp_data       ( bar0_emu_data                 ),
+{{ else if .MSIXConfig }}
+        .rsp_valid      ( bar0_base_valid               ),
+        .rsp_ctx        ( bar0_base_ctx                 ),
+        .rsp_data       ( bar0_base_data                ),
+{{ else }}
+        .rsp_valid      ( bar0_emu_valid                ),
+        .rsp_ctx        ( bar0_emu_ctx                  ),
+        .rsp_data       ( bar0_emu_data                 ),
+{{ end }}
+        .rsp_ready      ( {{ if eq .DeviceClass "nvme" }}bar0_emu_ready{{ else }}bar_rsp_ready[{{ if .BARModel }}{{ .BARModel.BIR }}{{ else }}0{{ end }}]{{ end }} ),
+        .wr_valid       ( wr_valid && wr_bar[{{ if .BARModel }}{{ .BARModel.BIR }}{{ else }}0{{ end }}]{{ if .BARModel }} && bar0_wr_hit{{ end }}{{ if .MSIXConfig }} && !msix_wr_table_select && !msix_wr_pba_select{{ end }} ),
+        .wr_addr        ( {{ if .BARModel }}wr_addr_bar0{{ else }}wr_addr{{ end }} ),
+        .wr_ack         ( bar0_wr_ack                   ),
+        .busy           ( bar0_emu_busy                 )
+    );
+
+    // 16-deep circular buffer FSM:
+    // Push: spill drains first (priority), then new BAR responses.
+    // Pop:  when emulator goes idle->busy (bar0_emu_accepted), it took the head data.
+    // Push+pop in the same cycle: count stays the same (single NBA expression).
+    always @(posedge clk) begin
+        if (device_reset) begin
+            bar0_buf_count     <= 5'd0;
+            bar0_buf_rd        <= 4'd0;
+            bar0_buf_wr        <= 4'd0;
+            bar0_emu_busy_d1   <= 1'b0;
+        end else if (hda_crst_falling) begin
+            // CRST soft reset: clear buffer pointers and counters.
+            // HDA FSM is resetting, so buffered responses become stale.
+            // The buffer will refill with new responses after re-enable.
+            // Note: bar0_spill_valid is reset by the spill always block above.
+            bar0_buf_count     <= 5'd0;
+            bar0_buf_rd        <= 4'd0;
+            bar0_buf_wr        <= 4'd0;
+            bar0_emu_busy_d1   <= 1'b0;
+        end else begin
+            bar0_emu_busy_d1 <= bar0_emu_busy;
+
+            // Pop head when emulator accepted (idle->busy transition = took head data)
+            if (bar0_buf_pop) begin
+                bar0_buf_rd <= bar0_buf_rd + 4'd1;
+            end
+
+            // Push tail: bar0_buf_write covers both spill drain and new data.
+            // Use the correct data source - spill data gets its own address
+            // reconstruction since ctx fields come from a different source.
+            if (bar0_buf_write) begin
+                if (bar0_spill_valid) begin
+                    // Draining spill: use spill's own ctx for address reconstruction
+                    bar0_buf_ctx[bar0_buf_wr]  <= bar0_spill_ctx;
+                    bar0_buf_data[bar0_buf_wr] <= bar0_spill_data;
+                    bar0_buf_addr[bar0_buf_wr] <= {bar0_spill_ctx[31:12], bar0_spill_ctx[11:2], 2'b00};
+                end else begin
+                    // New response
+                    bar0_buf_ctx[bar0_buf_wr]  <= bar0_raw_ctx;
+                    bar0_buf_data[bar0_buf_wr] <= bar0_raw_data;
+                    bar0_buf_addr[bar0_buf_wr] <= bar0_req_addr_from_ctx;
+                end
+                bar0_buf_wr <= bar0_buf_wr + 4'd1;
+            end
+
+            // single count update: avoids NBA last-write-wins on simultaneous push+pop
+            if (bar0_buf_write && !bar0_buf_pop)
+                bar0_buf_count <= bar0_buf_count + 5'd1;
+            else if (!bar0_buf_write && bar0_buf_pop)
+                bar0_buf_count <= bar0_buf_count - 5'd1;
+            // else: both or neither -> count unchanged
+        end
+    end
+
+{{ end }}
+
+{{ if .MSIXConfig }}
+
+    wire msix_wr_table_select = wr_valid && wr_bar[{{ .MSIXConfig.TableBIR }}] &&
+                                (wr_addr >= {{ .MSIXConfig.TableOffset }}) &&
+                                (wr_addr < {{ .MSIXConfig.TableEnd }});
+    wire msix_wr_pba_select   = wr_valid && wr_bar[{{ .MSIXConfig.PBABIR }}] &&
+                                (wr_addr >= {{ .MSIXConfig.PBAOffset }}) &&
+                                (wr_addr < {{ .MSIXConfig.PBAEnd }});
+    wire msix_rd_table_select = rd_req_valid && rd_req_bar[{{ .MSIXConfig.TableBIR }}] &&
+                                (rd_req_addr >= {{ .MSIXConfig.TableOffset }}) &&
+                                (rd_req_addr < {{ .MSIXConfig.TableEnd }});
+    wire msix_rd_pba_select   = rd_req_valid && rd_req_bar[{{ .MSIXConfig.PBABIR }}] &&
+                                (rd_req_addr >= {{ .MSIXConfig.PBAOffset }}) &&
+                                (rd_req_addr < {{ .MSIXConfig.PBAEnd }});
+
+    pcileech_msix_table #(
+        .NUM_VECTORS    ( {{ .MSIXConfig.NumVectors }}  ),
+        .TABLE_BIR      ( {{ .MSIXConfig.TableBIR }}     ),
+        .TABLE_OFFSET   ( 32'h{{ printf "%08X" .MSIXConfig.TableOffset }} ),
+        .PBA_BIR        ( {{ .MSIXConfig.PBABIR }}       ),
+        .PBA_OFFSET     ( 32'h{{ printf "%08X" .MSIXConfig.PBAOffset }}   )
+    ) i_msix_table(
+        .rst            ( device_reset                  ),
+        .clk            ( clk                           ),
+        .wr_addr        ( wr_addr                       ),
+        .wr_data        ( wr_data                       ),
+        .wr_be          ( wr_be                         ),
+        .wr_valid       ( wr_valid                      ),
+        .wr_table_select( msix_wr_table_select          ),
+        .wr_pba_select  ( msix_wr_pba_select            ),
+        .rd_req_ctx     ( rd_req_ctx                    ),
+        .rd_req_addr    ( rd_req_addr                   ),
+        .rd_req_valid   ( msix_rd_table_select || msix_rd_pba_select ),
+        .rd_table_select( msix_rd_table_select          ),
+        .rd_pba_select  ( msix_rd_pba_select            ),
+        .rd_rsp_ctx     ( msix_rsp_ctx                  ),
+        .rd_rsp_data    ( msix_rsp_data                 ),
+        .rd_rsp_valid   ( msix_rsp_valid                ),
+        .rd_rsp_bir     ( msix_rsp_bir                  ),
+{{ if and (eq .DeviceClass "nvme") .NVMeIdentify }}
+        .vector_select  ( nvme_msix_vector_select       ),
+        .vector_addr    ( nvme_msix_vector_addr         ),
+        .vector_data    ( nvme_msix_vector_data         ),
+        .vector_masked  ( nvme_msix_vector_masked       ),
+        .pba_set_valid   ( nvme_msix_pba_set_valid       ),
+        .pba_set_vector  ( nvme_msix_pba_vector          ),
+        .pba_clear_valid ( nvme_msix_pba_clear_valid     ),
+        .pba_clear_vector( nvme_msix_pba_vector          ),
+{{ else }}        .vector_select  ( 16'd0                         ),
+        .vector_addr    (                               ),
+        .vector_data    (                               ),
+        .vector_masked  (                               ),
+        .pba_set_valid  ( 1'b0                          ),
+        .pba_set_vector (                               ),
+        .pba_clear_valid( 1'b0                          ),
+        .pba_clear_vector(                              ),
+{{ end }}        .addr_hit       ( msix_addr_hit                 )
+    );
+{{ end }}
+
+{{end}}

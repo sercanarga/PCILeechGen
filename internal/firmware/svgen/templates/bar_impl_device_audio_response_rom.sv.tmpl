@@ -1,0 +1,173 @@
+{{ define "bar_impl_device_audio_response_rom" }}    // CA0132 codec response ROM — provides unique responses per VERB
+    // so hdaudio.sys can complete codec topology discovery.
+    // Format: {type_nid[31:0], response_data[31:0]}
+    // type=1 in bits [3:0], NID in [27:4], tag in [31:28].
+    //
+    // Entries 0–19: initial codec discovery (node parameters, configs).
+    // Entries 20–31: runtime responses (power state, pin sense, amp settings,
+    //   extra nodes) to prevent catch-all saturation during extended operation.
+    // Entries 32–63: extended runtime phase — cycling zone for repeated VERBs
+    //   (power transitions, converter/stream queries, jack detect simulation,
+    //   EAPD/BTL, repeated node parameters). After index 63, the counter wraps
+    //   back to 32 (runtime zone) rather than 0 (discovery zone), preventing
+    //   duplicate discovery responses during sustained operation.
+    function [63:0] rirb_rom_response;
+        input [5:0] idx;
+        begin
+            case (idx)
+                // === DISCOVERY PHASE (indices 0–19) ===
+                // 0: GET_PARAMETERS(Node 0 — AFG)
+                // NumSubNodes=16 | StartNode=1 | FuncType=AFG(0x1)
+                6'd0:  rirb_rom_response = {32'h00000001, 32'h01010001};
+                // 1: GET_SUBSYSTEM_ID
+                // SubsystemID = 0x11020010 (Creative SB Audigy FX)
+                6'd1:  rirb_rom_response = {32'h00000001, 32'h11020010};
+                // 2: GET_PARAMETERS(Node 1 — Audio Out, playback DAC)
+                // OutAmp=0, InAmp=0, Cap=0x3 (Out+Stereo), Type=0x1
+                6'd2:  rirb_rom_response = {32'h00000011, 32'h00030001};
+                // 3: GET_PARAMETERS(Node 2 — Audio Out, SPDIF out)
+                // DigOut, Type=0x2
+                6'd3:  rirb_rom_response = {32'h00000021, 32'h00020002};
+                // 4: GET_PARAMETERS(Node 3 — Audio In, recording ADC)
+                // InAmp present, Cap=0x2 (In), Type=0x1
+                6'd4:  rirb_rom_response = {32'h00000031, 32'h00020011};
+                // 5: GET_PARAMETERS(Node 4 — Audio Mixer)
+                // 3 inputs, mixer type=0x0
+                6'd5:  rirb_rom_response = {32'h00000041, 32'h00030000};
+                // 6: GET_PARAMETERS(Node 5 — Audio Mixer)
+                // 2 inputs, mixer type=0x0
+                6'd6:  rirb_rom_response = {32'h00000051, 32'h00020000};
+                // 7: GET_PARAMETERS(Node 6 — Audio Selector)
+                // 2 inputs, sel type=0x3
+                6'd7:  rirb_rom_response = {32'h00000061, 32'h00020003};
+                // 8: GET_PARAMETERS(Node 7 — Audio Selector)
+                // 3 inputs, sel type=0x3
+                6'd8:  rirb_rom_response = {32'h00000071, 32'h00030003};
+                // 9: GET_PARAMETERS(Node 8 — Audio Selector)
+                // 2 inputs, sel type=0x3
+                6'd9:  rirb_rom_response = {32'h00000081, 32'h00020003};
+                // 10: GET_PARAMETERS(Node 9 — Pin Complex, line-out)
+                // Cap=0x40000 (Out), type=0x4, default=0x01014010
+                6'd10: rirb_rom_response = {32'h00000091, 32'h00040004};
+                // 11: GET_CONFIG_DEFAULT(Node 9 pin)
+                // Default assoc=1, seq=0, device=Line Out, loc=Ext, conn=1/8
+                6'd11: rirb_rom_response = {32'h00000091, 32'h01014010};
+                // 12: GET_PARAMETERS(Node 10 — Pin Complex, mic in)
+                // Cap=0x20000 (In), type=0x4
+                6'd12: rirb_rom_response = {32'h000000A1, 32'h00040024};
+                // 13: GET_CONFIG_DEFAULT(Node 10 pin)
+                // Mic In, rear, 3.5mm
+                6'd13: rirb_rom_response = {32'h000000A1, 32'h01A19020};
+                // 14: GET_PARAMETERS(Node 11 — Vendor-defined widget)
+                6'd14: rirb_rom_response = {32'h000000B1, 32'h0000000F};
+                // 15: GET_PARAMETERS(Node 12 — Vendor-defined widget)
+                6'd15: rirb_rom_response = {32'h000000C1, 32'h0000000F};
+                // 16: GET_PARAMETERS(Node 13 — Audio Selector)
+                6'd16: rirb_rom_response = {32'h000000D1, 32'h00020003};
+                // 17: GET_CONNECT_LIST(Node 7 — input amp connections)
+                6'd17: rirb_rom_response = {32'h000000E1, 32'h00050004};
+                // 18: GET_PARAMETERS(Node 14 — Beep generator)
+                6'd18: rirb_rom_response = {32'h000000F1, 32'h00070007};
+                // 19: GET_PARAMETERS(Node 15 — Vendor-defined)
+                6'd19: rirb_rom_response = {32'h00000101, 32'h0000000F};
+                // === RUNTIME PHASE (indices 20–31) ===
+                // 20: SET_POWER_STATE(Node 0 AFG — D0 ack)
+                6'd20: rirb_rom_response = {32'h00000001, 32'h00000000};
+                // 21: GET_PIN_SENSE(Node 9 — line-out, no jack detect trigger)
+                6'd21: rirb_rom_response = {32'h00000091, 32'h00000000};
+                // 22: GET_PIN_SENSE(Node 10 — mic in, no jack detect trigger)
+                6'd22: rirb_rom_response = {32'h000000A1, 32'h00000000};
+                // 23: GET_AMP_GAIN_MUTE(Node 4 mixer, input 0)
+                6'd23: rirb_rom_response = {32'h00000041, 32'h00000000};
+                // 24: GET_AMP_GAIN_MUTE(Node 4 mixer, input 1)
+                6'd24: rirb_rom_response = {32'h00000041, 32'h00000001};
+                // 25: GET_CONVERTER_SAMPLE_RATE(Node 1)
+                6'd25: rirb_rom_response = {32'h00000011, 32'h0000BB80};  // 48000 Hz
+                // 26: GET_CONVERTER_STREAM_CHAN(Node 1)
+                6'd26: rirb_rom_response = {32'h00000011, 32'h00000000};
+                // 27: GET_VOLUME_KNOCK_CONTROL(Node 14 beep)
+                6'd27: rirb_rom_response = {32'h000000F1, 32'h00000000};
+                // 28: GET_EAPD_BTLENABLE(Node 1 — DAC)
+                6'd28: rirb_rom_response = {32'h00000011, 32'h00000002};
+                // 29: SET_PIN_WIDGET_CONTROL(Node 9 — OUT enable)
+                6'd29: rirb_rom_response = {32'h00000091, 32'h00000000};
+                // 30: SET_PIN_WIDGET_CONTROL(Node 10 — IN enable)
+                6'd30: rirb_rom_response = {32'h000000A1, 32'h00000000};
+                // 31: GET_PARAMETERS(Node 1 — repeated for runtime poll)
+                6'd31: rirb_rom_response = {32'h00000011, 32'h00030001};
+                // === EXTENDED RUNTIME PHASE (indices 32–63) ===
+                // Cycled after index 63 wraps back to 32, avoiding discovery zone.
+                // 32: SET_POWER_STATE(Node 0 AFG — D3 sleep ack)
+                6'd32: rirb_rom_response = {32'h00000001, 32'h00000003};
+                // 33: SET_POWER_STATE(Node 0 AFG — D0 wake ack)
+                6'd33: rirb_rom_response = {32'h00000001, 32'h00000000};
+                // 34: GET_PIN_SENSE(Node 9 — line-out, plugged in)
+                6'd34: rirb_rom_response = {32'h00000091, 32'h01000000};
+                // 35: GET_PIN_SENSE(Node 10 — mic in, plugged in)
+                6'd35: rirb_rom_response = {32'h000000A1, 32'h01000000};
+                // 36: GET_AMP_GAIN_MUTE(Node 5 mixer, input 0)
+                6'd36: rirb_rom_response = {32'h00000041, 32'h00000000};
+                // 37: GET_AMP_GAIN_MUTE(Node 5 mixer, input 1)
+                6'd37: rirb_rom_response = {32'h00000051, 32'h00000001};
+                // 38: GET_CONVERTER_FORMAT(Node 1 — 48kHz 16-bit stereo)
+                6'd38: rirb_rom_response = {32'h00000011, 32'h00000040};
+                // 39: GET_CONVERTER_FORMAT(Node 2 — SPDIF 48kHz)
+                6'd39: rirb_rom_response = {32'h00000021, 32'h00000040};
+                // 40: GET_STREAM_ID(Node 1 — stream 1)
+                6'd40: rirb_rom_response = {32'h00000011, 32'h00000001};
+                // 41: GET_STREAM_ID(Node 2 — stream 2 for SPDIF)
+                6'd41: rirb_rom_response = {32'h00000021, 32'h00000002};
+                // 42: GET_EAPD_BTLENABLE(Node 2 — SPDIF DAC, EAPD enabled)
+                6'd42: rirb_rom_response = {32'h00000021, 32'h00000002};
+                // 43: SET_EAPD_BTLENABLE(Node 1 — enable EAPD)
+                6'd43: rirb_rom_response = {32'h00000011, 32'h00000000};
+                // 44: SET_EAPD_BTLENABLE(Node 2 — enable SPDIF EAPD)
+                6'd44: rirb_rom_response = {32'h00000021, 32'h00000000};
+                // 45: Unsolicited response — jack detect (line-out present)
+                // type=2 (unsolicited), tag=1, NID=9
+                6'd45: rirb_rom_response = {32'h11000092, 32'h01000000};
+                // 46: Unsolicited response — jack detect (mic present)
+                // type=2 (unsolicited), tag=2, NID=10
+                6'd46: rirb_rom_response = {32'h210000A2, 32'h01000000};
+                // 47: SET_POWER_STATE(Node 1 — DAC D0)
+                6'd47: rirb_rom_response = {32'h00000011, 32'h00000000};
+                // 48: SET_POWER_STATE(Node 2 — SPDIF DAC D0)
+                6'd48: rirb_rom_response = {32'h00000021, 32'h00000000};
+                // 49: SET_POWER_STATE(Node 3 — ADC D0)
+                6'd49: rirb_rom_response = {32'h00000031, 32'h00000000};
+                // 50: GET_PARAMETERS(Node 4 mixer — repeated runtime poll)
+                6'd50: rirb_rom_response = {32'h00000041, 32'h00030000};
+                // 51: GET_PARAMETERS(Node 5 mixer — repeated runtime poll)
+                6'd51: rirb_rom_response = {32'h00000051, 32'h00020000};
+                // 52: GET_PIN_WIDGET_CONTROL(Node 9 — output enable query)
+                6'd52: rirb_rom_response = {32'h00000091, 32'h00000040};
+                // 53: GET_PIN_WIDGET_CONTROL(Node 10 — input enable query)
+                6'd53: rirb_rom_response = {32'h000000A1, 32'h00000020};
+                // 54: SET_CONVERTER_SAMPLE_RATE(Node 1 — 48kHz)
+                6'd54: rirb_rom_response = {32'h00000011, 32'h00000000};
+                // 55: SET_CONVERTER_SAMPLE_RATE(Node 2 — SPDIF 48kHz)
+                6'd55: rirb_rom_response = {32'h00000021, 32'h00000000};
+                // 56: SET_CONVERTER_STREAM_CHAN(Node 1)
+                6'd56: rirb_rom_response = {32'h00000011, 32'h00000000};
+                // 57: SET_CONVERTER_STREAM_CHAN(Node 2 — SPDIF)
+                6'd57: rirb_rom_response = {32'h00000021, 32'h00000000};
+                // 58: GET_AMP_GAIN_MUTE(Node 4 mixer, input 2)
+                6'd58: rirb_rom_response = {32'h00000041, 32'h00000002};
+                // 59: GET_AMP_GAIN_MUTE(Node 6 selector, input 0)
+                6'd59: rirb_rom_response = {32'h00000061, 32'h00000000};
+                // 60: SET_POWER_STATE(Node 14 — beep widget D3)
+                6'd60: rirb_rom_response = {32'h000000F1, 32'h00000003};
+                // 61: GET_PARAMETERS(Node 2 — SPDIF repeated poll)
+                6'd61: rirb_rom_response = {32'h00000021, 32'h00020002};
+                // 62: GET_PARAMETERS(Node 3 — ADC repeated poll)
+                6'd62: rirb_rom_response = {32'h00000031, 32'h00020011};
+                // 63: GET_SUBSYSTEM_ID — repeated runtime query
+                6'd63: rirb_rom_response = {32'h00000001, 32'h11020010};
+                // 64+: catch-all — safe "no-op" response (should not be reached
+                // with 6-bit index, but defensive default)
+                default: rirb_rom_response = {32'h00000001, 32'h00000000};
+            endcase
+        end
+    endfunction
+
+{{ end }}

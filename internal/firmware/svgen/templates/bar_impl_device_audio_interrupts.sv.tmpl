@@ -1,0 +1,53 @@
+{{ define "bar_impl_device_audio_interrupts" }}    // ========================================================================
+    // Consolidated INTFL driver — SINGLE source for reg_0x00000060.
+    // All INTFL modifications go through here to avoid multi-driver conflicts.
+    // Priority: set (response committed) takes precedence over RW1C clear.
+    // This ensures the MSI edge is never missed when driver clears INTFL in
+    // the same cycle we set it — the set wins, clear applies on next write.
+    // CRST/reinit clear still takes absolute priority (full reset).
+    // ========================================================================
+    always @(posedge clk) begin
+        if (rst) begin
+            reg_0x00000060 <= 32'h00000000;
+        end else if (rb_reinit || intfl_crst_clear_req) begin
+            // CRST rising edge or CTE reinit — clear INTFL.
+            reg_0x00000060[0] <= 1'b0;
+        end else if (intfl_set_req) begin
+            // RIRB response committed — set INTFL to notify driver.
+            // Takes priority over RW1C clear: if both fire simultaneously,
+            // INTFL goes 0→1, triggering MSI edge detection. The driver's
+            // clear takes effect on the next write to RIRBINTSTS.
+            reg_0x00000060[0] <= 1'b1;
+        end else if (intfl_clear_req) begin
+            // Driver wrote 1 to RIRBINTSTS[0] (RW1C) — clear INTFL.
+            reg_0x00000060[0] <= 1'b0;
+        end
+        // Default: hold current value (no explicit assignment needed for regs).
+    end
+
+    // Port assignments — expose internal regs to module outputs
+    assign dma_req_valid   = dma_req_valid_r;
+    assign dma_resp_lo     = dma_resp_lo_r;
+    assign dma_resp_hi     = dma_resp_hi_r;
+    assign dma_resp_wp     = dma_resp_wp_r;
+    assign dma_rirb_lbase  = reg_0x00000050;  // RIRBLBASE
+    assign dma_rirb_ubase  = reg_0x00000054;  // RIRBUBASE
+
+    // MSI trigger: 1-cycle pulse when INTFL transitions 0->1
+    // We detect the rising edge of reg_0x00000060[0] (RIRBINTSTS.INTFL)
+    reg intfl_prev;
+    always @(posedge clk) begin
+        if (rst) begin
+            intfl_prev <= 1'b0;
+        end else begin
+            intfl_prev <= reg_0x00000060[0];
+        end
+    end
+    // MSI trigger gated by INTCTL: GIE (bit 31) and CIE (bit 30) must be enabled
+    wire intctl_gie = reg_0x00000020[31];
+    wire intctl_cie = reg_0x00000020[30];
+    assign msi_trigger = reg_0x00000060[0] && !intfl_prev && intctl_gie && intctl_cie;
+    assign rirbintsts  = reg_0x00000060;  // live RIRBINTSTS value
+    assign crst_falling = !reg_0x00000008[0] && crst_prev;  // CRST falling edge
+
+{{ end }}

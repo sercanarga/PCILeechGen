@@ -1,0 +1,60 @@
+{{ define "bar_impl_device_nvme" }}{{ if eq .DeviceClass "nvme" }}
+    // ========================================================================
+    // NVMe CC -> CSTS State Machine
+    // stornvme.sys polls CSTS.RDY after writing CC.EN - this is the #1 cause
+    // of Code 10. Static CSTS values do NOT work; real transition is required.
+    // ========================================================================
+    reg        cc_en_prev;
+    reg [3:0]  csts_transition_cnt;
+    reg        csts_rdy_pending;
+    wire       cc_en_rising  = reg_0x00000014[0] && !cc_en_prev;
+    wire       cc_en_falling = !reg_0x00000014[0] && cc_en_prev;
+
+    always @(posedge clk) begin
+        if (rst) begin
+            cc_en_prev          <= 1'b0;
+            csts_transition_cnt <= 4'h0;
+            csts_rdy_pending    <= 1'b0;
+            reg_0x0000001C      <= 32'h00000000;  // CSTS: RDY=0, CFS=0, SHST=0
+        end else begin
+            cc_en_prev <= reg_0x00000014[0]; // CC.EN
+
+            // CC.EN rising edge -> start RDY transition (2-8 cycle delay)
+            if (cc_en_rising) begin
+                csts_rdy_pending    <= 1'b1;
+                csts_transition_cnt <= 4'h0;
+                reg_0x0000001C[0]   <= 1'b0;  // CSTS.RDY = 0 while enabling
+            end
+            // CC.EN falling edge -> controller disabled; SHST is only for CC.SHN shutdown
+            else if (cc_en_falling) begin
+                reg_0x0000001C[0]   <= 1'b0;  // CSTS.RDY = 0
+                csts_rdy_pending    <= 1'b0;
+                csts_transition_cnt <= 4'h0;
+            end else if (csts_rdy_pending) begin
+                // Pending RDY transition: count up then set RDY.
+                csts_transition_cnt <= csts_transition_cnt + 1'b1;
+                if (csts_transition_cnt >= 4'h4) begin
+                    reg_0x0000001C[0] <= 1'b1;  // CSTS.RDY = 1
+                    csts_rdy_pending  <= 1'b0;
+                end
+            end
+
+            // SHST follows the live CC.SHN request and the responder's real
+            // drain/flush/abort terminal acknowledgement.
+            if (reg_0x00000014[15:14] == 2'b00)
+                reg_0x0000001C[3:2] <= 2'b00;
+            else if (nvme_shutdown_complete)
+                reg_0x0000001C[3:2] <= 2'b10;
+            else
+                reg_0x0000001C[3:2] <= 2'b01;
+
+            // A disable edge owns same-cycle priority over a fatal pulse.
+            // Otherwise CFS is sticky until reset or the next CC.EN falling edge.
+            if (cc_en_falling)
+                reg_0x0000001C[1] <= 1'b0;
+            else if (controller_fatal)
+                reg_0x0000001C[1] <= 1'b1;
+        end
+    end
+{{ end }}
+{{ end }}
