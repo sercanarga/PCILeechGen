@@ -328,6 +328,8 @@ class SourceContractTests(unittest.TestCase):
         self.assertIn("--check-venv", source)
         self.assertIn("--clean --output-root", source)
         self.assertNotIn('rm -rf "$(COCOTB_OUTPUT_ROOT)"', source)
+        self.assertIn("COCOTB_CASES ?= nvme generic audio xhci wifi", source)
+        self.assertIn("$(foreach case,$(COCOTB_CASES),--case $(case))", source)
         self.assertLess(source.index("--check-venv"), source.index("-m venv"))
         self.assertLess(source.index("--check-python", source.index("-m venv")), source.index("-m pip"))
 

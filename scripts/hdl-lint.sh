@@ -41,12 +41,14 @@ case "$TMP" in
     exit 1
     ;;
 esac
-[ -d "$TMP" ] && [ ! -L "$TMP" ] || {
+if [ ! -d "$TMP" ] || [ -L "$TMP" ]; then
   echo "ERROR: HDL lint temporary directory is unsafe: $TMP" >&2
   exit 1
-}
+fi
 cleanup_tmp() {
-  [ -d "$TMP" ] && [ ! -L "$TMP" ] || return 0
+  if [ ! -d "$TMP" ] || [ -L "$TMP" ]; then
+    return 0
+  fi
   rm -rf -- "$TMP"
 }
 trap cleanup_tmp EXIT
