@@ -446,8 +446,14 @@ func TestBarCriticalClass(t *testing.T) {
 	if !barCriticalClass(0x010802) {
 		t.Error("NVMe should be BAR-critical")
 	}
+	if barCriticalClass(0x010800) {
+		t.Error("non-NVMe progIF should not be BAR-critical")
+	}
 	if !barCriticalClass(0x0C0330) {
 		t.Error("xHCI should be BAR-critical")
+	}
+	if barCriticalClass(0x0C0320) {
+		t.Error("non-xHCI progIF should not be BAR-critical")
 	}
 	if !barCriticalClass(0x020000) {
 		t.Error("Ethernet should be BAR-critical")

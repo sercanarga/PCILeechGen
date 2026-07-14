@@ -3,6 +3,7 @@ package firmware
 import (
 	"github.com/sercanarga/pcileechgen/internal/board"
 	"github.com/sercanarga/pcileechgen/internal/donor"
+	"github.com/sercanarga/pcileechgen/internal/firmware/devclass"
 )
 
 // LowestBar picks the value with the smallest map key.
@@ -144,7 +145,7 @@ func CappedBAR0Size(ctx *donor.DeviceContext, b *board.Board, msixTableSize int)
 
 func MSIXPlacement(bar0Size int, msixTableSize int, class uint32, dstrd uint32) (uint32, uint32, uint32) {
 	tableBytes := msixTableSize * 16
-	isNVMe := class>>8 == 0x0108
+	isNVMe := devclass.IsNVMe(class)
 	// dbBase uses board.DefaultBRAMSize (classic 0x1000) so doorbells + post-doorbell MSIX
 	// placement for variable BAR0 (16k NVMe 010802 etc) is consistent with Capped/Compute.
 	dbBase := uint32(board.DefaultBRAMSize)

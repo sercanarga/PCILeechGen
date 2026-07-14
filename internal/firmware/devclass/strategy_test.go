@@ -51,6 +51,25 @@ func TestStrategyForClass_RequiresExactProgrammingInterface(t *testing.T) {
 	}
 }
 
+func TestExactClassPredicates(t *testing.T) {
+	if !IsNVMe(ClassCodeNVMe) || IsNVMe(0x010800) {
+		t.Fatal("NVMe predicate must require progIF 0x02")
+	}
+	if !IsXHCI(ClassCodeXHCI) || IsXHCI(0x0C0320) {
+		t.Fatal("xHCI predicate must require progIF 0x30")
+	}
+	for _, classCode := range []uint32{ClassCodeNVMe, ClassCodeXHCI, 0x020000, 0x028000} {
+		if !IsBARCritical(classCode) {
+			t.Fatalf("class 0x%06X should be BAR-critical", classCode)
+		}
+	}
+	for _, classCode := range []uint32{0x010800, 0x0C0320, 0xFF0000} {
+		if IsBARCritical(classCode) {
+			t.Fatalf("class 0x%06X should not be BAR-critical", classCode)
+		}
+	}
+}
+
 func TestStrategyForClass_Ethernet(t *testing.T) {
 	s := StrategyForClass(0x020000)
 	if s == nil {

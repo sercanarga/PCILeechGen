@@ -4,6 +4,31 @@ package devclass
 // (base 0x01 / sub 0x08 / progIF 0x02).
 const ClassCodeNVMe uint32 = 0x010802
 
+const ClassCodeXHCI uint32 = 0x0C0330
+
+// IsNVMe reports whether classCode identifies the standardized NVMe
+// programming interface, not merely the broader NVM-controller subclass.
+func IsNVMe(classCode uint32) bool { return classCode&0xFFFFFF == ClassCodeNVMe }
+
+// IsXHCI reports whether classCode identifies the xHCI programming interface.
+func IsXHCI(classCode uint32) bool { return classCode&0xFFFFFF == ClassCodeXHCI }
+
+// IsBARCritical reports whether useful BAR state is required to model the
+// device class. Exact programming interfaces are required where PCI defines
+// multiple interfaces under the same subclass.
+func IsBARCritical(classCode uint32) bool {
+	switch {
+	case IsNVMe(classCode), IsXHCI(classCode):
+		return true
+	case classCode>>8 == 0x0200: // Ethernet
+		return true
+	case classCode>>8 == 0x0280: // Wi-Fi / CNVi
+		return true
+	default:
+		return false
+	}
+}
+
 const (
 	ClassNVMe        = "nvme"
 	ClassXHCI        = "xhci"
@@ -54,12 +79,11 @@ func StrategyForClass(classCode uint32) DeviceStrategy {
 func StrategyForClassAndVendor(classCode uint32, vendorID uint16) DeviceStrategy {
 	baseClass := (classCode >> 16) & 0xFF
 	subClass := (classCode >> 8) & 0xFF
-	progIF := classCode & 0xFF
 
 	switch {
-	case baseClass == 0x01 && subClass == 0x08 && progIF == 0x02:
+	case IsNVMe(classCode):
 		return &nvmeStrategy{baseStrategy{"NVMe", ClassNVMe, nvmeProfile}}
-	case baseClass == 0x0C && subClass == 0x03 && progIF == 0x30:
+	case IsXHCI(classCode):
 		return &xhciStrategy{baseStrategy{"xHCI", ClassXHCI, xhciProfile}}
 	case baseClass == 0x02 && subClass == 0x00:
 		return &ethernetStrategy{baseStrategy{"Ethernet", ClassEthernet, ethernetProfile}}

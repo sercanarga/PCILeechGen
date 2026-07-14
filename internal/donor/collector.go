@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/sercanarga/pcileechgen/internal/donor/vfio"
+	"github.com/sercanarga/pcileechgen/internal/firmware/devclass"
 	"github.com/sercanarga/pcileechgen/internal/pci"
 	"github.com/sercanarga/pcileechgen/internal/version"
 )
@@ -89,19 +90,7 @@ func (c *Collector) Collect(bdf pci.BDF) (*DeviceContext, error) {
 // barCriticalClass returns true for device classes where empty BAR contents
 // will cause the Windows driver to fail with Code 10.
 func barCriticalClass(classCode uint32) bool {
-	baseClass := (classCode >> 16) & 0xFF
-	subClass := (classCode >> 8) & 0xFF
-	switch {
-	case baseClass == 0x01 && subClass == 0x08: // NVMe
-		return true
-	case baseClass == 0x0C && subClass == 0x03: // xHCI USB 3.0
-		return true
-	case baseClass == 0x02 && subClass == 0x00: // Ethernet
-		return true
-	case baseClass == 0x02 && subClass == 0x80: // WiFi / CNVi
-		return true
-	}
-	return false
+	return devclass.IsBARCritical(classCode)
 }
 
 func (c *Collector) validateBARContents(ctx *DeviceContext) error {
@@ -263,7 +252,7 @@ type nativeVisitCache struct {
 }
 
 func isNVMeClass(classCode uint32) bool {
-	return classCode>>16 == 0x01 && (classCode>>8)&0xFF == 0x08
+	return devclass.IsNVMe(classCode)
 }
 
 func (c *Collector) runNativeVisit(vc *nativeVisitCache) (nativeVisitResult, error) {
