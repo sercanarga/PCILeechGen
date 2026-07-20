@@ -292,28 +292,63 @@ initial begin
     if (dbg_state !== 8'd0) $fatal(22, "responder not idle after CC.EN handshake");
     @(negedge clk);
 
-    poke_sqe(16'h400, 8'h0A, 32'h0,
+    // Unsupported log pages retain INVALID_FIELD precedence even when the
+    // unused PRP fields are zero.
+    poke_sqe(16'h400, 8'h02, 32'h0,
              32'h0, 32'h0, 32'h0, 32'h0,
              32'h000000FF, 32'h0, 32'h0);
     ring_sq(16'd0, 16'd1);
     wait_cqe(15'h0002);
 
+    // A 4 KiB Identify buffer with only four bytes left in PRP1 requires PRP2.
+    // Reject a missing PRP2 before it turns the remaining payload into writes
+    // at physical address zero.
+    host_mem[16'h0000] = 32'hDEADBEEF;
+    host_mem[16'h0BFF] = 32'hDEADBEEF;
     poke_sqe(16'h410, 8'h06, 32'h0,
-             32'h00005000, 32'h0, 32'h0, 32'h0,
+             32'h00002FFC, 32'h0, 32'h0, 32'h0,
              32'h00000001, 32'h0, 32'h0);
     ring_sq(16'd0, 16'd2);
-    wait_cqe(15'h0000);
+    wait_cqe(15'h0013);
+    if ((host_mem[16'h0000] !== 32'hDEADBEEF) ||
+        (host_mem[16'h0BFF] !== 32'hDEADBEEF))
+        $fatal(55, "invalid Identify PRPs performed a DMA write");
 
-    poke_sqe(16'h420, 8'h05, 32'h0,
-             32'h00004000, 32'h0, 32'h0, 32'h0,
-             32'h00010001, 32'h00000001, 32'h0);
+    // Model an allocator return near the end of a page and prove the Identify
+    // payload continues at PRP2 rather than linearly corrupting the next page.
+    host_mem[16'h1800] = 32'hDEADBEEF;
+    host_mem[16'h1C00] = 32'hCAFEBABE;
+    poke_sqe(16'h420, 8'h06, 32'h0,
+             32'h00005F00, 32'h0, 32'h00007000, 32'h0,
+             32'h00000001, 32'h0, 32'h0);
     ring_sq(16'd0, 16'd3);
     wait_cqe(15'h0000);
+    if (host_mem[16'h1800] !== 32'hDEADBEEF)
+        $fatal(56, "Identify payload ignored PRP2 at the page boundary");
+    if (host_mem[16'h1C00] !== 32'h07030003)
+        $fatal(57, "Identify payload did not continue at PRP2");
 
-    poke_sqe(16'h430, 8'h01, 32'h0,
+    host_mem[16'h0000] = 32'hDEADBEEF;
+    host_mem[16'h0BFF] = 32'hDEADBEEF;
+    poke_sqe(16'h430, 8'h02, 32'h0,
+             32'h00002FFC, 32'h0, 32'h0, 32'h0,
+             32'h03FF0002, 32'h0, 32'h0);
+    ring_sq(16'd0, 16'd4);
+    wait_cqe(15'h0013);
+    if ((host_mem[16'h0000] !== 32'hDEADBEEF) ||
+        (host_mem[16'h0BFF] !== 32'hDEADBEEF))
+        $fatal(58, "invalid Get Log PRPs performed a DMA write");
+
+    poke_sqe(16'h440, 8'h05, 32'h0,
+             32'h00004000, 32'h0, 32'h0, 32'h0,
+             32'h00010001, 32'h00000001, 32'h0);
+    ring_sq(16'd0, 16'd5);
+    wait_cqe(15'h0000);
+
+    poke_sqe(16'h450, 8'h01, 32'h0,
              32'h00003000, 32'h0, 32'h0, 32'h0,
              32'h00010001, 32'h00010001, 32'h0);
-    ring_sq(16'd0, 16'd4);
+    ring_sq(16'd0, 16'd6);
     wait_cqe(15'h0000);
 
     poke_sqe(16'hC00, 8'h02, 32'h00000001,
@@ -322,10 +357,10 @@ initial begin
     ring_sq(16'd1, 16'd1);
     wait_cqe(15'h0002);
 
-    poke_sqe(16'h440, 8'h02, 32'h0,
+    poke_sqe(16'h460, 8'h02, 32'h0,
              32'h00006000, 32'h0, 32'h0, 32'h0,
              32'h007F0002, 32'h0, 32'h0);
-    ring_sq(16'd0, 16'd5);
+    ring_sq(16'd0, 16'd7);
     wait_cqe(15'h0000);
     #1;
     if (host_mem[16'h1800][31:24] !== 8'h64) $fatal(5, "smart log spare byte");
@@ -333,11 +368,11 @@ initial begin
     if (host_mem[16'h1801] !== 32'h0000000A) $fatal(7, "smart log spare threshold");
     if (host_mem[16'h1824] !== 32'h00000003) $fatal(8, "smart log unsafe shutdowns");
 
-    poke_sqe(16'h450, 8'h0C, 32'h0,
+    poke_sqe(16'h470, 8'h0C, 32'h0,
              32'h0, 32'h0, 32'h0, 32'h0,
              32'h0, 32'h0, 32'h0);
     cqe_snapshot = cqe_count;
-    ring_sq(16'd0, 16'd6);
+    ring_sq(16'd0, 16'd8);
     repeat (2000) @(posedge clk);
     if (cqe_count !== cqe_snapshot) $fatal(8, "AER posted a synchronous CQE");
     #1;
@@ -361,12 +396,12 @@ initial begin
 
     // A normal shutdown requested during an active admin command must drain
     // that command and its CQE, then wait for a real backend flush terminal.
-    poke_sqe(16'h460, 8'h0A, 32'h0,
+    poke_sqe(16'h480, 8'h0A, 32'h0,
              32'h0, 32'h0, 32'h0, 32'h0,
              32'h000000FF, 32'h0, 32'h0);
     cqe_snapshot = cqe_count;
     flush_snapshot = disk_flush_count;
-    ring_sq(16'd0, 16'd7);
+    ring_sq(16'd0, 16'd9);
     wait_cycles = 0;
     while (dbg_state == 8'd0 && wait_cycles < 100) begin
         @(posedge clk);
@@ -377,9 +412,9 @@ initial begin
     cc_shn = 2'b01;
     #1;
     if (shutdown_complete) $fatal(31, "normal shutdown completed before command drain");
-    ring_sq(16'd0, 16'd8);
+    ring_sq(16'd0, 16'd10);
     #1;
-    if (responder.sq_tail !== 16'd7)
+    if (responder.sq_tail !== 16'd9)
         $fatal(46, "normal shutdown accepted a new SQ submission");
     wait_cycles = 0;
     while (cqe_count == cqe_snapshot && wait_cycles < 20000) begin

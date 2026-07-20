@@ -267,6 +267,26 @@ module pcileech_nvme_admin_responder #(
     wire        cmd_mdts_ok = (cmd_total_dw <= MAX_XFER_DW);
     wire [127:0] nvme_disk_bytes = {55'h0, NVME_ADVERTISED_LBAS, 9'h000};
     wire [10:0] cmd_log_last_dw = (cmd_cdw10[31:16] > 16'd1023) ? 11'd1023 : cmd_cdw10[26:16];
+    wire [12:0] cmd_log_bytes = ({2'b00, cmd_log_last_dw} + 13'd1) << 2;
+
+    function admin_prps_valid;
+        input [12:0] transfer_bytes;
+        input [63:0] prp1;
+        input [63:0] prp2;
+        reg [12:0] first_span;
+        begin
+            first_span = 13'd4096 - {1'b0, prp1[11:0]};
+            admin_prps_valid =
+                (prp1 != 64'h0000000000000000) &&
+                (prp1[1:0] == 2'b00) &&
+                ((transfer_bytes <= first_span) ||
+                 ((prp2 != 64'h0000000000000000) &&
+                  (prp2[11:0] == 12'h000)));
+        end
+    endfunction
+
+    wire admin_4k_prps_valid = admin_prps_valid(13'd4096, cmd_prp1, cmd_prp2);
+    wire admin_log_prps_valid = admin_prps_valid(cmd_log_bytes, cmd_prp1, cmd_prp2);
 
     function [63:0] prp_data_addr;
         input [23:0] dw_index;
@@ -367,6 +387,19 @@ module pcileech_nvme_admin_responder #(
     localparam [7:0] LOG_PAGE_SMART     = 8'h02;
     localparam [7:0] LOG_PAGE_FW_SLOT   = 8'h03;
     localparam [7:0] LOG_PAGE_VENDOR    = 8'hC0;
+    wire cmd_log_page_supported =
+        (cmd_cdw10[7:0] == LOG_PAGE_SUPPORTED) ||
+        (cmd_cdw10[7:0] == LOG_PAGE_ERROR) ||
+        (cmd_cdw10[7:0] == LOG_PAGE_SMART) ||
+        (cmd_cdw10[7:0] == LOG_PAGE_FW_SLOT) ||
+        (cmd_cdw10[7:0] == LOG_PAGE_VENDOR);
+    wire identify_cns_supported =
+        (identify_cns == 8'h00) || (identify_cns == 8'h11) ||
+        (identify_cns == 8'h01) || (identify_cns == 8'h02) ||
+        (identify_cns == 8'h10) || (identify_cns == 8'h03);
+    wire identify_nsid_valid_for_cns =
+        ((identify_cns == 8'h00) || (identify_cns == 8'h11) ||
+         (identify_cns == 8'h03)) ? cmd_nsid_selects_ns1 : 1'b1;
 
     reg [63:0] stat_data_units_read;
     reg [63:0] stat_data_units_written;
@@ -1318,20 +1351,25 @@ module pcileech_nvme_admin_responder #(
 
 	                                8'h02: begin
                                     timing_class <= TIMING_GET_LOG;
+                                    if (cmd_log_page_supported && !admin_log_prps_valid) begin
+                                        cqe_status <= NVME_SC_PRP_OFFSET_INVALID;
+                                        state <= S_BUILD_CQE;
+                                    end else begin
 	                                    case (cmd_cdw10[7:0])
-                                        LOG_PAGE_SUPPORTED,
-                                        LOG_PAGE_ERROR,
-                                        LOG_PAGE_SMART,
-                                        LOG_PAGE_FW_SLOT,
-                                        LOG_PAGE_VENDOR: begin
-                                            data_dw_cnt <= 11'h0;
-                                            state <= S_EXEC_LOGPAGE;
-                                        end
-                                        default: begin
-                                            cqe_status <= NVME_SC_INVALID_FIELD;
-                                            state <= S_BUILD_CQE;
-                                        end
-                                    endcase
+                                            LOG_PAGE_SUPPORTED,
+                                            LOG_PAGE_ERROR,
+                                            LOG_PAGE_SMART,
+                                            LOG_PAGE_FW_SLOT,
+                                            LOG_PAGE_VENDOR: begin
+                                                data_dw_cnt <= 11'h0;
+                                                state <= S_EXEC_LOGPAGE;
+                                            end
+                                            default: begin
+                                                cqe_status <= NVME_SC_INVALID_FIELD;
+                                                state <= S_BUILD_CQE;
+                                            end
+                                        endcase
+                                    end
                                 end
 
                                 8'h04: begin
@@ -1365,7 +1403,12 @@ module pcileech_nvme_admin_responder #(
 
 	                                8'h06: begin
                                     timing_class <= TIMING_IDENTIFY;
-		                                    case (identify_cns)
+                                    if (identify_cns_supported && identify_nsid_valid_for_cns &&
+                                        !admin_4k_prps_valid) begin
+                                        cqe_status <= NVME_SC_PRP_OFFSET_INVALID;
+                                        state <= S_BUILD_CQE;
+                                    end else begin
+		                                case (identify_cns)
 	                                        8'h00,
 	                                        8'h11: begin
 	                                            if (cmd_nsid_selects_ns1) begin
@@ -1403,6 +1446,7 @@ module pcileech_nvme_admin_responder #(
 	                                            state <= S_BUILD_CQE;
 	                                        end
 	                                    endcase
+                                    end
                                 end
 
                                 8'h08: begin
