@@ -195,7 +195,7 @@ jobs:
           python-version: '3.13'
 
       - name: Install Verilator
-        uses: YosysHQ/setup-oss-cad-suite@853bb54f52246aa8fb4fab963f104cfb6676197a # v4
+        uses: YosysHQ/setup-oss-cad-suite@c7845bc0d335c8076aa22047e85972caa8a916df # v4
         with:
           version: '2026-07-13'
           github-token: ${{ secrets.GITHUB_TOKEN }}
