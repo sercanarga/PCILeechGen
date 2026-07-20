@@ -266,6 +266,9 @@ func CheckVFIOModules() error {
 // BindToVFIO unbinds from the current driver and rebinds to vfio-pci.
 func BindToVFIO(bdf string) error {
 	devPath := filepath.Join(sysfsBase, bdf)
+	if err := CheckSafeToBind(bdf); err != nil {
+		return fmt.Errorf("unsafe VFIO bind: %w", err)
+	}
 
 	driverLink, err := os.Readlink(filepath.Join(devPath, "driver"))
 	if err == nil && filepath.Base(driverLink) == "vfio-pci" {
@@ -352,13 +355,18 @@ func EnableMemorySpace(bdf string) error {
 // power state bits in the PM Control/Status register and disabling
 // kernel runtime power management.
 func WakeToD0(bdf string) error {
-	// disable kernel runtime PM so it won't put the device back to sleep
+	// Disable kernel runtime PM so it cannot put the device back to sleep.
 	powerCtrl := filepath.Join(sysfsBase, bdf, "power", "control")
-	_ = os.WriteFile(powerCtrl, []byte("on"), 0200)
+	if err := os.WriteFile(powerCtrl, []byte("on"), 0200); err != nil {
+		return fmt.Errorf("cannot disable runtime power management for %s: %w", bdf, err)
+	}
 
 	ps, err := CheckPowerState(bdf)
-	if err != nil || ps == "D0" {
-		return nil // already in D0 or can't check
+	if err != nil {
+		return err
+	}
+	if ps == "D0" {
+		return nil
 	}
 
 	// find PM capability offset by walking config space cap list

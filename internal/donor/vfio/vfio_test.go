@@ -70,6 +70,68 @@ func TestBindToVFIO_InvalidDevice(t *testing.T) {
 	}
 }
 
+func TestBindToVFIORejectsMountedDeviceBeforeUnbind(t *testing.T) {
+	fakeInitialMountNamespace(t)
+	tmpDir := t.TempDir()
+	sysRoot := filepath.Join(tmpDir, "sys")
+	SetSysfsBase(filepath.Join(sysRoot, "bus", "pci", "devices"))
+	defer ResetSysfsBase()
+
+	oldMountInfo, oldDevBlock := mountInfoPath, sysDevBlockBase
+	mountInfoPath = filepath.Join(tmpDir, "mountinfo")
+	sysDevBlockBase = filepath.Join(sysRoot, "dev", "block")
+	defer func() {
+		mountInfoPath, sysDevBlockBase = oldMountInfo, oldDevBlock
+	}()
+
+	bdf := "0000:03:00.0"
+	devDir := mkFakeDev(t, sysfsBase, bdf)
+	symlinkIOMMUGroup(t, sysfsBase, devDir, 42)
+	driverDir := filepath.Join(tmpDir, "drivers", "nvme")
+	if err := os.MkdirAll(driverDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	unbindPath := filepath.Join(driverDir, "unbind")
+	if err := os.WriteFile(unbindPath, []byte("untouched"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(driverDir, filepath.Join(devDir, "driver")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(devDir, "vendor"), []byte("0x144d\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(devDir, "device"), []byte("0xa801\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	blockDir := filepath.Join(devDir, "nvme", "nvme0", "nvme0n1")
+	if err := os.MkdirAll(blockDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(sysDevBlockBase, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(blockDir, filepath.Join(sysDevBlockBase, "259:0")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mountInfoPath,
+		[]byte("36 25 259:0 / / rw,relatime - ext4 /dev/nvme0n1 rw\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := BindToVFIO(bdf)
+	if err == nil || !containsStr(err.Error(), "mounted at /") {
+		t.Fatalf("BindToVFIO() = %v, want mounted root safety rejection", err)
+	}
+	got, err := os.ReadFile(unbindPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "untouched" {
+		t.Fatalf("driver unbind was written before safety rejection: %q", got)
+	}
+}
+
 func TestUnbindFromVFIO_InvalidDevice(t *testing.T) {
 	err := UnbindFromVFIO("9999:99:99.9")
 	if err == nil {
@@ -699,5 +761,50 @@ func TestUnbindFromVFIO_BusPathsAreConfigurable(t *testing.T) {
 	}
 	if vfioPCIDriverDir() != filepath.Join(tmp, "drivers", "vfio-pci") {
 		t.Errorf("driverPath = %q", vfioPCIDriverDir())
+	}
+}
+
+func TestWakeToD0ReportsRuntimePMControlFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	SetSysfsBase(tmpDir)
+	defer ResetSysfsBase()
+
+	bdf := "0000:03:00.0"
+	devDir := filepath.Join(tmpDir, bdf)
+	if err := os.MkdirAll(devDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(devDir, "power_state"), []byte("D0\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := WakeToD0(bdf); err == nil || !containsStr(err.Error(), "runtime power management") {
+		t.Fatalf("WakeToD0() = %v, want runtime PM control error", err)
+	}
+}
+
+func TestWakeToD0D0WritesRuntimePMControl(t *testing.T) {
+	tmpDir := t.TempDir()
+	SetSysfsBase(tmpDir)
+	defer ResetSysfsBase()
+
+	bdf := "0000:03:00.0"
+	devDir := filepath.Join(tmpDir, bdf)
+	if err := os.MkdirAll(filepath.Join(devDir, "power"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(devDir, "power_state"), []byte("D0\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	control := filepath.Join(devDir, "power", "control")
+	if err := os.WriteFile(control, []byte("auto"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := WakeToD0(bdf); err != nil {
+		t.Fatalf("WakeToD0() = %v", err)
+	}
+	if got, err := os.ReadFile(control); err != nil || string(got) != "on" {
+		t.Fatalf("power/control = %q, %v; want on", got, err)
 	}
 }

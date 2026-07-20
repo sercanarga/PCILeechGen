@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -24,6 +25,24 @@ func mkFakeDev(t *testing.T, base, bdf string) string {
 		t.Fatalf("mkdir %s: %v", devDir, err)
 	}
 	return devDir
+}
+
+func fakeInitialMountNamespace(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	self := filepath.Join(dir, "self")
+	init := filepath.Join(dir, "init")
+	if err := os.Symlink("mnt:[1]", self); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("mnt:[1]", init); err != nil {
+		t.Fatal(err)
+	}
+	oldSelf, oldInit := selfMountNamespacePath, initMountNamespacePath
+	selfMountNamespacePath, initMountNamespacePath = self, init
+	t.Cleanup(func() {
+		selfMountNamespacePath, initMountNamespacePath = oldSelf, oldInit
+	})
 }
 
 func symlinkDriver(t *testing.T, base, devDir, driver string) {
@@ -298,5 +317,445 @@ func TestRunDiagnostics_MissingPowerStateOmitsEntry(t *testing.T) {
 	results := RunDiagnostics(bdf)
 	if _, ok := findDiag(results, "Power State"); ok {
 		t.Error("Power State result should be omitted when power_state is unreadable")
+	}
+}
+
+func TestCheckIOMMUGroupSafe(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		peerDriver string
+		wantErr    bool
+	}{
+		{name: "alone"},
+		{name: "peer unbound"},
+		{name: "peer on vfio", peerDriver: "vfio-pci"},
+		{name: "peer on native driver", peerDriver: "nvme", wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			SetSysfsBase(tmpDir)
+			defer ResetSysfsBase()
+
+			bdf := "0000:03:00.0"
+			devDir := mkFakeDev(t, tmpDir, bdf)
+			if tc.name == "alone" {
+				symlinkIOMMUGroup(t, tmpDir, devDir, 42)
+			} else {
+				peer := "0000:03:00.1"
+				peerDir := mkFakeDev(t, tmpDir, peer)
+				symlinkIOMMUGroup(t, tmpDir, devDir, 42, peer)
+				if tc.peerDriver != "" {
+					symlinkDriver(t, tmpDir, peerDir, tc.peerDriver)
+				}
+			}
+
+			err := CheckIOMMUGroupSafe(bdf)
+			if tc.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "0000:03:00.1") ||
+					!strings.Contains(err.Error(), "nvme") {
+					t.Fatalf("CheckIOMMUGroupSafe() = %v, want peer BDF and driver", err)
+				}
+			} else if err != nil {
+				t.Fatalf("CheckIOMMUGroupSafe() = %v, want nil", err)
+			}
+		})
+	}
+}
+
+func TestCheckIOMMUGroupSafeRejectsUnknownPeerDriverState(t *testing.T) {
+	tmpDir := t.TempDir()
+	SetSysfsBase(tmpDir)
+	defer ResetSysfsBase()
+
+	bdf := "0000:03:00.0"
+	devDir := mkFakeDev(t, tmpDir, bdf)
+	peer := "0000:03:00.1"
+	peerDir := mkFakeDev(t, tmpDir, peer)
+	symlinkIOMMUGroup(t, tmpDir, devDir, 42, peer)
+	if err := os.WriteFile(filepath.Join(peerDir, "driver"), []byte("not a symlink"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := CheckIOMMUGroupSafe(bdf)
+	if err == nil || !strings.Contains(err.Error(), peer) || !strings.Contains(err.Error(), "cannot read driver") {
+		t.Fatalf("CheckIOMMUGroupSafe() = %v, want fail-closed driver-state error", err)
+	}
+}
+
+func TestCheckSafeToBindRejectsMountedSystemDevice(t *testing.T) {
+	fakeInitialMountNamespace(t)
+	tmpDir := t.TempDir()
+	sysRoot := filepath.Join(tmpDir, "sys")
+	SetSysfsBase(filepath.Join(sysRoot, "bus", "pci", "devices"))
+	defer ResetSysfsBase()
+
+	oldMountInfo, oldDevBlock := mountInfoPath, sysDevBlockBase
+	mountInfoPath = filepath.Join(tmpDir, "mountinfo")
+	sysDevBlockBase = filepath.Join(sysRoot, "dev", "block")
+	defer func() {
+		mountInfoPath, sysDevBlockBase = oldMountInfo, oldDevBlock
+	}()
+
+	bdf := "0000:03:00.0"
+	devDir := mkFakeDev(t, sysfsBase, bdf)
+	symlinkIOMMUGroup(t, sysfsBase, devDir, 42)
+	blockDir := filepath.Join(devDir, "nvme", "nvme0", "nvme0n1")
+	if err := os.MkdirAll(blockDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(sysDevBlockBase, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(blockDir, filepath.Join(sysDevBlockBase, "259:0")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mountInfoPath,
+		[]byte("36 25 259:0 / / rw,relatime - ext4 /dev/nvme0n1 rw\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := CheckSafeToBind(bdf)
+	if err == nil || !strings.Contains(err.Error(), "mounted at /") {
+		t.Fatalf("CheckSafeToBind() = %v, want mounted root rejection", err)
+	}
+}
+
+func TestCheckSafeToBindAllowsUnrelatedMountedDevice(t *testing.T) {
+	fakeInitialMountNamespace(t)
+	tmpDir := t.TempDir()
+	sysRoot := filepath.Join(tmpDir, "sys")
+	SetSysfsBase(filepath.Join(sysRoot, "bus", "pci", "devices"))
+	defer ResetSysfsBase()
+
+	oldMountInfo, oldDevBlock := mountInfoPath, sysDevBlockBase
+	mountInfoPath = filepath.Join(tmpDir, "mountinfo")
+	sysDevBlockBase = filepath.Join(sysRoot, "dev", "block")
+	defer func() {
+		mountInfoPath, sysDevBlockBase = oldMountInfo, oldDevBlock
+	}()
+
+	bdf := "0000:03:00.0"
+	devDir := mkFakeDev(t, sysfsBase, bdf)
+	symlinkIOMMUGroup(t, sysfsBase, devDir, 42)
+	otherBlock := filepath.Join(sysRoot, "devices", "virtual", "block", "loop0")
+	if err := os.MkdirAll(otherBlock, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(sysDevBlockBase, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(otherBlock, filepath.Join(sysDevBlockBase, "7:0")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mountInfoPath,
+		[]byte("36 25 7:0 / / rw,relatime - ext4 /dev/loop0 rw\n"+
+			"37 25 0:42 / /sys/fs/selinux rw - selinuxfs selinuxfs rw\n"+
+			"38 25 0:43 / /var/lib/nfs/rpc_pipefs rw - rpc_pipefs rpc_pipefs rw\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := CheckSafeToBind(bdf); err != nil {
+		t.Fatalf("CheckSafeToBind() = %v, want unrelated device allowed", err)
+	}
+}
+
+func TestCheckSafeToBindRejectsMissingBlockMapping(t *testing.T) {
+	fakeInitialMountNamespace(t)
+	tmpDir := t.TempDir()
+	SetSysfsBase(filepath.Join(tmpDir, "sys", "bus", "pci", "devices"))
+	defer ResetSysfsBase()
+
+	oldMountInfo, oldDevBlock := mountInfoPath, sysDevBlockBase
+	mountInfoPath = filepath.Join(tmpDir, "mountinfo")
+	sysDevBlockBase = filepath.Join(tmpDir, "sys", "dev", "block")
+	defer func() {
+		mountInfoPath, sysDevBlockBase = oldMountInfo, oldDevBlock
+	}()
+
+	bdf := "0000:03:00.0"
+	devDir := mkFakeDev(t, sysfsBase, bdf)
+	symlinkIOMMUGroup(t, sysfsBase, devDir, 42)
+	if err := os.WriteFile(mountInfoPath,
+		[]byte("36 25 259:2 / / rw,relatime - ext4 /dev/nvme0n1p2 rw\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := CheckSafeToBind(bdf)
+	if err == nil || !strings.Contains(err.Error(), "259:2") {
+		t.Fatalf("CheckSafeToBind() = %v, want missing nonzero block mapping error", err)
+	}
+}
+
+func TestCheckSafeToBindTraversesVirtualPartitionParent(t *testing.T) {
+	fakeInitialMountNamespace(t)
+	tmpDir := t.TempDir()
+	sysRoot := filepath.Join(tmpDir, "sys")
+	SetSysfsBase(filepath.Join(sysRoot, "bus", "pci", "devices"))
+	defer ResetSysfsBase()
+
+	oldMountInfo, oldDevBlock := mountInfoPath, sysDevBlockBase
+	mountInfoPath = filepath.Join(tmpDir, "mountinfo")
+	sysDevBlockBase = filepath.Join(sysRoot, "dev", "block")
+	defer func() {
+		mountInfoPath, sysDevBlockBase = oldMountInfo, oldDevBlock
+	}()
+
+	bdf := "0000:03:00.0"
+	devDir := mkFakeDev(t, sysfsBase, bdf)
+	symlinkIOMMUGroup(t, sysfsBase, devDir, 42)
+	physical := filepath.Join(devDir, "nvme", "nvme0", "nvme0n1")
+	virtualDisk := filepath.Join(sysRoot, "devices", "virtual", "block", "dm-0")
+	partition := filepath.Join(virtualDisk, "dm-0p1")
+	if err := os.MkdirAll(filepath.Join(virtualDisk, "slaves"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(physical, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(partition, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(partition, "partition"), []byte("1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(physical, filepath.Join(virtualDisk, "slaves", "nvme0n1")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(sysDevBlockBase, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(partition, filepath.Join(sysDevBlockBase, "253:1")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mountInfoPath,
+		[]byte("36 25 253:1 / / rw,relatime - ext4 /dev/dm-0p1 rw\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := CheckSafeToBind(bdf)
+	if err == nil || !strings.Contains(err.Error(), "mounted at /") {
+		t.Fatalf("CheckSafeToBind() = %v, want virtual partition rejection", err)
+	}
+}
+
+func TestCheckSafeToBindTraversesNVMeMultipath(t *testing.T) {
+	fakeInitialMountNamespace(t)
+	tmpDir := t.TempDir()
+	sysRoot := filepath.Join(tmpDir, "sys")
+	SetSysfsBase(filepath.Join(sysRoot, "bus", "pci", "devices"))
+	defer ResetSysfsBase()
+
+	oldMountInfo, oldDevBlock := mountInfoPath, sysDevBlockBase
+	mountInfoPath = filepath.Join(tmpDir, "mountinfo")
+	sysDevBlockBase = filepath.Join(sysRoot, "dev", "block")
+	defer func() {
+		mountInfoPath, sysDevBlockBase = oldMountInfo, oldDevBlock
+	}()
+
+	bdf := "0000:03:00.0"
+	devDir := mkFakeDev(t, sysfsBase, bdf)
+	symlinkIOMMUGroup(t, sysfsBase, devDir, 42)
+	pathDisk := filepath.Join(devDir, "nvme", "nvme0", "nvme0c0n1")
+	head := filepath.Join(sysRoot, "devices", "virtual", "nvme-subsystem", "nvme-subsys0", "nvme0n1")
+	if err := os.MkdirAll(filepath.Join(head, "multipath"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(pathDisk, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(pathDisk, filepath.Join(head, "multipath", "nvme0c0n1")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(sysDevBlockBase, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(head, filepath.Join(sysDevBlockBase, "259:0")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mountInfoPath,
+		[]byte("36 25 259:0 / / rw,relatime - ext4 /dev/nvme0n1 rw\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := CheckSafeToBind(bdf)
+	if err == nil || !strings.Contains(err.Error(), "mounted at /") {
+		t.Fatalf("CheckSafeToBind() = %v, want NVMe multipath rejection", err)
+	}
+}
+
+func TestCheckSafeToBindRejectsUnresolvedNVMeMultipath(t *testing.T) {
+	fakeInitialMountNamespace(t)
+	tmpDir := t.TempDir()
+	sysRoot := filepath.Join(tmpDir, "sys")
+	SetSysfsBase(filepath.Join(sysRoot, "bus", "pci", "devices"))
+	defer ResetSysfsBase()
+
+	oldMountInfo, oldDevBlock := mountInfoPath, sysDevBlockBase
+	mountInfoPath = filepath.Join(tmpDir, "mountinfo")
+	sysDevBlockBase = filepath.Join(sysRoot, "dev", "block")
+	defer func() {
+		mountInfoPath, sysDevBlockBase = oldMountInfo, oldDevBlock
+	}()
+
+	bdf := "0000:03:00.0"
+	devDir := mkFakeDev(t, sysfsBase, bdf)
+	symlinkIOMMUGroup(t, sysfsBase, devDir, 42)
+	head := filepath.Join(sysRoot, "devices", "virtual", "nvme-subsystem", "nvme-subsys0", "nvme0n1")
+	if err := os.MkdirAll(head, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(sysDevBlockBase, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(head, filepath.Join(sysDevBlockBase, "259:0")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mountInfoPath,
+		[]byte("36 25 259:0 / / rw,relatime - ext4 /dev/nvme0n1 rw\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := CheckSafeToBind(bdf)
+	if err == nil || !strings.Contains(err.Error(), "NVMe multipath") {
+		t.Fatalf("CheckSafeToBind() = %v, want unresolved NVMe multipath error", err)
+	}
+}
+
+func TestCheckSafeToBindUsesLegacyNVMeSubsystemLinks(t *testing.T) {
+	fakeInitialMountNamespace(t)
+	tmpDir := t.TempDir()
+	sysRoot := filepath.Join(tmpDir, "sys")
+	SetSysfsBase(filepath.Join(sysRoot, "bus", "pci", "devices"))
+	defer ResetSysfsBase()
+
+	oldMountInfo, oldDevBlock := mountInfoPath, sysDevBlockBase
+	mountInfoPath = filepath.Join(tmpDir, "mountinfo")
+	sysDevBlockBase = filepath.Join(sysRoot, "dev", "block")
+	defer func() {
+		mountInfoPath, sysDevBlockBase = oldMountInfo, oldDevBlock
+	}()
+
+	bdf := "0000:03:00.0"
+	devDir := mkFakeDev(t, sysfsBase, bdf)
+	symlinkIOMMUGroup(t, sysfsBase, devDir, 42)
+	controller := filepath.Join(devDir, "nvme", "nvme0")
+	subsystem := filepath.Join(sysRoot, "devices", "virtual", "nvme-subsystem", "nvme-subsys0")
+	head := filepath.Join(subsystem, "nvme0n1")
+	if err := os.MkdirAll(controller, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(head, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(controller, filepath.Join(subsystem, "nvme0")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(sysDevBlockBase, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(head, filepath.Join(sysDevBlockBase, "259:0")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mountInfoPath,
+		[]byte("36 25 259:0 / / rw,relatime - ext4 /dev/nvme0n1 rw\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := CheckSafeToBind(bdf)
+	if err == nil || !strings.Contains(err.Error(), "mounted at /") {
+		t.Fatalf("CheckSafeToBind() = %v, want legacy NVMe subsystem rejection", err)
+	}
+}
+
+func TestCheckSafeToBindRejectsMajorZeroStorage(t *testing.T) {
+	fakeInitialMountNamespace(t)
+	tmpDir := t.TempDir()
+	SetSysfsBase(filepath.Join(tmpDir, "sys", "bus", "pci", "devices"))
+	defer ResetSysfsBase()
+
+	oldMountInfo := mountInfoPath
+	mountInfoPath = filepath.Join(tmpDir, "mountinfo")
+	defer func() { mountInfoPath = oldMountInfo }()
+
+	bdf := "0000:03:00.0"
+	devDir := mkFakeDev(t, sysfsBase, bdf)
+	symlinkIOMMUGroup(t, sysfsBase, devDir, 42)
+	if err := os.WriteFile(mountInfoPath,
+		[]byte("36 25 0:32 / / rw,relatime - overlay overlay rw\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := CheckSafeToBind(bdf)
+	if err == nil || !strings.Contains(err.Error(), "major 0") {
+		t.Fatalf("CheckSafeToBind() = %v, want unverifiable major-0 root rejection", err)
+	}
+}
+
+func TestCheckInitialMountNamespace(t *testing.T) {
+	dir := t.TempDir()
+	self := filepath.Join(dir, "self")
+	init := filepath.Join(dir, "init")
+	if err := os.Symlink("mnt:[1]", self); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("mnt:[2]", init); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkInitialMountNamespace(self, init); err == nil {
+		t.Fatal("checkInitialMountNamespace() accepted a private mount namespace")
+	}
+}
+
+func TestCheckLiveEnvironment(t *testing.T) {
+	oldMountInfo, oldCmdline := mountInfoPath, procCmdlinePath
+	defer func() {
+		mountInfoPath, procCmdlinePath = oldMountInfo, oldCmdline
+	}()
+
+	for _, tc := range []struct {
+		name      string
+		mountInfo string
+		cmdline   string
+		wantLive  bool
+	}{
+		{
+			name:      "Ubuntu casper",
+			mountInfo: "36 25 0:32 / / rw - overlay overlay rw\n37 25 8:1 / /cdrom ro - iso9660 /dev/sda1 ro\n",
+			cmdline:   "quiet splash boot=casper",
+			wantLive:  true,
+		},
+		{
+			name:      "Debian live media",
+			mountInfo: "36 25 0:32 / / rw - overlay overlay rw\n37 25 8:1 / /run/live/medium ro - squashfs /dev/sda1 ro\n",
+			wantLive:  true,
+		},
+		{
+			name:      "container overlay only",
+			mountInfo: "36 25 0:32 / / rw - overlay overlay rw\n",
+		},
+		{
+			name:      "installed ext4",
+			mountInfo: "36 25 259:2 / / rw - ext4 /dev/nvme0n1p2 rw\n",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			mountInfoPath = filepath.Join(dir, "mountinfo")
+			procCmdlinePath = filepath.Join(dir, "cmdline")
+			if err := os.WriteFile(mountInfoPath, []byte(tc.mountInfo), 0644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(procCmdlinePath, []byte(tc.cmdline), 0644); err != nil {
+				t.Fatal(err)
+			}
+
+			live, _, err := CheckLiveEnvironment()
+			if err != nil {
+				t.Fatalf("CheckLiveEnvironment() error = %v", err)
+			}
+			if live != tc.wantLive {
+				t.Fatalf("CheckLiveEnvironment() live = %v, want %v", live, tc.wantLive)
+			}
+		})
 	}
 }
