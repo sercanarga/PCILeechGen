@@ -155,3 +155,28 @@ func TestBARString(t *testing.T) {
 		t.Errorf("Memory BAR string = %q", s)
 	}
 }
+
+func TestParseBARsFromSysfsResourceMalformed(t *testing.T) {
+	// Each line must parse to exactly {start, end, flags} with end >= start,
+	// otherwise the region is treated as disabled rather than yielding a bogus
+	// (underflowed) size from "end - start + 1".
+	lines := []string{
+		"0x00000000f7dfffff 0x00000000f7d00000 0x00000200", // inverted range (end < start)
+		"0x00000000f7d00000",                               // truncated line (only start)
+		"not a resource line",                              // unparsable
+		"0x0000000000006001 0x000000000000601f 0x00000101", // valid IO BAR, 31 bytes
+	}
+
+	bars := ParseBARsFromSysfsResource(lines)
+	if len(bars) != 4 {
+		t.Fatalf("expected 4 BARs, got %d", len(bars))
+	}
+	for i := 0; i < 3; i++ {
+		if !bars[i].IsDisabled() {
+			t.Errorf("BAR%d should be disabled (got type %q size 0x%x)", i, bars[i].Type, bars[i].Size)
+		}
+	}
+	if bars[3].Type != BARTypeIO || bars[3].Size != 0x1F {
+		t.Errorf("BAR3 = {type %q size 0x%x}, want {io 0x1f}", bars[3].Type, bars[3].Size)
+	}
+}
