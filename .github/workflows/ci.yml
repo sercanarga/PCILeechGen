@@ -91,6 +91,29 @@ jobs:
             -checks='-*,clang-analyzer-core.NullDereference' \
             -warnings-as-errors='*' -- $cflags
 
+  lint:
+    name: Lint (golangci-lint)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          submodules: recursive
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      # TODO: pin to a commit SHA (matching the other actions in this file) once
+      # a specific golangci-lint v2 release is chosen; `version: latest` tracks
+      # the newest v2 build and can shift default checks between runs.
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: latest
+
   hdl-lint:
     name: HDL Lint (Verilator)
     runs-on: ubuntu-latest
