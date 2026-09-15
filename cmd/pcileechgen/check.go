@@ -27,6 +27,10 @@ as a donor device with VFIO. Also shows board compatibility analysis.
 
 Example:
   pcileechgen check --bdf 0000:03:00.0`,
+	// A failing check is a diagnostic result, not a usage error: report the
+	// issues via the printed summary and a non-zero exit, without a usage dump.
+	SilenceUsage:  true,
+	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		bdf, err := pci.ParseBDF(checkDevice)
 		if err != nil {
@@ -65,10 +69,11 @@ func (c *checker) run() error {
 	fmt.Fprintf(c.w, "\n%s\n", color.Header("Summary"))
 	if c.issues == 0 {
 		fmt.Fprintln(c.w, color.OK("Device is ready for firmware generation"))
-	} else {
-		fmt.Fprintln(c.w, color.Failf("%d issue(s) found - see above for details", c.issues))
+		return nil
 	}
-	return nil
+	fmt.Fprintln(c.w, color.Failf("%d issue(s) found - see above for details", c.issues))
+	// Non-zero exit so scripted "check && build" pipelines actually gate.
+	return fmt.Errorf("%d issue(s) found", c.issues)
 }
 
 func (c *checker) checkDeviceInfo() {
