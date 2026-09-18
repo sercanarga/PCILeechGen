@@ -129,12 +129,15 @@ func ParseBARsFromSysfsResource(lines []string) []BAR {
 		n, _ := fmt.Sscanf(lines[i], "0x%x 0x%x 0x%x", &start, &end, &flags)
 		if n != 3 {
 			// Try without 0x prefix
-			_, _ = fmt.Sscanf(lines[i], "%x %x %x", &start, &end, &flags)
+			n, _ = fmt.Sscanf(lines[i], "%x %x %x", &start, &end, &flags)
 		}
 
 		bar := BAR{Index: i}
 
-		if start == 0 && end == 0 {
+		// Treat an unparsable line, an empty region, or an inverted range as
+		// disabled. Without the end >= start guard, "end - start + 1" would
+		// underflow into a bogus multi-exabyte size on a partially parsed line.
+		if n != 3 || (start == 0 && end == 0) || end < start {
 			bar.Type = BARTypeDisabled
 		} else {
 			bar.Address = start

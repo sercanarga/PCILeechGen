@@ -34,7 +34,7 @@ func findFreeCapSpace(cs *pci.ConfigSpace, caps []pci.Capability, needed int) in
 		used[i] = true
 	}
 	for _, cap := range caps {
-		size := capSizeAt(cs, cap.ID, cap.Offset)
+		size := capSize(cs, cap)
 		for i := cap.Offset; i < cap.Offset+size && i < pci.ConfigSpaceLegacySize; i++ {
 			used[i] = true
 		}

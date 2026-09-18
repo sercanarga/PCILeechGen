@@ -1,11 +1,12 @@
+# golangci-lint v2 configuration.
+# (The go 1.26 toolchain requires golangci-lint v2; the previous v1 schema no
+# longer parses - notably `gosimple` is now folded into `staticcheck`.)
+version: "2"
+
 linters:
+  # standard = errcheck, govet, ineffassign, staticcheck, unused
+  default: standard
   enable:
-    - errcheck
-    - gosimple
-    - govet
-    - ineffassign
-    - staticcheck
-    - unused
     - bodyclose
     - durationcheck
     - errorlint
@@ -14,20 +15,23 @@ linters:
     - unconvert
     - unparam
     - wastedassign
-
-linters-settings:
-  errcheck:
-    check-type-assertions: true
-  govet:
-    enable-all: true
-    disable:
-      - fieldalignment
-  staticcheck:
-    checks: ["all", "-SA1019"]
+  settings:
+    errcheck:
+      check-type-assertions: true
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment
+    staticcheck:
+      checks:
+        - all
+        - -SA1019
+  exclusions:
+    paths:
+      - lib
+      - vendor
 
 issues:
-  exclude-dirs:
-    - lib
-    - vendor
-  max-issues-per-linter: 50
-  max-same-issues: 5
+  # 0 = report everything; the previous 50/5 caps silently hid findings.
+  max-issues-per-linter: 0
+  max-same-issues: 0

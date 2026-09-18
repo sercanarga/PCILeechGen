@@ -131,10 +131,30 @@ func (dc *DeviceContext) UnmarshalJSON(data []byte) error {
 	dc.NVMeIdentity = j.NVMeIdentity
 	dc.BehaviorRules = j.BehaviorRules
 
-	// Reconstruct config space from hex words
+	// Reconstruct config space from hex words. config_space_size is
+	// attacker-controlled on the --from-json path, so validate it before use:
+	// the true length is the number of hex words, and Size must be a canonical
+	// config-space size that fits the fixed backing array. Otherwise
+	// ConfigSpace.Bytes and every consumer that iterates up to Size would read
+	// out of bounds.
 	if len(j.ConfigSpaceHex) > 0 {
+		hexBytes := len(j.ConfigSpaceHex) * 4
+		size := j.ConfigSpaceSize
+		if size == 0 {
+			size = hexBytes // tolerate producers that omit the field
+		}
+		// Size must match the data actually provided and fit the fixed backing
+		// array; a larger (or negative) declared size would make ConfigSpace.Bytes
+		// and Size-bounded consumers read out of bounds.
+		if size != hexBytes {
+			return fmt.Errorf("config_space_size %d disagrees with %d hex words (%d bytes)",
+				size, len(j.ConfigSpaceHex), hexBytes)
+		}
+		if size > pci.ConfigSpaceSize {
+			return fmt.Errorf("config_space_size %d exceeds maximum %d", size, pci.ConfigSpaceSize)
+		}
 		dc.ConfigSpace = pci.NewConfigSpace()
-		dc.ConfigSpace.Size = j.ConfigSpaceSize
+		dc.ConfigSpace.Size = size
 		for i, hexWord := range j.ConfigSpaceHex {
 			var word uint32
 			if _, err := fmt.Sscanf(hexWord, "%x", &word); err != nil {

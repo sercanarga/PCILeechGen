@@ -1089,3 +1089,30 @@ func TestPhisonNVMe64bMSIXScrub(t *testing.T) {
 		t.Error("class at 0x08 not matching")
 	}
 }
+
+func TestCapSizePrefersChainExtentButFloorsTerminalCap(t *testing.T) {
+	// Two unknown caps (not in capMinSize) chained: an inner cap spanning 16
+	// bytes (0x40..0x50) and a terminal cap at 0x50 whose ParseCapabilities
+	// Data runs to end-of-space. capSize must report the inner cap's true 16-byte
+	// extent (so scrub/inject don't clip it) while the terminal cap falls back to
+	// the conservative static size, leaving the trailing gap free.
+	cs := pci.NewConfigSpace()
+	cs.Size = pci.ConfigSpaceSize
+	cs.WriteU16(0x06, 0x0010) // Status: capabilities list present (bit 4)
+	cs.WriteU8(0x34, 0x40)    // capabilities pointer
+	cs.WriteU8(0x40, 0x12)    // cap id 0x12 (unknown to capMinSize)
+	cs.WriteU8(0x41, 0x50)    // next -> 0x50
+	cs.WriteU8(0x50, 0x13)    // terminal cap id 0x13 (unknown)
+	cs.WriteU8(0x51, 0x00)    // next -> 0 (last)
+
+	caps := pci.ParseCapabilities(cs)
+	if len(caps) != 2 {
+		t.Fatalf("expected 2 caps, got %d", len(caps))
+	}
+	if got := capSize(cs, caps[0]); got != 0x10 {
+		t.Errorf("inner cap size = %d, want 16 (full chain extent)", got)
+	}
+	if got := capSize(cs, caps[1]); got != 8 {
+		t.Errorf("terminal cap size = %d, want 8 (static floor, not run-to-end)", got)
+	}
+}
