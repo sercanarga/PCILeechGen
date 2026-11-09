@@ -29,7 +29,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@1ad29ea4a422cce9a242a9fae469541dcd08addc # v4
+        uses: github/codeql-action/init@ce8b5602e2e75eddc698f13db2342ef698999255 # v4
         with:
           languages: go
 
